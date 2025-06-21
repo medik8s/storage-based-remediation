@@ -274,10 +274,10 @@ var _ = Describe("Manager", Ordered, func() {
 			cmd = exec.Command("kubectl", "delete", "daemonset", "-l", "app.kubernetes.io/name=sbd-agent", "-n", "sbd-system", "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
 
-			// Clean up SCC
-			By("cleaning up SBD agent SCC")
-			cmd = exec.Command("kubectl", "delete", "scc", "sbd-agent-privileged", "--ignore-not-found=true")
-			_, _ = utils.Run(cmd)
+			// Clean up SCC (note: SCC is managed by operator installation, not by individual tests)
+			By("SCC cleanup not needed - managed by operator installation")
+			// The SCC sbd-operator-sbd-agent-privileged is deployed via the OpenShift installer
+			// and should not be deleted by individual tests
 
 			// Clean up temporary file
 			if tmpFile != "" {
@@ -483,6 +483,84 @@ spec:
 				), fmt.Sprintf("SBD agent logs don't show successful startup: %s", output))
 			}
 			Eventually(verifySBDAgentLogs, 2*time.Minute).Should(Succeed())
+		})
+	})
+
+	Context("SBD Remediation", func() {
+		var sbdRemediationName string
+		var tmpFile string
+
+		BeforeEach(func() {
+			sbdRemediationName = fmt.Sprintf("test-sbdremediation-%d", time.Now().UnixNano())
+		})
+
+		AfterEach(func() {
+			// Clean up SBDRemediation
+			By("cleaning up SBDRemediation resource")
+			cmd := exec.Command("kubectl", "delete", "sbdremediation", sbdRemediationName, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			// Clean up temporary file
+			if tmpFile != "" {
+				os.Remove(tmpFile)
+			}
+		})
+
+		It("should create and manage SBDRemediation resource", func() {
+			By("creating an SBDRemediation resource")
+			sbdRemediationYAML := fmt.Sprintf(`
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDRemediation
+metadata:
+  name: %s
+spec:
+  nodeName: "test-node"
+  sbdDevice: "/dev/null"
+`, sbdRemediationName)
+
+			// Write SBDRemediation to temporary file
+			tmpFile = filepath.Join("/tmp", fmt.Sprintf("sbdremediation-%s.yaml", sbdRemediationName))
+			err := os.WriteFile(tmpFile, []byte(sbdRemediationYAML), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Apply the SBDRemediation
+			cmd := exec.Command("kubectl", "apply", "-f", tmpFile)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDRemediation")
+
+			By("verifying the SBDRemediation resource exists")
+			verifySBDRemediationExists := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "sbdremediation", sbdRemediationName, "-o", "jsonpath={.metadata.name}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal(sbdRemediationName))
+			}
+			Eventually(verifySBDRemediationExists, 30*time.Second).Should(Succeed())
+
+			By("verifying the SBDRemediation has conditions")
+			verifySBDRemediationConditions := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "sbdremediation", sbdRemediationName, "-o", "jsonpath={.status.conditions}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).ToNot(BeEmpty(), "SBDRemediation should have status conditions")
+			}
+			Eventually(verifySBDRemediationConditions, 60*time.Second).Should(Succeed())
+
+			By("verifying the SBDRemediation status fields are set")
+			verifySBDRemediationStatus := func(g Gomega) {
+				// Check if operatorInstance is set
+				cmd := exec.Command("kubectl", "get", "sbdremediation", sbdRemediationName, "-o", "jsonpath={.status.operatorInstance}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).ToNot(BeEmpty(), "SBDRemediation should have operatorInstance set")
+
+				// Check if lastUpdateTime is set
+				cmd = exec.Command("kubectl", "get", "sbdremediation", sbdRemediationName, "-o", "jsonpath={.status.lastUpdateTime}")
+				output, err = utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).ToNot(BeEmpty(), "SBDRemediation should have lastUpdateTime set")
+			}
+			Eventually(verifySBDRemediationStatus, 60*time.Second).Should(Succeed())
 		})
 	})
 })
