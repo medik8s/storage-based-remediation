@@ -126,7 +126,7 @@ setup-test-e2e: ## Set up CRC environment for e2e tests (start CRC only if not r
 	@echo "E2E environment setup complete!"
 
 .PHONY: test-e2e-fresh
-test-e2e-fresh: cleanup-crc setup-test-e2e test-e2e
+test-e2e-fresh: destroy-crc setup-test-e2e test-e2e
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e ## Run the e2e tests on CRC OpenShift cluster (setup handled in setup-test-e2e).
@@ -178,7 +178,7 @@ cleanup-test-e2e: ## Clean up e2e test environment and stop CRC cluster
 	@eval $$(crc oc-env) && kubectl delete clusterrole sbd-operator-sbd-agent-scc-user --ignore-not-found=true || true
 	@$(MAKE) uninstall || true
 
-cleanup-crc:
+destroy-crc:
 	@echo "Stopping CRC cluster..."
 	@crc stop || true
 
