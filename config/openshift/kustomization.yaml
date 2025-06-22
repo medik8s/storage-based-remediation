@@ -5,6 +5,8 @@ resources:
 - sbd-agent-scc.yaml
 
 # Labels to add to all resources
-commonLabels:
-  app.kubernetes.io/name: sbd-operator
-  app.kubernetes.io/component: openshift-resources 
+labels:
+- includeSelectors: true
+  pairs:
+    app.kubernetes.io/component: openshift-resources
+    app.kubernetes.io/name: sbd-operator
