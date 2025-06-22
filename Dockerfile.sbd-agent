@@ -1,31 +1,31 @@
 # ==============================================================================
 # Build Stage - Compile the SBD Agent Go application
 # ==============================================================================
-FROM registry.access.redhat.com/ubi9/go-toolset:1.21 AS builder
+# Alt: FROM registry.access.redhat.com/ubi9/ubi-minimal:latest AS builder
+FROM registry.access.redhat.com/ubi9/go-toolset:latest AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 # Install build dependencies and certificates for HTTPS connections
-RUN microdnf install -y git ca-certificates tzdata
+# Temp: RUN microdnf install -y git go
 
-# Create a non-root user for the build process
-RUN useradd -r -g '' appuser
+# Set GOTOOLCHAIN to auto to allow Go to download newer versions
+ENV GOTOOLCHAIN=auto
 
 # Set the working directory inside the container
-WORKDIR /build
-
+WORKDIR /workspace
+USER default
 # Copy go.mod and go.sum files for dependency caching
 # This allows Docker to cache the dependency download step
-COPY go.mod go.sum ./
-
-# Download dependencies
-# This step is cached as long as go.mod and go.sum don't change
-RUN go mod download
-
-# Verify dependencies
-RUN go mod verify
+COPY --chown=default go.mod go.sum ./
+COPY --chown=default cmd/ cmd/
+COPY --chown=default vendor/ vendor/
 
 # Copy the entire source code
-COPY . .
-
+RUN ls -al
+RUN go version
+RUN mkdir -p bin
 # Build the SBD Agent binary
 # CGO_ENABLED=0: Disable CGO for a static binary
 # GOOS=linux: Target Linux OS
@@ -33,10 +33,10 @@ COPY . .
 # -a: Force rebuilding of packages
 # -installsuffix cgo: Add suffix for CGO-disabled builds
 # -ldflags: Linker flags to reduce binary size and remove debug info
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+RUN CGO_ENABLED=${CGO_ENABLED:-0} GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
     -a -installsuffix cgo \
     -ldflags='-w -s -extldflags "-static"' \
-    -o sbd-agent \
+    -o bin/sbd-agent \
     ./cmd/sbd-agent/main.go
 
 # ==============================================================================
@@ -51,32 +51,19 @@ RUN microdnf install -y ca-certificates util-linux && microdnf clean all
 
 # Import the user and group files from the builder stage
 # This ensures we have a non-root user available
-COPY --from=builder /etc/passwd /etc/passwd
-COPY --from=builder /etc/group /etc/group
 
 # Create directories that the application might need
 RUN mkdir -p /var/log/sbd-agent && \
     mkdir -p /etc/sbd-agent
 
-# Copy the timezone data from builder
-COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 
-# Copy the CA certificates from builder
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 # Copy the compiled binary from the builder stage
-COPY --from=builder /build/sbd-agent /usr/local/bin/sbd-agent
+COPY --from=builder /workspace/bin/sbd-agent /usr/local/bin/sbd-agent
 
 # Make the binary executable
 RUN chmod +x /usr/local/bin/sbd-agent
 
-# Set ownership of application directories to the non-root user
-RUN chown -R appuser:appuser /var/log/sbd-agent /etc/sbd-agent
-
-# Use the non-root user for running the application
-# Note: The container will need to be run with --privileged and --cap-add=SYS_ADMIN
-# for watchdog and block device access, which will override this user setting
-USER appuser
 
 # Set the working directory
 WORKDIR /
