@@ -19,7 +19,7 @@ endif
 # Be aware that the target commands are only tested with Docker which is
 # scaffolded by default. However, you might want to replace it to use other
 # tools. (i.e. podman)
-CONTAINER_TOOL ?= docker
+CONTAINER_TOOL ?= podman
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -227,8 +227,8 @@ build-operator-image: manifests generate fmt vet ## Build operator container ima
 
 .PHONY: build-agent-image  
 build-agent-image: manifests generate fmt vet ## Build agent container image.
-	@echo "Building agent image: $(QUAY_AGENT_IMG):$(VERSION)"
-	$(CONTAINER_TOOL) build -f Dockerfile.sbd-agent -t sbd-agent:$(VERSION) . --load
+	@echo "Building agent image: $(QUAY_AGENT_IMG):$(VERSION) in $(PWD)"
+	$(CONTAINER_TOOL) build -f Dockerfile.sbd-agent -t sbd-agent:$(VERSION) .
 	$(CONTAINER_TOOL) tag sbd-agent:$(VERSION) $(QUAY_AGENT_IMG):$(VERSION)
 	$(CONTAINER_TOOL) tag sbd-agent:$(VERSION) $(QUAY_AGENT_IMG):latest
 
@@ -238,20 +238,20 @@ build-images: build-operator-image build-agent-image ## Build both operator and 
 	@echo "Operator: $(QUAY_OPERATOR_IMG):$(VERSION)"
 	@echo "Agent: $(QUAY_AGENT_IMG):$(VERSION)"
 
-.PHONY: push-operator
-push-operator: ## Push operator container image to registry.
+.PHONY: push-operator-image
+push-operator-image: ## Push operator container image to registry.
 	@echo "Pushing operator image: $(QUAY_OPERATOR_IMG):$(VERSION)"
 	$(CONTAINER_TOOL) push $(QUAY_OPERATOR_IMG):$(VERSION)
 	$(CONTAINER_TOOL) push $(QUAY_OPERATOR_IMG):latest
 
-.PHONY: push-agent
-push-agent: ## Push agent container image to registry.
+.PHONY: push-agent-image
+push-agent-image: ## Push agent container image to registry.
 	@echo "Pushing agent image: $(QUAY_AGENT_IMG):$(VERSION)"
 	$(CONTAINER_TOOL) push $(QUAY_AGENT_IMG):$(VERSION)
 	$(CONTAINER_TOOL) push $(QUAY_AGENT_IMG):latest
 
 .PHONY: push-images
-push-images: push-operator push-agent ## Push both operator and agent container images to registry.
+push-images: push-operator-image push-agent-image ## Push both operator and agent container images to registry.
 	@echo "Pushed SBD images to registry..."
 
 .PHONY: build-push
