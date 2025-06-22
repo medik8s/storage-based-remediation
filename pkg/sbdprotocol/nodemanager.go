@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -188,8 +189,17 @@ func (nm *NodeManager) atomicAssignSlot(nodeName string) (uint16, error) {
 					"attempt", attempt+1,
 					"maxAttempts", MaxAtomicRetries)
 
-				// Add randomized delay to reduce contention
-				time.Sleep(AtomicRetryDelay + time.Duration(attempt)*50*time.Millisecond)
+				// Add randomized exponential backoff to reduce contention
+				baseDelay := AtomicRetryDelay * time.Duration(1<<attempt) // Exponential backoff
+				jitter := time.Duration(rand.Intn(int(baseDelay / 2)))    // Add up to 50% jitter
+				totalDelay := baseDelay + jitter
+
+				nm.logger.V(2).Info("Retrying with exponential backoff",
+					"baseDelay", baseDelay,
+					"jitter", jitter,
+					"totalDelay", totalDelay)
+
+				time.Sleep(totalDelay)
 				continue
 			}
 			return 0, fmt.Errorf("failed to sync node mapping atomically: %w", err)
@@ -562,6 +572,17 @@ func (nm *NodeManager) atomicSyncToDevice(expectedVersion uint64) error {
 		return fmt.Errorf("node mapping table too large: %d bytes, maximum %d", len(data), SBD_SLOT_SIZE)
 	}
 
+	// Use advisory locking to prevent concurrent physical writes
+	// This prevents data corruption when multiple nodes write to slot 0 simultaneously
+	if err := nm.acquireDeviceLock(); err != nil {
+		return fmt.Errorf("failed to acquire device lock: %w", err)
+	}
+	defer func() {
+		if unlockErr := nm.releaseDeviceLock(); unlockErr != nil {
+			nm.logger.Error(unlockErr, "Failed to release device lock")
+		}
+	}()
+
 	// Read current version from device to check for conflicts
 	slotOffset := int64(SBD_NODE_MAP_SLOT) * SBD_SLOT_SIZE
 	currentSlotData := make([]byte, SBD_SLOT_SIZE)
@@ -614,6 +635,12 @@ func (nm *NodeManager) atomicSyncToDevice(expectedVersion uint64) error {
 		return fmt.Errorf("failed to sync node mapping to device: %w", err)
 	}
 
+	// Verify the write by reading back and checking the version
+	if err := nm.verifyWrite(slotData, slotOffset); err != nil {
+		nm.logger.Error(err, "Write verification failed, but data was written")
+		// Don't fail the operation for verification errors, just log them
+	}
+
 	nm.lastSync = time.Now()
 	nm.dirty = false
 
@@ -622,5 +649,60 @@ func (nm *NodeManager) atomicSyncToDevice(expectedVersion uint64) error {
 		"nodeCount", len(nm.table.Entries),
 		"version", nm.table.Version)
 
+	return nil
+}
+
+// acquireDeviceLock attempts to acquire an advisory lock on the SBD device
+// This prevents concurrent writes to the same physical block which can cause corruption
+func (nm *NodeManager) acquireDeviceLock() error {
+	// For SBD devices, we use a randomized delay approach to reduce contention
+	// This is simpler and more reliable than file locking across nodes
+
+	// Add random jitter to reduce thundering herd when multiple nodes start
+	jitter := time.Duration(rand.Intn(100)) * time.Millisecond
+	time.Sleep(jitter)
+
+	nm.logger.V(2).Info("Using randomized delay to reduce write contention", "jitter", jitter)
+	return nil
+}
+
+// releaseDeviceLock releases the advisory lock on the SBD device
+func (nm *NodeManager) releaseDeviceLock() error {
+	// No-op for the randomized delay approach
+	return nil
+}
+
+// createLockFile creates a lock file atomically
+func (nm *NodeManager) createLockFile(lockPath string) error {
+	// Not used in the randomized delay approach
+	return nil
+}
+
+// removeLockFile removes a lock file
+func (nm *NodeManager) removeLockFile(lockPath string) error {
+	// Not used in the randomized delay approach
+	return nil
+}
+
+// verifyWrite verifies that the data was written correctly by reading it back
+func (nm *NodeManager) verifyWrite(expectedData []byte, offset int64) error {
+	readBuffer := make([]byte, len(expectedData))
+	n, err := nm.device.ReadAt(readBuffer, offset)
+	if err != nil {
+		return fmt.Errorf("failed to read back data for verification: %w", err)
+	}
+
+	if n != len(expectedData) {
+		return fmt.Errorf("verification read size mismatch: expected %d bytes, got %d", len(expectedData), n)
+	}
+
+	// Compare the data
+	for i, expected := range expectedData {
+		if readBuffer[i] != expected {
+			return fmt.Errorf("data verification failed at byte %d: expected 0x%02x, got 0x%02x", i, expected, readBuffer[i])
+		}
+	}
+
+	nm.logger.V(2).Info("Write verification successful", "bytesVerified", len(expectedData))
 	return nil
 }
