@@ -108,8 +108,9 @@ func (h *NodeHasher) HashNodeName(nodeName string) uint32 {
 	hasher.Write([]byte(nodeName))
 	hash := hasher.Sum(nil)
 
-	// Convert to uint32 using the first 4 bytes
-	return binary.BigEndian.Uint32(hash[:4])
+	// Convert to uint32 using little-endian for consistency with SBD protocol
+	// This ensures compatibility across different architectures (amd64, arm64, s390x, ppc64le)
+	return binary.LittleEndian.Uint32(hash[:4])
 }
 
 // CalculateSlotID calculates the preferred slot ID for a node based on its hash

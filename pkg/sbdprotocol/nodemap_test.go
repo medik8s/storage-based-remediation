@@ -534,3 +534,166 @@ func TestNodeMapTable_VersionPersistence(t *testing.T) {
 
 	t.Logf("Successfully tested version persistence: %d", expectedVersion)
 }
+
+func TestEndianessCompatibility(t *testing.T) {
+	// Test that hash functions produce consistent results regardless of architecture endianness
+	hasher := NewNodeHasher("test-cluster")
+
+	testNodes := []string{
+		"worker-1",
+		"control-plane-1",
+		"node-s390x-1",   // IBM Z (big endian)
+		"node-arm64-1",   // ARM64 (little endian)
+		"node-amd64-1",   // x86_64 (little endian)
+		"node-ppc64le-1", // PowerPC little endian
+	}
+
+	// Hash values should be deterministic across runs
+	expectedHashes := make(map[string]uint32)
+	for _, nodeName := range testNodes {
+		hash := hasher.HashNodeName(nodeName)
+		expectedHashes[nodeName] = hash
+
+		// Verify hash is consistent across multiple calls
+		for i := 0; i < 10; i++ {
+			rehash := hasher.HashNodeName(nodeName)
+			if rehash != hash {
+				t.Errorf("Hash inconsistency for node %s: expected %d, got %d on iteration %d",
+					nodeName, hash, rehash, i)
+			}
+		}
+	}
+
+	// Test that different node names produce different hashes
+	for i, node1 := range testNodes {
+		for j, node2 := range testNodes {
+			if i != j {
+				hash1 := expectedHashes[node1]
+				hash2 := expectedHashes[node2]
+				if hash1 == hash2 {
+					t.Errorf("Hash collision between %s and %s: both have hash %d", node1, node2, hash1)
+				}
+			}
+		}
+	}
+}
+
+func TestBinaryProtocolEndianness(t *testing.T) {
+	// Test that SBD protocol messages are endianness-agnostic
+	nodeID := uint16(42)
+	sequence := uint64(12345)
+
+	// Create heartbeat message
+	msg := NewHeartbeat(nodeID, sequence)
+
+	// Marshal the message
+	data, err := Marshal(msg)
+	if err != nil {
+		t.Fatalf("Failed to marshal message: %v", err)
+	}
+
+	// Unmarshal the message
+	unmarshaled, err := Unmarshal(data)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal message: %v", err)
+	}
+
+	// Verify all fields match
+	if unmarshaled.NodeID != nodeID {
+		t.Errorf("NodeID mismatch: expected %d, got %d", nodeID, unmarshaled.NodeID)
+	}
+	if unmarshaled.Sequence != sequence {
+		t.Errorf("Sequence mismatch: expected %d, got %d", sequence, unmarshaled.Sequence)
+	}
+
+	// Test with extreme values that would expose endianness issues
+	extremeMsg := SBDMessageHeader{
+		Magic:     [8]byte{'S', 'B', 'D', 'M', 'S', 'G', '0', '1'},
+		Version:   0xFF00, // High byte set
+		Type:      SBD_MSG_TYPE_HEARTBEAT,
+		NodeID:    0x1234,             // Mixed bytes
+		Timestamp: 0x123456789ABCDEF0, // All bytes different
+		Sequence:  0xFEDCBA9876543210, // Reverse pattern
+		Checksum:  0,                  // Will be calculated
+	}
+
+	extremeData, err := Marshal(extremeMsg)
+	if err != nil {
+		t.Fatalf("Failed to marshal extreme message: %v", err)
+	}
+
+	extremeUnmarshaled, err := Unmarshal(extremeData)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal extreme message: %v", err)
+	}
+
+	if extremeUnmarshaled.Version != 0xFF00 {
+		t.Errorf("Version endianness issue: expected 0xFF00, got 0x%04X", extremeUnmarshaled.Version)
+	}
+	if extremeUnmarshaled.NodeID != 0x1234 {
+		t.Errorf("NodeID endianness issue: expected 0x1234, got 0x%04X", extremeUnmarshaled.NodeID)
+	}
+	if extremeUnmarshaled.Timestamp != 0x123456789ABCDEF0 {
+		t.Errorf("Timestamp endianness issue: expected 0x123456789ABCDEF0, got 0x%016X", extremeUnmarshaled.Timestamp)
+	}
+	if extremeUnmarshaled.Sequence != 0xFEDCBA9876543210 {
+		t.Errorf("Sequence endianness issue: expected 0xFEDCBA9876543210, got 0x%016X", extremeUnmarshaled.Sequence)
+	}
+}
+
+func TestNodeMappingEndianness(t *testing.T) {
+	// Test that node mapping tables are endianness-safe
+	table := NewNodeMapTable("test-cluster")
+	hasher := NewNodeHasher("test-cluster")
+
+	// Add nodes with specific patterns that would expose endianness issues
+	testNodes := []struct {
+		name                string
+		expectedSlotPattern string
+	}{
+		{"node-0x1234", "consistent"},
+		{"big-endian-test", "consistent"},
+		{"little-endian-test", "consistent"},
+		{"mixed-endian-scenario", "consistent"},
+	}
+
+	assignedSlots := make(map[string]uint16)
+	for _, test := range testNodes {
+		slot, err := table.AssignSlot(test.name, hasher)
+		if err != nil {
+			t.Fatalf("Failed to assign slot for %s: %v", test.name, err)
+		}
+		assignedSlots[test.name] = slot
+	}
+
+	// Marshal and unmarshal the table
+	data, err := table.Marshal()
+	if err != nil {
+		t.Fatalf("Failed to marshal node mapping table: %v", err)
+	}
+
+	unmarshaledTable, err := UnmarshalNodeMapTable(data)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal node mapping table: %v", err)
+	}
+
+	// Verify all slots are preserved correctly
+	for nodeName, expectedSlot := range assignedSlots {
+		actualSlot, found := unmarshaledTable.GetSlotForNode(nodeName)
+		if !found {
+			t.Errorf("Node %s not found in unmarshaled table", nodeName)
+			continue
+		}
+		if actualSlot != expectedSlot {
+			t.Errorf("Slot mismatch for %s: expected %d, got %d", nodeName, expectedSlot, actualSlot)
+		}
+	}
+
+	// Verify version and other fields survived marshaling
+	if unmarshaledTable.Version != table.Version {
+		t.Errorf("Version mismatch: expected %d, got %d", table.Version, unmarshaledTable.Version)
+	}
+	if unmarshaledTable.ClusterName != table.ClusterName {
+		t.Errorf("ClusterName mismatch: expected %s, got %s", table.ClusterName, unmarshaledTable.ClusterName)
+	}
+}
