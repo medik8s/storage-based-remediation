@@ -74,9 +74,6 @@ test/
 Makefile
 scripts/
 
-# Dependencies cache (will be rebuilt in container)
-vendor/
-
 # Environment files
 .env
 .env.*
