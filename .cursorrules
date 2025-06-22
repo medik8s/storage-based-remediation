@@ -91,7 +91,7 @@ DOCUMENTATION:
 - Document all public APIs with Go doc comments
 - Include examples in config/samples/
 - Update CRD descriptions and validation
-- Maintain design documents for complex features
+- Maintain design documents for complex features and include any alternatives
 - Document operational procedures
 
 PROJECT-SPECIFIC GUIDELINES:

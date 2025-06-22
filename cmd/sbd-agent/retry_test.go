@@ -31,7 +31,7 @@ func TestSBDAgent_FailureTracking(t *testing.T) {
 	// Create agent with short intervals for testing
 	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, "", "test-node", "test-cluster", 1,
 		10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond,
-		30, "panic", 8097, false, 10*time.Minute)
+		30, "panic", 8097, 10*time.Minute)
 	if err != nil {
 		t.Fatalf("Failed to create SBD agent: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestSBDAgent_SelfFenceThreshold(t *testing.T) {
 	// Create agent with short intervals for testing
 	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, "", "test-node", "test-cluster", 1,
 		10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond,
-		30, "panic", 8098, false, 10*time.Minute)
+		30, "panic", 8098, 10*time.Minute)
 	if err != nil {
 		t.Fatalf("Failed to create SBD agent: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestSBDAgent_FailureCountReset(t *testing.T) {
 	// Create agent with short intervals for testing
 	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, "", "test-node", "test-cluster", 1,
 		10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond,
-		30, "panic", 8099, false, 10*time.Minute)
+		30, "panic", 8099, 10*time.Minute)
 	if err != nil {
 		t.Fatalf("Failed to create SBD agent: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestSBDAgent_RetryConfiguration(t *testing.T) {
 	// Create agent
 	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, "", "test-node", "test-cluster", 1,
 		1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second,
-		30, "panic", 8100, false, 10*time.Minute)
+		30, "panic", 8100, 10*time.Minute)
 	if err != nil {
 		t.Fatalf("Failed to create SBD agent: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestSBDAgent_WatchdogRetryMechanism(t *testing.T) {
 	// Create agent with very short intervals for testing
 	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, "", "test-node", "test-cluster", 1,
 		10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond,
-		30, "panic", 8101, false, 10*time.Minute)
+		30, "panic", 8101, 10*time.Minute)
 	if err != nil {
 		t.Fatalf("Failed to create SBD agent: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestSBDAgent_HeartbeatRetryMechanism(t *testing.T) {
 	// Create agent with short intervals for testing
 	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, "", "test-node", "test-cluster", 1,
 		10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond,
-		30, "panic", 8102, false, 10*time.Minute)
+		30, "panic", 8102, 10*time.Minute)
 	if err != nil {
 		t.Fatalf("Failed to create SBD agent: %v", err)
 	}
