@@ -476,8 +476,8 @@ spec:
 				g.Expect(err).NotTo(HaveOccurred())
 				// Look for signs that the agent started successfully
 				g.Expect(output).To(Or(
-					ContainSubstring("Starting SBD agent"),
-					ContainSubstring("sbd-agent started"),
+					ContainSubstring("Starting SBD Agent"),
+					ContainSubstring("SBD Agent started successfully"),
 					ContainSubstring("Watchdog initialized"),
 					ContainSubstring("Agent running"),
 				), fmt.Sprintf("SBD agent logs don't show successful startup: %s", output))
@@ -515,7 +515,8 @@ metadata:
   name: %s
 spec:
   nodeName: "test-node"
-  sbdDevice: "/dev/null"
+  reason: "ManualFencing"
+  timeoutSeconds: 60
 `, sbdRemediationName)
 
 			// Write SBDRemediation to temporary file
