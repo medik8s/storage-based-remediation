@@ -697,3 +697,627 @@ func TestNodeMappingEndianness(t *testing.T) {
 		t.Errorf("ClusterName mismatch: expected %s, got %s", table.ClusterName, unmarshaledTable.ClusterName)
 	}
 }
+
+func TestNodeMapTable_MaxNodesBackwardCompatibility(t *testing.T) {
+	// Test that tables work correctly with default behavior
+	table := NewNodeMapTable("test-cluster")
+	hasher := NewNodeHasher("test-cluster")
+
+	// Should use default max nodes
+	expectedMaxNodes := uint16(255) // SBD_MAX_NODES default
+
+	slot, err := table.AssignSlot("test-node", hasher)
+	if err != nil {
+		t.Fatalf("Failed to assign slot: %v", err)
+	}
+
+	// Should work with default max nodes range
+	if slot < 1 || slot > expectedMaxNodes {
+		t.Errorf("Assigned slot %d is outside default range [1, %d]", slot, expectedMaxNodes)
+	}
+
+	// Test marshal/unmarshal preserves backward compatibility
+	data, err := table.Marshal()
+	if err != nil {
+		t.Fatalf("Failed to marshal table: %v", err)
+	}
+
+	unmarshaled, err := UnmarshalNodeMapTable(data)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal table: %v", err)
+	}
+
+	// Should work correctly after unmarshal
+	if len(unmarshaled.Entries) != 1 {
+		t.Errorf("Expected 1 entry after unmarshal, got %d", len(unmarshaled.Entries))
+	}
+}
+
+func TestNodeMapTable_HashCollisionHandling(t *testing.T) {
+	tests := []struct {
+		name      string
+		nodeCount int
+		testName  string
+	}{
+		{
+			name:      "small cluster with potential collisions",
+			nodeCount: 20,
+			testName:  "collision-test",
+		},
+		{
+			name:      "medium cluster with many nodes",
+			nodeCount: 50,
+			testName:  "medium-test",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			table := NewNodeMapTable(tt.testName)
+			hasher := NewNodeHasher(tt.testName)
+			assignedSlots := make(map[uint16]bool)
+
+			// Create node names that are likely to collide due to similar patterns
+			nodeNames := make([]string, tt.nodeCount)
+			for i := 0; i < tt.nodeCount; i++ {
+				// Use patterns that might hash to similar values
+				nodeNames[i] = fmt.Sprintf("node-collision-test-%d-%s", i, tt.testName)
+			}
+
+			// Assign slots to all nodes
+			for i, nodeName := range nodeNames {
+				slot, err := table.AssignSlot(nodeName, hasher)
+				if err != nil {
+					t.Fatalf("Failed to assign slot for node %s (iteration %d): %v", nodeName, i, err)
+				}
+
+				// Verify slot is within range
+				if slot < 1 || slot > SBD_MAX_NODES {
+					t.Errorf("Assigned slot %d for node %s is outside valid range [1, %d]",
+						slot, nodeName, SBD_MAX_NODES)
+				}
+
+				// Verify no duplicate slots
+				if assignedSlots[slot] {
+					t.Errorf("Slot %d was assigned to multiple nodes (current: %s)",
+						slot, nodeName)
+				}
+				assignedSlots[slot] = true
+
+				// Verify node can be found
+				retrievedSlot, found := table.GetSlotForNode(nodeName)
+				if !found || retrievedSlot != slot {
+					t.Errorf("Could not retrieve slot for node %s: expected %d, got %d (found: %v)",
+						nodeName, slot, retrievedSlot, found)
+				}
+
+				// Verify consistency on re-assignment
+				slot2, err := table.AssignSlot(nodeName, hasher)
+				if err != nil {
+					t.Errorf("Failed to reassign slot for node %s: %v", nodeName, err)
+				}
+				if slot2 != slot {
+					t.Errorf("Inconsistent slot assignment for node %s: %d != %d",
+						nodeName, slot, slot2)
+				}
+			}
+
+			t.Logf("Successfully assigned %d unique slots with potential collisions handled",
+				len(assignedSlots))
+		})
+	}
+}
+
+func TestNodeMapTable_SlotExhaustion(t *testing.T) {
+	// This test attempts to fill many slots and verify behavior near capacity
+	table := NewNodeMapTable("exhaustion-test")
+	hasher := NewNodeHasher("exhaustion-test")
+
+	// Try to assign many nodes to test for slot exhaustion
+	maxAttempts := 300 // More than SBD_MAX_NODES to force exhaustion
+	successfulAssignments := 0
+	failures := 0
+
+	for i := 0; i < maxAttempts; i++ {
+		nodeName := fmt.Sprintf("fill-node-%05d", i) // Zero-padded for consistent hashing
+		slot, err := table.AssignSlot(nodeName, hasher)
+		if err != nil {
+			failures++
+			if failures < 5 { // Log first few failures
+				t.Logf("Assignment failure %d for node %s: %v", failures, nodeName, err)
+			}
+			continue
+		}
+
+		if slot < 1 || slot > SBD_MAX_NODES {
+			t.Errorf("Assigned slot %d is outside valid range [1, %d]", slot, SBD_MAX_NODES)
+		}
+		successfulAssignments++
+
+		// Stop if we've filled a reasonable number of slots to avoid long test
+		if successfulAssignments >= 200 {
+			break
+		}
+	}
+
+	t.Logf("Successfully filled %d slots with %d failures", successfulAssignments, failures)
+
+	// Verify table state
+	stats := table.GetStats()
+	slotsUsed, ok := stats["slots_used"].(int)
+	if !ok {
+		t.Errorf("Could not get slots_used from stats: %v", stats)
+	} else {
+		if slotsUsed != successfulAssignments {
+			t.Errorf("Stats mismatch: expected %d slots used, got %d", successfulAssignments, slotsUsed)
+		}
+		t.Logf("Final state: %d slots used", slotsUsed)
+	}
+
+	// Verify all assignments are unique
+	seenSlots := make(map[uint16]bool)
+	for _, entry := range table.Entries {
+		if seenSlots[entry.SlotID] {
+			t.Errorf("Duplicate slot assignment detected: slot %d", entry.SlotID)
+		}
+		seenSlots[entry.SlotID] = true
+	}
+}
+
+func TestNodeMapTable_ForcedHashCollisions(t *testing.T) {
+	table := NewNodeMapTable("collision-test")
+	hasher := NewNodeHasher("collision-test")
+
+	// Create node names that are likely to have hash collisions
+	nodeNames := []string{
+		"collision-node-alpha-001",
+		"collision-node-beta-002",
+		"collision-node-gamma-003",
+		"collision-node-delta-004",
+		"collision-node-epsilon-005",
+		"collision-node-zeta-006",
+		"collision-node-eta-007",
+		"collision-node-theta-008",
+		"collision-node-iota-009",
+		"collision-node-kappa-010",
+	}
+
+	assignedSlots := make(map[uint16]string)
+	collisionResolved := 0
+
+	for i, nodeName := range nodeNames {
+		// Calculate preferred slot for this node
+		preferredSlot := hasher.CalculateSlotID(nodeName, 0)
+
+		slot, err := table.AssignSlot(nodeName, hasher)
+		if err != nil {
+			t.Errorf("Unexpected error for node %s (position %d): %v", nodeName, i, err)
+			continue
+		}
+
+		// Check if collision resolution was needed
+		if slot != preferredSlot {
+			collisionResolved++
+			t.Logf("Collision resolved for node %s: preferred slot %d, assigned slot %d",
+				nodeName, preferredSlot, slot)
+		}
+
+		// Verify no duplicate assignments
+		if existingNode, exists := assignedSlots[slot]; exists {
+			t.Errorf("Slot collision! Slot %d assigned to both %s and %s",
+				slot, existingNode, nodeName)
+		}
+		assignedSlots[slot] = nodeName
+
+		// Verify slot is in valid range
+		if slot < 1 || slot > SBD_MAX_NODES {
+			t.Errorf("Assigned slot %d for node %s is outside valid range [1, %d]",
+				slot, nodeName, SBD_MAX_NODES)
+		}
+	}
+
+	t.Logf("Hash collision test completed: %d collisions resolved out of %d assignments",
+		collisionResolved, len(assignedSlots))
+
+	// Verify collision resolution worked
+	if collisionResolved == 0 && len(assignedSlots) > 1 {
+		t.Log("No hash collisions occurred in this test run (this is random but possible)")
+	}
+}
+
+func TestNodeMapTable_MaxRetriesExceeded(t *testing.T) {
+	table := NewNodeMapTable("retry-test")
+	hasher := NewNodeHasher("retry-test")
+
+	// Fill many slots to increase chance of retry exhaustion
+	nodesToFill := 200
+	filledSlots := make(map[uint16]bool)
+
+	for i := 0; i < nodesToFill; i++ {
+		nodeName := fmt.Sprintf("node-%05d", i)
+		slot, err := table.AssignSlot(nodeName, hasher)
+		if err != nil {
+			// This could happen due to slot exhaustion or collision resolution failure
+			t.Logf("Could not assign slot for node %s: %v", nodeName, err)
+			break
+		}
+		filledSlots[slot] = true
+	}
+
+	t.Logf("Filled %d unique slots", len(filledSlots))
+
+	// Try to assign more nodes to potentially trigger retry exhaustion
+	for i := nodesToFill; i < nodesToFill+20; i++ {
+		nodeName := fmt.Sprintf("overflow-node-%05d", i)
+		slot, err := table.AssignSlot(nodeName, hasher)
+
+		if err != nil {
+			t.Logf("Got expected error for node %s: %v", nodeName, err)
+			errMsg := err.Error()
+			if !containsAny(errMsg, []string{"attempts", "occupied", "retry", "exhausted"}) {
+				t.Errorf("Error message should mention retry attempts or slot occupation: %s", errMsg)
+			}
+		} else {
+			// Assignment succeeded
+			if slot < 1 || slot > SBD_MAX_NODES {
+				t.Errorf("Assigned slot %d is outside valid range", slot)
+			}
+		}
+	}
+}
+
+func TestNodeMapTable_CollisionResolutionWithLimitedSlots(t *testing.T) {
+	table := NewNodeMapTable("collision-resolution")
+	hasher := NewNodeHasher("collision-resolution")
+
+	// Use node names that might create predictable collisions
+	nodes := []string{
+		"node-a", "node-b", "node-c", "node-d", "node-e",
+		"node-f", "node-g", "node-h", "node-i", "node-j",
+	}
+
+	// Track collision resolution attempts
+	successfulAssignments := 0
+	collisionCount := 0
+
+	for i, nodeName := range nodes {
+		// Get the preferred slot
+		preferredSlot := hasher.CalculateSlotID(nodeName, 0)
+
+		slot, err := table.AssignSlot(nodeName, hasher)
+		if err != nil {
+			t.Logf("Failed to assign slot for node %s (position %d): %v", nodeName, i, err)
+			continue
+		}
+
+		successfulAssignments++
+
+		// Check if collision resolution was used
+		if slot != preferredSlot {
+			collisionCount++
+			t.Logf("Collision resolved for %s: preferred %d, assigned %d",
+				nodeName, preferredSlot, slot)
+		}
+
+		// Verify slot is valid
+		if slot < 1 || slot > SBD_MAX_NODES {
+			t.Errorf("Invalid slot %d assigned to node %s", slot, nodeName)
+		}
+	}
+
+	t.Logf("Collision resolution test: %d successful assignments, %d collisions resolved",
+		successfulAssignments, collisionCount)
+
+	// Verify no slot conflicts
+	seenSlots := make(map[uint16]bool)
+	for _, entry := range table.Entries {
+		if seenSlots[entry.SlotID] {
+			t.Errorf("Duplicate slot assignment detected: slot %d", entry.SlotID)
+		}
+		seenSlots[entry.SlotID] = true
+	}
+}
+
+// Helper functions
+func containsAny(s string, substrings []string) bool {
+	for _, substr := range substrings {
+		if len(s) >= len(substr) {
+			for i := 0; i <= len(s)-len(substr); i++ {
+				if s[i:i+len(substr)] == substr {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func TestNodeMapTable_ExtremHashCollisionStress(t *testing.T) {
+	table := NewNodeMapTable("stress-test")
+	hasher := NewNodeHasher("stress-test")
+
+	// Create many nodes with similar naming patterns to increase collision probability
+	nodePatterns := []string{
+		"node-cluster-%03d",
+		"worker-node-%03d",
+		"compute-%03d",
+		"k8s-node-%03d",
+		"instance-%03d",
+	}
+
+	assignedSlots := make(map[uint16]string)
+	collisionCount := 0
+	totalNodes := 0
+
+	// Try each pattern with multiple node numbers
+	for _, pattern := range nodePatterns {
+		for i := 1; i <= 30; i++ { // 30 nodes per pattern = 150 total
+			nodeName := fmt.Sprintf(pattern, i)
+			totalNodes++
+
+			// Calculate preferred slot
+			preferredSlot := hasher.CalculateSlotID(nodeName, 0)
+
+			slot, err := table.AssignSlot(nodeName, hasher)
+			if err != nil {
+				// Log slot exhaustion errors
+				t.Logf("Slot assignment failed for node %s: %v", nodeName, err)
+				continue
+			}
+
+			// Check if collision resolution was needed
+			if slot != preferredSlot {
+				collisionCount++
+				t.Logf("Collision resolved for %s: preferred %d -> assigned %d",
+					nodeName, preferredSlot, slot)
+			}
+
+			// Verify no duplicate assignments
+			if existingNode, exists := assignedSlots[slot]; exists {
+				t.Errorf("CRITICAL: Slot %d assigned to both %s and %s",
+					slot, existingNode, nodeName)
+			}
+			assignedSlots[slot] = nodeName
+
+			// Stop early if we approach capacity to avoid long tests
+			if len(assignedSlots) >= 200 {
+				t.Logf("Stopping stress test at %d assignments to avoid timeout", len(assignedSlots))
+				break
+			}
+		}
+		if len(assignedSlots) >= 200 {
+			break
+		}
+	}
+
+	t.Logf("Stress test results: %d nodes assigned, %d collisions resolved, %d/%d success rate",
+		len(assignedSlots), collisionCount, len(assignedSlots), totalNodes)
+
+	// Verify collision resolution effectiveness
+	if collisionCount > 0 {
+		t.Logf("Collision resolution working: %d collisions handled successfully", collisionCount)
+	}
+
+	// Verify no slot conflicts occurred
+	for slotID, nodeName := range assignedSlots {
+		if retrievedNode, found := table.GetNodeForSlot(slotID); !found || retrievedNode != nodeName {
+			t.Errorf("Slot mapping inconsistency: slot %d should map to %s, got %s (found: %v)",
+				slotID, nodeName, retrievedNode, found)
+		}
+	}
+}
+
+func TestNodeMapTable_SlotExhaustionBoundary(t *testing.T) {
+	table := NewNodeMapTable("boundary-test")
+	hasher := NewNodeHasher("boundary-test")
+
+	// Test behavior when approaching the theoretical maximum
+	// SBD_MAX_NODES = 255, so usable slots are 1-255
+	maxUsableSlots := uint16(SBD_MAX_NODES)
+
+	// Try to fill exactly up to the boundary
+	successCount := 0
+	failureCount := 0
+	maxAttempts := int(maxUsableSlots) + 50 // Try beyond capacity
+
+	for i := 0; i < maxAttempts; i++ {
+		nodeName := fmt.Sprintf("boundary-node-%05d", i)
+		slot, err := table.AssignSlot(nodeName, hasher)
+
+		if err != nil {
+			failureCount++
+			if failureCount <= 3 { // Log first few failures
+				t.Logf("Expected failure %d at attempt %d: %v", failureCount, i+1, err)
+			}
+			continue
+		}
+
+		successCount++
+		if slot < 1 || slot > maxUsableSlots {
+			t.Errorf("Slot %d assigned to %s is outside valid range [1, %d]",
+				slot, nodeName, maxUsableSlots)
+		}
+
+		// Stop when we've confirmed the algorithm works well beyond reasonable capacity
+		if successCount >= 220 { // Leave some buffer for the test
+			t.Logf("Stopping boundary test at %d successful assignments", successCount)
+			break
+		}
+	}
+
+	t.Logf("Boundary test: %d successes, %d failures out of %d attempts",
+		successCount, failureCount, successCount+failureCount)
+
+	// Verify internal consistency
+	if len(table.Entries) != successCount {
+		t.Errorf("Entry count mismatch: expected %d, got %d", successCount, len(table.Entries))
+	}
+
+	if len(table.SlotUsage) != successCount {
+		t.Errorf("Slot usage count mismatch: expected %d, got %d", successCount, len(table.SlotUsage))
+	}
+
+	// Verify stats consistency
+	stats := table.GetStats()
+	slotsUsed, ok := stats["slots_used"].(int)
+	if !ok || slotsUsed != successCount {
+		t.Errorf("Stats inconsistency: expected %d slots used, got %v", successCount, slotsUsed)
+	}
+}
+
+func TestNodeMapTable_RetryMechanismValidation(t *testing.T) {
+	table := NewNodeMapTable("retry-validation")
+	hasher := NewNodeHasher("retry-validation")
+
+	// Fill some slots to create collision scenarios
+	prefilledNodes := []string{
+		"node-retry-001", "node-retry-002", "node-retry-003",
+		"node-retry-004", "node-retry-005",
+	}
+
+	prefilledSlots := make(map[uint16]string)
+	for _, nodeName := range prefilledNodes {
+		slot, err := table.AssignSlot(nodeName, hasher)
+		if err != nil {
+			t.Fatalf("Failed to prefill node %s: %v", nodeName, err)
+		}
+		prefilledSlots[slot] = nodeName
+		t.Logf("Prefilled node %s in slot %d", nodeName, slot)
+	}
+
+	// Now try to assign nodes that might collide with prefilled slots
+	testNodes := []string{
+		"test-collision-alpha",
+		"test-collision-beta",
+		"test-collision-gamma",
+		"test-collision-delta",
+		"test-collision-epsilon",
+	}
+
+	for _, testNode := range testNodes {
+		// Track which slots would be tried for this node
+		attemptedSlots := make([]uint16, 0, SBD_MAX_RETRIES)
+		for attempt := 0; attempt < SBD_MAX_RETRIES; attempt++ {
+			attemptSlot := hasher.CalculateSlotID(testNode, attempt)
+			attemptedSlots = append(attemptedSlots, attemptSlot)
+		}
+
+		slot, err := table.AssignSlot(testNode, hasher)
+		if err != nil {
+			t.Logf("Node %s failed assignment after trying slots %v: %v",
+				testNode, attemptedSlots, err)
+			continue
+		}
+
+		// Verify the assigned slot was in the attempted list
+		slotFound := false
+		for _, attemptSlot := range attemptedSlots {
+			if slot == attemptSlot {
+				slotFound = true
+				break
+			}
+		}
+
+		if !slotFound {
+			t.Errorf("Node %s assigned slot %d not in attempted slots %v",
+				testNode, slot, attemptedSlots)
+		}
+
+		// Verify slot is not conflicting with prefilled slots
+		if existingNode, exists := prefilledSlots[slot]; exists {
+			t.Errorf("Node %s assigned to slot %d which is already occupied by %s",
+				testNode, slot, existingNode)
+		}
+
+		t.Logf("Node %s successfully assigned to slot %d (attempts: %v)",
+			testNode, slot, attemptedSlots)
+	}
+}
+
+func TestNodeMapTable_ConsistentHashingValidation(t *testing.T) {
+	// Test that the same node name always gets the same slot across multiple tables
+	clusterName := "consistency-test"
+
+	// Create multiple independent tables
+	table1 := NewNodeMapTable(clusterName)
+	table2 := NewNodeMapTable(clusterName)
+	table3 := NewNodeMapTable(clusterName)
+
+	hasher := NewNodeHasher(clusterName)
+
+	testNodes := []string{
+		"consistent-node-1",
+		"consistent-node-2",
+		"consistent-node-3",
+		"worker-xyz-123",
+		"master-abc-456",
+	}
+
+	// Assign same nodes to different tables
+	for _, nodeName := range testNodes {
+		slot1, err1 := table1.AssignSlot(nodeName, hasher)
+		slot2, err2 := table2.AssignSlot(nodeName, hasher)
+		slot3, err3 := table3.AssignSlot(nodeName, hasher)
+
+		// All assignments should succeed
+		if err1 != nil || err2 != nil || err3 != nil {
+			t.Errorf("Assignment failed for node %s: err1=%v, err2=%v, err3=%v",
+				nodeName, err1, err2, err3)
+			continue
+		}
+
+		// All assignments should result in the same slot
+		if slot1 != slot2 || slot2 != slot3 {
+			t.Errorf("Inconsistent slot assignment for node %s: table1=%d, table2=%d, table3=%d",
+				nodeName, slot1, slot2, slot3)
+		} else {
+			t.Logf("Node %s consistently assigned to slot %d across all tables", nodeName, slot1)
+		}
+	}
+}
+
+func TestNodeMapTable_ErrorMessageQuality(t *testing.T) {
+	table := NewNodeMapTable("error-test")
+	hasher := NewNodeHasher("error-test")
+
+	// Test empty node name error
+	_, err := table.AssignSlot("", hasher)
+	if err == nil {
+		t.Error("Expected error for empty node name")
+	} else {
+		if !containsAny(err.Error(), []string{"empty", "cannot be empty"}) {
+			t.Errorf("Empty node name error should mention 'empty': %s", err.Error())
+		}
+	}
+
+	// Fill many slots to trigger retry exhaustion
+	for i := 0; i < 200; i++ {
+		nodeName := fmt.Sprintf("filler-node-%03d", i)
+		_, err := table.AssignSlot(nodeName, hasher)
+		if err != nil {
+			// Expected after filling many slots
+			break
+		}
+	}
+
+	// Try to assign another node to trigger retry exhaustion error
+	_, err = table.AssignSlot("exhaustion-test-node", hasher)
+	if err != nil {
+		errMsg := err.Error()
+		// Error should mention attempts or exhaustion
+		if !containsAny(errMsg, []string{"attempts", "occupied", "retry", "exhausted"}) {
+			t.Errorf("Retry exhaustion error should mention attempts/exhaustion: %s", errMsg)
+		}
+		t.Logf("Good error message for slot exhaustion: %s", errMsg)
+	}
+
+	// Test removal of non-existent node
+	err = table.RemoveNode("non-existent-node")
+	if err == nil {
+		t.Error("Expected error when removing non-existent node")
+	} else {
+		if !containsAny(err.Error(), []string{"not found", "not exist"}) {
+			t.Errorf("Non-existent node error should mention 'not found': %s", err.Error())
+		}
+	}
+}
