@@ -1,8 +1,10 @@
 # Quay registry configuration - primary image naming system
 QUAY_REGISTRY ?= quay.io
 QUAY_ORG ?= medik8s
-QUAY_OPERATOR_IMG ?= $(QUAY_REGISTRY)/$(QUAY_ORG)/sbd-operator
-QUAY_AGENT_IMG ?= $(QUAY_REGISTRY)/$(QUAY_ORG)/sbd-agent
+OPERATOR_IMG ?= sbd-operator
+AGENT_IMG ?= sbd-agent
+QUAY_OPERATOR_IMG ?= $(QUAY_REGISTRY)/$(QUAY_ORG)/$(OPERATOR_IMG)
+QUAY_AGENT_IMG ?= $(QUAY_REGISTRY)/$(QUAY_ORG)/$(AGENT_IMG)
 VERSION ?= latest
 
 # Legacy IMG variable for backwards compatibility (maps to operator image)
@@ -87,6 +89,14 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # 5. Waiting for operator readiness
 CRC_CLUSTER ?= sbd-operator-test-e2e
 
+.PHONY: load-images
+load-images:
+	@echo "Loading images into CRC..."
+	$(CONTAINER_TOOL) save --format docker-archive $(QUAY_OPERATOR_IMG):$(VERSION) -o bin/$(OPERATOR_IMG).tar
+	$(CONTAINER_TOOL) save --format docker-archive $(QUAY_AGENT_IMG):$(VERSION) -o bin/$(AGENT_IMG).tar
+	@eval $$(crc podman-env) && $(CONTAINER_TOOL) load -i bin/$(OPERATOR_IMG).tar
+	@eval $$(crc podman-env) && $(CONTAINER_TOOL) load -i bin/$(AGENT_IMG).tar
+
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up CRC environment for e2e tests (start CRC only if not running)
 	@command -v crc >/dev/null 2>&1 || { \
@@ -107,12 +117,8 @@ setup-test-e2e: ## Set up CRC environment for e2e tests (start CRC only if not r
 		exit 1; \
 	}
 	@echo "Building and loading container images..."
-	# TODO: Uncomment this when we need a way to build/load images in CI
-	#@$(MAKE) build-images
-	#@echo "Loading images into CRC..."
-	#@eval $$(crc podman-env) && \
-	#	docker save $(QUAY_OPERATOR_IMG):$(VERSION) | podman load && \
-	#	docker save $(QUAY_AGENT_IMG):$(VERSION) | podman load
+	#TODO:$@(MAKE) build-images
+	@$(MAKE) load-images
 	@echo "Building OpenShift installer with SecurityContextConstraints..."
 	@$(MAKE) build-openshift-installer
 	@echo "Deploying operator to CRC with OpenShift support..."
@@ -221,13 +227,13 @@ PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 .PHONY: build-operator-image
 build-operator-image: manifests generate fmt vet ## Build operator container image.
 	@echo "Building operator image: $(QUAY_OPERATOR_IMG):$(VERSION)"
-	$(CONTAINER_TOOL) build -t sbd-operator:$(VERSION) . --load
+	$(CONTAINER_TOOL) build -t sbd-operator:$(VERSION) .
 	$(CONTAINER_TOOL) tag sbd-operator:$(VERSION) $(QUAY_OPERATOR_IMG):$(VERSION)
 	$(CONTAINER_TOOL) tag sbd-operator:$(VERSION) $(QUAY_OPERATOR_IMG):latest
 
 .PHONY: build-agent-image  
 build-agent-image: manifests generate fmt vet ## Build agent container image.
-	@echo "Building agent image: $(QUAY_AGENT_IMG):$(VERSION) in $(PWD)"
+	@echo "Building agent image: $(QUAY_AGENT_IMG):$(VERSION)"
 	$(CONTAINER_TOOL) build -f Dockerfile.sbd-agent -t sbd-agent:$(VERSION) .
 	$(CONTAINER_TOOL) tag sbd-agent:$(VERSION) $(QUAY_AGENT_IMG):$(VERSION)
 	$(CONTAINER_TOOL) tag sbd-agent:$(VERSION) $(QUAY_AGENT_IMG):latest
