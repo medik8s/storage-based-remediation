@@ -449,3 +449,88 @@ func TestUnmarshalNodeMapTable_InvalidData(t *testing.T) {
 		t.Error("Expected error for invalid JSON")
 	}
 }
+
+func TestNodeMapTable_AtomicOperations(t *testing.T) {
+	table := NewNodeMapTable("test-cluster")
+	hasher := NewNodeHasher("test-cluster")
+
+	// Test that version increments with each operation
+	initialVersion := table.Version
+
+	// Assign a slot
+	slot, err := table.AssignSlot("node-1", hasher)
+	if err != nil {
+		t.Fatalf("Failed to assign slot: %v", err)
+	}
+
+	if slot < SBD_USABLE_SLOTS_START || slot > SBD_USABLE_SLOTS_END {
+		t.Errorf("Assigned slot %d is outside valid range [%d, %d]", slot, SBD_USABLE_SLOTS_START, SBD_USABLE_SLOTS_END)
+	}
+
+	if table.Version != initialVersion+1 {
+		t.Errorf("Version should increment after slot assignment: expected %d, got %d", initialVersion+1, table.Version)
+	}
+
+	// Update last seen
+	previousVersion := table.Version
+	err = table.UpdateLastSeen("node-1")
+	if err != nil {
+		t.Fatalf("Failed to update last seen: %v", err)
+	}
+
+	if table.Version != previousVersion+1 {
+		t.Errorf("Version should increment after update: expected %d, got %d", previousVersion+1, table.Version)
+	}
+
+	// Remove node
+	previousVersion = table.Version
+	err = table.RemoveNode("node-1")
+	if err != nil {
+		t.Fatalf("Failed to remove node: %v", err)
+	}
+
+	if table.Version != previousVersion+1 {
+		t.Errorf("Version should increment after removal: expected %d, got %d", previousVersion+1, table.Version)
+	}
+
+	t.Logf("Successfully tested atomic operations with version tracking from %d to %d", initialVersion, table.Version)
+}
+
+func TestNodeMapTable_VersionPersistence(t *testing.T) {
+	// Create and populate a table
+	table1 := NewNodeMapTable("test-cluster")
+	hasher := NewNodeHasher("test-cluster")
+
+	// Assign some slots to increment version
+	for i := 1; i <= 3; i++ {
+		nodeName := fmt.Sprintf("node-%d", i)
+		_, err := table1.AssignSlot(nodeName, hasher)
+		if err != nil {
+			t.Fatalf("Failed to assign slot for %s: %v", nodeName, err)
+		}
+	}
+
+	expectedVersion := table1.Version
+	if expectedVersion == 1 {
+		t.Error("Version should have incremented from initial value")
+	}
+
+	// Marshal the table
+	data, err := table1.Marshal()
+	if err != nil {
+		t.Fatalf("Failed to marshal table: %v", err)
+	}
+
+	// Unmarshal into a new table
+	table2, err := UnmarshalNodeMapTable(data)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal table: %v", err)
+	}
+
+	// Verify version is preserved
+	if table2.Version != expectedVersion {
+		t.Errorf("Version not preserved during marshal/unmarshal: expected %d, got %d", expectedVersion, table2.Version)
+	}
+
+	t.Logf("Successfully tested version persistence: %d", expectedVersion)
+}

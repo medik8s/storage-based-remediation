@@ -18,12 +18,27 @@ limitations under the License.
 package sbdprotocol
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
+)
+
+// Error types for node manager operations
+var (
+	ErrVersionMismatch    = errors.New("version mismatch during atomic update")
+	ErrMaxRetriesExceeded = errors.New("maximum retry attempts exceeded")
+)
+
+// Constants for atomic operations
+const (
+	// MaxAtomicRetries is the maximum number of retries for atomic operations
+	MaxAtomicRetries = 5
+	// AtomicRetryDelay is the base delay between retries (will be randomized)
+	AtomicRetryDelay = 100 * time.Millisecond
 )
 
 // SBDDevice interface for block device operations
@@ -109,40 +124,119 @@ func NewNodeManager(device SBDDevice, config NodeManagerConfig) (*NodeManager, e
 }
 
 // GetSlotForNode returns the slot ID for a given node name, assigning one if necessary
+// This method uses atomic Compare-and-Swap operations to prevent race conditions
 func (nm *NodeManager) GetSlotForNode(nodeName string) (uint16, error) {
-	nm.mutex.Lock()
-	defer nm.mutex.Unlock()
-
 	if nodeName == "" {
 		return 0, fmt.Errorf("node name cannot be empty")
 	}
 
-	// Check if node already has a slot
+	// First, try to get the slot without locking if it already exists locally
+	nm.mutex.RLock()
 	if slot, found := nm.table.GetSlotForNode(nodeName); found {
-		// Update last seen timestamp
-		if err := nm.table.UpdateLastSeen(nodeName); err != nil {
-			nm.logger.Error(err, "Failed to update last seen timestamp", "nodeName", nodeName)
+		nm.mutex.RUnlock()
+		// Update last seen timestamp atomically
+		if err := nm.atomicUpdateLastSeen(nodeName); err != nil {
+			nm.logger.Error(err, "Failed to update last seen timestamp atomically", "nodeName", nodeName)
+		}
+		return slot, nil
+	}
+	nm.mutex.RUnlock()
+
+	// Node doesn't exist locally, use atomic assignment
+	return nm.atomicAssignSlot(nodeName)
+}
+
+// atomicAssignSlot assigns a slot using Compare-and-Swap operations
+func (nm *NodeManager) atomicAssignSlot(nodeName string) (uint16, error) {
+	for attempt := 0; attempt < MaxAtomicRetries; attempt++ {
+		// Step 1: Load current state from device
+		nm.mutex.Lock()
+		if err := nm.loadFromDevice(); err != nil {
+			nm.mutex.Unlock()
+			// If loading fails, create a new table
+			nm.table = NewNodeMapTable(nm.clusterName)
+			nm.dirty = true
+		} else {
+			nm.mutex.Unlock()
+		}
+
+		// Step 2: Check if node already exists (another node might have assigned it)
+		nm.mutex.RLock()
+		if slot, found := nm.table.GetSlotForNode(nodeName); found {
+			nm.mutex.RUnlock()
+			nm.logger.Info("Node found in mapping during atomic assignment", "nodeName", nodeName, "slotID", slot)
+			return slot, nil
+		}
+		originalVersion := nm.table.Version
+		nm.mutex.RUnlock()
+
+		// Step 3: Assign slot locally
+		nm.mutex.Lock()
+		slot, err := nm.table.AssignSlot(nodeName, nm.hasher)
+		if err != nil {
+			nm.mutex.Unlock()
+			return 0, fmt.Errorf("failed to assign slot for node %s: %w", nodeName, err)
 		}
 		nm.dirty = true
+		nm.mutex.Unlock()
+
+		// Step 4: Attempt atomic write with version check
+		if err := nm.atomicSyncToDevice(originalVersion); err != nil {
+			if errors.Is(err, ErrVersionMismatch) {
+				nm.logger.V(1).Info("Version mismatch during atomic assignment, retrying",
+					"nodeName", nodeName,
+					"attempt", attempt+1,
+					"maxAttempts", MaxAtomicRetries)
+
+				// Add randomized delay to reduce contention
+				time.Sleep(AtomicRetryDelay + time.Duration(attempt)*50*time.Millisecond)
+				continue
+			}
+			return 0, fmt.Errorf("failed to sync node mapping atomically: %w", err)
+		}
+
+		// Success!
+		nm.logger.Info("Assigned new slot to node atomically", "nodeName", nodeName, "slotID", slot)
 		return slot, nil
 	}
 
-	// Assign a new slot
-	slot, err := nm.table.AssignSlot(nodeName, nm.hasher)
-	if err != nil {
-		return 0, fmt.Errorf("failed to assign slot for node %s: %w", nodeName, err)
+	return 0, fmt.Errorf("%w: failed to assign slot for node %s after %d attempts", ErrMaxRetriesExceeded, nodeName, MaxAtomicRetries)
+}
+
+// atomicUpdateLastSeen updates the last seen timestamp using atomic operations
+func (nm *NodeManager) atomicUpdateLastSeen(nodeName string) error {
+	for attempt := 0; attempt < MaxAtomicRetries; attempt++ {
+		// Step 1: Load current state
+		nm.mutex.Lock()
+		if err := nm.loadFromDevice(); err != nil {
+			nm.mutex.Unlock()
+			return fmt.Errorf("failed to load current state: %w", err)
+		}
+		originalVersion := nm.table.Version
+		nm.mutex.Unlock()
+
+		// Step 2: Update timestamp locally
+		nm.mutex.Lock()
+		if err := nm.table.UpdateLastSeen(nodeName); err != nil {
+			nm.mutex.Unlock()
+			return err
+		}
+		nm.dirty = true
+		nm.mutex.Unlock()
+
+		// Step 3: Attempt atomic write
+		if err := nm.atomicSyncToDevice(originalVersion); err != nil {
+			if errors.Is(err, ErrVersionMismatch) {
+				time.Sleep(AtomicRetryDelay)
+				continue
+			}
+			return fmt.Errorf("failed to sync timestamp update atomically: %w", err)
+		}
+
+		return nil
 	}
 
-	nm.dirty = true
-	nm.logger.Info("Assigned new slot to node", "nodeName", nodeName, "slotID", slot)
-
-	// Trigger immediate sync for new assignments
-	if err := nm.syncToDevice(); err != nil {
-		nm.logger.Error(err, "Failed to sync node mapping to device after assignment", "nodeName", nodeName)
-		// Don't fail the assignment, but log the error
-	}
-
-	return slot, nil
+	return fmt.Errorf("%w: failed to update last seen for node %s", ErrMaxRetriesExceeded, nodeName)
 }
 
 // GetNodeForSlot returns the node name for a given slot ID
@@ -200,23 +294,47 @@ func (nm *NodeManager) Sync() error {
 
 // CleanupStaleNodes removes nodes that haven't been seen for the configured timeout
 func (nm *NodeManager) CleanupStaleNodes() ([]string, error) {
-	nm.mutex.Lock()
-	defer nm.mutex.Unlock()
+	for attempt := 0; attempt < MaxAtomicRetries; attempt++ {
+		// Step 1: Load current state from device
+		nm.mutex.Lock()
+		if err := nm.loadFromDevice(); err != nil {
+			nm.mutex.Unlock()
+			return nil, fmt.Errorf("failed to load current state for cleanup: %w", err)
+		}
+		originalVersion := nm.table.Version
+		nm.mutex.Unlock()
 
-	removedNodes := nm.table.CleanupStaleNodes(nm.staleNodeTimeout)
-	if len(removedNodes) > 0 {
+		// Step 2: Clean up stale nodes locally
+		nm.mutex.Lock()
+		removedNodes := nm.table.CleanupStaleNodes(nm.staleNodeTimeout)
+		if len(removedNodes) == 0 {
+			// No nodes to clean up
+			nm.mutex.Unlock()
+			return removedNodes, nil
+		}
 		nm.dirty = true
 		nm.lastCleanup = time.Now()
-		nm.logger.Info("Cleaned up stale nodes", "count", len(removedNodes), "nodes", removedNodes)
+		nm.mutex.Unlock()
 
-		// Sync after cleanup
-		if err := nm.syncToDevice(); err != nil {
-			nm.logger.Error(err, "Failed to sync after stale node cleanup")
-			return removedNodes, err
+		// Step 3: Attempt atomic write
+		if err := nm.atomicSyncToDevice(originalVersion); err != nil {
+			if errors.Is(err, ErrVersionMismatch) {
+				nm.logger.V(1).Info("Version mismatch during cleanup, retrying",
+					"attempt", attempt+1,
+					"maxAttempts", MaxAtomicRetries,
+					"removedNodes", removedNodes)
+				time.Sleep(AtomicRetryDelay)
+				continue
+			}
+			return nil, fmt.Errorf("failed to sync after cleanup atomically: %w", err)
 		}
+
+		// Success!
+		nm.logger.Info("Cleaned up stale nodes atomically", "count", len(removedNodes), "nodes", removedNodes)
+		return removedNodes, nil
 	}
 
-	return removedNodes, nil
+	return nil, fmt.Errorf("%w: failed to cleanup stale nodes after %d attempts", ErrMaxRetriesExceeded, MaxAtomicRetries)
 }
 
 // StartPeriodicSync starts a background goroutine that periodically syncs and cleans up
@@ -424,4 +542,85 @@ func (nm *NodeManager) GetLastSync() time.Time {
 	nm.mutex.RLock()
 	defer nm.mutex.RUnlock()
 	return nm.lastSync
+}
+
+// atomicSyncToDevice writes the node mapping table to the SBD device with version checking
+// This implements Compare-and-Swap semantics to prevent race conditions
+func (nm *NodeManager) atomicSyncToDevice(expectedVersion uint64) error {
+	if !nm.dirty {
+		return nil // Nothing to sync
+	}
+
+	// Marshal the table
+	data, err := nm.table.Marshal()
+	if err != nil {
+		return fmt.Errorf("failed to marshal node mapping table: %w", err)
+	}
+
+	// Check if data fits in one slot
+	if len(data) > SBD_SLOT_SIZE {
+		return fmt.Errorf("node mapping table too large: %d bytes, maximum %d", len(data), SBD_SLOT_SIZE)
+	}
+
+	// Read current version from device to check for conflicts
+	slotOffset := int64(SBD_NODE_MAP_SLOT) * SBD_SLOT_SIZE
+	currentSlotData := make([]byte, SBD_SLOT_SIZE)
+
+	n, err := nm.device.ReadAt(currentSlotData, slotOffset)
+	if err != nil {
+		return fmt.Errorf("failed to read current node mapping slot for version check: %w", err)
+	}
+
+	if n != SBD_SLOT_SIZE {
+		return fmt.Errorf("partial read from node mapping slot during version check: read %d bytes, expected %d", n, SBD_SLOT_SIZE)
+	}
+
+	// Check if slot is empty (first time write)
+	if !isEmptySlot(currentSlotData) {
+		// Parse current version from device
+		currentTable, err := UnmarshalNodeMapTable(currentSlotData)
+		if err != nil {
+			// If we can't parse the current data, it might be corrupted
+			// Log a warning but proceed with the write
+			nm.logger.Info("Warning: failed to parse current node mapping table, proceeding with write", "error", err)
+		} else {
+			// Check version mismatch
+			if currentTable.Version != expectedVersion {
+				nm.logger.V(1).Info("Version mismatch detected",
+					"expectedVersion", expectedVersion,
+					"currentVersion", currentTable.Version,
+					"clusterName", currentTable.ClusterName)
+				return ErrVersionMismatch
+			}
+		}
+	}
+
+	// Prepare slot data (pad with zeros if necessary)
+	slotData := make([]byte, SBD_SLOT_SIZE)
+	copy(slotData, data)
+
+	// Write to the node mapping slot (slot 0)
+	n, err = nm.device.WriteAt(slotData, slotOffset)
+	if err != nil {
+		return fmt.Errorf("failed to write node mapping slot: %w", err)
+	}
+
+	if n != SBD_SLOT_SIZE {
+		return fmt.Errorf("partial write to node mapping slot: wrote %d bytes, expected %d", n, SBD_SLOT_SIZE)
+	}
+
+	// Ensure data is synced to disk
+	if err := nm.device.Sync(); err != nil {
+		return fmt.Errorf("failed to sync node mapping to device: %w", err)
+	}
+
+	nm.lastSync = time.Now()
+	nm.dirty = false
+
+	nm.logger.V(1).Info("Synced node mapping to device atomically",
+		"dataSize", len(data),
+		"nodeCount", len(nm.table.Entries),
+		"version", nm.table.Version)
+
+	return nil
 }

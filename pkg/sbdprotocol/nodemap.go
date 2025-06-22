@@ -64,7 +64,7 @@ type NodeMapEntry struct {
 // NodeMapTable represents the complete node-to-slot mapping table
 type NodeMapTable struct {
 	Magic       [8]byte                  `json:"-"`
-	Version     uint16                   `json:"version"`
+	Version     uint64                   `json:"version"`
 	ClusterName string                   `json:"cluster_name"`
 	Entries     map[string]*NodeMapEntry `json:"entries"`
 	SlotUsage   map[uint16]string        `json:"slot_usage"` // slot_id -> node_name
@@ -80,7 +80,7 @@ func NewNodeMapTable(clusterName string) *NodeMapTable {
 
 	return &NodeMapTable{
 		Magic:       magic,
-		Version:     SBD_NODE_MAP_VERSION,
+		Version:     1, // Start with version 1
 		ClusterName: clusterName,
 		Entries:     make(map[string]*NodeMapEntry),
 		SlotUsage:   make(map[uint16]string),
@@ -140,6 +140,7 @@ func (table *NodeMapTable) AssignSlot(nodeName string, hasher *NodeHasher) (uint
 	if entry, exists := table.Entries[nodeName]; exists {
 		entry.LastSeen = time.Now()
 		table.LastUpdate = time.Now()
+		table.Version++ // Increment version for any change
 		return entry.SlotID, nil
 	}
 
@@ -163,6 +164,7 @@ func (table *NodeMapTable) AssignSlot(nodeName string, hasher *NodeHasher) (uint
 			table.Entries[nodeName] = entry
 			table.SlotUsage[preferredSlot] = nodeName
 			table.LastUpdate = time.Now()
+			table.Version++ // Increment version for slot assignment
 
 			return preferredSlot, nil
 		} else if existingNode == nodeName {
@@ -210,6 +212,7 @@ func (table *NodeMapTable) RemoveNode(nodeName string) error {
 	delete(table.Entries, nodeName)
 	delete(table.SlotUsage, entry.SlotID)
 	table.LastUpdate = time.Now()
+	table.Version++ // Increment version for removal
 
 	return nil
 }
@@ -226,6 +229,7 @@ func (table *NodeMapTable) UpdateLastSeen(nodeName string) error {
 
 	entry.LastSeen = time.Now()
 	table.LastUpdate = time.Now()
+	table.Version++ // Increment version for timestamp update
 	return nil
 }
 
@@ -283,6 +287,7 @@ func (table *NodeMapTable) CleanupStaleNodes(maxAge time.Duration) []string {
 
 	if len(removedNodes) > 0 {
 		table.LastUpdate = time.Now()
+		table.Version++ // Increment version for cleanup changes
 	}
 
 	sort.Strings(removedNodes)
@@ -297,7 +302,7 @@ func (table *NodeMapTable) Marshal() ([]byte, error) {
 	// Create a serializable version
 	data := struct {
 		Magic       [8]byte                  `json:"magic"`
-		Version     uint16                   `json:"version"`
+		Version     uint64                   `json:"version"`
 		ClusterName string                   `json:"cluster_name"`
 		Entries     map[string]*NodeMapEntry `json:"entries"`
 		SlotUsage   map[uint16]string        `json:"slot_usage"`
@@ -345,7 +350,7 @@ func UnmarshalNodeMapTable(data []byte) (*NodeMapTable, error) {
 	// Unmarshal JSON data
 	var serializedData struct {
 		Magic       [8]byte                  `json:"magic"`
-		Version     uint16                   `json:"version"`
+		Version     uint64                   `json:"version"`
 		ClusterName string                   `json:"cluster_name"`
 		Entries     map[string]*NodeMapEntry `json:"entries"`
 		SlotUsage   map[uint16]string        `json:"slot_usage"`
@@ -363,8 +368,9 @@ func UnmarshalNodeMapTable(data []byte) (*NodeMapTable, error) {
 		return nil, fmt.Errorf("invalid node mapping magic: expected %s", SBD_NODE_MAP_MAGIC)
 	}
 
-	if serializedData.Version != SBD_NODE_MAP_VERSION {
-		return nil, fmt.Errorf("unsupported node mapping version: %d", serializedData.Version)
+	// Version validation is more flexible now since we use uint64 for atomic operations
+	if serializedData.Version == 0 {
+		return nil, fmt.Errorf("invalid node mapping version: version cannot be zero")
 	}
 
 	// Create table
@@ -414,4 +420,11 @@ func (table *NodeMapTable) GetStats() map[string]interface{} {
 		"cluster_name":    table.ClusterName,
 		"last_update":     table.LastUpdate,
 	}
+}
+
+// incrementVersion safely increments the table version
+func (table *NodeMapTable) incrementVersion() {
+	table.mutex.Lock()
+	defer table.mutex.Unlock()
+	table.Version++
 }
