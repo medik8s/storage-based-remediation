@@ -34,7 +34,7 @@ RUN mkdir -p bin
 # -a: Force rebuilding of packages
 # -installsuffix cgo: Add suffix for CGO-disabled builds
 # -ldflags: Linker flags to reduce binary size and remove debug info
-RUN CGO_ENABLED=${CGO_ENABLED:-0} GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
+RUN CGO_ENABLED=${CGO_ENABLED:-0} GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build \
     -a -installsuffix cgo \
     -ldflags='-w -s -extldflags "-static"' \
     -o bin/sbd-agent \

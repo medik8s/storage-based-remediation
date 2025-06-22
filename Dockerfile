@@ -27,8 +27,7 @@ RUN go version
 # was called. For example, if we call make docker-build in a local env which has the Apple Silicon M1 SO
 # the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
-RUN CGO_ENABLED=${CGO_ENABLED:-0} GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o bin/manager cmd/main.go
-RUN CGO_ENABLED=${CGO_ENABLED:-0} GOOS=linux GOARCH=amd64 go build \
+RUN CGO_ENABLED=${CGO_ENABLED:-0} GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build \
     -a -installsuffix cgo \
     -ldflags='-w -s -extldflags "-static"' \
     -o bin/manager \
