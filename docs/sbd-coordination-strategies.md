@@ -220,6 +220,34 @@ If you prefer the previous jitter-only behavior:
 - **No manual intervention**: The kernel handles cleanup automatically
 - **Works for all exit scenarios**: Normal exit, crash, SIGKILL, power failure, etc.
 
+### Q: What happens if the entire node/kernel crashes while holding a file lock?
+
+**A**: The behavior depends on the **storage system architecture**. For SBD's target storage systems, locks are automatically released:
+
+#### **Network-Attached Storage (NFS)**
+- **Node crashes** → Network connection drops → **NFS server detects client disconnect**
+- **Lock cleanup**: NFS server automatically releases all locks held by disconnected client
+- **Recovery time**: Typically 30-60 seconds (depends on NFS timeout settings)
+- **Other nodes**: Can acquire locks immediately after server cleanup
+
+#### **Cluster Filesystems (CephFS, GlusterFS)**  
+- **Node crashes** → Cluster detects node failure → **Distributed lock manager releases locks**
+- **Lock cleanup**: Cluster consensus automatically invalidates crashed node's locks
+- **Recovery time**: Usually 10-30 seconds (depends on cluster failure detection)
+- **Other nodes**: Can acquire locks after cluster convergence
+
+#### **Shared Block Storage (Ceph RBD, iSCSI SAN)**
+- **Node crashes** → Storage fabric detects connection loss → **Locks released at storage level**
+- **Lock cleanup**: Storage system cleans up crashed client's state
+- **Recovery time**: 10-60 seconds (depends on storage timeout configuration)
+- **Other nodes**: Continue operations after storage cleanup
+
+#### **Worst Case: Storage System Doesn't Support Lock Cleanup**
+- **Timeout protection**: Our 5-second timeout prevents indefinite waiting
+- **Automatic fallback**: System switches to jitter coordination strategy
+- **No data loss**: Operations continue with randomized delay coordination
+- **Manual recovery**: Storage admin may need to restart storage services (rare)
+
 ### Q: Can file locks survive system reboots?
 
 **A**: No. File locks are **process-local** and do not persist across system reboots. When a system restarts, all file locks are automatically cleared.
@@ -259,25 +287,46 @@ grep "coordinationStrategy" /var/log/sbd-agent.log
 
 **Critical Feature**: POSIX file locks (`flock()`) are **automatically released** when the holding process crashes or exits, preventing permanent deadlocks.
 
-**What happens on process crash/exit:**
+**What happens on different failure scenarios:**
 1. **Normal Exit**: `defer` cleanup explicitly releases lock
 2. **Process Crash**: Kernel automatically releases all `flock()` locks held by crashed process
 3. **SIGKILL**: Kernel cleanup releases locks immediately
-4. **System Reboot**: File locks don't persist across reboots
+4. **Node/Kernel Crash**: Storage system detects disconnection and releases locks
+5. **System Reboot**: File locks don't persist across reboots
 
 **Recovery Time**: Other processes can acquire the lock within **milliseconds** of the crashed process exiting.
 
-**Example scenario:**
+**Example scenarios:**
+
+**Process Crash:**
 ```
 Timeline:
 T0: Process A acquires lock, starts write operation
-T1: Process A crashes during write (power failure, OOM kill, etc.)
+T1: Process A crashes (OOM kill, segfault, etc.)
 T2: Kernel automatically releases Process A's lock
 T3: Process B immediately acquires lock and continues operations
 Total downtime: < 1 second
 ```
 
+**Node Crash (e.g., NFS storage):**
+```
+Timeline:
+T0: Node A acquires lock, starts write operation  
+T1: Node A crashes (power failure, kernel panic, etc.)
+T2: NFS server detects client disconnect (30-60 seconds)
+T3: NFS server releases all locks held by Node A
+T4: Node B acquires lock and continues operations
+Total downtime: 30-60 seconds (NFS-dependent)
+```
+
 This automatic cleanup is a fundamental POSIX guarantee that makes file locking safe for critical operations like SBD coordination.
+
+**Why longer recovery times are acceptable for node crashes:**
+- **SBD context**: Node crashes are rare events (hardware failure, kernel panic)
+- **Crash detection**: Other nodes detect the crash through missing heartbeats
+- **Self-fencing**: Crashed node cannot interfere with operations (it's offline)
+- **Timeout protection**: 5-second lock timeout prevents indefinite blocking
+- **Automatic fallback**: System continues with jitter coordination if needed
 
 ### Jitter Implementation
 
