@@ -48,6 +48,7 @@ var (
 	watchdogTimeout   = flag.Duration("watchdog-timeout", 30*time.Second, "Watchdog pet interval (how often to pet the watchdog)")
 	watchdogTestMode  = flag.Bool("watchdog-test-mode", false, "Enable watchdog test mode (soft_noboot=1 for softdog, prevents actual reboots)")
 	sbdDevice         = flag.String("sbd-device", "", "Path to the SBD block device")
+	sbdFileLocking    = flag.Bool("sbd-file-locking", true, "Enable file locking for SBD device operations (recommended for shared storage)")
 	nodeName          = flag.String("node-name", "", "Name of this Kubernetes node")
 	clusterName       = flag.String("cluster-name", "default-cluster", "Name of the cluster for node mapping")
 	nodeID            = flag.Uint("node-id", 0, "Unique numeric ID for this node (1-255) - deprecated, use hash-based mapping")
@@ -82,6 +83,12 @@ const (
 	MaxConsecutiveFailures = 5
 	// FailureCountResetInterval is the interval after which failure counts are reset
 	FailureCountResetInterval = 30 * time.Second
+
+	// File locking constants
+	// FileLockTimeout is the maximum time to wait for acquiring a file lock
+	FileLockTimeout = 5 * time.Second
+	// FileLockRetryInterval is the interval between file lock acquisition attempts
+	FileLockRetryInterval = 100 * time.Millisecond
 )
 
 // Global logger instance
@@ -383,6 +390,9 @@ type SBDAgent struct {
 	metricsPort       int
 	metricsServer     *http.Server
 
+	// File locking configuration
+	fileLockingEnabled bool
+
 	// Node mapping for hash-based slot assignment (always enabled)
 	nodeManager      *sbdprotocol.NodeManager
 	nodeManagerStop  chan struct{}
@@ -398,18 +408,18 @@ type SBDAgent struct {
 }
 
 // NewSBDAgent creates a new SBD agent with the specified configuration
-func NewSBDAgent(watchdogPath, sbdDevicePath, nodeName, clusterName string, nodeID uint16, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval time.Duration, sbdTimeoutSeconds uint, rebootMethod string, metricsPort int, staleNodeTimeout time.Duration, watchdogTestMode bool) (*SBDAgent, error) {
+func NewSBDAgent(watchdogPath, sbdDevicePath, nodeName, clusterName string, nodeID uint16, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval time.Duration, sbdTimeoutSeconds uint, rebootMethod string, metricsPort int, staleNodeTimeout time.Duration, watchdogTestMode, fileLockingEnabled bool) (*SBDAgent, error) {
 	// Use the new softdog fallback functionality to handle cases where no hardware watchdog exists
 	wd, err := watchdog.NewWithSoftdogFallbackAndTestMode(watchdogPath, watchdogTestMode, logger.WithName("watchdog"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create watchdog with softdog fallback: %w", err)
 	}
 
-	return NewSBDAgentWithWatchdog(wd, sbdDevicePath, nodeName, clusterName, nodeID, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval, sbdTimeoutSeconds, rebootMethod, metricsPort, staleNodeTimeout)
+	return NewSBDAgentWithWatchdog(wd, sbdDevicePath, nodeName, clusterName, nodeID, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval, sbdTimeoutSeconds, rebootMethod, metricsPort, staleNodeTimeout, fileLockingEnabled)
 }
 
 // NewSBDAgentWithWatchdog creates a new SBD agent with the specified watchdog instance
-func NewSBDAgentWithWatchdog(wd WatchdogInterface, sbdDevicePath, nodeName, clusterName string, nodeID uint16, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval time.Duration, sbdTimeoutSeconds uint, rebootMethod string, metricsPort int, staleNodeTimeout time.Duration) (*SBDAgent, error) {
+func NewSBDAgentWithWatchdog(wd WatchdogInterface, sbdDevicePath, nodeName, clusterName string, nodeID uint16, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval time.Duration, sbdTimeoutSeconds uint, rebootMethod string, metricsPort int, staleNodeTimeout time.Duration, fileLockingEnabled bool) (*SBDAgent, error) {
 	// Validate required parameters
 	if wd == nil {
 		return nil, fmt.Errorf("watchdog interface cannot be nil")
@@ -475,6 +485,7 @@ func NewSBDAgentWithWatchdog(wd WatchdogInterface, sbdDevicePath, nodeName, clus
 		heartbeatFailureCount: 0,
 		lastFailureReset:      time.Now(),
 		retryConfig:           retryConfig,
+		fileLockingEnabled:    fileLockingEnabled,
 	}
 
 	// Initialize Prometheus metrics
@@ -685,78 +696,82 @@ func (s *SBDAgent) shouldTriggerSelfFence() (bool, string) {
 
 // writeNodeIDToSBD writes the node name to the SBD device at the predefined offset
 func (s *SBDAgent) writeNodeIDToSBD() error {
-	if s.sbdDevice == nil || s.sbdDevice.IsClosed() {
-		// Try to reinitialize the device
-		if err := s.initializeSBDDevice(); err != nil {
-			return fmt.Errorf("SBD device is closed and reinitialize failed: %w", err)
+	return s.withFileLock("write node ID", func() error {
+		if s.sbdDevice == nil || s.sbdDevice.IsClosed() {
+			// Try to reinitialize the device
+			if err := s.initializeSBDDevice(); err != nil {
+				return fmt.Errorf("SBD device is closed and reinitialize failed: %w", err)
+			}
 		}
-	}
 
-	// Prepare node name data with fixed size
-	nodeData := make([]byte, MaxNodeNameLength)
-	copy(nodeData, []byte(s.nodeName))
+		// Prepare node name data with fixed size
+		nodeData := make([]byte, MaxNodeNameLength)
+		copy(nodeData, []byte(s.nodeName))
 
-	// Write node name to SBD device
-	n, err := s.sbdDevice.WriteAt(nodeData, SBDNodeIDOffset)
-	if err != nil {
-		return fmt.Errorf("failed to write node ID to SBD device: %w", err)
-	}
+		// Write node name to SBD device
+		n, err := s.sbdDevice.WriteAt(nodeData, SBDNodeIDOffset)
+		if err != nil {
+			return fmt.Errorf("failed to write node ID to SBD device: %w", err)
+		}
 
-	if n != len(nodeData) {
-		return fmt.Errorf("partial write to SBD device: wrote %d bytes, expected %d", n, len(nodeData))
-	}
+		if n != len(nodeData) {
+			return fmt.Errorf("partial write to SBD device: wrote %d bytes, expected %d", n, len(nodeData))
+		}
 
-	// Ensure data is committed to storage
-	if err := s.sbdDevice.Sync(); err != nil {
-		return fmt.Errorf("failed to sync SBD device: %w", err)
-	}
+		// Ensure data is committed to storage
+		if err := s.sbdDevice.Sync(); err != nil {
+			return fmt.Errorf("failed to sync SBD device: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // writeHeartbeatToSBD writes a heartbeat message to the node's designated slot
 func (s *SBDAgent) writeHeartbeatToSBD() error {
-	if s.sbdDevice == nil || s.sbdDevice.IsClosed() {
-		// Try to reinitialize the device
-		if err := s.initializeSBDDevice(); err != nil {
-			return fmt.Errorf("SBD device is closed and reinitialize failed: %w", err)
+	return s.withFileLock("write heartbeat", func() error {
+		if s.sbdDevice == nil || s.sbdDevice.IsClosed() {
+			// Try to reinitialize the device
+			if err := s.initializeSBDDevice(); err != nil {
+				return fmt.Errorf("SBD device is closed and reinitialize failed: %w", err)
+			}
 		}
-	}
 
-	// Create heartbeat message
-	sequence := s.getNextHeartbeatSequence()
-	heartbeatHeader := sbdprotocol.NewHeartbeat(s.nodeID, sequence)
-	heartbeatMsg := sbdprotocol.SBDHeartbeatMessage{Header: heartbeatHeader}
+		// Create heartbeat message
+		sequence := s.getNextHeartbeatSequence()
+		heartbeatHeader := sbdprotocol.NewHeartbeat(s.nodeID, sequence)
+		heartbeatMsg := sbdprotocol.SBDHeartbeatMessage{Header: heartbeatHeader}
 
-	// Marshal the message
-	msgBytes, err := sbdprotocol.MarshalHeartbeat(heartbeatMsg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal heartbeat message: %w", err)
-	}
+		// Marshal the message
+		msgBytes, err := sbdprotocol.MarshalHeartbeat(heartbeatMsg)
+		if err != nil {
+			return fmt.Errorf("failed to marshal heartbeat message: %w", err)
+		}
 
-	// Calculate slot offset for this node (NodeID * SBD_SLOT_SIZE)
-	slotOffset := int64(s.nodeID) * sbdprotocol.SBD_SLOT_SIZE
+		// Calculate slot offset for this node (NodeID * SBD_SLOT_SIZE)
+		slotOffset := int64(s.nodeID) * sbdprotocol.SBD_SLOT_SIZE
 
-	// Write heartbeat message to the designated slot
-	n, err := s.sbdDevice.WriteAt(msgBytes, slotOffset)
-	if err != nil {
-		return fmt.Errorf("failed to write heartbeat to SBD device at offset %d: %w", slotOffset, err)
-	}
+		// Write heartbeat message to the designated slot
+		n, err := s.sbdDevice.WriteAt(msgBytes, slotOffset)
+		if err != nil {
+			return fmt.Errorf("failed to write heartbeat to SBD device at offset %d: %w", slotOffset, err)
+		}
 
-	if n != len(msgBytes) {
-		return fmt.Errorf("partial write to SBD device: wrote %d bytes, expected %d", n, len(msgBytes))
-	}
+		if n != len(msgBytes) {
+			return fmt.Errorf("partial write to SBD device: wrote %d bytes, expected %d", n, len(msgBytes))
+		}
 
-	// Ensure data is committed to storage
-	if err := s.sbdDevice.Sync(); err != nil {
-		return fmt.Errorf("failed to sync SBD device after heartbeat write: %w", err)
-	}
+		// Ensure data is committed to storage
+		if err := s.sbdDevice.Sync(); err != nil {
+			return fmt.Errorf("failed to sync SBD device after heartbeat write: %w", err)
+		}
 
-	logger.V(1).Info("Successfully wrote heartbeat message",
-		"sequence", sequence,
-		"nodeID", s.nodeID,
-		"slotOffset", slotOffset)
-	return nil
+		logger.V(1).Info("Successfully wrote heartbeat message",
+			"sequence", sequence,
+			"nodeID", s.nodeID,
+			"slotOffset", slotOffset)
+		return nil
+	})
 }
 
 // readPeerHeartbeat reads and processes a heartbeat from a peer node's slot
@@ -819,6 +834,76 @@ func (s *SBDAgent) readPeerHeartbeat(peerNodeID uint16) error {
 	return nil
 }
 
+// acquireFileLock attempts to acquire an exclusive file lock on the SBD device
+// Returns a file handle that should be closed to release the lock, or an error
+func (s *SBDAgent) acquireFileLock() (*os.File, error) {
+	if !s.fileLockingEnabled || s.sbdDevicePath == "" {
+		return nil, nil // No locking requested or no SBD device (watchdog-only mode)
+	}
+
+	logger.V(1).Info("Attempting to acquire file lock on SBD device", "devicePath", s.sbdDevicePath)
+
+	// Open the device file for locking (separate from the block device used for I/O)
+	lockFile, err := os.OpenFile(s.sbdDevicePath, os.O_RDWR, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open SBD device for locking: %w", err)
+	}
+
+	// Try to acquire an exclusive lock with timeout
+	lockCtx, cancel := context.WithTimeout(s.ctx, FileLockTimeout)
+	defer cancel()
+
+	lockAcquired := make(chan error, 1)
+	go func() {
+		err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX)
+		lockAcquired <- err
+	}()
+
+	select {
+	case err := <-lockAcquired:
+		if err != nil {
+			lockFile.Close()
+			return nil, fmt.Errorf("failed to acquire file lock: %w", err)
+		}
+		logger.V(1).Info("Successfully acquired file lock on SBD device", "devicePath", s.sbdDevicePath)
+		return lockFile, nil
+
+	case <-lockCtx.Done():
+		// Timeout occurred, try to close the file and return error
+		lockFile.Close()
+		return nil, fmt.Errorf("timeout waiting for file lock on SBD device after %v", FileLockTimeout)
+
+	case <-s.ctx.Done():
+		// Agent is shutting down
+		lockFile.Close()
+		return nil, fmt.Errorf("agent shutdown while waiting for file lock")
+	}
+}
+
+// releaseFileLock releases a file lock by closing the file handle
+func (s *SBDAgent) releaseFileLock(lockFile *os.File) {
+	if lockFile == nil {
+		return // No lock was acquired
+	}
+
+	logger.V(1).Info("Releasing file lock on SBD device", "devicePath", s.sbdDevicePath)
+	if err := lockFile.Close(); err != nil {
+		logger.Error(err, "Failed to release file lock", "devicePath", s.sbdDevicePath)
+	}
+}
+
+// withFileLock executes a function while holding a file lock on the SBD device
+func (s *SBDAgent) withFileLock(operation string, fn func() error) error {
+	lockFile, err := s.acquireFileLock()
+	if err != nil {
+		return fmt.Errorf("failed to acquire file lock for %s: %w", operation, err)
+	}
+	defer s.releaseFileLock(lockFile)
+
+	logger.V(1).Info("Executing operation with file lock", "operation", operation, "lockingEnabled", s.fileLockingEnabled)
+	return fn()
+}
+
 // Start begins the SBD agent operations
 func (s *SBDAgent) Start() error {
 	logger.Info("Starting SBD Agent",
@@ -829,7 +914,8 @@ func (s *SBDAgent) Start() error {
 		"petInterval", s.petInterval,
 		"sbdUpdateInterval", s.sbdUpdateInterval,
 		"heartbeatInterval", s.heartbeatInterval,
-		"peerCheckInterval", s.peerCheckInterval)
+		"peerCheckInterval", s.peerCheckInterval,
+		"fileLockingEnabled", s.fileLockingEnabled)
 
 	// Start node manager periodic sync if using hash mapping
 	if s.nodeManager != nil {
@@ -1699,7 +1785,7 @@ func main() {
 	}
 
 	// Create SBD agent (hash mapping is always enabled)
-	agent, err := NewSBDAgent(*watchdogPath, *sbdDevice, nodeNameValue, *clusterName, nodeIDValue, *watchdogTimeout, *sbdUpdateInterval, heartbeatInterval, *peerCheckInterval, sbdTimeoutValue, rebootMethodValue, *metricsPort, *staleNodeTimeout, *watchdogTestMode)
+	agent, err := NewSBDAgent(*watchdogPath, *sbdDevice, nodeNameValue, *clusterName, nodeIDValue, *watchdogTimeout, *sbdUpdateInterval, heartbeatInterval, *peerCheckInterval, sbdTimeoutValue, rebootMethodValue, *metricsPort, *staleNodeTimeout, *watchdogTestMode, *sbdFileLocking)
 	if err != nil {
 		logger.Error(err, "Failed to create SBD agent",
 			"watchdogPath", *watchdogPath,
