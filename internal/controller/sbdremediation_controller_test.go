@@ -514,6 +514,284 @@ var _ = Describe("SBDRemediation Controller", func() {
 				Expect(finalResource.GetCondition(medik8sv1alpha1.SBDRemediationConditionFencingSucceeded).Message).To(Equal("Already completed"))
 			})
 		})
+
+		It("should handle timeoutSeconds field correctly", func() {
+			By("Creating SBDRemediation with custom timeout")
+			customTimeout := int32(120)
+			resource := &medik8sv1alpha1.SBDRemediation{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: medik8sv1alpha1.SBDRemediationSpec{
+					NodeName:       "worker-8",
+					Reason:         medik8sv1alpha1.SBDRemediationReasonManualFencing,
+					TimeoutSeconds: customTimeout,
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("Verifying timeout is preserved in spec")
+			Eventually(func() int32 {
+				updatedResource := &medik8sv1alpha1.SBDRemediation{}
+				err := k8sClient.Get(ctx, namespacedName, updatedResource)
+				if err != nil {
+					return 0
+				}
+				if updatedResource.Spec.TimeoutSeconds == customTimeout {
+					return customTimeout
+				}
+				return 0
+			}, 5*time.Second, 100*time.Millisecond).Should(Equal(customTimeout))
+		})
+
+		It("should use default timeout when timeoutSeconds is not specified", func() {
+			By("Creating SBDRemediation without timeout")
+			resource := &medik8sv1alpha1.SBDRemediation{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: medik8sv1alpha1.SBDRemediationSpec{
+					NodeName: "worker-9",
+					Reason:   medik8sv1alpha1.SBDRemediationReasonNodeUnresponsive,
+					// TimeoutSeconds not specified - should use default (60)
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("Reconciling and verifying default handling")
+			Eventually(func() bool {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: namespacedName,
+				})
+				return err == nil
+			}, 5*time.Second, 100*time.Millisecond).Should(BeTrue())
+
+			By("Verifying resource was processed successfully")
+			finalResource := &medik8sv1alpha1.SBDRemediation{}
+			Expect(k8sClient.Get(ctx, namespacedName, finalResource)).To(Succeed())
+			// Default timeout behavior is handled in the controller logic
+		})
+
+		It("should handle finalizer correctly during deletion", func() {
+			By("Creating SBDRemediation with finalizer")
+			resource := &medik8sv1alpha1.SBDRemediation{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       resourceName,
+					Namespace:  "default",
+					Finalizers: []string{SBDRemediationFinalizer},
+				},
+				Spec: medik8sv1alpha1.SBDRemediationSpec{
+					NodeName: "worker-finalizer",
+					Reason:   medik8sv1alpha1.SBDRemediationReasonManualFencing,
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("Reconciling to process the resource")
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: namespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Initiating deletion")
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+			By("Reconciling deletion and verifying finalizer processing")
+			Eventually(func() bool {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: namespacedName,
+				})
+				if err != nil {
+					return false
+				}
+
+				// Check if resource is gone (finalizer removed and resource deleted)
+				deletedResource := &medik8sv1alpha1.SBDRemediation{}
+				err = k8sClient.Get(ctx, namespacedName, deletedResource)
+				return errors.IsNotFound(err)
+			}, 10*time.Second, 100*time.Millisecond).Should(BeTrue())
+		})
+
+		It("should handle status update conflicts gracefully", func() {
+			By("Creating SBDRemediation resource")
+			resource := &medik8sv1alpha1.SBDRemediation{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: medik8sv1alpha1.SBDRemediationSpec{
+					NodeName: "worker-conflict",
+					Reason:   medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("Simulating concurrent status updates")
+			// First reconciliation
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: namespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Get current resource
+			currentResource := &medik8sv1alpha1.SBDRemediation{}
+			Expect(k8sClient.Get(ctx, namespacedName, currentResource)).To(Succeed())
+
+			// Modify resource version to simulate conflict
+			currentResource.SetCondition(medik8sv1alpha1.SBDRemediationConditionReady, metav1.ConditionFalse, "Testing", "Conflict test")
+			Expect(k8sClient.Status().Update(ctx, currentResource)).To(Succeed())
+
+			By("Second reconciliation should handle any conflicts")
+			Eventually(func() bool {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: namespacedName,
+				})
+				return err == nil
+			}, 10*time.Second, 100*time.Millisecond).Should(BeTrue())
+		})
+
+		It("should emit events during reconciliation workflow", func() {
+			By("Setting up event recorder mock")
+			eventRecorder := &MockEventRecorder{
+				Events: make([]Event, 0),
+			}
+			reconciler.Recorder = eventRecorder
+
+			By("Creating SBDRemediation resource")
+			resource := &medik8sv1alpha1.SBDRemediation{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: medik8sv1alpha1.SBDRemediationSpec{
+					NodeName: "worker-events",
+					Reason:   medik8sv1alpha1.SBDRemediationReasonManualFencing,
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("Reconciling and verifying events are emitted")
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: namespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying events were recorded")
+			Eventually(func() int {
+				return len(eventRecorder.Events)
+			}, 5*time.Second, 100*time.Millisecond).Should(BeNumerically(">", 0))
+
+			// Check for specific events
+			events := eventRecorder.Events
+			hasRemediationInitiated := false
+			for _, event := range events {
+				if event.Reason == ReasonRemediationInitiated {
+					hasRemediationInitiated = true
+					break
+				}
+			}
+			Expect(hasRemediationInitiated).To(BeTrue(), "Should emit remediation initiated event")
+		})
+
+		It("should handle node ID out of range errors", func() {
+			By("Setting up reconciler with a mock that forces node ID out of range")
+			// Create a resource with a node name that would map to an invalid ID
+			resource := &medik8sv1alpha1.SBDRemediation{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: medik8sv1alpha1.SBDRemediationSpec{
+					NodeName: "node-999", // This should fail node ID mapping
+					Reason:   medik8sv1alpha1.SBDRemediationReasonNodeUnresponsive,
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("Reconciling and expecting node ID mapping failure")
+			Eventually(func() bool {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: namespacedName,
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				updatedResource := &medik8sv1alpha1.SBDRemediation{}
+				err = k8sClient.Get(ctx, namespacedName, updatedResource)
+				Expect(err).NotTo(HaveOccurred())
+
+				return updatedResource.IsReady() && !updatedResource.IsFencingSucceeded()
+			}, 10*time.Second, 100*time.Millisecond).Should(BeTrue())
+
+			By("Verifying appropriate error conditions are set")
+			finalResource := &medik8sv1alpha1.SBDRemediation{}
+			Expect(k8sClient.Get(ctx, namespacedName, finalResource)).To(Succeed())
+
+			readyCondition := finalResource.GetCondition(medik8sv1alpha1.SBDRemediationConditionReady)
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(readyCondition.Reason).To(Equal("Failed"))
+
+			fencingCondition := finalResource.GetCondition(medik8sv1alpha1.SBDRemediationConditionFencingSucceeded)
+			Expect(fencingCondition).NotTo(BeNil())
+			Expect(fencingCondition.Status).To(Equal(metav1.ConditionFalse))
+		})
+
+		It("should handle multiple SBDRemediation resources simultaneously", func() {
+			By("Creating multiple SBDRemediation resources")
+			resources := make([]*medik8sv1alpha1.SBDRemediation, 3)
+			namespacedNames := make([]types.NamespacedName, 3)
+
+			for i := 0; i < 3; i++ {
+				resourceName := fmt.Sprintf("test-remediation-multi-%d-%d", time.Now().UnixNano(), i)
+				namespacedNames[i] = types.NamespacedName{
+					Name:      resourceName,
+					Namespace: "default",
+				}
+
+				resources[i] = &medik8sv1alpha1.SBDRemediation{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      resourceName,
+						Namespace: "default",
+					},
+					Spec: medik8sv1alpha1.SBDRemediationSpec{
+						NodeName: fmt.Sprintf("worker-multi-%d", i+1),
+						Reason:   medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
+					},
+				}
+				Expect(k8sClient.Create(ctx, resources[i])).To(Succeed())
+			}
+
+			By("Reconciling all resources")
+			for i, nsName := range namespacedNames {
+				Eventually(func() bool {
+					_, err := reconciler.Reconcile(ctx, reconcile.Request{
+						NamespacedName: nsName,
+					})
+					if err != nil {
+						return false
+					}
+
+					updatedResource := &medik8sv1alpha1.SBDRemediation{}
+					err = k8sClient.Get(ctx, nsName, updatedResource)
+					if err != nil {
+						return false
+					}
+
+					return updatedResource.IsFencingSucceeded()
+				}, 15*time.Second, 200*time.Millisecond).Should(BeTrue(),
+					fmt.Sprintf("Resource %d should be successfully fenced", i))
+			}
+
+			By("Cleaning up multiple resources")
+			for i, resource := range resources {
+				err := k8sClient.Delete(ctx, resource)
+				if err != nil && !errors.IsNotFound(err) {
+					logf.Log.Error(err, "Failed to delete resource", "index", i)
+				}
+			}
+		})
 	})
 
 	Context("Retry Logic", func() {

@@ -18,6 +18,7 @@ package sbdprotocol
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -633,5 +634,191 @@ func BenchmarkHeartbeatRoundTrip(b *testing.B) {
 		if err != nil {
 			b.Fatalf("Unmarshal failed: %v", err)
 		}
+	}
+}
+
+func TestSBDMarshalUnmarshalRoundtrip(t *testing.T) {
+	// Test heartbeat message roundtrip
+	t.Run("HeartbeatMessage", func(t *testing.T) {
+		originalMsg := SBDHeartbeatMessage{
+			Header: NewHeartbeat(42, 123),
+		}
+
+		// Marshal
+		data, err := MarshalHeartbeat(originalMsg)
+		if err != nil {
+			t.Fatalf("MarshalHeartbeat failed: %v", err)
+		}
+
+		// Unmarshal
+		unmarshaledMsg, err := UnmarshalHeartbeat(data)
+		if err != nil {
+			t.Fatalf("UnmarshalHeartbeat failed: %v", err)
+		}
+
+		// Compare
+		if originalMsg.Header.NodeID != unmarshaledMsg.Header.NodeID {
+			t.Errorf("NodeID mismatch: expected %d, got %d", originalMsg.Header.NodeID, unmarshaledMsg.Header.NodeID)
+		}
+		if originalMsg.Header.Sequence != unmarshaledMsg.Header.Sequence {
+			t.Errorf("Sequence mismatch: expected %d, got %d", originalMsg.Header.Sequence, unmarshaledMsg.Header.Sequence)
+		}
+	})
+
+	// Test fence message roundtrip
+	t.Run("FenceMessage", func(t *testing.T) {
+		originalMsg := SBDFenceMessage{
+			Header:       NewFence(1, 42, 456, FENCE_REASON_HEARTBEAT_TIMEOUT),
+			TargetNodeID: 42,
+			Reason:       FENCE_REASON_HEARTBEAT_TIMEOUT,
+		}
+
+		// Marshal
+		data, err := MarshalFence(originalMsg)
+		if err != nil {
+			t.Fatalf("MarshalFence failed: %v", err)
+		}
+
+		// Unmarshal
+		unmarshaledMsg, err := UnmarshalFence(data)
+		if err != nil {
+			t.Fatalf("UnmarshalFence failed: %v", err)
+		}
+
+		// Compare
+		if originalMsg.Header.NodeID != unmarshaledMsg.Header.NodeID {
+			t.Errorf("NodeID mismatch: expected %d, got %d", originalMsg.Header.NodeID, unmarshaledMsg.Header.NodeID)
+		}
+		if originalMsg.TargetNodeID != unmarshaledMsg.TargetNodeID {
+			t.Errorf("TargetNodeID mismatch: expected %d, got %d", originalMsg.TargetNodeID, unmarshaledMsg.TargetNodeID)
+		}
+		if originalMsg.Reason != unmarshaledMsg.Reason {
+			t.Errorf("Reason mismatch: expected %d, got %d", originalMsg.Reason, unmarshaledMsg.Reason)
+		}
+	})
+}
+
+func TestSBDCorruptedData(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{
+			name: "empty data",
+			data: []byte{},
+		},
+		{
+			name: "truncated data",
+			data: []byte{0x01, 0x02},
+		},
+		{
+			name: "corrupted header",
+			data: []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
+		},
+		{
+			name: "invalid magic",
+			data: append([]byte("BADMAGIC"), make([]byte, 25)...),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Unmarshal(tt.data)
+			if err == nil {
+				t.Error("Expected error when unmarshaling corrupted data, but got none")
+			}
+		})
+	}
+}
+
+func TestSBDMessageValidation(t *testing.T) {
+	t.Run("ValidMessageTypes", func(t *testing.T) {
+		validTypes := []byte{SBD_MSG_TYPE_HEARTBEAT, SBD_MSG_TYPE_FENCE}
+		for _, msgType := range validTypes {
+			if !IsValidMessageType(msgType) {
+				t.Errorf("Expected message type %d to be valid", msgType)
+			}
+		}
+	})
+
+	t.Run("InvalidMessageTypes", func(t *testing.T) {
+		invalidTypes := []byte{0x00, 0x03, 0xFF}
+		for _, msgType := range invalidTypes {
+			if IsValidMessageType(msgType) {
+				t.Errorf("Expected message type %d to be invalid", msgType)
+			}
+		}
+	})
+}
+
+func TestSBDGetMessageTypeName(t *testing.T) {
+	tests := []struct {
+		msgType      byte
+		expectedName string
+	}{
+		{SBD_MSG_TYPE_HEARTBEAT, "HEARTBEAT"},
+		{SBD_MSG_TYPE_FENCE, "FENCE"},
+		{0x99, "UNKNOWN"},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("MessageType_%d", tt.msgType), func(t *testing.T) {
+			name := GetMessageTypeName(tt.msgType)
+			if name != tt.expectedName {
+				t.Errorf("Expected message type name %s, got %s", tt.expectedName, name)
+			}
+		})
+	}
+}
+
+func TestSBDGetFenceReasonName(t *testing.T) {
+	tests := []struct {
+		reason       uint8
+		expectedName string
+	}{
+		{FENCE_REASON_HEARTBEAT_TIMEOUT, "HEARTBEAT_TIMEOUT"},
+		{FENCE_REASON_MANUAL, "MANUAL"},
+		{FENCE_REASON_SPLIT_BRAIN, "SPLIT_BRAIN"},
+		{FENCE_REASON_RESOURCE_CONFLICT, "RESOURCE_CONFLICT"},
+		{99, "UNKNOWN"},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("FenceReason_%d", tt.reason), func(t *testing.T) {
+			name := GetFenceReasonName(tt.reason)
+			if name != tt.expectedName {
+				t.Errorf("Expected fence reason name %s, got %s", tt.expectedName, name)
+			}
+		})
+	}
+}
+
+func TestSBDChecksumValidation(t *testing.T) {
+	// Create a test message
+	msg := NewHeartbeat(1, 100)
+	data, err := Marshal(msg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	// Verify checksum validation during unmarshal
+	unmarshaledMsg, err := Unmarshal(data)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if unmarshaledMsg.NodeID != msg.NodeID {
+		t.Errorf("NodeID mismatch after checksum validation: expected %d, got %d", msg.NodeID, unmarshaledMsg.NodeID)
+	}
+
+	// Test corrupted checksum
+	corruptedData := make([]byte, len(data))
+	copy(corruptedData, data)
+	// Modify the last 4 bytes (checksum)
+	corruptedData[len(corruptedData)-1] ^= 0xFF
+
+	_, err = Unmarshal(corruptedData)
+	if err == nil {
+		t.Error("Expected error when unmarshaling data with corrupted checksum, but got none")
 	}
 }

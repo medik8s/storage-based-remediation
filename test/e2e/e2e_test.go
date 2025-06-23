@@ -166,7 +166,7 @@ var _ = Describe("Manager", Ordered, func() {
 			By("creating a ClusterRoleBinding for the service account to allow access to metrics")
 			// Clean up any existing clusterrolebinding first
 			cmd := exec.Command("kubectl", "delete", "clusterrolebinding", metricsRoleBindingName, "--ignore-not-found=true")
-			_, _ = utils.Run(cmd) // Ignore errors for cleanup
+			_, _ = utils.Run(cmd)
 
 			cmd = exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
 				"--clusterrole=sbd-operator-metrics-reader",
@@ -562,6 +562,264 @@ spec:
 				g.Expect(output).ToNot(BeEmpty(), "SBDRemediation should have lastUpdateTime set")
 			}
 			Eventually(verifySBDRemediationStatus, 60*time.Second).Should(Succeed())
+		})
+	})
+
+	Context("SBD Remediation Enhancements", func() {
+		It("should be able to create and reconcile SBDConfig resources", func() {
+			By("creating a test SBDConfig")
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			sbdConfigYAML := `
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDConfig
+metadata:
+  name: test-sbdconfig
+spec:
+  sbd:
+    watchdogTimeout: 60
+    msgwaitTimeout: 120
+`
+			cmd.Stdin = strings.NewReader(sbdConfigYAML)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDConfig")
+
+			By("verifying the SBDConfig is created and processed")
+			Eventually(func() bool {
+				cmd := exec.Command("kubectl", "get", "sbdconfig", "test-sbdconfig", "-o", "jsonpath={.status.conditions}")
+				output, err := utils.Run(cmd)
+				if err != nil {
+					return false
+				}
+				return strings.Contains(output, "Ready")
+			}).Should(BeTrue())
+
+			By("cleaning up the test SBDConfig")
+			cmd = exec.Command("kubectl", "delete", "sbdconfig", "test-sbdconfig", "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+		})
+
+		It("should handle SBDRemediation resources with timeout validation", func() {
+			By("creating a test SBDRemediation with custom timeout")
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			sbdRemediationYAML := `
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDRemediation
+metadata:
+  name: test-sbdremediation-timeout
+spec:
+  nodeName: test-worker-node
+  reason: ManualFencing
+  timeoutSeconds: 120
+`
+			cmd.Stdin = strings.NewReader(sbdRemediationYAML)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDRemediation")
+
+			By("verifying the SBDRemediation timeout is preserved")
+			Eventually(func() string {
+				cmd := exec.Command("kubectl", "get", "sbdremediation", "test-sbdremediation-timeout", "-o", "jsonpath={.spec.timeoutSeconds}")
+				output, err := utils.Run(cmd)
+				if err != nil {
+					return ""
+				}
+				return strings.TrimSpace(output)
+			}).Should(Equal("120"))
+
+			By("verifying the SBDRemediation is processed")
+			Eventually(func() bool {
+				cmd := exec.Command("kubectl", "get", "sbdremediation", "test-sbdremediation-timeout", "-o", "jsonpath={.status.conditions}")
+				output, err := utils.Run(cmd)
+				if err != nil {
+					return false
+				}
+				return strings.Contains(output, "Ready")
+			}).Should(BeTrue())
+
+			By("cleaning up the test SBDRemediation")
+			cmd = exec.Command("kubectl", "delete", "sbdremediation", "test-sbdremediation-timeout", "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+		})
+
+		It("should handle multiple SBDRemediation resources concurrently", func() {
+			const numRemediations = 5
+			remediationNames := make([]string, numRemediations)
+
+			By(fmt.Sprintf("creating %d SBDRemediation resources", numRemediations))
+			for i := 0; i < numRemediations; i++ {
+				remediationNames[i] = fmt.Sprintf("test-concurrent-remediation-%d", i)
+				sbdRemediationYAML := fmt.Sprintf(`
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDRemediation
+metadata:
+  name: %s
+spec:
+  nodeName: test-worker-node-%d
+  reason: NodeUnresponsive
+  timeoutSeconds: 60
+`, remediationNames[i], i)
+
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(sbdRemediationYAML)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Failed to create SBDRemediation %d", i))
+			}
+
+			By("verifying all SBDRemediations are processed")
+			for i, name := range remediationNames {
+				Eventually(func() bool {
+					cmd := exec.Command("kubectl", "get", "sbdremediation", name, "-o", "jsonpath={.status.conditions}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return false
+					}
+					return strings.Contains(output, "Ready")
+				}).Should(BeTrue(), fmt.Sprintf("SBDRemediation %d should be ready", i))
+			}
+
+			By("cleaning up all test SBDRemediations")
+			for _, name := range remediationNames {
+				cmd := exec.Command("kubectl", "delete", "sbdremediation", name, "--ignore-not-found=true")
+				_, _ = utils.Run(cmd)
+			}
+		})
+
+		It("should handle SBDRemediation resources with invalid node names", func() {
+			By("creating a test SBDRemediation with invalid node name")
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			sbdRemediationYAML := `
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDRemediation
+metadata:
+  name: test-invalid-node-remediation
+spec:
+  nodeName: non-existent-node-12345
+  reason: HeartbeatTimeout
+  timeoutSeconds: 30
+`
+			cmd.Stdin = strings.NewReader(sbdRemediationYAML)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDRemediation")
+
+			By("verifying the SBDRemediation becomes ready with failed fencing")
+			Eventually(func() bool {
+				cmd := exec.Command("kubectl", "get", "sbdremediation", "test-invalid-node-remediation", "-o", "json")
+				output, err := utils.Run(cmd)
+				if err != nil {
+					return false
+				}
+
+				var remediation map[string]interface{}
+				if err := json.Unmarshal([]byte(output), &remediation); err != nil {
+					return false
+				}
+
+				status, ok := remediation["status"].(map[string]interface{})
+				if !ok {
+					return false
+				}
+
+				conditions, ok := status["conditions"].([]interface{})
+				if !ok {
+					return false
+				}
+
+				readyFound := false
+				fencingFailed := false
+
+				for _, conditionInterface := range conditions {
+					condition, ok := conditionInterface.(map[string]interface{})
+					if !ok {
+						continue
+					}
+
+					conditionType, ok := condition["type"].(string)
+					if !ok {
+						continue
+					}
+
+					conditionStatus, ok := condition["status"].(string)
+					if !ok {
+						continue
+					}
+
+					if conditionType == "Ready" && conditionStatus == "True" {
+						readyFound = true
+						reason, _ := condition["reason"].(string)
+						if reason == "Failed" {
+							fencingFailed = true
+						}
+					}
+				}
+
+				return readyFound && fencingFailed
+			}).Should(BeTrue())
+
+			By("cleaning up the test SBDRemediation")
+			cmd = exec.Command("kubectl", "delete", "sbdremediation", "test-invalid-node-remediation", "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+		})
+
+		It("should validate timeout ranges in SBDRemediation CRD", func() {
+			By("attempting to create SBDRemediation with timeout below minimum")
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			invalidTimeoutYAML := `
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDRemediation
+metadata:
+  name: test-invalid-timeout-low
+spec:
+  nodeName: test-worker-node
+  reason: ManualFencing
+  timeoutSeconds: 29
+`
+			cmd.Stdin = strings.NewReader(invalidTimeoutYAML)
+			_, err := utils.Run(cmd)
+			Expect(err).To(HaveOccurred(), "Should reject timeout below minimum (30)")
+
+			By("attempting to create SBDRemediation with timeout above maximum")
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			invalidTimeoutYAML = `
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDRemediation
+metadata:
+  name: test-invalid-timeout-high
+spec:
+  nodeName: test-worker-node
+  reason: ManualFencing
+  timeoutSeconds: 301
+`
+			cmd.Stdin = strings.NewReader(invalidTimeoutYAML)
+			_, err = utils.Run(cmd)
+			Expect(err).To(HaveOccurred(), "Should reject timeout above maximum (300)")
+
+			By("creating SBDRemediation with valid timeout at boundaries")
+			validTimeoutYAML := `
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDRemediation
+metadata:
+  name: test-valid-timeout-boundary
+spec:
+  nodeName: test-worker-node
+  reason: ManualFencing
+  timeoutSeconds: 30
+`
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(validTimeoutYAML)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Should accept minimum valid timeout (30)")
+
+			validTimeoutYAML = strings.ReplaceAll(validTimeoutYAML, "timeoutSeconds: 30", "timeoutSeconds: 300")
+			validTimeoutYAML = strings.ReplaceAll(validTimeoutYAML, "test-valid-timeout-boundary", "test-valid-timeout-boundary-max")
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(validTimeoutYAML)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Should accept maximum valid timeout (300)")
+
+			By("cleaning up test resources")
+			cmd = exec.Command("kubectl", "delete", "sbdremediation", "test-valid-timeout-boundary", "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "sbdremediation", "test-valid-timeout-boundary-max", "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
 		})
 	})
 })
