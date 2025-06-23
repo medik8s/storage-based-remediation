@@ -55,7 +55,7 @@ spec:
                   If not specified, defaults to "/dev/watchdog"
                 type: string
               staleNodeTimeout:
-                default: 10m
+                default: 1h
                 description: |-
                   StaleNodeTimeout defines how long to wait before considering a node stale and removing it from slot mapping
                   This timeout determines when inactive nodes are cleaned up from the shared SBD device slot assignments.

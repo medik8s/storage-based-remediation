@@ -18,11 +18,14 @@ limitations under the License.
 package sbdprotocol
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math/rand"
+	"os"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -40,7 +43,18 @@ const (
 	MaxAtomicRetries = 5
 	// AtomicRetryDelay is the base delay between retries (will be randomized)
 	AtomicRetryDelay = 100 * time.Millisecond
+
+	// File locking constants
+	// FileLockTimeout is the maximum time to wait for acquiring a file lock
+	FileLockTimeout = 5 * time.Second
+	// FileLockRetryInterval is the interval between file lock acquisition attempts
+	FileLockRetryInterval = 100 * time.Millisecond
 )
+
+// PathProvider interface for getting device path (needed for file locking)
+type PathProvider interface {
+	Path() string
+}
 
 // SBDDevice interface for block device operations
 type SBDDevice interface {
@@ -48,6 +62,7 @@ type SBDDevice interface {
 	io.WriterAt
 	Sync() error
 	Close() error
+	PathProvider
 }
 
 // NodeManager manages node-to-slot mappings with persistence to SBD device
@@ -60,8 +75,9 @@ type NodeManager struct {
 	mutex       sync.RWMutex
 
 	// Configuration
-	syncInterval     time.Duration
-	staleNodeTimeout time.Duration
+	syncInterval       time.Duration
+	staleNodeTimeout   time.Duration
+	fileLockingEnabled bool
 
 	// State
 	lastSync    time.Time
@@ -75,15 +91,18 @@ type NodeManagerConfig struct {
 	SyncInterval     time.Duration
 	StaleNodeTimeout time.Duration
 	Logger           logr.Logger
+	// File locking configuration
+	FileLockingEnabled bool
 }
 
 // DefaultNodeManagerConfig returns a default configuration
 func DefaultNodeManagerConfig() NodeManagerConfig {
 	return NodeManagerConfig{
-		ClusterName:      "default-cluster",
-		SyncInterval:     30 * time.Second,
-		StaleNodeTimeout: 10 * time.Minute,
-		Logger:           logr.Discard(),
+		ClusterName:        "default-cluster",
+		SyncInterval:       30 * time.Second,
+		StaleNodeTimeout:   10 * time.Minute,
+		Logger:             logr.Discard(),
+		FileLockingEnabled: true, // Default to enabled
 	}
 }
 
@@ -106,12 +125,13 @@ func NewNodeManager(device SBDDevice, config NodeManagerConfig) (*NodeManager, e
 	}
 
 	manager := &NodeManager{
-		device:           device,
-		clusterName:      config.ClusterName,
-		logger:           config.Logger,
-		syncInterval:     config.SyncInterval,
-		staleNodeTimeout: config.StaleNodeTimeout,
-		hasher:           NewNodeHasher(config.ClusterName),
+		device:             device,
+		clusterName:        config.ClusterName,
+		logger:             config.Logger,
+		syncInterval:       config.SyncInterval,
+		staleNodeTimeout:   config.StaleNodeTimeout,
+		hasher:             NewNodeHasher(config.ClusterName),
+		fileLockingEnabled: config.FileLockingEnabled,
 	}
 
 	// Try to load existing mapping table from device
@@ -574,11 +594,12 @@ func (nm *NodeManager) atomicSyncToDevice(expectedVersion uint64) error {
 
 	// Use advisory locking to prevent concurrent physical writes
 	// This prevents data corruption when multiple nodes write to slot 0 simultaneously
-	if err := nm.acquireDeviceLock(); err != nil {
+	lockFile, err := nm.acquireDeviceLock()
+	if err != nil {
 		return fmt.Errorf("failed to acquire device lock: %w", err)
 	}
 	defer func() {
-		if unlockErr := nm.releaseDeviceLock(); unlockErr != nil {
+		if unlockErr := nm.releaseDeviceLock(lockFile); unlockErr != nil {
 			nm.logger.Error(unlockErr, "Failed to release device lock")
 		}
 	}()
@@ -652,23 +673,79 @@ func (nm *NodeManager) atomicSyncToDevice(expectedVersion uint64) error {
 	return nil
 }
 
-// acquireDeviceLock attempts to acquire an advisory lock on the SBD device
+// acquireDeviceLock attempts to acquire an exclusive file lock on the SBD device
 // This prevents concurrent writes to the same physical block which can cause corruption
-func (nm *NodeManager) acquireDeviceLock() error {
-	// For SBD devices, we use a randomized delay approach to reduce contention
-	// This is simpler and more reliable than file locking across nodes
+func (nm *NodeManager) acquireDeviceLock() (*os.File, error) {
+	if !nm.fileLockingEnabled {
+		// When file locking is disabled, use randomized delay approach to reduce contention
+		// This is simpler and more reliable than file locking across nodes on storage systems
+		// that don't support POSIX file locking properly
 
-	// Add random jitter to reduce thundering herd when multiple nodes start
-	jitter := time.Duration(rand.Intn(100)) * time.Millisecond
-	time.Sleep(jitter)
+		// Add random jitter to reduce thundering herd when multiple nodes start
+		jitter := time.Duration(rand.Intn(100)) * time.Millisecond
+		time.Sleep(jitter)
 
-	nm.logger.V(2).Info("Using randomized delay to reduce write contention", "jitter", jitter)
-	return nil
+		nm.logger.V(2).Info("Using randomized delay to reduce write contention",
+			"jitter", jitter,
+			"fileLockingEnabled", false)
+		return nil, nil // No lock file when using jitter approach
+	}
+
+	devicePath := nm.device.Path()
+	if devicePath == "" {
+		// No device path available, fall back to jitter approach
+		jitter := time.Duration(rand.Intn(100)) * time.Millisecond
+		time.Sleep(jitter)
+		nm.logger.V(2).Info("No device path available, using randomized delay", "jitter", jitter)
+		return nil, nil
+	}
+
+	nm.logger.V(1).Info("Attempting to acquire file lock on SBD device", "devicePath", devicePath)
+
+	// Open the device file for locking (separate from the block device used for I/O)
+	lockFile, err := os.OpenFile(devicePath, os.O_RDWR, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open SBD device for locking: %w", err)
+	}
+
+	// Try to acquire an exclusive lock with timeout
+	lockCtx, cancel := context.WithTimeout(context.Background(), FileLockTimeout)
+	defer cancel()
+
+	lockAcquired := make(chan error, 1)
+	go func() {
+		err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX)
+		lockAcquired <- err
+	}()
+
+	select {
+	case err := <-lockAcquired:
+		if err != nil {
+			lockFile.Close()
+			return nil, fmt.Errorf("failed to acquire file lock: %w", err)
+		}
+		nm.logger.V(1).Info("Successfully acquired file lock on SBD device", "devicePath", devicePath)
+		return lockFile, nil
+
+	case <-lockCtx.Done():
+		// Timeout occurred, try to close the file and return error
+		lockFile.Close()
+		return nil, fmt.Errorf("timeout waiting for file lock on SBD device after %v", FileLockTimeout)
+	}
 }
 
-// releaseDeviceLock releases the advisory lock on the SBD device
-func (nm *NodeManager) releaseDeviceLock() error {
-	// No-op for the randomized delay approach
+// releaseDeviceLock releases the file lock by closing the file handle
+func (nm *NodeManager) releaseDeviceLock(lockFile *os.File) error {
+	if lockFile == nil {
+		// No lock was acquired (either jitter approach or no device path)
+		return nil
+	}
+
+	devicePath := nm.device.Path()
+	nm.logger.V(1).Info("Releasing file lock on SBD device", "devicePath", devicePath)
+	if err := lockFile.Close(); err != nil {
+		return fmt.Errorf("failed to release file lock on %s: %w", devicePath, err)
+	}
 	return nil
 }
 
@@ -705,4 +782,50 @@ func (nm *NodeManager) verifyWrite(expectedData []byte, offset int64) error {
 
 	nm.logger.V(2).Info("Write verification successful", "bytesVerified", len(expectedData))
 	return nil
+}
+
+// WriteWithLock executes a write operation using the configured coordination strategy.
+// When file locking is enabled and a device path is available, it uses POSIX file locking.
+// When file locking is disabled or no device path is available, it uses randomized jitter
+// to reduce write contention between nodes.
+func (nm *NodeManager) WriteWithLock(operation string, fn func() error) error {
+	lockFile, err := nm.acquireDeviceLock()
+	if err != nil {
+		return fmt.Errorf("failed to acquire device coordination for %s: %w", operation, err)
+	}
+	defer func() {
+		if unlockErr := nm.releaseDeviceLock(lockFile); unlockErr != nil {
+			nm.logger.Error(unlockErr, "Failed to release device coordination", "operation", operation)
+		}
+	}()
+
+	if nm.fileLockingEnabled && lockFile != nil {
+		nm.logger.V(1).Info("Executing operation with file lock",
+			"operation", operation,
+			"lockingEnabled", nm.fileLockingEnabled,
+			"devicePath", nm.device.Path())
+	} else {
+		nm.logger.V(1).Info("Executing operation with jitter coordination",
+			"operation", operation,
+			"lockingEnabled", nm.fileLockingEnabled)
+	}
+
+	return fn()
+}
+
+// IsFileLockingEnabled returns whether file locking is enabled
+func (nm *NodeManager) IsFileLockingEnabled() bool {
+	return nm.fileLockingEnabled
+}
+
+// GetCoordinationStrategy returns a string describing the coordination strategy being used
+func (nm *NodeManager) GetCoordinationStrategy() string {
+	if nm.fileLockingEnabled {
+		devicePath := nm.device.Path()
+		if devicePath != "" {
+			return "file-locking"
+		}
+		return "jitter-fallback" // File locking enabled but no device path
+	}
+	return "jitter-only"
 }
