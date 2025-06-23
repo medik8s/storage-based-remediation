@@ -170,6 +170,70 @@ test-e2e-kind: ## Run e2e tests on Kind Kubernetes cluster (legacy support)
 	go test ./test/e2e/ -v -ginkgo.v && \
 	kind delete cluster --name $(CRC_CLUSTER)
 
+##@ OpenShift on AWS
+
+# AWS OpenShift Cluster Configuration
+# The provisioning script automatically downloads and installs required tools:
+# - AWS CLI v2, openshift-install, oc CLI, and jq
+# Prerequisites: AWS credentials configured, Red Hat pull secret
+OCP_CLUSTER_NAME ?= sbd-operator-test
+AWS_REGION ?= us-east-1
+OCP_WORKER_COUNT ?= 4
+OCP_INSTANCE_TYPE ?= m5.large
+OCP_VERSION ?= 4.18
+
+.PHONY: provision-ocp-aws
+provision-ocp-aws: ## Provision OpenShift cluster on AWS (auto-installs required tools)
+	@echo "Provisioning OpenShift cluster on AWS with automatic tool installation..."
+	@chmod +x scripts/provision-ocp-aws.sh
+	@scripts/provision-ocp-aws.sh \
+		--cluster-name $(OCP_CLUSTER_NAME) \
+		--region $(AWS_REGION) \
+		--workers $(OCP_WORKER_COUNT) \
+		--instance-type $(OCP_INSTANCE_TYPE) \
+		--ocp-version $(OCP_VERSION)
+
+.PHONY: destroy-ocp-aws
+destroy-ocp-aws: ## Destroy OpenShift cluster on AWS
+	@echo "Destroying OpenShift cluster $(OCP_CLUSTER_NAME) on AWS..."
+	@if [ -d "cluster" ]; then \
+		cd cluster && openshift-install destroy cluster --log-level=info; \
+		cd .. && rm -rf cluster; \
+	else \
+		echo "No cluster directory found - cluster may already be destroyed"; \
+	fi
+
+.PHONY: test-e2e-multinode
+test-e2e-multinode: ## Run multi-node e2e tests on existing OpenShift cluster
+	@echo "Running multi-node e2e tests on existing OpenShift cluster..."
+	@command -v kubectl >/dev/null 2>&1 || { \
+		echo "kubectl is not installed. Please install it manually."; \
+		exit 1; \
+	}
+	@echo "Checking cluster connectivity..."
+	@kubectl cluster-info || { \
+		echo "Cannot connect to Kubernetes cluster. Please ensure KUBECONFIG is set correctly."; \
+		exit 1; \
+	}
+	@echo "Running multi-node e2e test suite..."
+	@go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus="Multi-Node"
+
+.PHONY: provision-and-test-multinode
+provision-and-test-multinode: ## Provision AWS cluster and run multi-node e2e tests
+	@echo "Provisioning AWS cluster and running multi-node e2e tests..."
+	@$(MAKE) provision-ocp-aws
+	@echo "Waiting for cluster to be ready..."
+	@sleep 60
+	@echo "Setting up kubeconfig..."
+	@export KUBECONFIG=$$(pwd)/cluster/auth/kubeconfig
+	@$(MAKE) test-e2e-multinode
+	@if [ "$(CLEANUP_AFTER_TEST)" = "true" ]; then \
+		echo "Cleaning up AWS cluster..."; \
+		$(MAKE) destroy-ocp-aws; \
+	else \
+		echo "Cluster preserved. Run 'make destroy-ocp-aws' to clean up manually."; \
+	fi
+
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Clean up e2e test environment and stop CRC cluster
 	@echo "Cleaning up e2e test environment..."

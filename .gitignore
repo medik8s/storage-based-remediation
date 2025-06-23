@@ -28,6 +28,12 @@ go.work.sum
 # env file
 .env
 
+# Downloaded tools directory
+.tools/
+
+# Cluster provisioning artifacts
+cluster/
+
 # Editor/IDE
 # .idea/
 # .vscode/
