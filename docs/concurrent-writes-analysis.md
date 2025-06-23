@@ -56,19 +56,46 @@ Both think they succeeded!
 2. **Retry Logic**: Exponential backoff on version conflicts
 3. **Version Checking**: Prevents logical race conditions
 
+### ✅ **Coordination Level** (NEW)
+1. **File-Based Locking**: POSIX `flock()` serializes writes when supported
+2. **Jitter Fallback**: Randomized delays when file locking unavailable
+3. **Strategy Auto-Detection**: NodeManager chooses optimal coordination method
+
 ### ✅ **Block Device Level**  
 1. **O_SYNC Flag**: Synchronous writes go directly to storage
 2. **Explicit Sync()**: Force write completion before returning
 3. **Write Verification**: Read-back verification after writes
 
-### ⚠️ **Remaining Gaps**
-1. **No Physical Write Serialization**: Multiple nodes can still write simultaneously
-2. **Block-Level Granularity**: 512-byte writes can interfere within same block
-3. **Storage Controller Behavior**: Dependent on underlying storage implementation
+### ⚠️ **Remaining Gaps** (Mitigated)
+1. **Physical Write Serialization**: ✅ **ADDRESSED** by file locking (when supported) or jitter fallback
+2. **Block-Level Granularity**: ⚠️ **MITIGATED** by coordination strategies, but still possible on non-POSIX storage
+3. **Storage Controller Behavior**: ⚠️ **MITIGATED** by write verification and retry logic
 
 ## Mitigation Strategies Implemented
 
-### 1. **Randomized Delays**
+### 1. **Coordination Strategies** (NEW)
+```go
+// NodeManager provides dual coordination strategies
+type CoordinationStrategy string
+
+const (
+    StrategyFileLocking    = "file-locking"     // POSIX flock() when available
+    StrategyJitterFallback = "jitter-fallback"  // Fallback when no device path
+    StrategyJitterOnly     = "jitter-only"      // When file locking disabled
+)
+```
+
+**File Locking Strategy**: Uses `syscall.Flock()` with timeout-based acquisition:
+- **Timeout**: 5 seconds maximum wait for lock
+- **Exclusive Lock**: `LOCK_EX` prevents concurrent writes
+- **Automatic Cleanup**: Lock released when file handle closed
+
+**Jitter Fallback Strategy**: Randomized delays when file locking unavailable:
+- **Random Delay**: Up to 100ms before write operations
+- **Reduces Collisions**: Spreads write attempts across time
+- **Storage Agnostic**: Works with any block device
+
+### 2. **Randomized Delays**
 ```go
 // Add random jitter to reduce thundering herd
 jitter := time.Duration(rand.Intn(100)) * time.Millisecond
@@ -136,13 +163,19 @@ if currentTable.Version != expectedVersion {
 // 3. Conflicts with SBD design principles
 ```
 
-### ❌ **File-Based Locking**
+### ✅ **File-Based Locking** (Implemented with Fallback)
 ```go
-// Problems:
-// 1. Requires shared filesystem
-// 2. Introduces additional dependencies
-// 3. May not work across all storage types
+// ✅ IMPLEMENTED: Optional POSIX file locking with intelligent fallback
+// 1. Uses flock() for storage systems that support POSIX locking (NFS, CephFS, etc.)
+// 2. Graceful fallback to jitter-based coordination when locking unavailable
+// 3. Configurable via --sbd-file-locking flag (default: enabled)
+// 4. NodeManager automatically detects coordination strategy
 ```
+
+**Current Implementation**: The NodeManager now provides dual coordination strategies:
+- **File Locking**: Uses `syscall.Flock()` when device path is available and locking enabled
+- **Jitter Fallback**: Uses randomized delays when file locking is disabled or unavailable
+- **Auto-Detection**: Automatically chooses the best strategy based on configuration and device availability
 
 ## Monitoring and Detection
 
@@ -158,6 +191,9 @@ sbd_device_write_verification_failures_total
 "Version mismatch during atomic assignment, retrying"
 "Write verification failed, but data was written"
 "Maximum retry attempts exceeded"
+"Node assigned to slot via hash-based mapping" (includes coordinationStrategy)
+"Executing write operation with coordination strategy: file-locking"
+"Executing write operation with coordination strategy: jitter-fallback"
 ```
 
 ## Real-World Testing
@@ -174,11 +210,12 @@ sbd_device_write_verification_failures_total
 
 ## Conclusion
 
-The combination of **version-based CAS + randomized backoff + write verification** provides:
+The combination of **version-based CAS + coordination strategies + write verification** provides:
 
 1. **Strong logical consistency** (prevents double slot assignment)
-2. **Practical physical protection** (reduces write collision probability) 
+2. **Physical write serialization** (file locking when supported, jitter fallback otherwise)
 3. **Error detection and recovery** (catches and handles corruption)
-4. **Operational simplicity** (no external dependencies)
+4. **Operational flexibility** (adapts to different storage environments)
+5. **Backward compatibility** (graceful fallback for non-POSIX storage)
 
-While it doesn't provide 100% physical write serialization, it reduces the probability of corruption to acceptable levels for the SBD use case, with robust detection and recovery mechanisms for the rare cases where issues occur. 
+The dual coordination strategy approach provides **optimal protection** for POSIX-compatible storage (NFS, CephFS, GlusterFS) while maintaining **reliable operation** on storage systems that don't support file locking. This addresses the physical write serialization gap while preserving the simplicity and reliability of the SBD approach. 
