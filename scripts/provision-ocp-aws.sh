@@ -88,38 +88,43 @@ install_aws_cli() {
     log_info "Installing AWS CLI..."
     
     local install_dir="${TOOLS_DIR}/aws"
-    mkdir -p "${install_dir}"
+    mkdir -p "${install_dir}" || return 1
+    mkdir -p "${TOOLS_DIR}/bin" || return 1
     
     case "${PLATFORM_OS}" in
         linux)
             if [[ "${PLATFORM_ARCH}" == "amd64" ]]; then
-                curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "${install_dir}/awscliv2.zip"
+                curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "${install_dir}/awscliv2.zip" || return 1
             else
-                curl -s "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "${install_dir}/awscliv2.zip"
+                curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "${install_dir}/awscliv2.zip" || return 1
             fi
+            cd "${install_dir}" || return 1
+            unzip -q awscliv2.zip || return 1
+            ./aws/install --install-dir "${install_dir}/aws-cli" --bin-dir "${TOOLS_DIR}/bin" --update || return 1
             ;;
         mac)
-            if [[ "${PLATFORM_ARCH}" == "amd64" ]]; then
-                curl -s "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "${install_dir}/AWSCLIV2.pkg"
+            # For macOS, use the zip version to avoid sudo requirements
+            if [[ "${PLATFORM_ARCH}" == "arm64" ]]; then
+                log_info "Downloading AWS CLI for macOS ARM64..."
+                curl -sL "https://awscli.amazonaws.com/awscli-exe-macos-arm64.zip" -o "${install_dir}/awscliv2.zip" || return 1
             else
-                curl -s "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "${install_dir}/AWSCLIV2.pkg"
+                log_info "Downloading AWS CLI for macOS x86_64..."
+                curl -sL "https://awscli.amazonaws.com/awscli-exe-macos-x86_64.zip" -o "${install_dir}/awscliv2.zip" || return 1
             fi
+            cd "${install_dir}" || return 1
+            unzip -q awscliv2.zip || return 1
+            ./aws/install --install-dir "${install_dir}/aws-cli" --bin-dir "${TOOLS_DIR}/bin" --update || return 1
             ;;
     esac
     
-    case "${PLATFORM_OS}" in
-        linux)
-            cd "${install_dir}"
-            unzip -q awscliv2.zip
-            ./aws/install --install-dir "${install_dir}/aws-cli" --bin-dir "${TOOLS_DIR}/bin" --update
-            ;;
-        mac)
-            log_info "Installing AWS CLI via package installer (may require sudo)..."
-            sudo installer -pkg "${install_dir}/AWSCLIV2.pkg" -target /
-            ;;
-    esac
+    # Verify installation
+    if ! "${TOOLS_DIR}/bin/aws" --version &> /dev/null; then
+        log_error "AWS CLI installation verification failed"
+        return 1
+    fi
     
     log_success "AWS CLI installed successfully"
+    return 0
 }
 
 # Download and install OpenShift Install
@@ -127,8 +132,8 @@ install_openshift_install() {
     log_info "Installing openshift-install..."
     
     local install_dir="${TOOLS_DIR}/openshift-install"
-    mkdir -p "${install_dir}"
-    mkdir -p "${TOOLS_DIR}/bin"
+    mkdir -p "${install_dir}" || return 1
+    mkdir -p "${TOOLS_DIR}/bin" || return 1
     
     local download_url
     case "${PLATFORM_OS}" in
@@ -138,13 +143,33 @@ install_openshift_install() {
         mac)
             download_url="https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OPENSHIFT_INSTALL_VERSION}/openshift-install-mac.tar.gz"
             ;;
+        *)
+            log_error "Unsupported platform for openshift-install: ${PLATFORM_OS}"
+            return 1
+            ;;
     esac
     
-    curl -sL "${download_url}" | tar -xzC "${install_dir}"
-    cp "${install_dir}/openshift-install" "${TOOLS_DIR}/bin/"
-    chmod +x "${TOOLS_DIR}/bin/openshift-install"
+    if ! curl -sL "${download_url}" | tar -xzC "${install_dir}"; then
+        log_error "Failed to download or extract openshift-install"
+        return 1
+    fi
+    
+    if [[ ! -f "${install_dir}/openshift-install" ]]; then
+        log_error "openshift-install binary not found after extraction"
+        return 1
+    fi
+    
+    cp "${install_dir}/openshift-install" "${TOOLS_DIR}/bin/" || return 1
+    chmod +x "${TOOLS_DIR}/bin/openshift-install" || return 1
+    
+    # Verify installation
+    if ! "${TOOLS_DIR}/bin/openshift-install" version &> /dev/null; then
+        log_error "openshift-install installation verification failed"
+        return 1
+    fi
     
     log_success "openshift-install installed successfully"
+    return 0
 }
 
 # Download and install oc CLI
@@ -152,8 +177,8 @@ install_oc_cli() {
     log_info "Installing oc CLI..."
     
     local install_dir="${TOOLS_DIR}/oc"
-    mkdir -p "${install_dir}"
-    mkdir -p "${TOOLS_DIR}/bin"
+    mkdir -p "${install_dir}" || return 1
+    mkdir -p "${TOOLS_DIR}/bin" || return 1
     
     local download_url
     case "${PLATFORM_OS}" in
@@ -163,22 +188,42 @@ install_oc_cli() {
         mac)
             download_url="https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OC_CLI_VERSION}/openshift-client-mac.tar.gz"
             ;;
+        *)
+            log_error "Unsupported platform for oc CLI: ${PLATFORM_OS}"
+            return 1
+            ;;
     esac
     
-    curl -sL "${download_url}" | tar -xzC "${install_dir}"
-    cp "${install_dir}/oc" "${TOOLS_DIR}/bin/"
+    if ! curl -sL "${download_url}" | tar -xzC "${install_dir}"; then
+        log_error "Failed to download or extract oc CLI"
+        return 1
+    fi
+    
+    if [[ ! -f "${install_dir}/oc" ]]; then
+        log_error "oc binary not found after extraction"
+        return 1
+    fi
+    
+    cp "${install_dir}/oc" "${TOOLS_DIR}/bin/" || return 1
     cp "${install_dir}/kubectl" "${TOOLS_DIR}/bin/" 2>/dev/null || true
-    chmod +x "${TOOLS_DIR}/bin/oc"
+    chmod +x "${TOOLS_DIR}/bin/oc" || return 1
     [[ -f "${TOOLS_DIR}/bin/kubectl" ]] && chmod +x "${TOOLS_DIR}/bin/kubectl"
     
+    # Verify installation
+    if ! "${TOOLS_DIR}/bin/oc" version --client &> /dev/null; then
+        log_error "oc CLI installation verification failed"
+        return 1
+    fi
+    
     log_success "oc CLI installed successfully"
+    return 0
 }
 
 # Install jq
 install_jq() {
     log_info "Installing jq..."
     
-    mkdir -p "${TOOLS_DIR}/bin"
+    mkdir -p "${TOOLS_DIR}/bin" || return 1
     
     local download_url
     case "${PLATFORM_OS}-${PLATFORM_ARCH}" in
@@ -194,12 +239,27 @@ install_jq() {
         mac-arm64)
             download_url="https://github.com/jqlang/jq/releases/latest/download/jq-macos-arm64"
             ;;
+        *)
+            log_error "Unsupported platform for jq: ${PLATFORM_OS}-${PLATFORM_ARCH}"
+            return 1
+            ;;
     esac
     
-    curl -sL "${download_url}" -o "${TOOLS_DIR}/bin/jq"
-    chmod +x "${TOOLS_DIR}/bin/jq"
+    if ! curl -sL "${download_url}" -o "${TOOLS_DIR}/bin/jq"; then
+        log_error "Failed to download jq"
+        return 1
+    fi
+    
+    chmod +x "${TOOLS_DIR}/bin/jq" || return 1
+    
+    # Verify installation
+    if ! "${TOOLS_DIR}/bin/jq" --version &> /dev/null; then
+        log_error "jq installation verification failed"
+        return 1
+    fi
     
     log_success "jq installed successfully"
+    return 0
 }
 
 # Update PATH to include tools directory
@@ -343,7 +403,14 @@ install_missing_tools() {
     
     # Check and install AWS CLI
     if ! command -v aws &> /dev/null; then
-        install_aws_cli
+        log_info "AWS CLI not found, installing..."
+        if ! install_aws_cli; then
+            log_error "Failed to install AWS CLI"
+            log_info "You can install it manually:"
+            log_info "  macOS: brew install awscli"
+            log_info "  Linux: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
+            exit 1
+        fi
         update_path  # Update PATH again after installation
     else
         log_info "AWS CLI already installed: $(aws --version)"
@@ -351,21 +418,38 @@ install_missing_tools() {
     
     # Check and install openshift-install
     if ! command -v openshift-install &> /dev/null; then
-        install_openshift_install
+        log_info "openshift-install not found, installing..."
+        if ! install_openshift_install; then
+            log_error "Failed to install openshift-install"
+            log_info "You can download it manually from: https://console.redhat.com/openshift/install"
+            exit 1
+        fi
     else
         log_info "openshift-install already installed: $(openshift-install version | head -n1)"
     fi
     
     # Check and install oc CLI
     if ! command -v oc &> /dev/null; then
-        install_oc_cli
+        log_info "oc CLI not found, installing..."
+        if ! install_oc_cli; then
+            log_error "Failed to install oc CLI"
+            log_info "You can download it manually from: https://console.redhat.com/openshift/install"
+            exit 1
+        fi
     else
         log_info "oc CLI already installed: $(oc version --client --short 2>/dev/null || echo 'oc version unknown')"
     fi
     
     # Check and install jq
     if ! command -v jq &> /dev/null; then
-        install_jq
+        log_info "jq not found, installing..."
+        if ! install_jq; then
+            log_error "Failed to install jq"
+            log_info "You can install it manually:"
+            log_info "  macOS: brew install jq"
+            log_info "  Linux: apt-get install jq (Ubuntu/Debian) or yum install jq (RHEL/CentOS)"
+            exit 1
+        fi
     else
         log_info "jq already installed: $(jq --version)"
     fi
