@@ -34,6 +34,8 @@ const (
 	MinStaleNodeTimeout = 1 * time.Minute
 	// MaxStaleNodeTimeout is the maximum allowed stale node timeout
 	MaxStaleNodeTimeout = 24 * time.Hour
+	// DefaultWatchdogPath is the default path to the watchdog device
+	DefaultWatchdogPath = "/dev/watchdog"
 )
 
 // SBDConfigSpec defines the desired state of SBDConfig.
@@ -42,9 +44,10 @@ type SBDConfigSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// SbdWatchdogPath is the path to the watchdog device on the host
-	// +kubebuilder:validation:Required
+	// If not specified, defaults to "/dev/watchdog"
 	// +kubebuilder:default="/dev/watchdog"
-	SbdWatchdogPath string `json:"sbdWatchdogPath"`
+	// +optional
+	SbdWatchdogPath string `json:"sbdWatchdogPath,omitempty"`
 
 	// Image is the container image for the SBD agent DaemonSet
 	// +kubebuilder:default="sbd-agent:latest"
@@ -63,6 +66,14 @@ type SBDConfigSpec struct {
 	// +kubebuilder:default="10m"
 	// +optional
 	StaleNodeTimeout *metav1.Duration `json:"staleNodeTimeout,omitempty"`
+}
+
+// GetSbdWatchdogPath returns the watchdog path with default fallback
+func (s *SBDConfigSpec) GetSbdWatchdogPath() string {
+	if s.SbdWatchdogPath != "" {
+		return s.SbdWatchdogPath
+	}
+	return DefaultWatchdogPath
 }
 
 // GetStaleNodeTimeout returns the stale node timeout with default fallback

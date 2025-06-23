@@ -216,20 +216,18 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	logger.V(1).Info("Starting SBDConfig reconciliation",
 		"spec.image", sbdConfig.Spec.Image,
 		"spec.namespace", sbdConfig.Spec.Namespace,
-		"spec.sbdWatchdogPath", sbdConfig.Spec.SbdWatchdogPath)
+		"spec.sbdWatchdogPath", sbdConfig.Spec.GetSbdWatchdogPath(),
+		"spec.staleNodeTimeout", sbdConfig.Spec.GetStaleNodeTimeout())
 
-	// Set default values if not specified
+	// Set defaults if not specified
 	if sbdConfig.Spec.Image == "" {
 		sbdConfig.Spec.Image = "sbd-agent:latest"
 		logger.V(1).Info("Set default image", "image", sbdConfig.Spec.Image)
 	}
+
 	if sbdConfig.Spec.Namespace == "" {
 		sbdConfig.Spec.Namespace = "sbd-system"
 		logger.V(1).Info("Set default namespace", "namespace", sbdConfig.Spec.Namespace)
-	}
-	if sbdConfig.Spec.SbdWatchdogPath == "" {
-		sbdConfig.Spec.SbdWatchdogPath = "/dev/watchdog"
-		logger.V(1).Info("Set default watchdog path", "watchdogPath", sbdConfig.Spec.SbdWatchdogPath)
 	}
 
 	// Ensure the namespace exists with retry logic
@@ -615,7 +613,7 @@ func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfi
 								},
 							},
 							Args: []string{
-								fmt.Sprintf("--watchdog-path=%s", sbdConfig.Spec.SbdWatchdogPath),
+								fmt.Sprintf("--watchdog-path=%s", sbdConfig.Spec.GetSbdWatchdogPath()),
 								"--watchdog-timeout=30s",
 								"--log-level=info",
 								fmt.Sprintf("--stale-node-timeout=%s", sbdConfig.Spec.GetStaleNodeTimeout().String()),
@@ -640,7 +638,7 @@ func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfi
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									Exec: &corev1.ExecAction{
-										Command: []string{"/bin/sh", "-c", fmt.Sprintf("test -c %s && grep -l sbd-agent /proc/*/cmdline 2>/dev/null", sbdConfig.Spec.SbdWatchdogPath)},
+										Command: []string{"/bin/sh", "-c", fmt.Sprintf("test -c %s && grep -l sbd-agent /proc/*/cmdline 2>/dev/null", sbdConfig.Spec.GetSbdWatchdogPath())},
 									},
 								},
 								InitialDelaySeconds: 10,

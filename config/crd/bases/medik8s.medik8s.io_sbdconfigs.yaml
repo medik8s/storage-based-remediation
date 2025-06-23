@@ -50,8 +50,9 @@ spec:
                 type: string
               sbdWatchdogPath:
                 default: /dev/watchdog
-                description: SbdWatchdogPath is the path to the watchdog device on
-                  the host
+                description: |-
+                  SbdWatchdogPath is the path to the watchdog device on the host
+                  If not specified, defaults to "/dev/watchdog"
                 type: string
               staleNodeTimeout:
                 default: 10m
@@ -62,8 +63,6 @@ spec:
                   will be freed for reuse by new nodes. The value must be at least 1 minute.
                 pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                 type: string
-            required:
-            - sbdWatchdogPath
             type: object
           status:
             description: SBDConfigStatus defines the observed state of SBDConfig.

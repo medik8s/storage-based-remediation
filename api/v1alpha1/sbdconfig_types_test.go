@@ -30,19 +30,21 @@ func TestSBDConfigSpec_GetStaleNodeTimeout(t *testing.T) {
 		expected time.Duration
 	}{
 		{
-			name:     "nil timeout returns default",
-			spec:     SBDConfigSpec{},
+			name: "nil timeout returns default",
+			spec: SBDConfigSpec{
+				StaleNodeTimeout: nil,
+			},
 			expected: DefaultStaleNodeTimeout,
 		},
 		{
-			name: "custom timeout is returned",
+			name: "explicit timeout is returned",
 			spec: SBDConfigSpec{
 				StaleNodeTimeout: &metav1.Duration{Duration: 5 * time.Minute},
 			},
 			expected: 5 * time.Minute,
 		},
 		{
-			name: "zero timeout returns default",
+			name: "zero timeout returns zero",
 			spec: SBDConfigSpec{
 				StaleNodeTimeout: &metav1.Duration{Duration: 0},
 			},
@@ -54,7 +56,7 @@ func TestSBDConfigSpec_GetStaleNodeTimeout(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := tt.spec.GetStaleNodeTimeout()
 			if result != tt.expected {
-				t.Errorf("GetStaleNodeTimeout() = %v, expected %v", result, tt.expected)
+				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
 		})
 	}
@@ -141,5 +143,51 @@ func TestConstants(t *testing.T) {
 	if DefaultStaleNodeTimeout >= MaxStaleNodeTimeout {
 		t.Errorf("DefaultStaleNodeTimeout (%v) should be less than MaxStaleNodeTimeout (%v)",
 			DefaultStaleNodeTimeout, MaxStaleNodeTimeout)
+	}
+}
+
+func TestSBDConfigSpec_GetSbdWatchdogPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		spec     SBDConfigSpec
+		expected string
+	}{
+		{
+			name: "empty path returns default",
+			spec: SBDConfigSpec{
+				SbdWatchdogPath: "",
+			},
+			expected: DefaultWatchdogPath,
+		},
+		{
+			name: "explicit path is returned",
+			spec: SBDConfigSpec{
+				SbdWatchdogPath: "/dev/watchdog1",
+			},
+			expected: "/dev/watchdog1",
+		},
+		{
+			name: "custom path is returned",
+			spec: SBDConfigSpec{
+				SbdWatchdogPath: "/custom/watchdog",
+			},
+			expected: "/custom/watchdog",
+		},
+		{
+			name: "default path when unset",
+			spec: SBDConfigSpec{
+				// SbdWatchdogPath not set
+			},
+			expected: DefaultWatchdogPath,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.spec.GetSbdWatchdogPath()
+			if result != tt.expected {
+				t.Errorf("Expected %s, got %s", tt.expected, result)
+			}
+		})
 	}
 }

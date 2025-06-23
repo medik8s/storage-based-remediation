@@ -7,7 +7,8 @@ metadata:
   name: sbdconfig-sample
 spec:
   # Path to the watchdog device on the host nodes
-  sbdWatchdogPath: "/dev/watchdog"
+  # If not specified, defaults to "/dev/watchdog"
+  # sbdWatchdogPath: "/dev/watchdog"
   
   # Container image for the SBD Agent DaemonSet
   image: "quay.io/medik8s/sbd-agent:latest"
