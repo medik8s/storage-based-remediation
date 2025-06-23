@@ -163,7 +163,7 @@ func TestSBDRemediation_SetCondition(t *testing.T) {
 			conditionType:    SBDRemediationConditionReady,
 			status:           metav1.ConditionTrue,
 			reason:           "Succeeded",
-			message:          "Completed",
+			message:          "Completed - Same status, no transition",
 			expectNew:        false,
 			expectTransition: false, // Same status, no transition
 		},
@@ -181,7 +181,7 @@ func TestSBDRemediation_SetCondition(t *testing.T) {
 			conditionType:    SBDRemediationConditionReady,
 			status:           metav1.ConditionTrue,
 			reason:           "Succeeded",
-			message:          "Completed",
+			message:          "Completed - Different status, should transition",
 			expectNew:        false,
 			expectTransition: true, // Different status, should transition
 		},
@@ -198,8 +198,13 @@ func TestSBDRemediation_SetCondition(t *testing.T) {
 				},
 			}
 
-			// Store original transition time if condition exists (for reference)
-			_ = remediation.GetCondition(tt.conditionType)
+			// Store original transition time if condition exists
+			var tTime metav1.Time = metav1.Time{}
+			var originalTransitionTime *metav1.Time
+			if existingCondition := remediation.GetCondition(tt.conditionType); existingCondition != nil {
+				tTime = existingCondition.LastTransitionTime // Ensure we get a copy of the time
+				originalTransitionTime = &tTime
+			}
 
 			// Set the condition
 			remediation.SetCondition(tt.conditionType, tt.status, tt.reason, tt.message)
@@ -233,15 +238,12 @@ func TestSBDRemediation_SetCondition(t *testing.T) {
 				}
 			} else {
 				if tt.expectTransition {
-					// For different status, LastTransitionTime should be updated to a recent time
-					timeDiff := time.Since(condition.LastTransitionTime.Time)
-					if timeDiff > 5*time.Second {
-						t.Errorf("Expected LastTransitionTime to be updated recently for status change, but was %v ago", timeDiff)
+					if originalTransitionTime != nil && condition.LastTransitionTime.Equal(originalTransitionTime) {
+						t.Errorf("Expected LastTransitionTime to be updated for status change: %s", condition.Message)
 					}
 				} else {
-					// For same status updates, just verify LastTransitionTime is set
-					if condition.LastTransitionTime.IsZero() {
-						t.Error("Expected LastTransitionTime to be set")
+					if originalTransitionTime != nil && !condition.LastTransitionTime.Equal(originalTransitionTime) {
+						t.Error("Expected LastTransitionTime to remain unchanged for same status")
 					}
 				}
 			}
