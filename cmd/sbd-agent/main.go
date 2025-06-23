@@ -45,7 +45,7 @@ import (
 
 var (
 	watchdogPath      = flag.String("watchdog-path", "/dev/watchdog", "Path to the watchdog device")
-	watchdogTimeout   = flag.Duration("watchdog-timeout", 30*time.Second, "Watchdog pet interval")
+	watchdogTimeout   = flag.Duration("watchdog-timeout", 30*time.Second, "Watchdog pet interval (how often to pet the watchdog)")
 	watchdogTestMode  = flag.Bool("watchdog-test-mode", false, "Enable watchdog test mode (soft_noboot=1 for softdog, prevents actual reboots)")
 	sbdDevice         = flag.String("sbd-device", "", "Path to the SBD block device")
 	nodeName          = flag.String("node-name", "", "Name of this Kubernetes node")
@@ -1568,6 +1568,37 @@ func checkNodeIDNameResolution(nodeName string, nodeID uint16) error {
 	return nil
 }
 
+// validateWatchdogTiming validates that the pet interval is appropriate for the watchdog timeout
+func validateWatchdogTiming(petInterval time.Duration) error {
+	// Get the watchdog timeout that will be used (currently hardcoded in watchdog package)
+	watchdogTimeoutSeconds := watchdog.DefaultSoftdogTimeout
+	watchdogTimeout := time.Duration(watchdogTimeoutSeconds) * time.Second
+
+	// Pet interval should be at least 3 times shorter than watchdog timeout
+	// This ensures we have enough safety margin to pet the watchdog before it times out
+	maxPetInterval := watchdogTimeout / 3
+
+	if petInterval > maxPetInterval {
+		return fmt.Errorf("pet interval (%v) is too long for watchdog timeout (%v). "+
+			"Pet interval must be at least 3 times shorter than watchdog timeout. "+
+			"Maximum allowed pet interval: %v",
+			petInterval, watchdogTimeout, maxPetInterval)
+	}
+
+	// Also validate minimum pet interval (should be at least 1 second)
+	if petInterval < time.Second {
+		return fmt.Errorf("pet interval (%v) is too short. Minimum allowed: 1s", petInterval)
+	}
+
+	logger.V(1).Info("Watchdog timing validation successful",
+		"petInterval", petInterval,
+		"watchdogTimeout", watchdogTimeout,
+		"maxAllowedPetInterval", maxPetInterval,
+		"safetyMargin", fmt.Sprintf("%.1fx", float64(watchdogTimeout)/float64(petInterval)))
+
+	return nil
+}
+
 func main() {
 	flag.Parse()
 
@@ -1578,6 +1609,12 @@ func main() {
 	}
 
 	logger.Info("SBD Agent starting", "version", "development")
+
+	// Validate watchdog timing early
+	if err := validateWatchdogTiming(*watchdogTimeout); err != nil {
+		logger.Error(err, "Watchdog timing validation failed")
+		os.Exit(1)
+	}
 
 	// Determine node name
 	nodeNameValue := *nodeName

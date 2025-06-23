@@ -1087,7 +1087,7 @@ func TestPreflightChecks_Success(t *testing.T) {
 	sbdFile.Close()
 
 	// Test successful pre-flight checks
-	err = runPreflightChecks(watchdogPath, sbdPath, "test-node", 1)
+	err = runPreflightChecks(watchdogPath, sbdPath, "test-node", 1, false)
 	if err != nil {
 		t.Errorf("Expected pre-flight checks to succeed, but got error: %v", err)
 	}
@@ -1104,7 +1104,7 @@ func TestPreflightChecks_WatchdogMissing(t *testing.T) {
 	watchdogPath := "/non/existent/watchdog"
 
 	// Test pre-flight checks with missing watchdog device
-	err := runPreflightChecks(watchdogPath, "", "test-node", 1)
+	err := runPreflightChecks(watchdogPath, "", "test-node", 1, false)
 	if err == nil {
 		t.Error("Expected pre-flight checks to fail with missing watchdog, but they succeeded")
 	}
@@ -1152,7 +1152,7 @@ func TestPreflightChecks_SBDMissing(t *testing.T) {
 	sbdPath := "/non/existent/sbd"
 
 	// Test pre-flight checks with missing SBD device
-	err = runPreflightChecks(watchdogPath, sbdPath, "test-node", 1)
+	err = runPreflightChecks(watchdogPath, sbdPath, "test-node", 1, false)
 	if err == nil {
 		t.Error("Expected pre-flight checks to fail with missing SBD device, but they succeeded")
 	}
@@ -1182,7 +1182,7 @@ func TestPreflightChecks_WatchdogOnlyMode(t *testing.T) {
 	sbdPath := ""
 
 	// Test pre-flight checks in watchdog-only mode
-	err = runPreflightChecks(watchdogPath, sbdPath, "test-node", 1)
+	err = runPreflightChecks(watchdogPath, sbdPath, "test-node", 1, false)
 	if err != nil {
 		t.Errorf("Expected pre-flight checks to succeed in watchdog-only mode, but got error: %v", err)
 	}
@@ -1244,7 +1244,7 @@ func TestPreflightChecks_InvalidNodeName(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := runPreflightChecks(watchdogPath, "", tc.nodeName, tc.nodeID)
+			err := runPreflightChecks(watchdogPath, "", tc.nodeName, tc.nodeID, false)
 			if err == nil {
 				t.Errorf("Expected pre-flight checks to fail for %s, but they succeeded", tc.name)
 				return
@@ -1273,14 +1273,14 @@ func TestCheckWatchdogDevice(t *testing.T) {
 	}
 	watchdogFile.Close()
 
-	err = checkWatchdogDevice(watchdogPath)
+	err = checkWatchdogDevice(watchdogPath, false)
 	if err != nil {
 		t.Errorf("Expected watchdog device check to succeed, but got error: %v", err)
 	}
 
 	// Test with non-existent file
 	nonExistentPath := filepath.Join(tmpDir, "non-existent")
-	err = checkWatchdogDevice(nonExistentPath)
+	err = checkWatchdogDevice(nonExistentPath, false)
 	if err == nil {
 		t.Error("Expected watchdog device check to fail with non-existent file, but it succeeded")
 	}
@@ -1377,4 +1377,122 @@ func TestPerformSBDReadWriteTest(t *testing.T) {
 	if err == nil {
 		t.Error("Expected SBD read/write test to fail with sync failure, but it succeeded")
 	}
+}
+
+func TestValidateWatchdogTiming(t *testing.T) {
+	// Initialize logger for tests
+	logger = logr.Discard()
+
+	tests := []struct {
+		name        string
+		petInterval time.Duration
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "valid pet interval - 15s (4x safety margin)",
+			petInterval: 15 * time.Second,
+			wantErr:     false,
+		},
+		{
+			name:        "valid pet interval - 20s (3x safety margin, exactly at limit)",
+			petInterval: 20 * time.Second,
+			wantErr:     false,
+		},
+		{
+			name:        "valid pet interval - 10s (6x safety margin)",
+			petInterval: 10 * time.Second,
+			wantErr:     false,
+		},
+		{
+			name:        "valid pet interval - 1s (minimum allowed)",
+			petInterval: 1 * time.Second,
+			wantErr:     false,
+		},
+		{
+			name:        "invalid pet interval - too long (21s)",
+			petInterval: 21 * time.Second,
+			wantErr:     true,
+			errContains: "too long for watchdog timeout",
+		},
+		{
+			name:        "invalid pet interval - too long (25s)",
+			petInterval: 25 * time.Second,
+			wantErr:     true,
+			errContains: "too long for watchdog timeout",
+		},
+		{
+			name:        "invalid pet interval - exactly at watchdog timeout (60s)",
+			petInterval: 60 * time.Second,
+			wantErr:     true,
+			errContains: "too long for watchdog timeout",
+		},
+		{
+			name:        "invalid pet interval - longer than watchdog timeout (90s)",
+			petInterval: 90 * time.Second,
+			wantErr:     true,
+			errContains: "too long for watchdog timeout",
+		},
+		{
+			name:        "invalid pet interval - too short (500ms)",
+			petInterval: 500 * time.Millisecond,
+			wantErr:     true,
+			errContains: "too short",
+		},
+		{
+			name:        "invalid pet interval - too short (100ms)",
+			petInterval: 100 * time.Millisecond,
+			wantErr:     true,
+			errContains: "too short",
+		},
+		{
+			name:        "invalid pet interval - zero",
+			petInterval: 0,
+			wantErr:     true,
+			errContains: "too short",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateWatchdogTiming(tt.petInterval)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("validateWatchdogTiming() expected error but got none")
+					return
+				}
+				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+					t.Errorf("validateWatchdogTiming() error = %v, want error containing %q", err, tt.errContains)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("validateWatchdogTiming() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+// contains checks if a string contains a substring (helper function)
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > len(substr) && containsSubstring(s, substr)))
+}
+
+// containsSubstring is a simple substring search
+func containsSubstring(s, substr string) bool {
+	if len(substr) == 0 {
+		return true
+	}
+	if len(substr) > len(s) {
+		return false
+	}
+
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
