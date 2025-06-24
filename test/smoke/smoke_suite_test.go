@@ -41,6 +41,7 @@ var (
 	// with the code source changes to be tested.
 	// It uses environment variables that match the Makefile QUAY_* variables.
 	projectImage = getProjectImage()
+	agentImage   = getAgentImage()
 )
 
 // getProjectImage returns the project image name based on environment variables.
@@ -69,6 +70,32 @@ func getProjectImage() string {
 	return fmt.Sprintf("%s/%s/sbd-operator:%s", registry, org, version)
 }
 
+// getAgentImage returns the agent image name based on environment variables.
+// It uses the same pattern as the Makefile QUAY_* variables, with sensible defaults for local testing.
+func getAgentImage() string {
+	registry := os.Getenv("QUAY_REGISTRY")
+	if registry == "" {
+		registry = "localhost:5000" // Local registry for testing
+	}
+
+	org := os.Getenv("QUAY_ORG")
+	if org == "" {
+		org = "sbd-operator"
+	}
+
+	version := os.Getenv("VERSION")
+	if version == "" {
+		version = "smoke-test"
+	}
+
+	// Allow complete override via AGENT_IMG environment variable
+	if agentImg := os.Getenv("AGENT_IMG"); agentImg != "" {
+		return agentImg
+	}
+
+	return fmt.Sprintf("%s/%s/sbd-agent:%s", registry, org, version)
+}
+
 // TestSmoke runs the smoke test suite for the project. These tests execute in an isolated,
 // temporary environment to validate basic functionality with the purpose to be used in CI jobs.
 // The default setup requires CRC, builds/loads the Manager Docker image locally, and installs
@@ -83,6 +110,7 @@ var _ = BeforeSuite(func() {
 	By("verifying smoke test environment setup")
 	_, _ = fmt.Fprintf(GinkgoWriter, "Smoke test environment setup completed by Makefile\n")
 	_, _ = fmt.Fprintf(GinkgoWriter, "Project image: %s\n", projectImage)
+	_, _ = fmt.Fprintf(GinkgoWriter, "Agent image: %s\n", agentImage)
 
 	// Verify we can connect to the cluster
 	By("verifying cluster connection")

@@ -293,10 +293,10 @@ kind: SBDConfig
 metadata:
   name: %s
 spec:
-  sbdWatchdogPath: "/dev/null"
-  image: "quay.io/medik8s/sbd-agent:latest"
+  sbdWatchdogPath: "/dev/watchdog"
+  image: "%s"
   namespace: "sbd-system"
-`, sbdConfigName)
+`, sbdConfigName, agentImage)
 
 			// Write SBDConfig to temporary file
 			tmpFile = filepath.Join("/tmp", fmt.Sprintf("sbdconfig-%s.yaml", sbdConfigName))
@@ -333,13 +333,13 @@ spec:
 				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", "sbd-system", "-o", "jsonpath={.spec.template.spec.containers[0].image}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("quay.io/medik8s/sbd-agent:latest"))
+				g.Expect(output).To(Equal(agentImage))
 
 				// Check watchdog path argument
 				cmd = exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", "sbd-system", "-o", "jsonpath={.spec.template.spec.containers[0].args}")
 				output, err = utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(ContainSubstring("--watchdog-path=/dev/null"))
+				g.Expect(output).To(ContainSubstring("--watchdog-path=/dev/watchdog"))
 			}
 			Eventually(verifyDaemonSetConfig, 30*time.Second).Should(Succeed())
 
@@ -374,10 +374,10 @@ kind: SBDConfig
 metadata:
   name: %s
 spec:
-  sbdWatchdogPath: "/dev/null"
-  image: "quay.io/medik8s/sbd-agent:latest"
+  sbdWatchdogPath: "/dev/watchdog"
+  image: "%s"
   namespace: "sbd-system"
-`, sbdConfigName)
+`, sbdConfigName, agentImage)
 
 			// Write SBDConfig to temporary file
 			tmpFile = filepath.Join("/tmp", fmt.Sprintf("sbdconfig-%s.yaml", sbdConfigName))
@@ -569,16 +569,16 @@ spec:
 		It("should be able to create and reconcile SBDConfig resources", func() {
 			By("creating a test SBDConfig")
 			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			sbdConfigYAML := `
+			sbdConfigYAML := fmt.Sprintf(`
 apiVersion: medik8s.medik8s.io/v1alpha1
 kind: SBDConfig
 metadata:
   name: test-sbdconfig
 spec:
-  sbd:
-    watchdogTimeout: 60
-    msgwaitTimeout: 120
-`
+  sbdWatchdogPath: "/dev/watchdog"
+  image: "%s"
+  namespace: "sbd-system"
+`, agentImage)
 			cmd.Stdin = strings.NewReader(sbdConfigYAML)
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDConfig")
