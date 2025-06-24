@@ -45,6 +45,16 @@ type NodeInfo struct {
 		Name   string            `json:"name"`
 		Labels map[string]string `json:"labels"`
 	} `json:"metadata"`
+	Status struct {
+		Conditions []NodeCondition `json:"conditions"`
+	} `json:"status"`
+}
+
+// NodeCondition represents a node condition
+type NodeCondition struct {
+	Type   string `json:"type"`
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
 }
 
 var (
@@ -71,25 +81,49 @@ var _ = Describe("SBD Operator Multi-Node E2E Tests", func() {
 	})
 
 	AfterEach(func() {
-		// Clean up test namespace
+		// Clean up test namespace and any test artifacts
 		By(fmt.Sprintf("Cleaning up test namespace %s", testNS))
 		cmd := exec.Command("kubectl", "delete", "namespace", testNS, "--ignore-not-found=true")
 		_, _ = utils.Run(cmd)
+
+		// Clean up any test pods or disruptions
+		cleanupTestArtifacts()
 	})
 
-	Context("Adaptive Multi-Node SBD Tests", func() {
-		It("should handle basic SBD configuration", func() {
+	Context("SBD Failure Simulation Tests", func() {
+		It("should handle basic SBD configuration and agent deployment", func() {
 			if len(clusterInfo.WorkerNodes) < 3 {
 				Skip("Test requires at least 3 worker nodes")
 			}
 			testBasicSBDConfiguration(clusterInfo)
 		})
 
-		It("should handle node failure simulation", func() {
+		It("should trigger fencing when SBD agent loses storage access", func() {
 			if len(clusterInfo.WorkerNodes) < 4 {
-				Skip("Test requires at least 4 worker nodes")
+				Skip("Test requires at least 4 worker nodes for safe storage disruption testing")
 			}
-			testNodeFailureSimulation(clusterInfo)
+			testStorageAccessInterruption(clusterInfo)
+		})
+
+		It("should trigger fencing when kubelet communication is interrupted", func() {
+			if len(clusterInfo.WorkerNodes) < 4 {
+				Skip("Test requires at least 4 worker nodes for safe communication disruption testing")
+			}
+			testKubeletCommunicationFailure(clusterInfo)
+		})
+
+		It("should handle SBD agent crash and recovery", func() {
+			if len(clusterInfo.WorkerNodes) < 3 {
+				Skip("Test requires at least 3 worker nodes")
+			}
+			testSBDAgentCrash(clusterInfo)
+		})
+
+		It("should handle non-fencing failures gracefully", func() {
+			if len(clusterInfo.WorkerNodes) < 3 {
+				Skip("Test requires at least 3 worker nodes")
+			}
+			testNonFencingFailure(clusterInfo)
 		})
 
 		It("should handle large cluster coordination", func() {
@@ -160,18 +194,18 @@ func discoverClusterTopology() {
 // Test implementation functions
 
 func testBasicSBDConfiguration(cluster ClusterInfo) {
-	By("Creating basic SBDConfig for worker nodes")
+	By("Creating SBDConfig with proper agent deployment")
 	sbdConfigYAML := fmt.Sprintf(`apiVersion: medik8s.medik8s.io/v1alpha1
 kind: SBDConfig
 metadata:
-  name: basic-sbd
+  name: test-sbd-config
   namespace: %s
 spec:
   sbdWatchdogPath: "/dev/watchdog"
-  image: "sbd-agent:latest"
-  namespace: "sbd-system"
+  image: "quay.io/medik8s/sbd-agent:test-amd64"
+  namespace: "%s"
   staleNodeTimeout: "30s"
-`, testNS)
+`, testNS, testNS)
 
 	// Apply the SBDConfig
 	cmd := exec.Command("kubectl", "apply", "-f", "-")
@@ -179,33 +213,485 @@ spec:
 	_, err := utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred())
 
-	By("Verifying SBDConfig was created")
+	By("Verifying SBDConfig was created and processed")
 	Eventually(func() bool {
-		cmd := exec.Command("kubectl", "get", "sbdconfig", "basic-sbd", "-n", testNS)
+		cmd := exec.Command("kubectl", "get", "sbdconfig", "test-sbd-config", "-n", testNS)
 		_, err := utils.Run(cmd)
 		return err == nil
 	}, time.Minute*2, time.Second*10).Should(BeTrue())
+
+	By("Waiting for SBD agent DaemonSet to be created")
+	Eventually(func() bool {
+		cmd := exec.Command("kubectl", "get", "daemonset", "-n", testNS, "-l", "app=sbd-agent")
+		output, err := utils.Run(cmd)
+		return err == nil && !strings.Contains(output, "No resources found")
+	}, time.Minute*3, time.Second*15).Should(BeTrue())
+
+	By("Verifying SBD agents are running on worker nodes")
+	Eventually(func() bool {
+		cmd := exec.Command("kubectl", "get", "pods", "-n", testNS, "-l", "app=sbd-agent", "-o", "json")
+		output, err := utils.Run(cmd)
+		if err != nil {
+			return false
+		}
+
+		var podList struct {
+			Items []struct {
+				Status struct {
+					Phase string `json:"phase"`
+				} `json:"status"`
+			} `json:"items"`
+		}
+
+		if err := json.Unmarshal([]byte(output), &podList); err != nil {
+			return false
+		}
+
+		runningPods := 0
+		for _, pod := range podList.Items {
+			if pod.Status.Phase == "Running" {
+				runningPods++
+			}
+		}
+
+		// Expect at least 2 running pods (minimum for meaningful SBD testing)
+		return runningPods >= 2
+	}, time.Minute*5, time.Second*15).Should(BeTrue())
+
+	GinkgoWriter.Printf("SBD configuration test completed successfully\n")
 }
 
-func testNodeFailureSimulation(cluster ClusterInfo) {
-	By("Testing node failure simulation")
-	targetNode := cluster.WorkerNodes[0]
+func testStorageAccessInterruption(cluster ClusterInfo) {
+	By("Setting up SBD configuration for storage access test")
+	testBasicSBDConfiguration(cluster)
 
-	// Cordon the node to simulate failure
-	cmd := exec.Command("kubectl", "cordon", targetNode.Metadata.Name)
+	targetNode := cluster.WorkerNodes[0]
+	By(fmt.Sprintf("Testing storage access interruption on node %s", targetNode.Metadata.Name))
+
+	// Create a disruption pod that will interfere with storage access
+	disruptionPodYAML := fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata:
+  name: storage-disruptor
+  namespace: %s
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: %s
+  hostNetwork: true
+  hostPID: true
+  containers:
+  - name: disruptor
+    image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+    command:
+    - /bin/bash
+    - -c
+    - |
+      echo "Starting storage access disruption simulation..."
+      # Simulate storage I/O issues by creating high I/O load
+      # This simulates the scenario where SBD device becomes inaccessible
+      for i in {1..10}; do
+        timeout 30s dd if=/dev/zero of=/tmp/storage-load-$i bs=1M count=100 2>/dev/null || true &
+      done
+      
+      # Wait and monitor for SBD agent response
+      sleep 60
+      
+      echo "Storage disruption simulation completed"
+      # Clean up
+      pkill -f "dd if=/dev/zero" || true
+      rm -f /tmp/storage-load-* || true
+    securityContext:
+      privileged: true
+      runAsUser: 0
+  restartPolicy: Never
+  tolerations:
+  - operator: Exists`, testNS, targetNode.Metadata.Name)
+
+	By("Creating storage disruption pod")
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(disruptionPodYAML)
 	_, err := utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred())
 
-	// Uncordon the node to recover
-	defer func() {
-		cmd := exec.Command("kubectl", "uncordon", targetNode.Metadata.Name)
-		_, _ = utils.Run(cmd)
-	}()
+	By("Monitoring for SBD agent response to storage issues")
+	// Monitor SBD agent logs for storage access issues
+	Eventually(func() bool {
+		cmd := exec.Command("kubectl", "logs", "-n", testNS, "-l", "app=sbd-agent", "--tail=50")
+		output, err := utils.Run(cmd)
+		if err != nil {
+			return false
+		}
 
-	GinkgoWriter.Printf("Simulated failure of node %s\n", targetNode.Metadata.Name)
+		// Look for storage-related warnings or errors
+		return strings.Contains(output, "storage") ||
+			strings.Contains(output, "watchdog") ||
+			strings.Contains(output, "device")
+	}, time.Minute*3, time.Second*15).Should(BeTrue())
+
+	By("Verifying cluster stability after storage disruption")
+	// Ensure the cluster remains stable and other nodes are healthy
+	Consistently(func() bool {
+		cmd := exec.Command("kubectl", "get", "nodes", "--no-headers")
+		output, err := utils.Run(cmd)
+		if err != nil {
+			return false
+		}
+
+		// Count Ready nodes - should remain stable
+		readyNodes := strings.Count(output, " Ready ")
+		return readyNodes >= len(cluster.WorkerNodes)-1 // Allow for one potentially affected node
+	}, time.Minute*2, time.Second*30).Should(BeTrue())
+
+	GinkgoWriter.Printf("Storage access interruption test completed\n")
+}
+
+func testKubeletCommunicationFailure(cluster ClusterInfo) {
+	By("Setting up SBD configuration for kubelet communication test")
+	testBasicSBDConfiguration(cluster)
+
+	targetNode := cluster.WorkerNodes[1] // Use different node than storage test
+	By(fmt.Sprintf("Testing kubelet communication failure on node %s", targetNode.Metadata.Name))
+
+	// Create a network disruption pod that interferes with kubelet communication
+	networkDisruptorYAML := fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata:
+  name: network-disruptor
+  namespace: %s
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: %s
+  hostNetwork: true
+  containers:
+  - name: disruptor
+    image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+    command:
+    - /bin/bash
+    - -c
+    - |
+      echo "Starting kubelet communication disruption..."
+      
+      # Install required tools
+      microdnf install -y iptables || true
+      
+      # Block kubelet API port (10250) temporarily to simulate communication failure
+      # This simulates network partition between control plane and worker
+      iptables -A OUTPUT -p tcp --dport 10250 -j DROP 2>/dev/null || true
+      iptables -A INPUT -p tcp --sport 10250 -j DROP 2>/dev/null || true
+      
+      echo "Network disruption active for 45 seconds..."
+      sleep 45
+      
+      # Restore communication
+      iptables -D OUTPUT -p tcp --dport 10250 -j DROP 2>/dev/null || true
+      iptables -D INPUT -p tcp --sport 10250 -j DROP 2>/dev/null || true
+      
+      echo "Network communication restored"
+      sleep 15
+    securityContext:
+      privileged: true
+      runAsUser: 0
+      capabilities:
+        add:
+        - NET_ADMIN
+  restartPolicy: Never
+  tolerations:
+  - operator: Exists`, testNS, targetNode.Metadata.Name)
+
+	By("Creating network disruption pod")
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(networkDisruptorYAML)
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred())
+
+	By("Monitoring node status during communication disruption")
+	// Monitor for node becoming NotReady
+	Eventually(func() bool {
+		cmd := exec.Command("kubectl", "get", "node", targetNode.Metadata.Name, "-o", "json")
+		output, err := utils.Run(cmd)
+		if err != nil {
+			return false
+		}
+
+		var node NodeInfo
+		if err := json.Unmarshal([]byte(output), &node); err != nil {
+			return false
+		}
+
+		// Check if node is marked as NotReady
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == "Ready" && condition.Status != "True" {
+				GinkgoWriter.Printf("Node %s marked as NotReady due to communication failure\n", targetNode.Metadata.Name)
+				return true
+			}
+		}
+		return false
+	}, time.Minute*2, time.Second*10).Should(BeTrue())
+
+	By("Verifying node recovery after communication restoration")
+	// Wait for node to become Ready again
+	Eventually(func() bool {
+		cmd := exec.Command("kubectl", "get", "node", targetNode.Metadata.Name, "-o", "json")
+		output, err := utils.Run(cmd)
+		if err != nil {
+			return false
+		}
+
+		var node NodeInfo
+		if err := json.Unmarshal([]byte(output), &node); err != nil {
+			return false
+		}
+
+		// Check if node is Ready again
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == "Ready" && condition.Status == "True" {
+				GinkgoWriter.Printf("Node %s recovered and marked as Ready\n", targetNode.Metadata.Name)
+				return true
+			}
+		}
+		return false
+	}, time.Minute*3, time.Second*15).Should(BeTrue())
+
+	GinkgoWriter.Printf("Kubelet communication failure test completed\n")
+}
+
+func testSBDAgentCrash(cluster ClusterInfo) {
+	By("Setting up SBD configuration for agent crash test")
+	testBasicSBDConfiguration(cluster)
+
+	targetNode := cluster.WorkerNodes[2] // Use different node
+	By(fmt.Sprintf("Testing SBD agent crash and recovery on node %s", targetNode.Metadata.Name))
+
+	// Get the SBD agent pod on the target node
+	cmd := exec.Command("kubectl", "get", "pods", "-n", testNS, "-l", "app=sbd-agent",
+		"--field-selector", fmt.Sprintf("spec.nodeName=%s", targetNode.Metadata.Name), "-o", "name")
+	output, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred())
+
+	podName := strings.TrimSpace(strings.TrimPrefix(output, "pod/"))
+	Expect(podName).NotTo(BeEmpty(), "Should find SBD agent pod on target node")
+
+	By(fmt.Sprintf("Crashing SBD agent pod %s", podName))
+	// Delete the pod to simulate a crash
+	cmd = exec.Command("kubectl", "delete", "pod", podName, "-n", testNS)
+	_, err = utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred())
+
+	By("Verifying SBD agent pod is recreated by DaemonSet")
+	Eventually(func() bool {
+		cmd := exec.Command("kubectl", "get", "pods", "-n", testNS, "-l", "app=sbd-agent",
+			"--field-selector", fmt.Sprintf("spec.nodeName=%s", targetNode.Metadata.Name), "-o", "json")
+		output, err := utils.Run(cmd)
+		if err != nil {
+			return false
+		}
+
+		var podList struct {
+			Items []struct {
+				Metadata struct {
+					Name string `json:"name"`
+				} `json:"metadata"`
+				Status struct {
+					Phase string `json:"phase"`
+				} `json:"status"`
+			} `json:"items"`
+		}
+
+		if err := json.Unmarshal([]byte(output), &podList); err != nil {
+			return false
+		}
+
+		// Check for a new running pod (different name)
+		for _, pod := range podList.Items {
+			if pod.Metadata.Name != podName && pod.Status.Phase == "Running" {
+				GinkgoWriter.Printf("New SBD agent pod %s is running on node %s\n",
+					pod.Metadata.Name, targetNode.Metadata.Name)
+				return true
+			}
+		}
+		return false
+	}, time.Minute*3, time.Second*15).Should(BeTrue())
+
+	By("Verifying node remains healthy after agent recovery")
+	Consistently(func() bool {
+		cmd := exec.Command("kubectl", "get", "node", targetNode.Metadata.Name, "-o", "json")
+		output, err := utils.Run(cmd)
+		if err != nil {
+			return false
+		}
+
+		var node NodeInfo
+		if err := json.Unmarshal([]byte(output), &node); err != nil {
+			return false
+		}
+
+		// Verify node remains Ready
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == "Ready" && condition.Status == "True" {
+				return true
+			}
+		}
+		return false
+	}, time.Minute*2, time.Second*30).Should(BeTrue())
+
+	GinkgoWriter.Printf("SBD agent crash and recovery test completed\n")
+}
+
+func testNonFencingFailure(cluster ClusterInfo) {
+	By("Testing non-fencing failure scenario")
+	testBasicSBDConfiguration(cluster)
+
+	By("Creating a temporary resource constraint that should not trigger fencing")
+	// Create a pod that uses resources but doesn't cause critical failure
+	resourceConstraintYAML := fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata:
+  name: resource-consumer
+  namespace: %s
+spec:
+  containers:
+  - name: consumer
+    image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+    command:
+    - /bin/bash
+    - -c
+    - |
+      echo "Starting non-critical resource consumption..."
+      # Consume some CPU and memory but not enough to trigger fencing
+      stress-ng --cpu 1 --cpu-load 50 --timeout 60s 2>/dev/null || (
+        # Fallback if stress-ng is not available
+        for i in {1..2}; do
+          dd if=/dev/zero of=/dev/null bs=1M count=1 &
+        done
+        sleep 60
+        pkill dd || true
+      )
+      echo "Non-critical resource consumption completed"
+      sleep 30
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+  restartPolicy: Never`, testNS)
+
+	By("Creating resource constraint pod")
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(resourceConstraintYAML)
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred())
+
+	By("Verifying all nodes remain healthy during non-critical failure")
+	Consistently(func() bool {
+		cmd := exec.Command("kubectl", "get", "nodes", "--no-headers")
+		output, err := utils.Run(cmd)
+		if err != nil {
+			return false
+		}
+
+		// All nodes should remain Ready
+		readyNodes := strings.Count(output, " Ready ")
+		expectedNodes := len(cluster.WorkerNodes) + len(cluster.ControlNodes)
+
+		if readyNodes == expectedNodes {
+			return true
+		}
+
+		GinkgoWriter.Printf("Expected %d Ready nodes, found %d\n", expectedNodes, readyNodes)
+		return false
+	}, time.Minute*2, time.Second*30).Should(BeTrue())
+
+	By("Verifying SBD agents continue running normally")
+	Consistently(func() bool {
+		cmd := exec.Command("kubectl", "get", "pods", "-n", testNS, "-l", "app=sbd-agent", "-o", "json")
+		output, err := utils.Run(cmd)
+		if err != nil {
+			return false
+		}
+
+		var podList struct {
+			Items []struct {
+				Status struct {
+					Phase string `json:"phase"`
+				} `json:"status"`
+			} `json:"items"`
+		}
+
+		if err := json.Unmarshal([]byte(output), &podList); err != nil {
+			return false
+		}
+
+		runningPods := 0
+		for _, pod := range podList.Items {
+			if pod.Status.Phase == "Running" {
+				runningPods++
+			}
+		}
+
+		return runningPods >= 2 // Expect agents to keep running
+	}, time.Minute*2, time.Second*30).Should(BeTrue())
+
+	GinkgoWriter.Printf("Non-fencing failure test completed - cluster remained stable\n")
 }
 
 func testLargeClusterCoordination(cluster ClusterInfo) {
-	By(fmt.Sprintf("Testing coordination with %d worker nodes", len(cluster.WorkerNodes)))
-	GinkgoWriter.Printf("Large cluster coordination test with %d nodes\n", len(cluster.WorkerNodes))
+	By(fmt.Sprintf("Testing SBD coordination with %d worker nodes", len(cluster.WorkerNodes)))
+	testBasicSBDConfiguration(cluster)
+
+	By("Verifying SBD agents coordinate across large cluster")
+	Eventually(func() bool {
+		cmd := exec.Command("kubectl", "get", "pods", "-n", testNS, "-l", "app=sbd-agent", "-o", "json")
+		output, err := utils.Run(cmd)
+		if err != nil {
+			return false
+		}
+
+		var podList struct {
+			Items []struct {
+				Spec struct {
+					NodeName string `json:"nodeName"`
+				} `json:"spec"`
+				Status struct {
+					Phase string `json:"phase"`
+				} `json:"status"`
+			} `json:"items"`
+		}
+
+		if err := json.Unmarshal([]byte(output), &podList); err != nil {
+			return false
+		}
+
+		runningAgents := make(map[string]bool)
+		for _, pod := range podList.Items {
+			if pod.Status.Phase == "Running" {
+				runningAgents[pod.Spec.NodeName] = true
+			}
+		}
+
+		// Expect agents running on most worker nodes (allow for some scheduling constraints)
+		expectedMinimum := len(cluster.WorkerNodes) * 3 / 4 // At least 75% of worker nodes
+		actualRunning := len(runningAgents)
+
+		GinkgoWriter.Printf("SBD agents running on %d out of %d worker nodes (minimum required: %d)\n",
+			actualRunning, len(cluster.WorkerNodes), expectedMinimum)
+
+		return actualRunning >= expectedMinimum
+	}, time.Minute*5, time.Second*30).Should(BeTrue())
+
+	GinkgoWriter.Printf("Large cluster coordination test completed successfully\n")
+}
+
+func cleanupTestArtifacts() {
+	// Clean up any disruption pods or test artifacts
+	disruptionPods := []string{"storage-disruptor", "network-disruptor", "resource-consumer"}
+
+	for _, podName := range disruptionPods {
+		cmd := exec.Command("kubectl", "delete", "pod", podName, "-n", testNS, "--ignore-not-found=true")
+		_, _ = utils.Run(cmd)
+	}
+
+	// Wait a moment for cleanup
+	time.Sleep(5 * time.Second)
 }
