@@ -71,7 +71,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 .PHONY: test-all
-test-all: test test-smoke test-multinode ## Run all tests: unit tests, smoke tests, and multinode tests
+test-all: test test-smoke test-e2e ## Run all tests: unit tests, smoke tests, and e2e tests
 
 # Smoke Test Configuration
 # The smoke tests can either reuse an existing CRC environment or recreate it from scratch.
@@ -209,9 +209,9 @@ destroy-ocp-aws: ## Destroy OpenShift cluster on AWS
 		echo "No cluster directory found - cluster may already be destroyed"; \
 	fi
 
-.PHONY: test-multinode
-test-multinode: ## Run multi-node tests on existing OpenShift cluster
-	@echo "Running multi-node tests on existing OpenShift cluster..."
+.PHONY: test-e2e
+test-e2e: ## Run e2e tests on existing OpenShift cluster
+	@echo "Running e2e tests on existing OpenShift cluster..."
 	@command -v kubectl >/dev/null 2>&1 || { \
 		echo "kubectl is not installed. Please install it manually."; \
 		exit 1; \
@@ -221,18 +221,18 @@ test-multinode: ## Run multi-node tests on existing OpenShift cluster
 		echo "Cannot connect to Kubernetes cluster. Please ensure KUBECONFIG is set correctly."; \
 		exit 1; \
 	}
-	@echo "Running multi-node test suite..."
-	@go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus="Multi-Node"
+	@echo "Running e2e test suite..."
+	@go test ./test/e2e/ -v -ginkgo.v
 
-.PHONY: provision-and-test-multinode
-provision-and-test-multinode: ## Provision AWS cluster and run multi-node tests
-	@echo "Provisioning AWS cluster and running multi-node tests..."
+.PHONY: provision-and-test-e2e
+provision-and-test-e2e: ## Provision AWS cluster and run e2e tests
+	@echo "Provisioning AWS cluster and running e2e tests..."
 	@$(MAKE) provision-ocp-aws
 	@echo "Waiting for cluster to be ready..."
 	@sleep 60
 	@echo "Setting up kubeconfig..."
 	@export KUBECONFIG=$$(pwd)/cluster/auth/kubeconfig
-	@$(MAKE) test-multinode
+	@$(MAKE) test-e2e
 	@if [ "$(CLEANUP_AFTER_TEST)" = "true" ]; then \
 		echo "Cleaning up AWS cluster..."; \
 		$(MAKE) destroy-ocp-aws; \

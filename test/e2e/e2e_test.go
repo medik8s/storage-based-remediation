@@ -62,7 +62,7 @@ var (
 	testNS      string
 )
 
-var _ = Describe("SBD Operator Multi-Node E2E Tests", func() {
+var _ = Describe("SBD Operator E2E Tests", func() {
 	BeforeEach(func() {
 		// Generate unique namespace for each test
 		testNS = fmt.Sprintf("sbd-e2e-test-%d", rand.Intn(10000))
@@ -76,7 +76,7 @@ var _ = Describe("SBD Operator Multi-Node E2E Tests", func() {
 		// Discover cluster topology
 		discoverClusterTopology()
 
-		By(fmt.Sprintf("Running tests on cluster with %d total nodes (%d workers, %d control plane)",
+		By(fmt.Sprintf("Running e2e tests on cluster with %d total nodes (%d workers, %d control plane)",
 			clusterInfo.TotalNodes, len(clusterInfo.WorkerNodes), len(clusterInfo.ControlNodes)))
 	})
 
@@ -90,7 +90,7 @@ var _ = Describe("SBD Operator Multi-Node E2E Tests", func() {
 		cleanupTestArtifacts()
 	})
 
-	Context("SBD Failure Simulation Tests", func() {
+	Context("SBD E2E Failure Simulation Tests", func() {
 		It("should handle basic SBD configuration and agent deployment", func() {
 			if len(clusterInfo.WorkerNodes) < 3 {
 				Skip("Test requires at least 3 worker nodes")
