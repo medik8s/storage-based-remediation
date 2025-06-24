@@ -43,7 +43,7 @@ const metricsServiceName = "sbd-operator-controller-manager-metrics-service"
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "sbd-operator-metrics-binding"
 
-var _ = Describe("Manager", Ordered, func() {
+var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 	var controllerPodName string
 
 	// Verify the environment is set up correctly (setup handled by Makefile)

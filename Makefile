@@ -70,24 +70,27 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
-# E2E Test Configuration
-# The e2e tests can either reuse an existing CRC environment or recreate it from scratch.
-# Use 'test-e2e' to reuse existing CRC (faster) or 'test-e2e-fresh' for clean environment.
+.PHONY: test-all
+test-all: test test-smoke test-multinode ## Run all tests: unit tests, smoke tests, and multinode tests
+
+# Smoke Test Configuration
+# The smoke tests can either reuse an existing CRC environment or recreate it from scratch.
+# Use 'test-smoke' to reuse existing CRC (faster) or 'test-smoke-fresh' for clean environment.
 #
 # Environment Variables:
-# - E2E_CLEANUP_SKIP=true: Skip cleanup after tests (useful for debugging)
+# - SMOKE_CLEANUP_SKIP=true: Skip cleanup after tests (useful for debugging)
 # - CERT_MANAGER_INSTALL_SKIP=true: Skip CertManager installation
 # - QUAY_REGISTRY: Container registry (default: quay.io)
 # - QUAY_ORG: Container organization (default: medik8s)
 # - VERSION: Image version tag (default: latest)
 #
-# The setup-test-e2e target handles:
+# The setup-test-smoke target handles:
 # 1. Starting CRC cluster (only if not already running)
 # 2. Building and loading container images
 # 3. Installing CRDs
 # 4. Deploying the operator
 # 5. Waiting for operator readiness
-CRC_CLUSTER ?= sbd-operator-test-e2e
+CRC_CLUSTER ?= sbd-operator-test-smoke
 
 .PHONY: load-images
 load-images:
@@ -97,14 +100,14 @@ load-images:
 	@eval $$(crc podman-env) && $(CONTAINER_TOOL) load -i bin/$(OPERATOR_IMG).tar
 	@eval $$(crc podman-env) && $(CONTAINER_TOOL) load -i bin/$(AGENT_IMG).tar
 
-.PHONY: setup-test-e2e
-setup-test-e2e: ## Set up CRC environment for e2e tests (start CRC only if not running)
+.PHONY: setup-test-smoke
+setup-test-smoke: ## Set up CRC environment for smoke tests (start CRC only if not running)
 	@command -v crc >/dev/null 2>&1 || { \
 		echo "CRC is not installed. Please install CRC manually."; \
 		echo "Visit: https://developers.redhat.com/products/codeready-containers/download"; \
 		exit 1; \
 	}
-	@echo "Setting up CRC environment for e2e tests..."
+	@echo "Setting up CRC environment for smoke tests..."
 	@if crc status | grep -q "CRC VM.*Running"; then \
 		echo "CRC is already running, skipping CRC start..."; \
 	else \
@@ -129,34 +132,34 @@ setup-test-e2e: ## Set up CRC environment for e2e tests (start CRC only if not r
 		kubectl logs -n sbd-operator-system -l control-plane=controller-manager --tail=20 || true; \
 		exit 1; \
 	}
-	@echo "E2E environment setup complete!"
+	@echo "Smoke test environment setup complete!"
 
-.PHONY: test-e2e-fresh
-test-e2e-fresh: destroy-crc setup-test-e2e test-e2e
+.PHONY: test-smoke-fresh
+test-smoke-fresh: destroy-crc setup-test-smoke test-smoke
 
-.PHONY: test-e2e
-test-e2e: setup-test-e2e ## Run the e2e tests on CRC OpenShift cluster (setup handled in setup-test-e2e).
-	@echo "Running e2e tests on CRC OpenShift cluster..."
+.PHONY: test-smoke
+test-smoke: setup-test-smoke ## Run the smoke tests on CRC OpenShift cluster (setup handled in setup-test-smoke).
+	@echo "Running smoke tests on CRC OpenShift cluster..."
 	@eval $$(crc oc-env) && \
 	QUAY_REGISTRY=$(QUAY_REGISTRY) QUAY_ORG=$(QUAY_ORG) VERSION=$(VERSION) \
-	go test ./test/e2e/ -v -ginkgo.v; \
+	go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus="Smoke"; \
 	TEST_EXIT_CODE=$$?; \
-	if [ "$(E2E_CLEANUP_SKIP)" != "true" ]; then \
-		echo "Cleaning up e2e environment (set E2E_CLEANUP_SKIP=true to skip)..."; \
-		$(MAKE) cleanup-test-e2e; \
+	if [ "$(SMOKE_CLEANUP_SKIP)" != "true" ]; then \
+		echo "Cleaning up smoke test environment (set SMOKE_CLEANUP_SKIP=true to skip)..."; \
+		$(MAKE) cleanup-test-smoke; \
 	else \
-		echo "Skipping cleanup (E2E_CLEANUP_SKIP=true)"; \
+		echo "Skipping cleanup (SMOKE_CLEANUP_SKIP=true)"; \
 	fi; \
 	exit $$TEST_EXIT_CODE
 
-.PHONY: test-e2e-crc
-test-e2e-crc: ## Run e2e tests specifically on CRC OpenShift cluster
-	@echo "Setting up and running e2e tests on CRC OpenShift cluster..."
-	@export USE_CRC=true && $(MAKE) test-e2e
+.PHONY: test-smoke-crc
+test-smoke-crc: ## Run smoke tests specifically on CRC OpenShift cluster
+	@echo "Setting up and running smoke tests on CRC OpenShift cluster..."
+	@export USE_CRC=true && $(MAKE) test-smoke
 
-.PHONY: test-e2e-kind
-test-e2e-kind: ## Run e2e tests on Kind Kubernetes cluster (legacy support)
-	@echo "Setting up and running e2e tests on Kind cluster..."
+.PHONY: test-smoke-kind
+test-smoke-kind: ## Run smoke tests on Kind Kubernetes cluster (legacy support)
+	@echo "Setting up and running smoke tests on Kind cluster..."
 	@export USE_CRC=false && \
 	command -v kind >/dev/null 2>&1 || { \
 		echo "Kind is not installed. Please install Kind manually."; \
@@ -167,7 +170,7 @@ test-e2e-kind: ## Run e2e tests on Kind Kubernetes cluster (legacy support)
 	fi && \
 	KIND_CLUSTER=$(CRC_CLUSTER) \
 	QUAY_REGISTRY=$(QUAY_REGISTRY) QUAY_ORG=$(QUAY_ORG) VERSION=$(VERSION) \
-	go test ./test/e2e/ -v -ginkgo.v && \
+	go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus="Smoke" && \
 	kind delete cluster --name $(CRC_CLUSTER)
 
 ##@ OpenShift on AWS
@@ -206,9 +209,9 @@ destroy-ocp-aws: ## Destroy OpenShift cluster on AWS
 		echo "No cluster directory found - cluster may already be destroyed"; \
 	fi
 
-.PHONY: test-e2e-multinode
-test-e2e-multinode: ## Run multi-node e2e tests on existing OpenShift cluster
-	@echo "Running multi-node e2e tests on existing OpenShift cluster..."
+.PHONY: test-multinode
+test-multinode: ## Run multi-node tests on existing OpenShift cluster
+	@echo "Running multi-node tests on existing OpenShift cluster..."
 	@command -v kubectl >/dev/null 2>&1 || { \
 		echo "kubectl is not installed. Please install it manually."; \
 		exit 1; \
@@ -218,18 +221,18 @@ test-e2e-multinode: ## Run multi-node e2e tests on existing OpenShift cluster
 		echo "Cannot connect to Kubernetes cluster. Please ensure KUBECONFIG is set correctly."; \
 		exit 1; \
 	}
-	@echo "Running multi-node e2e test suite..."
+	@echo "Running multi-node test suite..."
 	@go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus="Multi-Node"
 
 .PHONY: provision-and-test-multinode
-provision-and-test-multinode: ## Provision AWS cluster and run multi-node e2e tests
-	@echo "Provisioning AWS cluster and running multi-node e2e tests..."
+provision-and-test-multinode: ## Provision AWS cluster and run multi-node tests
+	@echo "Provisioning AWS cluster and running multi-node tests..."
 	@$(MAKE) provision-ocp-aws
 	@echo "Waiting for cluster to be ready..."
 	@sleep 60
 	@echo "Setting up kubeconfig..."
 	@export KUBECONFIG=$$(pwd)/cluster/auth/kubeconfig
-	@$(MAKE) test-e2e-multinode
+	@$(MAKE) test-multinode
 	@if [ "$(CLEANUP_AFTER_TEST)" = "true" ]; then \
 		echo "Cleaning up AWS cluster..."; \
 		$(MAKE) destroy-ocp-aws; \
@@ -237,9 +240,9 @@ provision-and-test-multinode: ## Provision AWS cluster and run multi-node e2e te
 		echo "Cluster preserved. Run 'make destroy-ocp-aws' to clean up manually."; \
 	fi
 
-.PHONY: cleanup-test-e2e
-cleanup-test-e2e: ## Clean up e2e test environment and stop CRC cluster
-	@echo "Cleaning up e2e test environment..."
+.PHONY: cleanup-test-smoke
+cleanup-test-smoke: ## Clean up smoke test environment and stop CRC cluster
+	@echo "Cleaning up smoke test environment..."
 	@eval $$(crc oc-env) && kubectl delete ns sbd-operator-system --ignore-not-found=true || true
 	@eval $$(crc oc-env) && kubectl delete ns sbd-system --ignore-not-found=true || true
 	@eval $$(crc oc-env) && kubectl delete sbdconfig --all --ignore-not-found=true || true
