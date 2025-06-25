@@ -1022,7 +1022,8 @@ spec:
         - --health-probe-bind-address=:8081
         command:
         - /manager
-        image: quay.io/medik8s/sbd-operator:latest
+        image: quay.io/medik8s/sbd-operator@sha256:357594cbd71062c33af808db4e1fef1a8c8ba28b7c04e96d0fd7f6a909274c09
+        imagePullPolicy: Never
         livenessProbe:
           httpGet:
             path: /healthz

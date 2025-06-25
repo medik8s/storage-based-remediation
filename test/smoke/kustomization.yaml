@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- ../../config/openshift-default
+
+#images:
+#- name: controller:latest
+#  newName: quay.io/medik8s/sbd-operator
+#  newTag: latest
+
+patches:
+- path: ./image-pull-policy-patch.yaml
+  target:
+    kind: Deployment
+    name: controller-manager

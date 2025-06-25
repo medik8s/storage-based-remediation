@@ -7,6 +7,11 @@ FROM registry.access.redhat.com/ubi9/go-toolset:latest AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
+# Build arguments for injecting version information
+ARG GIT_COMMIT=unknown
+ARG GIT_DESCRIBE=unknown
+ARG BUILD_DATE=unknown
+
 # Install build dependencies and certificates for HTTPS connections
 # Temp: RUN microdnf install -y git go
 
@@ -36,7 +41,10 @@ RUN mkdir -p bin
 # -ldflags: Linker flags to reduce binary size and remove debug info
 RUN CGO_ENABLED=${CGO_ENABLED:-0} GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build \
     -a -installsuffix cgo \
-    -ldflags='-w -s -extldflags "-static"' \
+    -ldflags="-w -s -extldflags '-static' \
+    -X 'github.com/medik8s/sbd-operator/pkg/version.GitCommit=${GIT_COMMIT}' \
+    -X 'github.com/medik8s/sbd-operator/pkg/version.GitDescribe=${GIT_DESCRIBE}' \
+    -X 'github.com/medik8s/sbd-operator/pkg/version.BuildDate=${BUILD_DATE}'" \
     -o bin/sbd-agent \
     ./cmd/sbd-agent/main.go
 

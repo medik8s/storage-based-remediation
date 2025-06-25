@@ -39,6 +39,7 @@ import (
 
 	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
 	"github.com/medik8s/sbd-operator/internal/controller"
+	"github.com/medik8s/sbd-operator/pkg/version"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -91,6 +92,9 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Log build information at startup
+	setupLog.Info("SBD Operator starting", "buildInfo", version.GetFormattedBuildInfo())
 
 	/*
 	 * LEADER ELECTION IS CRITICAL FOR SBD FENCING OPERATIONS

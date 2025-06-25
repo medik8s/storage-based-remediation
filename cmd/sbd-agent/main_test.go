@@ -1442,7 +1442,9 @@ func TestValidateWatchdogTiming(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			valid, warning := validateWatchdogTiming(tt.petInterval)
+			// Use 60 second watchdog timeout (the hardcoded value the tests were based on)
+			watchdogTimeout := 60 * time.Second
+			valid, warning := validateWatchdogTiming(tt.petInterval, watchdogTimeout)
 
 			if tt.wantErr {
 				if valid {

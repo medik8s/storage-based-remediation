@@ -56,7 +56,7 @@ func getProjectImage() string {
 		org = "sbd-operator"
 	}
 
-	version := os.Getenv("VERSION")
+	version := os.Getenv("TAG")
 	if version == "" {
 		version = "e2e-test"
 	}

@@ -4,6 +4,11 @@ FROM registry.access.redhat.com/ubi9/go-toolset:latest AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
+# Build arguments for injecting version information
+ARG GIT_COMMIT=unknown
+ARG GIT_DESCRIBE=unknown
+ARG BUILD_DATE=unknown
+
 # Set GOTOOLCHAIN to auto to allow Go to download newer versions
 # Set to local to avoid downloading newer versions of Go
 ENV GOTOOLCHAIN=auto
@@ -29,7 +34,10 @@ RUN go version
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
 RUN CGO_ENABLED=${CGO_ENABLED:-0} GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build \
     -a -installsuffix cgo \
-    -ldflags='-w -s -extldflags "-static"' \
+    -ldflags="-w -s -extldflags '-static' \
+    -X 'github.com/medik8s/sbd-operator/pkg/version.GitCommit=${GIT_COMMIT}' \
+    -X 'github.com/medik8s/sbd-operator/pkg/version.GitDescribe=${GIT_DESCRIBE}' \
+    -X 'github.com/medik8s/sbd-operator/pkg/version.BuildDate=${BUILD_DATE}'" \
     -o bin/manager \
     ./cmd/main.go
 

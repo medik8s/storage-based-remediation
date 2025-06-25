@@ -6,3 +6,5 @@ images:
 - name: controller
   newName: quay.io/medik8s/sbd-operator
   newTag: latest
+- name: imagePullPolicy
+  newName: Never

@@ -5,10 +5,24 @@ OPERATOR_IMG ?= sbd-operator
 AGENT_IMG ?= sbd-agent
 QUAY_OPERATOR_IMG ?= $(QUAY_REGISTRY)/$(QUAY_ORG)/$(OPERATOR_IMG)
 QUAY_AGENT_IMG ?= $(QUAY_REGISTRY)/$(QUAY_ORG)/$(AGENT_IMG)
+
+# VERSION defines the project version for the bundle.
+# Update this value when you upgrade the version of your project.
+# To re-generate a bundle for another specific version without changing the standard setup, you can:
+# - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
+# - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
 VERSION ?= latest
+TAG ?= latest
+
+# Build information
+BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+GIT_DESCRIBE ?= $(shell git describe --tags --dirty 2>/dev/null || echo "unknown")
 
 # Legacy IMG variable for backwards compatibility (maps to operator image)
-IMG ?= $(QUAY_OPERATOR_IMG):$(VERSION)
+IMG ?= $(QUAY_OPERATOR_IMG):$(TAG)
+OPERATOR_SHA=$$(podman inspect $(QUAY_OPERATOR_IMG):$(TAG) --format "{{.ID}}" )
+AGENT_SHA=$$(podman inspect $(QUAY_AGENT_IMG):$(TAG) --format "{{.ID}}" )
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -98,8 +112,8 @@ CRC_CLUSTER ?= sbd-operator-test-smoke
 .PHONY: load-images
 load-images:
 	@echo "Loading images into CRC..."
-	$(CONTAINER_TOOL) save --format docker-archive $(QUAY_OPERATOR_IMG):$(VERSION) -o bin/$(OPERATOR_IMG).tar
-	$(CONTAINER_TOOL) save --format docker-archive $(QUAY_AGENT_IMG):$(VERSION) -o bin/$(AGENT_IMG).tar
+	$(CONTAINER_TOOL) save --format docker-archive $(QUAY_OPERATOR_IMG):$(TAG) -o bin/$(OPERATOR_IMG).tar
+	$(CONTAINER_TOOL) save --format docker-archive $(QUAY_AGENT_IMG):$(TAG) -o bin/$(AGENT_IMG).tar
 	@eval $$(crc podman-env) && $(CONTAINER_TOOL) load -i bin/$(OPERATOR_IMG).tar
 	@eval $$(crc podman-env) && $(CONTAINER_TOOL) load -i bin/$(AGENT_IMG).tar
 
@@ -127,12 +141,19 @@ setup-test-smoke: ## Set up CRC environment for smoke tests (start CRC only if n
 .PHONY: test-smoke-fresh
 test-smoke-fresh: destroy-crc setup-test-smoke build-images load-images test-smoke
 
+.PHONY: test-smoke-reload
+test-smoke-reload:
+	@echo "Reloading operator deployment..."
+	@eval $$(crc oc-env) && kubectl patch deployment sbd-operator-controller-manager -n sbd-operator-system -p '{"spec":{"template":{"spec":{"containers":[{"name":"manager","image":"$(QUAY_OPERATOR_IMG)@sha256:$$(podman inspect $(QUAY_AGENT_IMG):$(TAG) --format "{{.ID}}"| head -c 12 )","imagePullPolicy":"Never"}]}}}}'
+	@eval $$(crc oc-env) && kubectl patch sbdconfig test-config -n sbd-operator-system -p '{"spec":{"image":"$(QUAY_AGENT_IMG)@sha256:$$(podman inspect $(QUAY_AGENT_IMG):$(TAG) --format "{{.ID}}"| head -c 12 )"}}'
+
+
 .PHONY: test-smoke
 test-smoke: setup-test-smoke cleanup-test-smoke load-images ## Run the smoke tests on CRC OpenShift cluster (setup handled in setup-test-smoke).
 	@echo "Building OpenShift installer with SecurityContextConstraints..."
-	@$(MAKE) build-openshift-installer
+	@$(MAKE) build-smoke-installer
 	@echo "Deploying operator to CRC with OpenShift support..."
-	@eval $$(crc oc-env) && kubectl apply -f dist/install-openshift.yaml --server-side=true
+	@eval $$(crc oc-env) && kubectl apply -f dist/install.yaml --server-side=true
 	@echo "Waiting for operator to be ready..."
 	@eval $$(crc oc-env) && kubectl wait --for=condition=ready pod -l control-plane=controller-manager -n sbd-operator-system --timeout=120s || { \
 		echo "Operator failed to start, checking logs..."; \
@@ -140,8 +161,10 @@ test-smoke: setup-test-smoke cleanup-test-smoke load-images ## Run the smoke tes
 		exit 1; \
 	}
 	@echo "Running smoke tests on CRC OpenShift cluster..."
+	#	OPERATOR_IMG="$(QUAY_OPERATOR_IMG)@sha256:$(OPERATOR_SHA)" \
+	#	AGENT_IMG="$(QUAY_AGENT_IMG)@sha256:$(AGENT_SHA)" \
 	@eval $$(crc oc-env) && \
-	QUAY_REGISTRY=$(QUAY_REGISTRY) QUAY_ORG=$(QUAY_ORG) VERSION=$$(podman inspect $(QUAY_OPERATOR_IMG):$(VERSION) --format "{{.ID}}" ) AGENT_VERSION=$$(podman inspect $(QUAY_AGENT_IMG):$(VERSION) --format "{{.ID}}" ) \
+	QUAY_REGISTRY=$(QUAY_REGISTRY) QUAY_ORG=$(QUAY_ORG) TAG=$(TAG) \
 	go test ./test/smoke/ -v -ginkgo.v; \
 	TEST_EXIT_CODE=$$?; \
 	if [ "$$TEST_EXIT_CODE" = "0" ]; then \
@@ -168,7 +191,7 @@ test-smoke-kind: ## Run smoke tests on Kind Kubernetes cluster (legacy support)
 		kind create cluster --name $(CRC_CLUSTER); \
 	fi && \
 	KIND_CLUSTER=$(CRC_CLUSTER) \
-	QUAY_REGISTRY=$(QUAY_REGISTRY) QUAY_ORG=$(QUAY_ORG) VERSION=$(VERSION) \
+	QUAY_REGISTRY=$(QUAY_REGISTRY) QUAY_ORG=$(QUAY_ORG) VERSION=$(TAG) \
 	go test ./test/smoke/ -v -ginkgo.v && \
 	kind delete cluster --name $(CRC_CLUSTER)
 
@@ -251,7 +274,8 @@ cleanup-test-smoke: ## Clean up smoke test environment and stop CRC cluster
 	@eval $$(crc oc-env) && kubectl delete scc sbd-operator-sbd-agent-privileged --ignore-not-found=true || true
 	@eval $$(crc oc-env) && kubectl delete clusterrolebinding sbd-operator-sbd-agent-scc-user --ignore-not-found=true || true
 	@eval $$(crc oc-env) && kubectl delete clusterrole sbd-operator-sbd-agent-scc-user --ignore-not-found=true || true
-	@$(KUSTOMIZE) build config/crd | eval $$(crc oc-env) && $(KUBECTL) delete --ignore-not-found=true -f - || true
+	@echo "Cleaning up CRDs..."
+	@eval $$(crc oc-env) && $(KUSTOMIZE) build config/crd | $(KUBECTL) delete --ignore-not-found=true -f - || true
 
 destroy-crc:
 	@echo "Deleting CRC cluster..."
@@ -273,11 +297,17 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager cmd/main.go
+	go build -ldflags="-X 'github.com/medik8s/sbd-operator/pkg/version.GitCommit=$(GIT_COMMIT)' \
+		-X 'github.com/medik8s/sbd-operator/pkg/version.GitDescribe=$(GIT_DESCRIBE)' \
+		-X 'github.com/medik8s/sbd-operator/pkg/version.BuildDate=$(BUILD_DATE)'" \
+		-o bin/manager cmd/main.go
 
 .PHONY: build-agent
 build-agent: manifests generate fmt vet ## Build SBD agent binary.
-	go build -o bin/sbd-agent cmd/sbd-agent/main.go
+	go build -ldflags="-X 'github.com/medik8s/sbd-operator/pkg/version.GitCommit=$(GIT_COMMIT)' \
+		-X 'github.com/medik8s/sbd-operator/pkg/version.GitDescribe=$(GIT_DESCRIBE)' \
+		-X 'github.com/medik8s/sbd-operator/pkg/version.BuildDate=$(BUILD_DATE)'" \
+		-o bin/sbd-agent cmd/sbd-agent/main.go
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
@@ -295,39 +325,47 @@ PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 
 .PHONY: build-operator-image
 build-operator-image: manifests generate fmt vet ## Build operator container image.
-	@echo "Building operator image: $(QUAY_OPERATOR_IMG):$(VERSION)"
-	$(CONTAINER_TOOL) build -t sbd-operator:$(VERSION) .
-	$(CONTAINER_TOOL) tag sbd-operator:$(VERSION) $(QUAY_OPERATOR_IMG):$(VERSION)
-	$(CONTAINER_TOOL) tag sbd-operator:$(VERSION) $(QUAY_OPERATOR_IMG):latest
+	@echo "Building operator image: $(QUAY_OPERATOR_IMG):$(TAG)"
+	@echo "Build info: GitDescribe=$(GIT_DESCRIBE), GitCommit=$(GIT_COMMIT), BuildDate=$(BUILD_DATE)"
+	$(CONTAINER_TOOL) build -t sbd-operator:$(TAG) \
+		--build-arg BUILD_DATE="$(BUILD_DATE)" \
+		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
+		--build-arg GIT_DESCRIBE="$(GIT_DESCRIBE)" \
+		.
+	$(CONTAINER_TOOL) tag sbd-operator:$(TAG) $(QUAY_OPERATOR_IMG):$(TAG)
+	$(CONTAINER_TOOL) tag sbd-operator:$(TAG) $(QUAY_OPERATOR_IMG):latest
 
 .PHONY: build-agent-image  
 build-agent-image: manifests generate fmt vet ## Build agent container image.
-	@echo "Building agent image: $(QUAY_AGENT_IMG):$(VERSION)"
-	$(CONTAINER_TOOL) build -f Dockerfile.sbd-agent -t sbd-agent:$(VERSION) .
-	$(CONTAINER_TOOL) tag sbd-agent:$(VERSION) $(QUAY_AGENT_IMG):$(VERSION)
-	$(CONTAINER_TOOL) tag sbd-agent:$(VERSION) $(QUAY_AGENT_IMG):latest
+	@echo "Building agent image: $(QUAY_AGENT_IMG):$(TAG)"
+	@echo "Build info: GitDescribe=$(GIT_DESCRIBE), GitCommit=$(GIT_COMMIT), BuildDate=$(BUILD_DATE)"
+	$(CONTAINER_TOOL) build -f Dockerfile.sbd-agent -t sbd-agent:$(TAG) \
+		--build-arg BUILD_DATE="$(BUILD_DATE)" \
+		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
+		--build-arg GIT_DESCRIBE="$(GIT_DESCRIBE)" \
+		.
+	$(CONTAINER_TOOL) tag sbd-agent:$(TAG) $(QUAY_AGENT_IMG):$(TAG)
+	$(CONTAINER_TOOL) tag sbd-agent:$(TAG) $(QUAY_AGENT_IMG):latest
 
 .PHONY: build-images
 build-images: build-operator-image build-agent-image ## Build both operator and agent container images.
 	@echo "Built SBD Operator images..."
-	@echo "Operator: $(QUAY_OPERATOR_IMG):$(VERSION)"
-	@echo "Agent: $(QUAY_AGENT_IMG):$(VERSION)"
+	@echo "Operator: $(QUAY_OPERATOR_IMG):$(TAG)"
+	@echo "Agent: $(QUAY_AGENT_IMG):$(TAG)"
 	@echo "Capturing image SHAs for smoke tests..."
-	@$(CONTAINER_TOOL) inspect $(QUAY_OPERATOR_IMG):$(VERSION) --format '{{.Id}}' | cut -d: -f2 | head -c 12 > bin/operator-sha.txt
-	@$(CONTAINER_TOOL) inspect $(QUAY_AGENT_IMG):$(VERSION) --format '{{.Id}}' | cut -d: -f2 | head -c 12 > bin/agent-sha.txt
-	@echo "Operator SHA: $$(cat bin/operator-sha.txt)"
-	@echo "Agent SHA: $$(cat bin/agent-sha.txt)"
+	@echo "Operator SHA: $(OPERATOR_SHA)"
+	@echo "Agent SHA: $(AGENT_SHA)"
 
 .PHONY: push-operator-image
 push-operator-image: ## Push operator container image to registry.
-	@echo "Pushing operator image: $(QUAY_OPERATOR_IMG):$(VERSION)"
-	$(CONTAINER_TOOL) push $(QUAY_OPERATOR_IMG):$(VERSION)
+	@echo "Pushing operator image: $(QUAY_OPERATOR_IMG):$(TAG)"
+	$(CONTAINER_TOOL) push $(QUAY_OPERATOR_IMG):$(TAG)
 	$(CONTAINER_TOOL) push $(QUAY_OPERATOR_IMG):latest
 
 .PHONY: push-agent-image
 push-agent-image: ## Push agent container image to registry.
-	@echo "Pushing agent image: $(QUAY_AGENT_IMG):$(VERSION)"
-	$(CONTAINER_TOOL) push $(QUAY_AGENT_IMG):$(VERSION)
+	@echo "Pushing agent image: $(QUAY_AGENT_IMG):$(TAG)"
+	$(CONTAINER_TOOL) push $(QUAY_AGENT_IMG):$(TAG)
 	$(CONTAINER_TOOL) push $(QUAY_AGENT_IMG):latest
 
 .PHONY: push-images
@@ -341,8 +379,8 @@ build-push: update-manifests build-images push-images ## Build and push both ope
 buildx: manifests generate fmt vet ## Build and push multi-platform images to registry.
 	@echo "Building and pushing multi-platform SBD Operator images..."
 	@echo "Platforms: $(PLATFORMS)"
-	@echo "Operator: $(QUAY_OPERATOR_IMG):$(VERSION)"
-	@echo "Agent: $(QUAY_AGENT_IMG):$(VERSION)"
+	@echo "Operator: $(QUAY_OPERATOR_IMG):$(TAG)"
+	@echo "Agent: $(QUAY_AGENT_IMG):$(TAG)"
 	
 	# Create buildx builder if it doesn't exist
 	- $(CONTAINER_TOOL) buildx create --name sbd-operator-builder
@@ -352,7 +390,7 @@ buildx: manifests generate fmt vet ## Build and push multi-platform images to re
 	@echo "Building and pushing multi-platform operator image..."
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) \
-		--tag $(QUAY_OPERATOR_IMG):$(VERSION) \
+		--tag $(QUAY_OPERATOR_IMG):$(TAG) \
 		--tag $(QUAY_OPERATOR_IMG):latest \
 		-f Dockerfile.cross .
 	rm Dockerfile.cross
@@ -361,7 +399,7 @@ buildx: manifests generate fmt vet ## Build and push multi-platform images to re
 	@echo "Building and pushing multi-platform agent image..."
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile.sbd-agent > Dockerfile.sbd-agent.cross
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) \
-		--tag $(QUAY_AGENT_IMG):$(VERSION) \
+		--tag $(QUAY_AGENT_IMG):$(TAG) \
 		--tag $(QUAY_AGENT_IMG):latest \
 		-f Dockerfile.sbd-agent.cross .
 	rm Dockerfile.sbd-agent.cross
@@ -389,14 +427,14 @@ docker-buildx: buildx ## Legacy alias for buildx (deprecated).
 .PHONY: update-manifests
 update-manifests: ## Update all manifests to use current QUAY image references (auto-runs with build-push).
 	@echo "Updating manifests with image references..."
-	@echo "Operator: $(QUAY_OPERATOR_IMG):$(VERSION)"
-	@echo "Agent: $(QUAY_AGENT_IMG):$(VERSION)"
+	@echo "Operator: $(QUAY_OPERATOR_IMG):$(TAG) aka. $(OPERATOR_SHA)"
+	@echo "Agent: $(QUAY_AGENT_IMG):$(TAG)  aka. $(AGENT_SHA)"
 	
 	# Update agent daemonset manifests
 	@for file in deploy/sbd-agent-daemonset*.yaml; do \
 		if [ -f "$$file" ]; then \
 			echo "Updating $$file..."; \
-			sed -i.bak 's|image: quay\.io/medik8s/sbd-agent:.*|image: $(QUAY_AGENT_IMG):$(VERSION)|g' "$$file"; \
+			sed -i.bak 's|image: quay\.io/medik8s/sbd-agent:.*|image: $(QUAY_AGENT_IMG):$(TAG)|g' "$$file"; \
 			rm -f "$$file.bak"; \
 		fi; \
 	done
@@ -405,7 +443,7 @@ update-manifests: ## Update all manifests to use current QUAY image references (
 	@for file in config/samples/*.yaml; do \
 		if [ -f "$$file" ] && grep -q 'image:' "$$file"; then \
 			echo "Updating $$file..."; \
-			sed -i.bak 's|image: "quay\.io/medik8s/sbd-agent:.*"|image: "$(QUAY_AGENT_IMG):$(VERSION)"|g' "$$file"; \
+			sed -i.bak 's|image: "quay\.io/medik8s/sbd-agent:.*"|image: "$(QUAY_AGENT_IMG):$(TAG)"|g' "$$file"; \
 			rm -f "$$file.bak"; \
 		fi; \
 	done
@@ -415,14 +453,21 @@ update-manifests: ## Update all manifests to use current QUAY image references (
 .PHONY: build-installer
 build-installer: update-manifests manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
-	cd config/manager && $(KUSTOMIZE) edit set image controller=$(QUAY_OPERATOR_IMG):$(VERSION)
+	cd config/manager && $(KUSTOMIZE) edit set image controller=$(QUAY_OPERATOR_IMG):$(TAG)
 	$(KUSTOMIZE) build config/default > dist/install.yaml
 
 .PHONY: build-openshift-installer
 build-openshift-installer: update-manifests manifests generate kustomize ## Generate a consolidated YAML with CRDs, deployment, and OpenShift SecurityContextConstraints.
 	mkdir -p dist
-	cd config/manager && $(KUSTOMIZE) edit set image controller=$(QUAY_OPERATOR_IMG):$(VERSION)
-	$(KUSTOMIZE) build config/openshift-default > dist/install-openshift.yaml
+	cd config/manager && $(KUSTOMIZE) edit set image controller=$(QUAY_OPERATOR_IMG):$(TAG)
+	$(KUSTOMIZE) build config/openshift-default > dist/install.yaml
+
+.PHONY: build-smoke-installer
+build-smoke-installer: update-manifests manifests generate kustomize ## Generate a consolidated YAML with CRDs, deployment, and OpenShift SecurityContextConstraints.
+	mkdir -p dist
+	cd config/manager && $(KUSTOMIZE) edit set image controller=$(QUAY_OPERATOR_IMG)@sha256:$(OPERATOR_SHA)
+	cd config/manager && $(KUSTOMIZE) edit set image controller=$(QUAY_OPERATOR_IMG):$(TAG)
+	$(KUSTOMIZE) build test/smoke > dist/install.yaml
 
 ##@ Deployment
 
@@ -526,9 +571,9 @@ load-images-with-sha: ## Load images into CRC with SHA-based tagging for smoke t
 	AGENT_SHA=$$(cat bin/agent-sha.txt); \
 	echo "Using Operator SHA: $$OPERATOR_SHA"; \
 	echo "Using Agent SHA: $$AGENT_SHA"; \
-	$(CONTAINER_TOOL) save --format docker-archive $(QUAY_OPERATOR_IMG):$(VERSION) -o bin/$(OPERATOR_IMG).tar; \
-	$(CONTAINER_TOOL) save --format docker-archive $(QUAY_AGENT_IMG):$(VERSION) -o bin/$(AGENT_IMG).tar; \
+	$(CONTAINER_TOOL) save --format docker-archive $(QUAY_OPERATOR_IMG):$(TAG) -o bin/$(OPERATOR_IMG).tar; \
+	$(CONTAINER_TOOL) save --format docker-archive $(QUAY_AGENT_IMG):$(TAG) -o bin/$(AGENT_IMG).tar; \
 	eval $$(crc podman-env) && $(CONTAINER_TOOL) load -i bin/$(OPERATOR_IMG).tar; \
 	eval $$(crc podman-env) && $(CONTAINER_TOOL) load -i bin/$(AGENT_IMG).tar; \
-	eval $$(crc podman-env) && $(CONTAINER_TOOL) tag $(QUAY_OPERATOR_IMG):$(VERSION) $(QUAY_OPERATOR_IMG):sha-$$OPERATOR_SHA; \
-	eval $$(crc podman-env) && $(CONTAINER_TOOL) tag $(QUAY_AGENT_IMG):$(VERSION) $(QUAY_AGENT_IMG):sha-$$AGENT_SHA
+	eval $$(crc podman-env) && $(CONTAINER_TOOL) tag $(QUAY_OPERATOR_IMG):$(TAG) $(QUAY_OPERATOR_IMG):sha-$$OPERATOR_SHA; \
+	eval $$(crc podman-env) && $(CONTAINER_TOOL) tag $(QUAY_AGENT_IMG):$(TAG) $(QUAY_AGENT_IMG):sha-$$AGENT_SHA

@@ -47,6 +47,11 @@ var (
 // getProjectImage returns the project image name based on environment variables.
 // It uses the same pattern as the Makefile QUAY_* variables, with sensible defaults for local testing.
 func getProjectImage() string {
+	// Allow complete override via OPERATOR_IMG environment variable
+	if testImg := os.Getenv("OPERATOR_IMG"); testImg != "" {
+		return testImg
+	}
+
 	registry := os.Getenv("QUAY_REGISTRY")
 	if registry == "" {
 		registry = "localhost:5000" // Local registry for testing
@@ -57,14 +62,9 @@ func getProjectImage() string {
 		org = "sbd-operator"
 	}
 
-	version := os.Getenv("VERSION")
+	version := os.Getenv("TAG")
 	if version == "" {
 		version = "smoke-test"
-	}
-
-	// Allow complete override via TEST_IMG environment variable
-	if testImg := os.Getenv("TEST_IMG"); testImg != "" {
-		return testImg
 	}
 
 	return fmt.Sprintf("%s/%s/sbd-operator:%s", registry, org, version)
@@ -73,6 +73,11 @@ func getProjectImage() string {
 // getAgentImage returns the agent image name based on environment variables.
 // It uses the same pattern as the Makefile QUAY_* variables, with sensible defaults for local testing.
 func getAgentImage() string {
+	// Allow complete override via AGENT_IMG environment variable
+	if agentImg := os.Getenv("AGENT_IMG"); agentImg != "" {
+		return agentImg
+	}
+
 	registry := os.Getenv("QUAY_REGISTRY")
 	if registry == "" {
 		registry = "localhost:5000" // Local registry for testing
@@ -83,18 +88,9 @@ func getAgentImage() string {
 		org = "sbd-operator"
 	}
 
-	// Check for AGENT_VERSION first (for SHA-based testing), then VERSION
-	version := os.Getenv("AGENT_VERSION")
-	if version == "" {
-		version = os.Getenv("VERSION")
-	}
+	version := os.Getenv("TAG")
 	if version == "" {
 		version = "smoke-test"
-	}
-
-	// Allow complete override via AGENT_IMG environment variable
-	if agentImg := os.Getenv("AGENT_IMG"); agentImg != "" {
-		return agentImg
 	}
 
 	return fmt.Sprintf("%s/%s/sbd-agent:%s", registry, org, version)

@@ -40,6 +40,7 @@ import (
 	"github.com/medik8s/sbd-operator/pkg/blockdevice"
 	"github.com/medik8s/sbd-operator/pkg/retry"
 	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
+	"github.com/medik8s/sbd-operator/pkg/version"
 	"github.com/medik8s/sbd-operator/pkg/watchdog"
 )
 
@@ -1643,6 +1644,9 @@ func main() {
 	}
 
 	logger.Info("SBD Agent starting", "version", "development")
+
+	// Log build information at startup
+	logger.Info("SBD Agent build information", "buildInfo", version.GetFormattedBuildInfo())
 
 	// Validate watchdog timing early using the configured values
 	if valid, warning := validateWatchdogTiming(*petInterval, *watchdogTimeout); !valid {
