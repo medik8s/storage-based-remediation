@@ -20,6 +20,7 @@ NC='\033[0m' # No Color
 
 # Default values
 TEST_TYPE="smoke"
+TEST_ENVIRONMENT=""
 CLEANUP_AFTER_TEST="true"
 SKIP_BUILD="false"
 SKIP_DEPLOY="false"
@@ -70,7 +71,8 @@ Run smoke or e2e tests for the SBD Operator
 
 OPTIONS:
     -t, --type TYPE         Test type: 'smoke' or 'e2e' (default: smoke)
-    -c, --no-cleanup        Skip cleanup after tests (useful for debugging)
+    -e, --env ENV           Test environment: 'crc', 'kind', 'cluster' (auto-detected if not specified)
+    -c, --no-cleanup        Skip cleanup after successful tests (cleanup is always skipped on failure)
     -b, --skip-build        Skip building container images
     -d, --skip-deploy       Skip deploying operator (assumes already deployed)
     -v, --verbose           Enable verbose output
@@ -83,15 +85,20 @@ ENVIRONMENT VARIABLES:
     CONTAINER_TOOL        Container tool (default: podman)
     KUBECTL               Kubernetes CLI tool (default: kubectl)
 
+TEST ENVIRONMENTS:
+    crc                   CodeReady Containers (OpenShift local)
+    kind                  Kind (Kubernetes in Docker)
+    cluster               Existing Kubernetes/OpenShift cluster
+
 EXAMPLES:
-    # Run smoke tests with default settings
+    # Run smoke tests with auto-detected environment
     $0
 
-    # Run e2e tests
-    $0 --type e2e
+    # Run e2e tests on existing cluster
+    $0 --type e2e --env cluster
 
-    # Run smoke tests without cleanup (for debugging)
-    $0 --type smoke --no-cleanup
+    # Run smoke tests on CRC without cleanup (for debugging)
+    $0 --type smoke --env crc --no-cleanup
 
     # Run tests with custom registry
     QUAY_REGISTRY=my-registry.io QUAY_ORG=myorg $0
@@ -107,6 +114,10 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         -t|--type)
             TEST_TYPE="$2"
+            shift 2
+            ;;
+        -e|--env)
+            TEST_ENVIRONMENT="$2"
             shift 2
             ;;
         -c|--no-cleanup)
@@ -143,6 +154,35 @@ if [[ "$TEST_TYPE" != "smoke" && "$TEST_TYPE" != "e2e" ]]; then
     exit 1
 fi
 
+# Auto-detect test environment if not specified
+if [[ -z "$TEST_ENVIRONMENT" ]]; then
+    if command -v crc &> /dev/null && crc status | grep -q "CRC VM.*Running"; then
+        TEST_ENVIRONMENT="crc"
+        log_info "Auto-detected environment: CRC"
+    elif command -v kind &> /dev/null && kind get clusters | grep -q "$CRC_CLUSTER"; then
+        TEST_ENVIRONMENT="kind"
+        log_info "Auto-detected environment: Kind"
+    elif $KUBECTL cluster-info &> /dev/null; then
+        TEST_ENVIRONMENT="cluster"
+        log_info "Auto-detected environment: existing cluster"
+    else
+        # Default to CRC for smoke tests, cluster for e2e tests
+        if [[ "$TEST_TYPE" == "smoke" ]]; then
+            TEST_ENVIRONMENT="crc"
+            log_info "Defaulting to CRC environment for smoke tests"
+        else
+            TEST_ENVIRONMENT="cluster"
+            log_info "Defaulting to existing cluster environment for e2e tests"
+        fi
+    fi
+fi
+
+# Validate test environment
+if [[ "$TEST_ENVIRONMENT" != "crc" && "$TEST_ENVIRONMENT" != "kind" && "$TEST_ENVIRONMENT" != "cluster" ]]; then
+    log_error "Invalid test environment: $TEST_ENVIRONMENT. Must be 'crc', 'kind', or 'cluster'"
+    exit 1
+fi
+
 # Set verbose output if requested
 if [[ "$VERBOSE" == "true" ]]; then
     set -x
@@ -151,6 +191,7 @@ fi
 log_info "Starting SBD Operator $TEST_TYPE tests"
 log_info "Configuration:"
 log_info "  Test Type: $TEST_TYPE"
+log_info "  Test Environment: $TEST_ENVIRONMENT"
 log_info "  Operator Image: $QUAY_OPERATOR_IMG:$TAG"
 log_info "  Agent Image: $QUAY_AGENT_IMG:$TAG"
 log_info "  Cleanup After Test: $CLEANUP_AFTER_TEST"
@@ -173,8 +214,16 @@ check_tools() {
         missing_tools+=("go")
     fi
     
-    if [[ "$TEST_TYPE" == "smoke" ]] && ! command -v crc &> /dev/null; then
+    if ! command -v make &> /dev/null; then
+        missing_tools+=("make")
+    fi
+    
+    if [[ "$TEST_ENVIRONMENT" == "crc" ]] && ! command -v crc &> /dev/null; then
         missing_tools+=("crc")
+    fi
+    
+    if [[ "$TEST_ENVIRONMENT" == "kind" ]] && ! command -v kind &> /dev/null; then
+        missing_tools+=("kind")
     fi
     
     if [[ ${#missing_tools[@]} -gt 0 ]]; then
@@ -185,16 +234,26 @@ check_tools() {
 
 # Function to setup test environment
 setup_environment() {
-    if [[ "$TEST_TYPE" == "smoke" ]]; then
-        setup_crc_environment
-    else
-        setup_cluster_environment
-    fi
+    case "$TEST_ENVIRONMENT" in
+        "crc")
+            setup_crc_environment
+            ;;
+        "kind")
+            setup_kind_environment
+            ;;
+        "cluster")
+            setup_cluster_environment
+            ;;
+        *)
+            log_error "Unknown test environment: $TEST_ENVIRONMENT"
+            exit 1
+            ;;
+    esac
 }
 
-# Function to setup CRC environment for smoke tests
+# Function to setup CRC environment
 setup_crc_environment() {
-    log_info "Setting up CRC environment for smoke tests"
+    log_info "Setting up CRC environment"
     
     if crc status | grep -q "CRC VM.*Running"; then
         log_info "CRC is already running"
@@ -213,9 +272,26 @@ setup_crc_environment() {
     log_success "CRC environment setup complete"
 }
 
+# Function to setup Kind environment
+setup_kind_environment() {
+    log_info "Setting up Kind environment"
+    
+    if ! kind get clusters | grep -q "$CRC_CLUSTER"; then
+        log_info "Creating Kind cluster: $CRC_CLUSTER"
+        kind create cluster --name "$CRC_CLUSTER"
+    else
+        log_info "Kind cluster $CRC_CLUSTER already exists"
+    fi
+    
+    # Set kubectl context to kind cluster
+    kubectl config use-context "kind-$CRC_CLUSTER"
+    
+    log_success "Kind environment setup complete"
+}
+
 # Function to setup cluster environment for e2e tests
 setup_cluster_environment() {
-    log_info "Checking cluster connectivity for e2e tests"
+    log_info "Checking cluster connectivity"
     
     if ! $KUBECTL cluster-info &> /dev/null; then
         log_error "Cannot connect to Kubernetes cluster. Please ensure KUBECONFIG is set correctly."
@@ -225,48 +301,74 @@ setup_cluster_environment() {
     log_success "Cluster connectivity verified"
 }
 
-# Function to build container images
+# Function to cleanup test environment before starting
+cleanup_before_tests() {
+    log_info "Cleaning up any existing test resources before starting"
+    
+    # Set up kubectl context based on environment
+    case "$TEST_ENVIRONMENT" in
+        "crc")
+            eval $(crc oc-env) || true
+            ;;
+        "kind")
+            kubectl config use-context "kind-$CRC_CLUSTER" || true
+            ;;
+        "cluster")
+            # Use current context
+            ;;
+    esac
+    
+    # Clean up test resources
+    $KUBECTL delete sbdconfig --all --ignore-not-found=true || true
+    $KUBECTL delete daemonset sbd-agent-test-sbdconfig -n sbd-system --ignore-not-found=true || true
+    $KUBECTL delete clusterrolebinding -l app.kubernetes.io/managed-by=sbd-operator --ignore-not-found=true || true
+    $KUBECTL delete clusterrole -l app.kubernetes.io/managed-by=sbd-operator --ignore-not-found=true || true
+    $KUBECTL delete ns sbd-operator-system --ignore-not-found=true || true
+    $KUBECTL delete ns sbd-system --ignore-not-found=true || true
+    
+    # Clean up OpenShift-specific resources if on CRC
+    if [[ "$TEST_ENVIRONMENT" == "crc" ]]; then
+        $KUBECTL delete scc sbd-operator-sbd-agent-privileged --ignore-not-found=true || true
+        $KUBECTL delete clusterrolebinding sbd-operator-sbd-agent-scc-user --ignore-not-found=true || true
+        $KUBECTL delete clusterrole sbd-operator-sbd-agent-scc-user --ignore-not-found=true || true
+    fi
+    
+    # Clean up CRDs
+    if [[ -f "bin/kustomize" ]]; then
+        ./bin/kustomize build config/crd | $KUBECTL delete --ignore-not-found=true -f - || true
+    fi
+    
+    log_success "Pre-test cleanup completed"
+}
+
+# Function to build container images using make
 build_images() {
     if [[ "$SKIP_BUILD" == "true" ]]; then
         log_info "Skipping image build as requested"
         return 0
     fi
     
-    log_info "Building container images"
+    log_info "Building container images using make"
     
-    # Generate manifests and code
-    make manifests generate fmt vet
-    
-    # Build operator image
-    log_info "Building operator image: $QUAY_OPERATOR_IMG:$TAG"
-    $CONTAINER_TOOL build -t sbd-operator:$TAG \
-        --build-arg BUILD_DATE="$BUILD_DATE" \
-        --build-arg GIT_COMMIT="$GIT_COMMIT" \
-        --build-arg GIT_DESCRIBE="$GIT_DESCRIBE" \
-        .
-    $CONTAINER_TOOL tag sbd-operator:$TAG $QUAY_OPERATOR_IMG:$TAG
-    $CONTAINER_TOOL tag sbd-operator:$TAG $QUAY_OPERATOR_IMG:latest
-    
-    # Build agent image
-    log_info "Building agent image: $QUAY_AGENT_IMG:$TAG"
-    $CONTAINER_TOOL build -f Dockerfile.sbd-agent -t sbd-agent:$TAG \
-        --build-arg BUILD_DATE="$BUILD_DATE" \
-        --build-arg GIT_COMMIT="$GIT_COMMIT" \
-        --build-arg GIT_DESCRIBE="$GIT_DESCRIBE" \
-        .
-    $CONTAINER_TOOL tag sbd-agent:$TAG $QUAY_AGENT_IMG:$TAG
-    $CONTAINER_TOOL tag sbd-agent:$TAG $QUAY_AGENT_IMG:latest
+    # Use make to build images
+    make build-images
     
     log_success "Container images built successfully"
 }
 
-# Function to load images into cluster
-load_images() {
-    if [[ "$TEST_TYPE" == "smoke" ]]; then
-        load_images_crc
-    else
-        log_info "Skipping image loading for e2e tests (assumes images are available in registry)"
-    fi
+# Function to load/push images based on environment
+load_push_images() {
+    case "$TEST_ENVIRONMENT" in
+        "crc")
+            load_images_crc
+            ;;
+        "kind")
+            load_images_kind
+            ;;
+        "cluster")
+            push_images_registry
+            ;;
+    esac
 }
 
 # Function to load images into CRC
@@ -285,6 +387,31 @@ load_images_crc() {
     log_success "Images loaded into CRC"
 }
 
+# Function to load images into Kind
+load_images_kind() {
+    log_info "Loading images into Kind cluster"
+    
+    kind load docker-image $QUAY_OPERATOR_IMG:$TAG --name "$CRC_CLUSTER"
+    kind load docker-image $QUAY_AGENT_IMG:$TAG --name "$CRC_CLUSTER"
+    
+    log_success "Images loaded into Kind cluster"
+}
+
+# Function to push images to registry
+push_images_registry() {
+    if [[ "$SKIP_BUILD" == "true" ]]; then
+        log_info "Skipping image push (build was skipped)"
+        return 0
+    fi
+    
+    log_info "Pushing images to registry using make"
+    
+    # Use make to push images
+    make push-images
+    
+    log_success "Images pushed to registry"
+}
+
 # Function to build installer (inlined from build-smoke-installer)
 build_installer() {
     if [[ "$SKIP_DEPLOY" == "true" ]]; then
@@ -294,9 +421,6 @@ build_installer() {
     
     log_info "Building installer manifest"
     
-    # Update manifests
-    update_manifests
-    
     # Create dist directory
     mkdir -p dist
     
@@ -305,41 +429,26 @@ build_installer() {
     ./../../bin/kustomize edit set image controller=$QUAY_OPERATOR_IMG:$TAG
     cd ../..
     
-    # Build installer based on test type
-    if [[ "$TEST_TYPE" == "smoke" ]]; then
+    # Build installer based on environment and test type
+    local kustomize_target=""
+    if [[ "$TEST_ENVIRONMENT" == "crc" ]]; then
         log_info "Building OpenShift installer with SecurityContextConstraints"
-        ./bin/kustomize build test/smoke > dist/install.yaml
+        kustomize_target="test/smoke"
+    elif [[ "$TEST_ENVIRONMENT" == "kind" ]]; then
+        log_info "Building Kubernetes installer for Kind"
+        kustomize_target="config/default"
     else
-        log_info "Building standard Kubernetes installer"
-        ./bin/kustomize build test/e2e > dist/install.yaml
+        log_info "Building installer for existing cluster"
+        if [[ "$TEST_TYPE" == "smoke" ]]; then
+            kustomize_target="test/smoke"
+        else
+            kustomize_target="test/e2e"
+        fi
     fi
     
+    ./bin/kustomize build "$kustomize_target" > dist/install.yaml
+    
     log_success "Installer manifest built: dist/install.yaml"
-}
-
-# Function to update manifests (inlined from update-manifests)
-update_manifests() {
-    log_info "Updating manifests with image references"
-    
-    # Update agent daemonset manifests
-    for file in deploy/sbd-agent-daemonset*.yaml; do
-        if [ -f "$file" ]; then
-            log_info "Updating $file"
-            sed -i.bak "s|image: quay\.io/medik8s/sbd-agent:.*|image: $QUAY_AGENT_IMG:$TAG|g" "$file"
-            rm -f "$file.bak"
-        fi
-    done
-    
-    # Update sample configs
-    for file in config/samples/*.yaml; do
-        if [ -f "$file" ] && grep -q 'image:' "$file"; then
-            log_info "Updating $file"
-            sed -i.bak "s|image: \"quay\.io/medik8s/sbd-agent:.*\"|image: \"$QUAY_AGENT_IMG:$TAG\"|g" "$file"
-            rm -f "$file.bak"
-        fi
-    done
-    
-    log_success "Manifests updated successfully"
 }
 
 # Function to deploy operator
@@ -351,9 +460,18 @@ deploy_operator() {
     
     log_info "Deploying operator to cluster"
     
-    if [[ "$TEST_TYPE" == "smoke" ]]; then
-        eval $(crc oc-env)
-    fi
+    # Set up kubectl context based on environment
+    case "$TEST_ENVIRONMENT" in
+        "crc")
+            eval $(crc oc-env)
+            ;;
+        "kind")
+            kubectl config use-context "kind-$CRC_CLUSTER"
+            ;;
+        "cluster")
+            # Use current context
+            ;;
+    esac
     
     $KUBECTL apply -f dist/install.yaml --server-side=true
     
@@ -371,9 +489,18 @@ deploy_operator() {
 run_tests() {
     log_info "Running $TEST_TYPE tests"
     
-    if [[ "$TEST_TYPE" == "smoke" ]]; then
-        eval $(crc oc-env)
-    fi
+    # Set up kubectl context based on environment
+    case "$TEST_ENVIRONMENT" in
+        "crc")
+            eval $(crc oc-env)
+            ;;
+        "kind")
+            kubectl config use-context "kind-$CRC_CLUSTER"
+            ;;
+        "cluster")
+            # Use current context
+            ;;
+    esac
     
     # Set environment variables for tests
     export QUAY_REGISTRY
@@ -395,8 +522,8 @@ run_tests() {
     fi
 }
 
-# Function to cleanup test environment
-cleanup_environment() {
+# Function to cleanup test environment after tests
+cleanup_after_tests() {
     if [[ "$CLEANUP_AFTER_TEST" != "true" ]]; then
         log_info "Skipping cleanup as requested"
         return 0
@@ -404,9 +531,18 @@ cleanup_environment() {
     
     log_info "Cleaning up test environment"
     
-    if [[ "$TEST_TYPE" == "smoke" ]]; then
-        eval $(crc oc-env) || true
-    fi
+    # Set up kubectl context based on environment
+    case "$TEST_ENVIRONMENT" in
+        "crc")
+            eval $(crc oc-env) || true
+            ;;
+        "kind")
+            kubectl config use-context "kind-$CRC_CLUSTER" || true
+            ;;
+        "cluster")
+            # Use current context
+            ;;
+    esac
     
     # Clean up test resources
     $KUBECTL delete sbdconfig --all --ignore-not-found=true || true
@@ -416,15 +552,23 @@ cleanup_environment() {
     $KUBECTL delete ns sbd-operator-system --ignore-not-found=true || true
     $KUBECTL delete ns sbd-system --ignore-not-found=true || true
     
-    # Clean up OpenShift-specific resources for smoke tests
-    if [[ "$TEST_TYPE" == "smoke" ]]; then
+    # Clean up environment-specific resources
+    if [[ "$TEST_ENVIRONMENT" == "crc" ]]; then
         $KUBECTL delete scc sbd-operator-sbd-agent-privileged --ignore-not-found=true || true
         $KUBECTL delete clusterrolebinding sbd-operator-sbd-agent-scc-user --ignore-not-found=true || true
         $KUBECTL delete clusterrole sbd-operator-sbd-agent-scc-user --ignore-not-found=true || true
     fi
     
     # Clean up CRDs
-    ./bin/kustomize build config/crd | $KUBECTL delete --ignore-not-found=true -f - || true
+    if [[ -f "bin/kustomize" ]]; then
+        ./bin/kustomize build config/crd | $KUBECTL delete --ignore-not-found=true -f - || true
+    fi
+    
+    # Clean up Kind cluster if requested
+    if [[ "$TEST_ENVIRONMENT" == "kind" && "${CLEANUP_KIND_CLUSTER:-false}" == "true" ]]; then
+        log_info "Destroying Kind cluster: $CRC_CLUSTER"
+        kind delete cluster --name "$CRC_CLUSTER" || true
+    fi
     
     log_success "Cleanup completed"
 }
@@ -459,9 +603,12 @@ main() {
     # Setup test environment
     setup_environment
     
+    # Always cleanup before starting tests
+    cleanup_before_tests
+    
     # Build and prepare
     build_images
-    load_images
+    load_push_images
     build_installer
     
     # Deploy and test
@@ -475,8 +622,8 @@ main() {
         CLEANUP_AFTER_TEST="false"
     fi
     
-    # Cleanup
-    cleanup_environment
+    # Cleanup only if tests passed and cleanup is requested
+    cleanup_after_tests
     
     # Final status
     if [[ $test_exit_code -eq 0 ]]; then
@@ -488,8 +635,14 @@ main() {
     exit $test_exit_code
 }
 
-# Handle script interruption
-trap cleanup_environment EXIT
+# Handle script interruption - only cleanup if tests haven't failed
+cleanup_on_interrupt() {
+    log_warning "Script interrupted"
+    # Don't cleanup on interrupt to preserve state for debugging
+    exit 130
+}
+
+trap cleanup_on_interrupt INT TERM
 
 # Run main function
 main "$@" 

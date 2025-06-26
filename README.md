@@ -125,11 +125,16 @@ The SBD operator includes comprehensive testing through both **smoke tests** and
 The `scripts/run-tests.sh` script provides a unified interface for running both smoke and e2e tests with flexible configuration options:
 
 ```bash
-# Run smoke tests (default)
+# Run smoke tests with auto-detected environment
 scripts/run-tests.sh
 
-# Run e2e tests
+# Run e2e tests with auto-detected environment
 scripts/run-tests.sh --type e2e
+
+# Run tests on specific environments
+scripts/run-tests.sh --type smoke --env crc      # CRC (OpenShift local)
+scripts/run-tests.sh --type e2e --env kind       # Kind (Kubernetes in Docker)  
+scripts/run-tests.sh --type e2e --env cluster    # Existing cluster
 
 # Run tests without cleanup (useful for debugging)
 scripts/run-tests.sh --type smoke --no-cleanup
@@ -149,15 +154,20 @@ QUAY_REGISTRY=my-registry.io QUAY_ORG=myorg scripts/run-tests.sh --type e2e
 For convenience, the following Make targets are available:
 
 ```bash
-# Smoke tests (OpenShift on CRC)
-make test-smoke                    # Run smoke tests with full setup
+# Smoke tests
+make test-smoke                    # Auto-detect environment
+make test-smoke-crc               # CRC (OpenShift local)
+make test-smoke-kind              # Kind (Kubernetes in Docker)
 make test-smoke-no-cleanup        # Skip cleanup after tests
 make test-smoke-skip-build        # Use existing images
 
-# E2E tests (existing cluster)
-make test-e2e                     # Run e2e tests with full setup
-make test-e2e-no-cleanup         # Skip cleanup after tests  
-make test-e2e-skip-build         # Use existing images
+# E2E tests  
+make test-e2e                     # Auto-detect environment
+make test-e2e-crc                 # CRC (OpenShift local)
+make test-e2e-kind                # Kind (Kubernetes in Docker)
+make test-e2e-cluster             # Existing cluster
+make test-e2e-no-cleanup          # Skip cleanup after tests  
+make test-e2e-skip-build          # Use existing images
 ```
 
 ### Test Types

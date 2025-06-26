@@ -151,30 +151,19 @@ test-smoke-reload:
 	#	OPERATOR_IMG="$(QUAY_OPERATOR_IMG)@sha256:$(OPERATOR_SHA)" \
 	#	AGENT_IMG="$(QUAY_AGENT_IMG)@sha256:$(AGENT_SHA)" \
 .PHONY: test-smoke
-test-smoke: setup-test-smoke ## Run the smoke tests on CRC OpenShift cluster using the test runner script.
+test-smoke: setup-test-smoke ## Run the smoke tests using the test runner script (auto-detects environment).
 	@echo "Running smoke tests using test runner script..."
 	@scripts/run-tests.sh --type smoke
 
 .PHONY: test-smoke-crc
-test-smoke-crc: ## Run smoke tests specifically on CRC OpenShift cluster
-	@echo "Setting up and running smoke tests on CRC OpenShift cluster..."
-	@export USE_CRC=true && $(MAKE) test-smoke
+test-smoke-crc: setup-test-smoke ## Run smoke tests specifically on CRC OpenShift cluster
+	@echo "Running smoke tests on CRC OpenShift cluster..."
+	@scripts/run-tests.sh --type smoke --env crc
 
 .PHONY: test-smoke-kind
-test-smoke-kind: ## Run smoke tests on Kind Kubernetes cluster (legacy support)
-	@echo "Setting up and running smoke tests on Kind cluster..."
-	@export USE_CRC=false && \
-	command -v kind >/dev/null 2>&1 || { \
-		echo "Kind is not installed. Please install Kind manually."; \
-		exit 1; \
-	} && \
-	if ! kind get clusters | grep -q "$(CRC_CLUSTER)"; then \
-		kind create cluster --name $(CRC_CLUSTER); \
-	fi && \
-	KIND_CLUSTER=$(CRC_CLUSTER) \
-	QUAY_REGISTRY=$(QUAY_REGISTRY) QUAY_ORG=$(QUAY_ORG) VERSION=$(TAG) \
-	go test ./test/smoke/ -v -ginkgo.v && \
-	kind delete cluster --name $(CRC_CLUSTER)
+test-smoke-kind: ## Run smoke tests on Kind Kubernetes cluster
+	@echo "Running smoke tests on Kind cluster..."
+	@scripts/run-tests.sh --type smoke --env kind
 
 ##@ OpenShift on AWS
 
@@ -212,9 +201,24 @@ destroy-ocp-aws: ## Destroy OpenShift cluster on AWS
 	fi
 
 .PHONY: test-e2e
-test-e2e: ## Run e2e tests on existing OpenShift cluster using the test runner script.
+test-e2e: ## Run e2e tests using the test runner script (auto-detects environment).
 	@echo "Running e2e tests using test runner script..."
 	@scripts/run-tests.sh --type e2e
+
+.PHONY: test-e2e-crc
+test-e2e-crc: setup-test-smoke ## Run e2e tests specifically on CRC OpenShift cluster
+	@echo "Running e2e tests on CRC OpenShift cluster..."
+	@scripts/run-tests.sh --type e2e --env crc
+
+.PHONY: test-e2e-kind
+test-e2e-kind: ## Run e2e tests on Kind Kubernetes cluster
+	@echo "Running e2e tests on Kind cluster..."
+	@scripts/run-tests.sh --type e2e --env kind
+
+.PHONY: test-e2e-cluster
+test-e2e-cluster: ## Run e2e tests on existing cluster
+	@echo "Running e2e tests on existing cluster..."
+	@scripts/run-tests.sh --type e2e --env cluster
 
 .PHONY: test-smoke-no-cleanup
 test-smoke-no-cleanup: setup-test-smoke ## Run smoke tests without cleanup (useful for debugging).
