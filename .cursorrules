@@ -101,6 +101,7 @@ PROJECT-SPECIFIC GUIDELINES:
 - Agent communication needs retry logic with exponential backoff
 - Status updates should reflect actual system state
 - Consider split-brain scenarios in remediation logic
+- Use concise summaries for commit messages
 
 DEPENDENCIES:
 - Use controller-runtime for Kubernetes operations
