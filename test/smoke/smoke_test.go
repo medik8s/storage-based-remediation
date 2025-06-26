@@ -295,6 +295,7 @@ metadata:
 spec:
   sbdWatchdogPath: "/dev/watchdog"
   image: "%s"
+  imagePullPolicy: "Always"
   namespace: "sbd-system"
 `, sbdConfigName, agentImage)
 
@@ -334,6 +335,12 @@ spec:
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal(agentImage))
+
+				// Check image pull policy
+				cmd = exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", "sbd-system", "-o", "jsonpath={.spec.template.spec.containers[0].imagePullPolicy}")
+				output, err = utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("Always"))
 
 				// Check watchdog path argument
 				cmd = exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", "sbd-system", "-o", "jsonpath={.spec.template.spec.containers[0].args}")
@@ -376,6 +383,7 @@ metadata:
 spec:
   sbdWatchdogPath: "/dev/watchdog"
   image: "%s"
+  imagePullPolicy: "Always"
   namespace: "sbd-system"
 `, sbdConfigName, agentImage)
 

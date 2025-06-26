@@ -65,6 +65,14 @@ type SBDConfigSpec struct {
 	// +kubebuilder:default="sbd-agent:latest"
 	Image string `json:"image,omitempty"`
 
+	// ImagePullPolicy defines the pull policy for the SBD agent container image.
+	// Valid values are Always, Never, and IfNotPresent.
+	// Defaults to IfNotPresent for production stability.
+	// +kubebuilder:validation:Enum=Always;Never;IfNotPresent
+	// +kubebuilder:default="IfNotPresent"
+	// +optional
+	ImagePullPolicy string `json:"imagePullPolicy,omitempty"`
+
 	// Namespace is the namespace where the SBD agent DaemonSet will be deployed
 	// +kubebuilder:default="sbd-system"
 	Namespace string `json:"namespace,omitempty"`
@@ -106,6 +114,14 @@ func (s *SBDConfigSpec) GetSbdWatchdogPath() string {
 		return s.SbdWatchdogPath
 	}
 	return DefaultWatchdogPath
+}
+
+// GetImagePullPolicy returns the image pull policy with default fallback
+func (s *SBDConfigSpec) GetImagePullPolicy() string {
+	if s.ImagePullPolicy != "" {
+		return s.ImagePullPolicy
+	}
+	return "IfNotPresent"
 }
 
 // GetStaleNodeTimeout returns the stale node timeout with default fallback
@@ -218,6 +234,18 @@ func (s *SBDConfigSpec) ValidatePetIntervalTiming() error {
 	return nil
 }
 
+// ValidateImagePullPolicy validates the image pull policy value
+func (s *SBDConfigSpec) ValidateImagePullPolicy() error {
+	policy := s.GetImagePullPolicy()
+
+	switch policy {
+	case "Always", "Never", "IfNotPresent":
+		return nil
+	default:
+		return fmt.Errorf("invalid image pull policy %q. Valid values are: Always, Never, IfNotPresent", policy)
+	}
+}
+
 // ValidateAll validates all configuration values
 func (s *SBDConfigSpec) ValidateAll() error {
 	if err := s.ValidateStaleNodeTimeout(); err != nil {
@@ -234,6 +262,10 @@ func (s *SBDConfigSpec) ValidateAll() error {
 
 	if err := s.ValidatePetIntervalTiming(); err != nil {
 		return fmt.Errorf("pet interval timing validation failed: %w", err)
+	}
+
+	if err := s.ValidateImagePullPolicy(); err != nil {
+		return fmt.Errorf("image pull policy validation failed: %w", err)
 	}
 
 	return nil

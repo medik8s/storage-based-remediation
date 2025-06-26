@@ -65,6 +65,13 @@ spec:
   # - For production: use specific version like "v1.0.0"
   image: "quay.io/medik8s/sbd-agent:latest"
   
+  # Image pull policy for the SBD Agent container
+  # - Always: Always pull the image, useful for development with "latest" tags
+  # - IfNotPresent: Pull only if image not present locally (default, production-safe)
+  # - Never: Never pull, only use local images
+  # Default: "IfNotPresent" for production stability
+  imagePullPolicy: "IfNotPresent"
+  
   # ========================================================================
   # DEPLOYMENT CONFIGURATION
   # ========================================================================

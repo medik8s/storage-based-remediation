@@ -578,7 +578,7 @@ func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfi
 						{
 							Name:            "sbd-agent",
 							Image:           sbdConfig.Spec.Image,
-							ImagePullPolicy: corev1.PullIfNotPresent,
+							ImagePullPolicy: corev1.PullPolicy(sbdConfig.Spec.GetImagePullPolicy()),
 							SecurityContext: &corev1.SecurityContext{
 								Privileged:               &[]bool{true}[0],
 								RunAsUser:                &[]int64{0}[0],

@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -601,5 +602,117 @@ func TestWatchdogConstants(t *testing.T) {
 	if DefaultPetIntervalMultiple >= MaxPetIntervalMultiple {
 		t.Errorf("DefaultPetIntervalMultiple (%v) should be less than MaxPetIntervalMultiple (%v)",
 			DefaultPetIntervalMultiple, MaxPetIntervalMultiple)
+	}
+}
+
+func TestGetImagePullPolicy(t *testing.T) {
+	tests := []struct {
+		name     string
+		spec     SBDConfigSpec
+		expected string
+	}{
+		{
+			name:     "default value",
+			spec:     SBDConfigSpec{},
+			expected: "IfNotPresent",
+		},
+		{
+			name: "explicit Always",
+			spec: SBDConfigSpec{
+				ImagePullPolicy: "Always",
+			},
+			expected: "Always",
+		},
+		{
+			name: "explicit Never",
+			spec: SBDConfigSpec{
+				ImagePullPolicy: "Never",
+			},
+			expected: "Never",
+		},
+		{
+			name: "explicit IfNotPresent",
+			spec: SBDConfigSpec{
+				ImagePullPolicy: "IfNotPresent",
+			},
+			expected: "IfNotPresent",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.spec.GetImagePullPolicy()
+			if result != tt.expected {
+				t.Errorf("GetImagePullPolicy() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestValidateImagePullPolicy(t *testing.T) {
+	tests := []struct {
+		name      string
+		spec      SBDConfigSpec
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name:      "default value (valid)",
+			spec:      SBDConfigSpec{},
+			wantError: false,
+		},
+		{
+			name: "Always (valid)",
+			spec: SBDConfigSpec{
+				ImagePullPolicy: "Always",
+			},
+			wantError: false,
+		},
+		{
+			name: "Never (valid)",
+			spec: SBDConfigSpec{
+				ImagePullPolicy: "Never",
+			},
+			wantError: false,
+		},
+		{
+			name: "IfNotPresent (valid)",
+			spec: SBDConfigSpec{
+				ImagePullPolicy: "IfNotPresent",
+			},
+			wantError: false,
+		},
+		{
+			name: "invalid value",
+			spec: SBDConfigSpec{
+				ImagePullPolicy: "InvalidPolicy",
+			},
+			wantError: true,
+			errorMsg:  "invalid image pull policy \"InvalidPolicy\"",
+		},
+		{
+			name: "empty string (should use default)",
+			spec: SBDConfigSpec{
+				ImagePullPolicy: "",
+			},
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.spec.ValidateImagePullPolicy()
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("ValidateImagePullPolicy() expected error but got none")
+				} else if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("ValidateImagePullPolicy() error = %v, expected to contain %v", err, tt.errorMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateImagePullPolicy() unexpected error = %v", err)
+				}
+			}
+		})
 	}
 }

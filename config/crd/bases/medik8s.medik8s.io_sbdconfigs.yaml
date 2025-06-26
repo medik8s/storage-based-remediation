@@ -43,6 +43,17 @@ spec:
                 default: sbd-agent:latest
                 description: Image is the container image for the SBD agent DaemonSet
                 type: string
+              imagePullPolicy:
+                default: IfNotPresent
+                description: |-
+                  ImagePullPolicy defines the pull policy for the SBD agent container image.
+                  Valid values are Always, Never, and IfNotPresent.
+                  Defaults to IfNotPresent for production stability.
+                enum:
+                - Always
+                - Never
+                - IfNotPresent
+                type: string
               namespace:
                 default: sbd-system
                 description: Namespace is the namespace where the SBD agent DaemonSet
