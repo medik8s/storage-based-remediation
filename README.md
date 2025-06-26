@@ -139,8 +139,8 @@ scripts/run-tests.sh --type e2e --env cluster    # Existing cluster
 # Run tests without cleanup (useful for debugging)
 scripts/run-tests.sh --type smoke --no-cleanup
 
-# Skip building images (use existing ones)
-scripts/run-tests.sh --skip-build
+# Build images and run tests
+scripts/run-tests.sh --build
 
 # Run with verbose output
 scripts/run-tests.sh --verbose
@@ -155,19 +155,19 @@ For convenience, the following Make targets are available:
 
 ```bash
 # Smoke tests
-make test-smoke                    # Auto-detect environment
+make test-smoke                    # Auto-detect environment (uses existing images)
 make test-smoke-crc               # CRC (OpenShift local)
 make test-smoke-kind              # Kind (Kubernetes in Docker)
 make test-smoke-no-cleanup        # Skip cleanup after tests
-make test-smoke-skip-build        # Use existing images
+make test-smoke-build             # Build images before testing
 
 # E2E tests  
-make test-e2e                     # Auto-detect environment
+make test-e2e                     # Auto-detect environment (uses existing images)
 make test-e2e-crc                 # CRC (OpenShift local)
 make test-e2e-kind                # Kind (Kubernetes in Docker)
 make test-e2e-cluster             # Existing cluster
 make test-e2e-no-cleanup          # Skip cleanup after tests  
-make test-e2e-skip-build          # Use existing images
+make test-e2e-build               # Build images before testing
 ```
 
 ### Test Types

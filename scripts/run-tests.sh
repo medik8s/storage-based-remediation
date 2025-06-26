@@ -22,7 +22,7 @@ NC='\033[0m' # No Color
 TEST_TYPE="smoke"
 TEST_ENVIRONMENT=""
 CLEANUP_AFTER_TEST="true"
-SKIP_BUILD="false"
+SKIP_BUILD="true"
 SKIP_DEPLOY="false"
 VERBOSE="false"
 CRC_CLUSTER="sbd-operator-test"
@@ -73,7 +73,7 @@ OPTIONS:
     -t, --type TYPE         Test type: 'smoke' or 'e2e' (default: smoke)
     -e, --env ENV           Test environment: 'crc', 'kind', 'cluster' (auto-detected if not specified)
     -c, --no-cleanup        Skip cleanup after successful tests (cleanup is always skipped on failure)
-    -b, --skip-build        Skip building container images
+    -b, --build             Build container images (default: skip building, use existing images)
     -d, --skip-deploy       Skip deploying operator (assumes already deployed)
     -v, --verbose           Enable verbose output
     -h, --help              Show this help message
@@ -91,7 +91,7 @@ TEST ENVIRONMENTS:
     cluster               Existing Kubernetes/OpenShift cluster
 
 EXAMPLES:
-    # Run smoke tests with auto-detected environment
+    # Run smoke tests with auto-detected environment (uses existing images)
     $0
 
     # Run e2e tests on existing cluster
@@ -100,11 +100,11 @@ EXAMPLES:
     # Run smoke tests on CRC without cleanup (for debugging)
     $0 --type smoke --env crc --no-cleanup
 
+    # Build images and run tests
+    $0 --build
+
     # Run tests with custom registry
     QUAY_REGISTRY=my-registry.io QUAY_ORG=myorg $0
-
-    # Skip building images (use existing ones)
-    $0 --skip-build
 
 EOF
 }
@@ -124,8 +124,8 @@ while [[ $# -gt 0 ]]; do
             CLEANUP_AFTER_TEST="false"
             shift
             ;;
-        -b|--skip-build)
-            SKIP_BUILD="true"
+        -b|--build)
+            SKIP_BUILD="false"
             shift
             ;;
         -d|--skip-deploy)
@@ -195,7 +195,7 @@ log_info "  Test Environment: $TEST_ENVIRONMENT"
 log_info "  Operator Image: $QUAY_OPERATOR_IMG:$TAG"
 log_info "  Agent Image: $QUAY_AGENT_IMG:$TAG"
 log_info "  Cleanup After Test: $CLEANUP_AFTER_TEST"
-log_info "  Skip Build: $SKIP_BUILD"
+log_info "  Build Images: $(if [[ "$SKIP_BUILD" == "true" ]]; then echo "false (using existing)"; else echo "true"; fi)"
 log_info "  Skip Deploy: $SKIP_DEPLOY"
 
 # Function to check required tools
@@ -301,9 +301,18 @@ setup_cluster_environment() {
     log_success "Cluster connectivity verified"
 }
 
-# Function to cleanup test environment before starting
-cleanup_before_tests() {
-    log_info "Cleaning up any existing test resources before starting"
+# Function to cleanup test environment
+cleanup_environment() {
+    local cleanup_reason="${1:-"test environment"}"
+    local skip_kind_cluster="${2:-false}"
+    
+    # Check if cleanup should be skipped
+    if [[ "$cleanup_reason" == "after tests" && "$CLEANUP_AFTER_TEST" != "true" ]]; then
+        log_info "Skipping cleanup as requested"
+        return 0
+    fi
+    
+    log_info "Cleaning up $cleanup_reason"
     
     # Set up kubectl context based on environment
     case "$TEST_ENVIRONMENT" in
@@ -326,7 +335,7 @@ cleanup_before_tests() {
     $KUBECTL delete ns sbd-operator-system --ignore-not-found=true || true
     $KUBECTL delete ns sbd-system --ignore-not-found=true || true
     
-    # Clean up OpenShift-specific resources if on CRC
+    # Clean up environment-specific resources
     if [[ "$TEST_ENVIRONMENT" == "crc" ]]; then
         $KUBECTL delete scc sbd-operator-sbd-agent-privileged --ignore-not-found=true || true
         $KUBECTL delete clusterrolebinding sbd-operator-sbd-agent-scc-user --ignore-not-found=true || true
@@ -338,7 +347,13 @@ cleanup_before_tests() {
         ./bin/kustomize build config/crd | $KUBECTL delete --ignore-not-found=true -f - || true
     fi
     
-    log_success "Pre-test cleanup completed"
+    # Clean up Kind cluster if requested (only for post-test cleanup)
+    if [[ "$cleanup_reason" == "after tests" && "$TEST_ENVIRONMENT" == "kind" && "${CLEANUP_KIND_CLUSTER:-false}" == "true" ]]; then
+        log_info "Destroying Kind cluster: $CRC_CLUSTER"
+        kind delete cluster --name "$CRC_CLUSTER" || true
+    fi
+    
+    log_success "Cleanup completed"
 }
 
 # Function to build container images using make
@@ -522,56 +537,7 @@ run_tests() {
     fi
 }
 
-# Function to cleanup test environment after tests
-cleanup_after_tests() {
-    if [[ "$CLEANUP_AFTER_TEST" != "true" ]]; then
-        log_info "Skipping cleanup as requested"
-        return 0
-    fi
-    
-    log_info "Cleaning up test environment"
-    
-    # Set up kubectl context based on environment
-    case "$TEST_ENVIRONMENT" in
-        "crc")
-            eval $(crc oc-env) || true
-            ;;
-        "kind")
-            kubectl config use-context "kind-$CRC_CLUSTER" || true
-            ;;
-        "cluster")
-            # Use current context
-            ;;
-    esac
-    
-    # Clean up test resources
-    $KUBECTL delete sbdconfig --all --ignore-not-found=true || true
-    $KUBECTL delete daemonset sbd-agent-test-sbdconfig -n sbd-system --ignore-not-found=true || true
-    $KUBECTL delete clusterrolebinding -l app.kubernetes.io/managed-by=sbd-operator --ignore-not-found=true || true
-    $KUBECTL delete clusterrole -l app.kubernetes.io/managed-by=sbd-operator --ignore-not-found=true || true
-    $KUBECTL delete ns sbd-operator-system --ignore-not-found=true || true
-    $KUBECTL delete ns sbd-system --ignore-not-found=true || true
-    
-    # Clean up environment-specific resources
-    if [[ "$TEST_ENVIRONMENT" == "crc" ]]; then
-        $KUBECTL delete scc sbd-operator-sbd-agent-privileged --ignore-not-found=true || true
-        $KUBECTL delete clusterrolebinding sbd-operator-sbd-agent-scc-user --ignore-not-found=true || true
-        $KUBECTL delete clusterrole sbd-operator-sbd-agent-scc-user --ignore-not-found=true || true
-    fi
-    
-    # Clean up CRDs
-    if [[ -f "bin/kustomize" ]]; then
-        ./bin/kustomize build config/crd | $KUBECTL delete --ignore-not-found=true -f - || true
-    fi
-    
-    # Clean up Kind cluster if requested
-    if [[ "$TEST_ENVIRONMENT" == "kind" && "${CLEANUP_KIND_CLUSTER:-false}" == "true" ]]; then
-        log_info "Destroying Kind cluster: $CRC_CLUSTER"
-        kind delete cluster --name "$CRC_CLUSTER" || true
-    fi
-    
-    log_success "Cleanup completed"
-}
+
 
 # Function to ensure required tools are available
 ensure_tools() {
@@ -604,7 +570,7 @@ main() {
     setup_environment
     
     # Always cleanup before starting tests
-    cleanup_before_tests
+    cleanup_environment "any existing test resources before starting"
     
     # Build and prepare
     build_images
@@ -623,7 +589,7 @@ main() {
     fi
     
     # Cleanup only if tests passed and cleanup is requested
-    cleanup_after_tests
+    cleanup_environment "after tests"
     
     # Final status
     if [[ $test_exit_code -eq 0 ]]; then

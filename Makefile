@@ -230,15 +230,15 @@ test-e2e-no-cleanup: ## Run e2e tests without cleanup (useful for debugging).
 	@echo "Running e2e tests without cleanup..."
 	@scripts/run-tests.sh --type e2e --no-cleanup
 
-.PHONY: test-smoke-skip-build
-test-smoke-skip-build: setup-test-smoke ## Run smoke tests without building images (use existing ones).
-	@echo "Running smoke tests with existing images..."
-	@scripts/run-tests.sh --type smoke --skip-build
+.PHONY: test-smoke-build
+test-smoke-build: setup-test-smoke ## Run smoke tests with building images.
+	@echo "Running smoke tests with image building..."
+	@scripts/run-tests.sh --type smoke --build
 
-.PHONY: test-e2e-skip-build
-test-e2e-skip-build: ## Run e2e tests without building images (use existing ones).
-	@echo "Running e2e tests with existing images..."
-	@scripts/run-tests.sh --type e2e --skip-build
+.PHONY: test-e2e-build
+test-e2e-build: ## Run e2e tests with building images.
+	@echo "Running e2e tests with image building..."
+	@scripts/run-tests.sh --type e2e --build
 
 .PHONY: provision-and-test-e2e
 provision-and-test-e2e: ## Provision AWS cluster and run e2e tests
