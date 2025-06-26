@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -62,7 +63,8 @@ type SBDConfigSpec struct {
 	SbdWatchdogPath string `json:"sbdWatchdogPath,omitempty"`
 
 	// Image is the container image for the SBD agent DaemonSet
-	// +kubebuilder:default="sbd-agent:latest"
+	// If not specified, defaults to sbd-agent from the same registry/org/tag as the operator
+	// +optional
 	Image string `json:"image,omitempty"`
 
 	// ImagePullPolicy defines the pull policy for the SBD agent container image.
@@ -114,6 +116,15 @@ func (s *SBDConfigSpec) GetSbdWatchdogPath() string {
 		return s.SbdWatchdogPath
 	}
 	return DefaultWatchdogPath
+}
+
+// GetImageWithOperatorImage returns the agent image with default fallback
+// The default is constructed from the operator's image by replacing the image name with sbd-agent
+func (s *SBDConfigSpec) GetImageWithOperatorImage(operatorImage string) string {
+	if s.Image != "" {
+		return s.Image
+	}
+	return deriveAgentImageFromOperator(operatorImage)
 }
 
 // GetImagePullPolicy returns the image pull policy with default fallback
@@ -310,4 +321,39 @@ type SBDConfigList struct {
 
 func init() {
 	SchemeBuilder.Register(&SBDConfig{}, &SBDConfigList{})
+}
+
+// deriveAgentImageFromOperator constructs the agent image from the operator's image by replacing the image name with sbd-agent
+func deriveAgentImageFromOperator(operatorImage string) string {
+	// Handle the format: registry/org/image:tag or registry/org/image
+	// Examples:
+	// - quay.io/medik8s/sbd-operator:v1.2.3 -> quay.io/medik8s/sbd-agent:v1.2.3
+	// - quay.io/medik8s/sbd-operator -> quay.io/medik8s/sbd-agent:latest
+	// - sbd-operator:latest -> sbd-agent:latest
+
+	if operatorImage == "" {
+		return "sbd-agent:latest"
+	}
+
+	// Split by ':' to separate image from tag
+	var imageWithoutTag, tag string
+	if colonIndex := strings.LastIndex(operatorImage, ":"); colonIndex != -1 {
+		imageWithoutTag = operatorImage[:colonIndex]
+		tag = operatorImage[colonIndex+1:]
+	} else {
+		imageWithoutTag = operatorImage
+		tag = "latest"
+	}
+
+	// Split by '/' to get registry/org/image parts
+	parts := strings.Split(imageWithoutTag, "/")
+	if len(parts) == 0 {
+		return "sbd-agent:" + tag
+	}
+
+	// Replace the last part (image name) with sbd-agent
+	parts[len(parts)-1] = "sbd-agent"
+
+	// Reconstruct the image
+	return strings.Join(parts, "/") + ":" + tag
 }

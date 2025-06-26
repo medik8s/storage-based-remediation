@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -151,6 +152,46 @@ func (r *SBDConfigReconciler) emitEventf(object client.Object, eventType, reason
 	}
 }
 
+// getOperatorImage discovers the operator's own image by querying the current pod
+// It uses environment variables (POD_NAME, POD_NAMESPACE) to find the current pod
+// and extracts the image from the pod spec
+func (r *SBDConfigReconciler) getOperatorImage(ctx context.Context, logger logr.Logger) (string, error) {
+	// Try to get pod information from environment variables (set by Downward API)
+	podName := os.Getenv("POD_NAME")
+	podNamespace := os.Getenv("POD_NAMESPACE")
+
+	if podName == "" || podNamespace == "" {
+		logger.V(1).Info("POD_NAME or POD_NAMESPACE environment variables not set, using fallback")
+		return "sbd-agent:latest", nil
+	}
+
+	// Get the current pod
+	var pod corev1.Pod
+	err := r.Get(ctx, types.NamespacedName{Name: podName, Namespace: podNamespace}, &pod)
+	if err != nil {
+		logger.Error(err, "Failed to get operator pod", "podName", podName, "podNamespace", podNamespace)
+		return "sbd-agent:latest", nil // Fallback to default
+	}
+
+	// Find the manager container (operator container)
+	for _, container := range pod.Spec.Containers {
+		if container.Name == "manager" {
+			logger.V(1).Info("Found operator image", "image", container.Image)
+			return container.Image, nil
+		}
+	}
+
+	// If manager container not found, use the first container's image
+	if len(pod.Spec.Containers) > 0 {
+		image := pod.Spec.Containers[0].Image
+		logger.V(1).Info("Using first container image as operator image", "image", image)
+		return image, nil
+	}
+
+	logger.V(1).Info("No containers found in operator pod, using fallback")
+	return "sbd-agent:latest", nil
+}
+
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdconfigs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdconfigs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdconfigs/finalizers,verbs=update
@@ -214,8 +255,15 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		"sbdconfig.resourceVersion", sbdConfig.ResourceVersion,
 	)
 
+	// Get the operator image first for logging and DaemonSet creation
+	operatorImage, err := r.getOperatorImage(ctx, logger)
+	if err != nil {
+		logger.Error(err, "Failed to get operator image")
+		return ctrl.Result{}, err
+	}
+
 	logger.V(1).Info("Starting SBDConfig reconciliation",
-		"spec.image", sbdConfig.Spec.Image,
+		"spec.image", sbdConfig.Spec.GetImageWithOperatorImage(operatorImage),
 		"spec.namespace", sbdConfig.Spec.Namespace,
 		"spec.sbdWatchdogPath", sbdConfig.Spec.GetSbdWatchdogPath(),
 		"spec.staleNodeTimeout", sbdConfig.Spec.GetStaleNodeTimeout(),
@@ -233,11 +281,6 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Set defaults if not specified
-	if sbdConfig.Spec.Image == "" {
-		sbdConfig.Spec.Image = "sbd-agent:latest"
-		logger.V(1).Info("Set default image", "image", sbdConfig.Spec.Image)
-	}
-
 	if sbdConfig.Spec.Namespace == "" {
 		sbdConfig.Spec.Namespace = "sbd-system"
 		logger.V(1).Info("Set default namespace", "namespace", sbdConfig.Spec.Namespace)
@@ -282,7 +325,7 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Define the desired DaemonSet
-	desiredDaemonSet := r.buildDaemonSet(&sbdConfig)
+	desiredDaemonSet := r.buildDaemonSet(&sbdConfig, operatorImage)
 	daemonSetLogger := logger.WithValues(
 		"daemonset.name", desiredDaemonSet.Name,
 		"daemonset.namespace", desiredDaemonSet.Namespace,
@@ -502,7 +545,7 @@ func (r *SBDConfigReconciler) ensureServiceAccount(ctx context.Context, sbdConfi
 }
 
 // buildDaemonSet constructs the desired DaemonSet based on the SBDConfig
-func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfig) *appsv1.DaemonSet {
+func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfig, operatorImage string) *appsv1.DaemonSet {
 	daemonSetName := fmt.Sprintf("sbd-agent-%s", sbdConfig.Name)
 	labels := map[string]string{
 		"app":        "sbd-agent",
@@ -577,7 +620,7 @@ func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfi
 					Containers: []corev1.Container{
 						{
 							Name:            "sbd-agent",
-							Image:           sbdConfig.Spec.Image,
+							Image:           sbdConfig.Spec.GetImageWithOperatorImage(operatorImage),
 							ImagePullPolicy: corev1.PullPolicy(sbdConfig.Spec.GetImagePullPolicy()),
 							SecurityContext: &corev1.SecurityContext{
 								Privileged:               &[]bool{true}[0],

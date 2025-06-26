@@ -1,8 +1,0 @@
-apiVersion: medik8s.medik8s.io/v1alpha1
-kind: SBDConfig
-metadata:
-  name: test-fix
-spec:
-  sbdWatchdogPath: "/dev/null"
-  image: "quay.io/medik8s/sbd-agent:latest"
-  namespace: "sbd-system"

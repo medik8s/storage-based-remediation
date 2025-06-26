@@ -3,7 +3,6 @@ kind: SBDConfig
 metadata:
   name: test-sbdconfig
 spec:
-  image: quay.io/medik8s/sbd-agent:latest
   imagePullPolicy: Always 
   namespace: sbd-system
   petIntervalMultiple: 4

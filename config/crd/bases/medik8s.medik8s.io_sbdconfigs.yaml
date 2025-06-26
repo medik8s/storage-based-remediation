@@ -40,8 +40,9 @@ spec:
             description: SBDConfigSpec defines the desired state of SBDConfig.
             properties:
               image:
-                default: sbd-agent:latest
-                description: Image is the container image for the SBD agent DaemonSet
+                description: |-
+                  Image is the container image for the SBD agent DaemonSet
+                  If not specified, defaults to sbd-agent from the same registry/org/tag as the operator
                 type: string
               imagePullPolicy:
                 default: IfNotPresent

@@ -286,22 +286,20 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 		})
 
 		It("should deploy SBD agent DaemonSet when SBDConfig is created", func() {
-			By("creating an SBDConfig resource")
-			sbdConfigYAML := fmt.Sprintf(`
-apiVersion: medik8s.medik8s.io/v1alpha1
-kind: SBDConfig
-metadata:
-  name: %s
-spec:
-  sbdWatchdogPath: "/dev/watchdog"
-  image: "%s"
-  imagePullPolicy: "Always"
-  namespace: "sbd-system"
-`, sbdConfigName, agentImage)
+			By("creating an SBDConfig resource from sample configuration")
+			// Load sample configuration and customize name
+			samplePath := "../../config/samples/medik8s_v1alpha1_sbdconfig.yaml"
+			sampleData, err := os.ReadFile(samplePath)
+			Expect(err).NotTo(HaveOccurred(), "Failed to read sample SBDConfig")
+
+			// Replace the sample name with our test name
+			sbdConfigYAML := strings.ReplaceAll(string(sampleData), "sbdconfig-sample", sbdConfigName)
+			// Ensure imagePullPolicy is Always for testing
+			sbdConfigYAML = strings.ReplaceAll(sbdConfigYAML, `imagePullPolicy: "IfNotPresent"`, `imagePullPolicy: "Always"`)
 
 			// Write SBDConfig to temporary file
 			tmpFile = filepath.Join("/tmp", fmt.Sprintf("sbdconfig-%s.yaml", sbdConfigName))
-			err := os.WriteFile(tmpFile, []byte(sbdConfigYAML), 0644)
+			err = os.WriteFile(tmpFile, []byte(sbdConfigYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Apply the SBDConfig
@@ -330,7 +328,8 @@ spec:
 
 			By("verifying the DaemonSet has correct image and configuration")
 			verifyDaemonSetConfig := func(g Gomega) {
-				// Check image
+				// Check image - should be automatically derived from operator image
+				// (same registry/org/tag as operator, but with sbd-agent as image name)
 				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", "sbd-system", "-o", "jsonpath={.spec.template.spec.containers[0].image}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
@@ -374,22 +373,20 @@ spec:
 		})
 
 		It("should have SBD agent pods running and ready", func() {
-			By("creating an SBDConfig resource with test-friendly configuration")
-			sbdConfigYAML := fmt.Sprintf(`
-apiVersion: medik8s.medik8s.io/v1alpha1
-kind: SBDConfig
-metadata:
-  name: %s
-spec:
-  sbdWatchdogPath: "/dev/watchdog"
-  image: "%s"
-  imagePullPolicy: "Always"
-  namespace: "sbd-system"
-`, sbdConfigName, agentImage)
+			By("creating an SBDConfig resource from sample configuration")
+			// Load sample configuration and customize name
+			samplePath := "../../config/samples/medik8s_v1alpha1_sbdconfig.yaml"
+			sampleData, err := os.ReadFile(samplePath)
+			Expect(err).NotTo(HaveOccurred(), "Failed to read sample SBDConfig")
+
+			// Replace the sample name with our test name
+			sbdConfigYAML := strings.ReplaceAll(string(sampleData), "sbdconfig-sample", sbdConfigName)
+			// Ensure imagePullPolicy is Always for testing
+			sbdConfigYAML = strings.ReplaceAll(sbdConfigYAML, `imagePullPolicy: "IfNotPresent"`, `imagePullPolicy: "Always"`)
 
 			// Write SBDConfig to temporary file
 			tmpFile = filepath.Join("/tmp", fmt.Sprintf("sbdconfig-%s.yaml", sbdConfigName))
-			err := os.WriteFile(tmpFile, []byte(sbdConfigYAML), 0644)
+			err = os.WriteFile(tmpFile, []byte(sbdConfigYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Apply the SBDConfig
@@ -575,20 +572,19 @@ spec:
 
 	Context("SBD Remediation Enhancements", func() {
 		It("should be able to create and reconcile SBDConfig resources", func() {
-			By("creating a test SBDConfig")
+			By("creating a test SBDConfig from sample configuration")
+			// Load sample configuration
+			samplePath := "../../config/samples/medik8s_v1alpha1_sbdconfig.yaml"
+			sampleData, err := os.ReadFile(samplePath)
+			Expect(err).NotTo(HaveOccurred(), "Failed to read sample SBDConfig")
+
+			// Replace the sample name with test name and ensure Always pull policy
+			sbdConfigYAML := strings.ReplaceAll(string(sampleData), "sbdconfig-sample", "test-sbdconfig")
+			sbdConfigYAML = strings.ReplaceAll(sbdConfigYAML, `imagePullPolicy: "IfNotPresent"`, `imagePullPolicy: "Always"`)
+
 			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			sbdConfigYAML := fmt.Sprintf(`
-apiVersion: medik8s.medik8s.io/v1alpha1
-kind: SBDConfig
-metadata:
-  name: test-sbdconfig
-spec:
-  sbdWatchdogPath: "/dev/watchdog"
-  image: "%s"
-  namespace: "sbd-system"
-`, agentImage)
 			cmd.Stdin = strings.NewReader(sbdConfigYAML)
-			_, err := utils.Run(cmd)
+			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDConfig")
 
 			By("verifying the SBDConfig is created and processed")

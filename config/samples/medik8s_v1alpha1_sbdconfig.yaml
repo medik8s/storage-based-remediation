@@ -59,11 +59,18 @@ spec:
   # ========================================================================
   
   # Container image for the SBD Agent DaemonSet
+  # - If not specified, automatically derived from the operator's image
+  #   (same registry/org/tag as operator, but with "sbd-agent" as image name)
   # - Use specific version tags for production deployments
   # - Available images: quay.io/medik8s/sbd-agent:<version>
   # - For development: use "latest" tag
   # - For production: use specific version like "v1.0.0"
-  image: "quay.io/medik8s/sbd-agent:latest"
+  # 
+  # Examples:
+  # - If operator image is "quay.io/medik8s/sbd-operator:v1.2.3"
+  #   then agent image becomes "quay.io/medik8s/sbd-agent:v1.2.3"
+  # - Override with custom image if needed:
+  # image: "quay.io/medik8s/sbd-agent:v1.0.0"
   
   # Image pull policy for the SBD Agent container
   # - Always: Always pull the image, useful for development with "latest" tags
@@ -103,17 +110,22 @@ spec:
 # CONFIGURATION EXAMPLES
 # ========================================================================
 #
-# Basic Production Configuration:
-# --------------------------------
+# Basic Production Configuration (image auto-derived from operator):
+# -------------------------------------------------------------------
 # spec:
-#   image: "quay.io/medik8s/sbd-agent:latest"
+#   namespace: "sbd-system"
+#   staleNodeTimeout: "30m"
+#
+# Production with Custom Image:
+# -----------------------------
+# spec:
+#   image: "quay.io/medik8s/sbd-agent:v1.2.3"
 #   namespace: "sbd-system"
 #   staleNodeTimeout: "30m"
 #
 # High-Availability Configuration:
 # --------------------------------
 # spec:
-#   image: "quay.io/medik8s/sbd-agent:latest"
 #   sbdWatchdogPath: "/dev/watchdog1"
 #   namespace: "high-availability"
 #   staleNodeTimeout: "2h"
@@ -121,7 +133,7 @@ spec:
 # Development/Testing Configuration:
 # ----------------------------------
 # spec:
-#   image: "quay.io/medik8s/sbd-agent:latest"
+#   imagePullPolicy: "Always"
 #   namespace: "sbd-dev"
 #   staleNodeTimeout: "5m"
 #

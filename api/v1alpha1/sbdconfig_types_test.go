@@ -716,3 +716,64 @@ func TestValidateImagePullPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestGetImageWithOperatorImage(t *testing.T) {
+	tests := []struct {
+		name          string
+		spec          SBDConfigSpec
+		operatorImage string
+		expected      string
+	}{
+		{
+			name:          "explicit image specified",
+			spec:          SBDConfigSpec{Image: "custom-registry.com/custom-org/custom-agent:v1.0.0"},
+			operatorImage: "quay.io/medik8s/sbd-operator:v1.2.3",
+			expected:      "custom-registry.com/custom-org/custom-agent:v1.0.0",
+		},
+		{
+			name:          "no image specified - derive from operator image with tag",
+			spec:          SBDConfigSpec{},
+			operatorImage: "quay.io/medik8s/sbd-operator:v1.2.3",
+			expected:      "quay.io/medik8s/sbd-agent:v1.2.3",
+		},
+		{
+			name:          "no image specified - derive from operator image without tag",
+			spec:          SBDConfigSpec{},
+			operatorImage: "quay.io/medik8s/sbd-operator",
+			expected:      "quay.io/medik8s/sbd-agent:latest",
+		},
+		{
+			name:          "no image specified - simple operator image with tag",
+			spec:          SBDConfigSpec{},
+			operatorImage: "sbd-operator:v1.0.0",
+			expected:      "sbd-agent:v1.0.0",
+		},
+		{
+			name:          "no image specified - simple operator image without tag",
+			spec:          SBDConfigSpec{},
+			operatorImage: "sbd-operator",
+			expected:      "sbd-agent:latest",
+		},
+		{
+			name:          "no image specified - empty operator image",
+			spec:          SBDConfigSpec{},
+			operatorImage: "",
+			expected:      "sbd-agent:latest",
+		},
+		{
+			name:          "no image specified - complex registry path",
+			spec:          SBDConfigSpec{},
+			operatorImage: "registry.example.com:5000/my-org/my-project/sbd-operator:dev-123",
+			expected:      "registry.example.com:5000/my-org/my-project/sbd-agent:dev-123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.spec.GetImageWithOperatorImage(tt.operatorImage)
+			if result != tt.expected {
+				t.Errorf("GetImageWithOperatorImage() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}

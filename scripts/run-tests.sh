@@ -255,9 +255,19 @@ setup_environment() {
 setup_crc_environment() {
     log_info "Setting up CRC environment"
     
+    # Check if CRC is installed
+    if ! command -v crc >/dev/null 2>&1; then
+        log_error "CRC is not installed. Please install CRC manually."
+        log_error "Visit: https://developers.redhat.com/products/codeready-containers/download"
+        exit 1
+    fi
+    
     if crc status | grep -q "CRC VM.*Running"; then
         log_info "CRC is already running"
     else
+        log_info "Setting up CRC cluster..."
+        crc setup
+
         log_info "Starting CRC cluster..."
         crc start
     fi

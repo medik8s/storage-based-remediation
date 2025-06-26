@@ -52,7 +52,6 @@ TESTING REQUIREMENTS:
 - Use test fixtures for complex scenarios
 - Never use the --ginkgo.dry-run option
 - Always run e2e tests from the makefile
-- Commit all changes each time an additional test starts passing
 
 ERROR HANDLING:
 - Always return errors, don't panic
