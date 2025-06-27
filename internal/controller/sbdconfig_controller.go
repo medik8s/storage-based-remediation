@@ -453,8 +453,10 @@ func (r *SBDConfigReconciler) ensureServiceAccount(ctx context.Context, sbdConfi
 	}
 
 	result, err = controllerutil.CreateOrUpdate(ctx, r.Client, clusterRoleBinding, func() error {
-		// Set the controller reference
-		return controllerutil.SetControllerReference(sbdConfig, clusterRoleBinding, r.Scheme)
+		// Do not set owner reference on cluster-scoped resources when owner is namespace-scoped
+		// This is not allowed in Kubernetes and will cause the operation to fail
+		// The ClusterRoleBinding will be managed by the operator without ownership
+		return nil
 	})
 
 	if err != nil {

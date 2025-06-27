@@ -98,21 +98,37 @@ var _ = Describe("SBDConfig Controller", func() {
 	Context("When reconciling a resource", func() {
 		const (
 			resourceName = "test-sbdconfig"
-			namespace    = "test-sbd-system"
 			timeout      = time.Second * 10
 			interval     = time.Millisecond * 250
 		)
 
+		var namespace string
+
 		ctx := context.Background()
 
-		// Note: SBDConfig is cluster-scoped, so no namespace
-		typeNamespacedName := types.NamespacedName{
-			Name: resourceName,
-		}
+		// typeNamespacedName will be set dynamically in tests since namespace is set in BeforeEach
+		var typeNamespacedName types.NamespacedName
 
 		var controllerReconciler *SBDConfigReconciler
 
 		BeforeEach(func() {
+			// Generate unique namespace for each test to avoid conflicts
+			namespace = fmt.Sprintf("test-sbd-system-%d", time.Now().UnixNano())
+
+			// Set the typeNamespacedName now that we have the namespace
+			typeNamespacedName = types.NamespacedName{
+				Name:      resourceName,
+				Namespace: namespace,
+			}
+
+			By("creating the test namespace")
+			testNamespace := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: namespace,
+				},
+			}
+			Expect(k8sClient.Create(ctx, testNamespace)).To(Succeed())
+
 			By("initializing controller reconciler")
 			controllerReconciler = &SBDConfigReconciler{
 				Client: k8sClient,
@@ -140,7 +156,8 @@ var _ = Describe("SBDConfig Controller", func() {
 			By("creating the custom resource for the Kind SBDConfig")
 			resource := &medik8sv1alpha1.SBDConfig{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: resourceName,
+					Name:      resourceName,
+					Namespace: namespace,
 				},
 				Spec: medik8sv1alpha1.SBDConfigSpec{
 					SbdWatchdogPath: "/dev/watchdog",
@@ -166,7 +183,8 @@ var _ = Describe("SBDConfig Controller", func() {
 
 		It("should handle reconciling a non-existent resource without error", func() {
 			nonExistentName := types.NamespacedName{
-				Name: "non-existent-sbdconfig",
+				Name:      "non-existent-sbdconfig",
+				Namespace: namespace,
 			}
 
 			By("reconciling a non-existent resource")
@@ -182,7 +200,8 @@ var _ = Describe("SBDConfig Controller", func() {
 			By("creating the custom resource for the Kind SBDConfig")
 			resource := &medik8sv1alpha1.SBDConfig{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: resourceName,
+					Name:      resourceName,
+					Namespace: namespace,
 				},
 				Spec: medik8sv1alpha1.SBDConfigSpec{
 					SbdWatchdogPath: "/dev/watchdog",
@@ -209,20 +228,36 @@ var _ = Describe("SBDConfig Controller", func() {
 	Context("When testing DaemonSet management", func() {
 		const (
 			resourceName = "test-daemonset-sbdconfig"
-			namespace    = "test-daemonset-system"
 			timeout      = time.Second * 30
 			interval     = time.Millisecond * 250
 		)
 
+		var namespace string
 		ctx := context.Background()
 
-		typeNamespacedName := types.NamespacedName{
-			Name: resourceName,
-		}
+		// typeNamespacedName will be set dynamically in BeforeEach
+		var typeNamespacedName types.NamespacedName
 
 		var controllerReconciler *SBDConfigReconciler
 
 		BeforeEach(func() {
+			// Generate unique namespace for each test to avoid conflicts
+			namespace = fmt.Sprintf("test-daemonset-system-%d", time.Now().UnixNano())
+
+			// Set the typeNamespacedName now that we have the namespace
+			typeNamespacedName = types.NamespacedName{
+				Name:      resourceName,
+				Namespace: namespace,
+			}
+
+			By("creating the test namespace")
+			testNamespace := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: namespace,
+				},
+			}
+			Expect(k8sClient.Create(ctx, testNamespace)).To(Succeed())
+
 			By("initializing controller reconciler")
 			controllerReconciler = &SBDConfigReconciler{
 				Client: k8sClient,
@@ -250,7 +285,8 @@ var _ = Describe("SBDConfig Controller", func() {
 			By("creating the SBDConfig resource")
 			sbdConfig := &medik8sv1alpha1.SBDConfig{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: resourceName,
+					Name:      resourceName,
+					Namespace: namespace,
 				},
 				Spec: medik8sv1alpha1.SBDConfigSpec{
 					SbdWatchdogPath: "/dev/watchdog",
@@ -267,9 +303,9 @@ var _ = Describe("SBDConfig Controller", func() {
 			Expect(result).To(Equal(reconcile.Result{}))
 
 			By("verifying the namespace was created")
-			testNamespace := &corev1.Namespace{}
+			createdNamespace := &corev1.Namespace{}
 			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: namespace}, testNamespace)
+				return k8sClient.Get(ctx, types.NamespacedName{Name: namespace}, createdNamespace)
 			}, timeout, interval).Should(Succeed())
 
 			By("verifying the DaemonSet was created")
@@ -326,7 +362,8 @@ var _ = Describe("SBDConfig Controller", func() {
 			By("creating the SBDConfig resource")
 			sbdConfig := &medik8sv1alpha1.SBDConfig{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: resourceName,
+					Name:      resourceName,
+					Namespace: namespace,
 				},
 				Spec: medik8sv1alpha1.SBDConfigSpec{
 					SbdWatchdogPath: "/dev/watchdog",
@@ -396,7 +433,8 @@ var _ = Describe("SBDConfig Controller", func() {
 			By("creating the SBDConfig resource")
 			sbdConfig := &medik8sv1alpha1.SBDConfig{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: resourceName,
+					Name:      resourceName,
+					Namespace: namespace,
 				},
 				Spec: medik8sv1alpha1.SBDConfigSpec{
 					SbdWatchdogPath: "/dev/watchdog",
@@ -450,11 +488,12 @@ var _ = Describe("SBDConfig Controller", func() {
 			By("creating the SBDConfig resource with minimal spec")
 			sbdConfig := &medik8sv1alpha1.SBDConfig{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: resourceName,
+					Name:      resourceName,
+					Namespace: namespace,
 				},
 				Spec: medik8sv1alpha1.SBDConfigSpec{
 					SbdWatchdogPath: "/dev/watchdog",
-					// No image or namespace specified - should use defaults
+					// No image specified - should use defaults
 				},
 			}
 			Expect(k8sClient.Create(ctx, sbdConfig)).To(Succeed())
@@ -472,28 +511,45 @@ var _ = Describe("SBDConfig Controller", func() {
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
 					Name:      expectedDaemonSetName,
-					Namespace: "sbd-system", // default namespace
+					Namespace: namespace, // deployed to same namespace as SBDConfig
 				}, daemonSet)
 			}, timeout, interval).Should(Succeed())
 
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].Image).To(Equal("sbd-agent:latest"))
-			Expect(daemonSet.Namespace).To(Equal("sbd-system"))
+			Expect(daemonSet.Namespace).To(Equal(namespace))
 		})
 	})
 
 	Context("When testing event emission", func() {
 		const (
 			resourceName = "test-events-sbdconfig"
-			namespace    = "test-events-system"
 		)
 
+		var namespace string
 		ctx := context.Background()
-		typeNamespacedName := types.NamespacedName{Name: resourceName}
+		var typeNamespacedName types.NamespacedName
 
 		var controllerReconciler *SBDConfigReconciler
 		var mockRecorder *MockEventRecorder
 
 		BeforeEach(func() {
+			// Generate unique namespace for each test to avoid conflicts
+			namespace = fmt.Sprintf("test-events-system-%d", time.Now().UnixNano())
+
+			// Set the typeNamespacedName now that we have the namespace
+			typeNamespacedName = types.NamespacedName{
+				Name:      resourceName,
+				Namespace: namespace,
+			}
+
+			By("creating the test namespace")
+			testNamespace := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: namespace,
+				},
+			}
+			Expect(k8sClient.Create(ctx, testNamespace)).To(Succeed())
+
 			mockRecorder = NewMockEventRecorder()
 			controllerReconciler = &SBDConfigReconciler{
 				Client:   k8sClient,
@@ -521,7 +577,8 @@ var _ = Describe("SBDConfig Controller", func() {
 			By("creating the SBDConfig resource")
 			resource := &medik8sv1alpha1.SBDConfig{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: resourceName,
+					Name:      resourceName,
+					Namespace: namespace,
 				},
 				Spec: medik8sv1alpha1.SBDConfigSpec{
 					SbdWatchdogPath: "/dev/watchdog",
@@ -567,7 +624,10 @@ var _ = Describe("SBDConfig Controller", func() {
 		It("should emit events for helper methods", func() {
 			By("testing emitEvent helper")
 			resource := &medik8sv1alpha1.SBDConfig{
-				ObjectMeta: metav1.ObjectMeta{Name: resourceName},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
 			}
 
 			controllerReconciler.emitEvent(resource, EventTypeNormal, "TestReason", "Test message")

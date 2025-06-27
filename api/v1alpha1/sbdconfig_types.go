@@ -471,3 +471,7 @@ type SBDConfigList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []SBDConfig `json:"items"`
 }
+
+func init() {
+	SchemeBuilder.Register(&SBDConfig{}, &SBDConfigList{})
+}
