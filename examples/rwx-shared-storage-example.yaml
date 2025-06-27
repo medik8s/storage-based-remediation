@@ -1,0 +1,260 @@
+---
+# Example: Using RWX Persistent Volume for SBD Shared Storage
+# This example shows how to use the RWX PV created by create-rwx-pv.sh
+# for sharing data between SBD agent pods across multiple nodes
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sbd-shared-config
+  namespace: sbd-system
+data:
+  shared-data.txt: |
+    This is shared configuration data that can be accessed
+    by all SBD agent pods across different worker nodes.
+    
+    Use cases:
+    - Shared SBD device metadata
+    - Coordination data between agents
+    - Shared logs or status files
+    - Cross-node communication files
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: sbd-agent-with-shared-storage
+  namespace: sbd-system
+  labels:
+    app: sbd-agent
+    storage-type: rwx-shared
+spec:
+  selector:
+    matchLabels:
+      app: sbd-agent
+  template:
+    metadata:
+      labels:
+        app: sbd-agent
+    spec:
+      serviceAccountName: sbd-agent
+      hostNetwork: true
+      hostPID: true
+      containers:
+      - name: sbd-agent
+        image: quay.io/medik8s/sbd-agent:latest
+        imagePullPolicy: IfNotPresent
+        
+        # Security context for SBD operations
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+            - SYS_ADMIN
+            - SYS_BOOT
+            - SYS_TIME
+        
+        # Environment variables
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: SHARED_STORAGE_PATH
+          value: "/shared-storage"
+        - name: SBD_DEVICE
+          value: "/dev/disk/by-id/scsi-36001405example"
+        
+        # Volume mounts
+        volumeMounts:
+        # Shared RWX storage - accessible from all nodes
+        - name: shared-storage
+          mountPath: /shared-storage
+        
+        # Host paths for SBD operations
+        - name: dev
+          mountPath: /dev
+        - name: sys
+          mountPath: /sys
+        - name: proc
+          mountPath: /proc
+        
+        # Configuration
+        - name: config
+          mountPath: /etc/sbd-agent
+        
+        # Startup command
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          
+          echo "Starting SBD agent on node: $NODE_NAME"
+          echo "Shared storage mounted at: $SHARED_STORAGE_PATH"
+          
+          # Create node-specific directory in shared storage
+          mkdir -p "$SHARED_STORAGE_PATH/nodes/$NODE_NAME"
+          
+          # Write node status to shared storage
+          cat > "$SHARED_STORAGE_PATH/nodes/$NODE_NAME/status.json" << EOF
+          {
+            "node": "$NODE_NAME",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "status": "starting",
+            "sbd_device": "$SBD_DEVICE"
+          }
+          EOF
+          
+          # List all nodes in shared storage
+          echo "Nodes in shared storage:"
+          ls -la "$SHARED_STORAGE_PATH/nodes/" || echo "No other nodes yet"
+          
+          # Start the actual SBD agent
+          exec /usr/local/bin/sbd-agent \
+            --watchdog-path=/dev/watchdog \
+            --watchdog-timeout=30s \
+            --sbd-device="$SBD_DEVICE" \
+            --shared-storage="$SHARED_STORAGE_PATH" \
+            --log-level=info
+      
+      # Volumes
+      volumes:
+      # RWX Persistent Volume - shared across all nodes
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: sbd-shared-pvc
+      
+      # Host paths for hardware access
+      - name: dev
+        hostPath:
+          path: /dev
+      - name: sys
+        hostPath:
+          path: /sys
+      - name: proc
+        hostPath:
+          path: /proc
+      
+      # Configuration from ConfigMap
+      - name: config
+        configMap:
+          name: sbd-shared-config
+      
+      # Node selection and tolerations
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      - operator: Exists
+        effect: NoExecute
+
+---
+# Example Pod to test RWX storage functionality
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rwx-storage-test
+  namespace: sbd-system
+  labels:
+    app: storage-test
+spec:
+  containers:
+  - name: writer
+    image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+    command:
+    - /bin/bash
+    - -c
+    - |
+      echo "Testing RWX storage from pod on node: $NODE_NAME"
+      
+      # Create test directory
+      mkdir -p /shared/test-data
+      
+      # Write test data with timestamp and node info
+      while true; do
+        echo "$(date): Hello from $NODE_NAME" >> /shared/test-data/messages.log
+        echo "Current files in shared storage:"
+        find /shared -type f | head -10
+        sleep 30
+      done
+    
+    env:
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    
+    volumeMounts:
+    - name: shared-storage
+      mountPath: /shared
+  
+  volumes:
+  - name: shared-storage
+    persistentVolumeClaim:
+      claimName: sbd-shared-pvc
+  
+  restartPolicy: Always
+
+---
+# Example Job to verify RWX functionality
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: verify-rwx-storage
+  namespace: sbd-system
+spec:
+  template:
+    spec:
+      containers:
+      - name: verifier
+        image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "=== RWX Storage Verification ==="
+          echo "Node: $NODE_NAME"
+          echo "Shared storage contents:"
+          
+          # List contents
+          find /shared -type f -exec ls -la {} \; | head -20
+          
+          # Test write access
+          echo "Testing write access..."
+          test_file="/shared/verification-$(date +%s)-$NODE_NAME.txt"
+          echo "Verification test from $NODE_NAME at $(date)" > "$test_file"
+          
+          if [[ -f "$test_file" ]]; then
+            echo "✅ Write test successful: $test_file"
+          else
+            echo "❌ Write test failed"
+            exit 1
+          fi
+          
+          # Test read access to files from other nodes
+          echo "Testing read access to files from other nodes..."
+          other_files=$(find /shared -name "verification-*" ! -name "*$NODE_NAME*" | wc -l)
+          echo "Found $other_files files from other nodes"
+          
+          echo "=== Verification Complete ==="
+        
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        
+        volumeMounts:
+        - name: shared-storage
+          mountPath: /shared
+      
+      volumes:
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: sbd-shared-pvc
+      
+      restartPolicy: Never
+  backoffLimit: 3 
