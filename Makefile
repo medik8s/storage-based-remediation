@@ -234,11 +234,40 @@ build-agent-image: manifests generate fmt vet ## Build agent container image.
 		.
 	$(CONTAINER_TOOL) tag sbd-agent:$(TAG) $(QUAY_AGENT_IMG):$(TAG)
 
+.PHONY: build-multiarch-operator-image
+build-multiarch-operator-image: manifests generate fmt vet ## Build multi-platform operator container image.
+	@echo "Building multi-platform operator image: $(QUAY_OPERATOR_IMG):$(TAG)"
+	@echo "Platforms: $(PLATFORMS)"
+	@echo "Build info: GitDescribe=$(GIT_DESCRIBE), GitCommit=$(GIT_COMMIT), BuildDate=$(BUILD_DATE)"
+	$(CONTAINER_TOOL) build --platform=$(PLATFORMS) -t $(QUAY_OPERATOR_IMG):$(TAG) \
+		--build-arg BUILD_DATE="$(BUILD_DATE)" \
+		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
+		--build-arg GIT_DESCRIBE="$(GIT_DESCRIBE)" \
+		.
+
+.PHONY: build-multiarch-agent-image
+build-multiarch-agent-image: manifests generate fmt vet ## Build multi-platform agent container image.
+	@echo "Building multi-platform agent image: $(QUAY_AGENT_IMG):$(TAG)"
+	@echo "Platforms: $(PLATFORMS)"
+	@echo "Build info: GitDescribe=$(GIT_DESCRIBE), GitCommit=$(GIT_COMMIT), BuildDate=$(BUILD_DATE)"
+	$(CONTAINER_TOOL) build --platform=$(PLATFORMS) -f Dockerfile.sbd-agent -t $(QUAY_AGENT_IMG):$(TAG) \
+		--build-arg BUILD_DATE="$(BUILD_DATE)" \
+		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
+		--build-arg GIT_DESCRIBE="$(GIT_DESCRIBE)" \
+		.
+
 .PHONY: build-images
 build-images: build-operator-image build-agent-image ## Build both operator and agent container images.
 	@echo "Built SBD Operator images..."
 	@echo "Operator: $(QUAY_OPERATOR_IMG):$(TAG)"
 	@echo "Agent: $(QUAY_AGENT_IMG):$(TAG)"
+
+.PHONY: build-multiarch-images
+build-multiarch-images: build-multiarch-operator-image build-multiarch-agent-image ## Build both operator and agent multi-platform container images.
+	@echo "Built multi-platform SBD Operator images..."
+	@echo "Operator: $(QUAY_OPERATOR_IMG):$(TAG)"
+	@echo "Agent: $(QUAY_AGENT_IMG):$(TAG)"
+	@echo "Platforms: $(PLATFORMS)"
 
 .PHONY: push-operator-image
 push-operator-image: ## Push operator container image to registry.
@@ -254,40 +283,29 @@ push-agent-image: ## Push agent container image to registry.
 push-images: push-operator-image push-agent-image ## Push both operator and agent container images to registry.
 	@echo "Pushed SBD images to registry..."
 
+.PHONY: push-multiarch-operator-image
+push-multiarch-operator-image: ## Push multi-platform operator container image to registry.
+	@echo "Pushing multi-platform operator image: $(QUAY_OPERATOR_IMG):$(TAG)"
+	$(CONTAINER_TOOL) manifest push $(QUAY_OPERATOR_IMG):$(TAG)
+
+.PHONY: push-multiarch-agent-image
+push-multiarch-agent-image: ## Push multi-platform agent container image to registry.
+	@echo "Pushing multi-platform agent image: $(QUAY_AGENT_IMG):$(TAG)"
+	$(CONTAINER_TOOL) manifest push $(QUAY_AGENT_IMG):$(TAG)
+
+.PHONY: push-multiarch-images
+push-multiarch-images: push-multiarch-operator-image push-multiarch-agent-image ## Push both operator and agent multi-platform container images to registry.
+	@echo "Pushed multi-platform SBD images to registry..."
+
 .PHONY: build-push
 build-push: update-manifests build-images push-images ## Build and push both operator and agent images to registry.
 
+.PHONY: build-push-multiarch
+build-push-multiarch: update-manifests build-multiarch-images push-multiarch-images ## Build and push both operator and agent multi-platform images to registry.
+
 .PHONY: buildx
-buildx: manifests generate fmt vet ## Build and push multi-platform images to registry.
-	@echo "Building and pushing multi-platform SBD Operator images..."
-	@echo "Platforms: $(PLATFORMS)"
-	@echo "Operator: $(QUAY_OPERATOR_IMG):$(TAG)"
-	@echo "Agent: $(QUAY_AGENT_IMG):$(TAG)"
-	
-	# Create buildx builder if it doesn't exist
-	- $(CONTAINER_TOOL) buildx create --name sbd-operator-builder
-	- $(CONTAINER_TOOL) buildx use sbd-operator-builder
-	
-	# Build and push operator image (multi-platform)
-	@echo "Building and pushing multi-platform operator image..."
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) \
-		--tag $(QUAY_OPERATOR_IMG):$(TAG) \
-		-f Dockerfile.cross .
-	rm Dockerfile.cross
-	
-	# Build and push agent image (multi-platform)
-	@echo "Building and pushing multi-platform agent image..."
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile.sbd-agent > Dockerfile.sbd-agent.cross
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) \
-		--tag $(QUAY_AGENT_IMG):$(TAG) \
-		-f Dockerfile.sbd-agent.cross .
-	rm Dockerfile.sbd-agent.cross
-	
-	# Cleanup builder
-	- $(CONTAINER_TOOL) buildx rm sbd-operator-builder
-	
-	@echo "Successfully built and pushed multi-platform images!"
+buildx: build-push-multiarch ## Build and push multi-platform images to registry (alias for build-push-multiarch).
+	@echo "✅ Successfully built and pushed multi-platform images!"
 
 ##@ Legacy Docker Aliases (Deprecated - Use build-* targets instead)
 
