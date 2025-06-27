@@ -22,6 +22,7 @@ NC='\033[0m' # No Color
 TEST_TYPE="smoke"
 TEST_ENVIRONMENT=""
 CLEANUP_AFTER_TEST="true"
+CLEANUP_ONLY="false"
 SKIP_BUILD="true"
 SKIP_DEPLOY="false"
 VERBOSE="false"
@@ -67,12 +68,13 @@ show_usage() {
     cat << EOF
 Usage: $0 [OPTIONS]
 
-Run smoke or e2e tests for the SBD Operator
+Run smoke or e2e tests for the SBD Operator, or clean up test resources
 
 OPTIONS:
     -t, --type TYPE         Test type: 'smoke' or 'e2e' (default: smoke)
     -e, --env ENV           Test environment: 'crc', 'kind', 'cluster' (auto-detected if not specified)
     -c, --no-cleanup        Skip cleanup after successful tests (cleanup is always skipped on failure)
+    --cleanup-only          Only perform cleanup, don't run tests
     -b, --build             Build container images (default: skip building, use existing images)
     -d, --skip-deploy       Skip deploying operator (assumes already deployed)
     -v, --verbose           Enable verbose output
@@ -111,6 +113,12 @@ EXAMPLES:
     # Build images and run tests
     $0 --build
 
+    # Clean up test resources only (no tests)
+    $0 --cleanup-only
+
+    # Clean up test resources from specific environment
+    $0 --cleanup-only --env crc
+
     # Run tests with custom registry
     QUAY_REGISTRY=my-registry.io QUAY_ORG=myorg $0
 
@@ -133,6 +141,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -c|--no-cleanup)
             CLEANUP_AFTER_TEST="false"
+            shift
+            ;;
+        --cleanup-only)
+            CLEANUP_ONLY="true"
             shift
             ;;
         -b|--build)
@@ -184,13 +196,13 @@ if [[ -z "$TEST_ENVIRONMENT" ]]; then
         TEST_ENVIRONMENT="cluster"
         log_info "Auto-detected environment: existing cluster"
     else
-        # Default to CRC for smoke tests, cluster for e2e tests
-        if [[ "$TEST_TYPE" == "smoke" ]]; then
+        # Default to CRC for smoke tests, cluster for e2e/cleanup
+        if [[ "$TEST_TYPE" == "smoke" && "$CLEANUP_ONLY" != "true" ]]; then
             TEST_ENVIRONMENT="crc"
             log_info "Defaulting to CRC environment for smoke tests"
         else
             TEST_ENVIRONMENT="cluster"
-            log_info "Defaulting to existing cluster environment for e2e tests"
+            log_info "Defaulting to existing cluster environment"
         fi
     fi
 fi
@@ -206,15 +218,22 @@ if [[ "$VERBOSE" == "true" ]]; then
     set -x
 fi
 
-log_info "Starting SBD Operator $TEST_TYPE tests"
-log_info "Configuration:"
-log_info "  Test Type: $TEST_TYPE"
-log_info "  Test Environment: $TEST_ENVIRONMENT"
-log_info "  Operator Image: $QUAY_OPERATOR_IMG:$TAG"
-log_info "  Agent Image: $QUAY_AGENT_IMG:$TAG"
-log_info "  Cleanup After Test: $CLEANUP_AFTER_TEST"
-log_info "  Build Images: $(if [[ "$SKIP_BUILD" == "true" ]]; then echo "false (using existing)"; else echo "true"; fi)"
-log_info "  Skip Deploy: $SKIP_DEPLOY"
+if [[ "$CLEANUP_ONLY" == "true" ]]; then
+    log_info "Starting SBD Operator cleanup"
+    log_info "Configuration:"
+    log_info "  Mode: Cleanup only"
+    log_info "  Test Environment: $TEST_ENVIRONMENT"
+else
+    log_info "Starting SBD Operator $TEST_TYPE tests"
+    log_info "Configuration:"
+    log_info "  Test Type: $TEST_TYPE"
+    log_info "  Test Environment: $TEST_ENVIRONMENT"
+    log_info "  Operator Image: $QUAY_OPERATOR_IMG:$TAG"
+    log_info "  Agent Image: $QUAY_AGENT_IMG:$TAG"
+    log_info "  Cleanup After Test: $CLEANUP_AFTER_TEST"
+    log_info "  Build Images: $(if [[ "$SKIP_BUILD" == "true" ]]; then echo "false (using existing)"; else echo "true"; fi)"
+    log_info "  Skip Deploy: $SKIP_DEPLOY"
+fi
 
 # Function to check required tools
 check_tools() {
@@ -334,8 +353,8 @@ cleanup_environment() {
     local cleanup_reason="${1:-"test environment"}"
     local skip_kind_cluster="${2:-false}"
     
-    # Check if cleanup should be skipped
-    if [[ "$cleanup_reason" == "after tests" && "$CLEANUP_AFTER_TEST" != "true" ]]; then
+    # Check if cleanup should be skipped (but not for cleanup-only mode)
+    if [[ "$cleanup_reason" == "after tests" && "$CLEANUP_AFTER_TEST" != "true" && "$CLEANUP_ONLY" != "true" ]]; then
         log_info "Skipping cleanup as requested"
         return 0
     fi
@@ -638,6 +657,16 @@ main() {
     
     # Check prerequisites
     check_tools
+    
+    # If cleanup-only mode, just perform cleanup and exit
+    if [[ "$CLEANUP_ONLY" == "true" ]]; then
+        setup_environment
+        cleanup_environment "test resources (cleanup-only mode)"
+        log_success "Cleanup completed successfully!"
+        exit 0
+    fi
+    
+    # Normal test execution flow
     ensure_tools
     
     # Setup test environment
