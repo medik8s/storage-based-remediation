@@ -583,9 +583,7 @@ func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfi
 					DNSPolicy:          corev1.DNSClusterFirstWithHostNet,
 					PriorityClassName:  "system-node-critical",
 					RestartPolicy:      corev1.RestartPolicyAlways,
-					NodeSelector: map[string]string{
-						"kubernetes.io/os": "linux",
-					},
+					NodeSelector:       r.buildNodeSelector(sbdConfig),
 					Affinity: &corev1.Affinity{
 						NodeAffinity: &corev1.NodeAffinity{
 							RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
@@ -738,6 +736,20 @@ func (r *SBDConfigReconciler) buildSBDAgentArgs(sbdConfig *medik8sv1alpha1.SBDCo
 	}
 
 	return args
+}
+
+// buildNodeSelector builds the node selector for the DaemonSet, merging user-specified selectors with OS requirement
+func (r *SBDConfigReconciler) buildNodeSelector(sbdConfig *medik8sv1alpha1.SBDConfig) map[string]string {
+	// Start with the user-specified node selector (defaults to worker nodes only)
+	nodeSelector := make(map[string]string)
+	for k, v := range sbdConfig.Spec.GetNodeSelector() {
+		nodeSelector[k] = v
+	}
+
+	// Always require Linux OS
+	nodeSelector["kubernetes.io/os"] = "linux"
+
+	return nodeSelector
 }
 
 // buildVolumeMounts builds the volume mounts for the sbd-agent container

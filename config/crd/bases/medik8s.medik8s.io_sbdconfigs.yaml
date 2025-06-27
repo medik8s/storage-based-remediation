@@ -60,6 +60,15 @@ spec:
                 description: Namespace is the namespace where the SBD agent DaemonSet
                   will be deployed
                 type: string
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: |-
+                  NodeSelector is a selector which must be true for the SBD agent pod to fit on a node.
+                  This allows users to control which nodes the SBD agent runs on by specifying node labels.
+                  If not specified, defaults to worker nodes only (node-role.kubernetes.io/worker: "").
+                  The selector is merged with the default requirement for kubernetes.io/os=linux.
+                type: object
               petIntervalMultiple:
                 default: 4
                 description: |-

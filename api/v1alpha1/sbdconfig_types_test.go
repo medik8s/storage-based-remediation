@@ -904,6 +904,72 @@ func TestSBDConfigSpec_HasSharedStorage(t *testing.T) {
 	}
 }
 
+func TestSBDConfigSpec_GetNodeSelector(t *testing.T) {
+	tests := []struct {
+		name     string
+		spec     SBDConfigSpec
+		expected map[string]string
+	}{
+		{
+			name: "default node selector - worker nodes only",
+			spec: SBDConfigSpec{},
+			expected: map[string]string{
+				"node-role.kubernetes.io/worker": "",
+			},
+		},
+		{
+			name: "explicit node selector",
+			spec: SBDConfigSpec{
+				NodeSelector: map[string]string{
+					"custom-label": "custom-value",
+				},
+			},
+			expected: map[string]string{
+				"custom-label": "custom-value",
+			},
+		},
+		{
+			name: "multiple node selector labels",
+			spec: SBDConfigSpec{
+				NodeSelector: map[string]string{
+					"zone":        "us-east-1a",
+					"node-type":   "compute",
+					"environment": "production",
+				},
+			},
+			expected: map[string]string{
+				"zone":        "us-east-1a",
+				"node-type":   "compute",
+				"environment": "production",
+			},
+		},
+		{
+			name: "empty node selector map returns default",
+			spec: SBDConfigSpec{
+				NodeSelector: map[string]string{},
+			},
+			expected: map[string]string{
+				"node-role.kubernetes.io/worker": "",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.spec.GetNodeSelector()
+			if len(result) != len(tt.expected) {
+				t.Errorf("GetNodeSelector() length = %v, expected %v", len(result), len(tt.expected))
+				return
+			}
+			for k, v := range tt.expected {
+				if result[k] != v {
+					t.Errorf("GetNodeSelector()[%q] = %v, expected %v", k, result[k], v)
+				}
+			}
+		})
+	}
+}
+
 func TestSBDConfigSpec_ValidateSharedStoragePVC(t *testing.T) {
 	tests := []struct {
 		name      string

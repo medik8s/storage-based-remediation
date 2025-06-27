@@ -302,6 +302,12 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 			err = os.WriteFile(tmpFile, []byte(sbdConfigYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
 
+			// Display the contents of the tmp file for debugging
+			By("displaying the SBDConfig YAML contents")
+			tmpFileContents, err := os.ReadFile(tmpFile)
+			Expect(err).NotTo(HaveOccurred(), "Failed to read temporary SBDConfig file")
+			fmt.Printf("SBDConfig YAML contents:\n%s\n", string(tmpFileContents))
+
 			// Apply the SBDConfig
 			cmd := exec.Command("kubectl", "apply", "-f", tmpFile)
 			_, err = utils.Run(cmd)

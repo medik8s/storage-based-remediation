@@ -94,6 +94,13 @@ type SBDConfigSpec struct {
 	// +optional
 	SharedStorageMountPath string `json:"sharedStorageMountPath,omitempty"`
 
+	// NodeSelector is a selector which must be true for the SBD agent pod to fit on a node.
+	// This allows users to control which nodes the SBD agent runs on by specifying node labels.
+	// If not specified, defaults to worker nodes only (node-role.kubernetes.io/worker: "").
+	// The selector is merged with the default requirement for kubernetes.io/os=linux.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
 	// StaleNodeTimeout defines how long to wait before considering a node stale and removing it from slot mapping
 	// This timeout determines when inactive nodes are cleaned up from the shared SBD device slot assignments.
 	// Nodes that haven't updated their heartbeat within this duration will be considered stale and their slots
@@ -204,6 +211,18 @@ func (s *SBDConfigSpec) GetSharedStorageMountPath() string {
 // HasSharedStorage returns true if shared storage is configured
 func (s *SBDConfigSpec) HasSharedStorage() bool {
 	return s.SharedStoragePVC != ""
+}
+
+// GetNodeSelector returns the node selector with default fallback to worker nodes only
+func (s *SBDConfigSpec) GetNodeSelector() map[string]string {
+	if s.NodeSelector != nil && len(s.NodeSelector) > 0 {
+		return s.NodeSelector
+	}
+
+	// Default to worker nodes only
+	return map[string]string{
+		"node-role.kubernetes.io/worker": "",
+	}
 }
 
 // ValidateStaleNodeTimeout validates the stale node timeout value
@@ -376,6 +395,50 @@ func (s *SBDConfigSpec) ValidateAll() error {
 	return nil
 }
 
+// deriveAgentImageFromOperator derives the sbd-agent image from the operator image
+func deriveAgentImageFromOperator(operatorImage string) string {
+	// Handle empty operator image
+	if operatorImage == "" {
+		return "sbd-agent:latest"
+	}
+
+	// Replace the image name with sbd-agent while preserving registry/org/tag
+	// Example: registry.io/org/sbd-operator:v1.0.0 -> registry.io/org/sbd-agent:v1.0.0
+	lastSlash := strings.LastIndex(operatorImage, "/")
+	if lastSlash == -1 {
+		// No slash found, handle simple image names like "sbd-operator:v1.0.0" or "sbd-operator"
+		agentImage := strings.Replace(operatorImage, "sbd-operator", "sbd-agent", 1)
+		if agentImage == operatorImage {
+			// If no replacement happened, default to sbd-agent
+			agentImage = "sbd-agent"
+		}
+
+		// Add :latest tag if no tag is present
+		if !strings.Contains(agentImage, ":") {
+			agentImage += ":latest"
+		}
+
+		return agentImage
+	}
+
+	prefix := operatorImage[:lastSlash+1]
+	suffix := operatorImage[lastSlash+1:]
+
+	// Replace operator with agent in the image name
+	agentSuffix := strings.Replace(suffix, "sbd-operator", "sbd-agent", 1)
+	if agentSuffix == suffix {
+		// If no replacement happened, default to sbd-agent
+		agentSuffix = "sbd-agent"
+	}
+
+	// Add :latest tag if no tag is present
+	if !strings.Contains(agentSuffix, ":") {
+		agentSuffix += ":latest"
+	}
+
+	return prefix + agentSuffix
+}
+
 // SBDConfigStatus defines the observed state of SBDConfig.
 type SBDConfigStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
@@ -411,43 +474,4 @@ type SBDConfigList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []SBDConfig `json:"items"`
-}
-
-func init() {
-	SchemeBuilder.Register(&SBDConfig{}, &SBDConfigList{})
-}
-
-// deriveAgentImageFromOperator constructs the agent image from the operator's image by replacing the image name with sbd-agent
-func deriveAgentImageFromOperator(operatorImage string) string {
-	// Handle the format: registry/org/image:tag or registry/org/image
-	// Examples:
-	// - quay.io/medik8s/sbd-operator:v1.2.3 -> quay.io/medik8s/sbd-agent:v1.2.3
-	// - quay.io/medik8s/sbd-operator -> quay.io/medik8s/sbd-agent:latest
-	// - sbd-operator:latest -> sbd-agent:latest
-
-	if operatorImage == "" {
-		return "sbd-agent:latest"
-	}
-
-	// Split by ':' to separate image from tag
-	var imageWithoutTag, tag string
-	if colonIndex := strings.LastIndex(operatorImage, ":"); colonIndex != -1 {
-		imageWithoutTag = operatorImage[:colonIndex]
-		tag = operatorImage[colonIndex+1:]
-	} else {
-		imageWithoutTag = operatorImage
-		tag = "latest"
-	}
-
-	// Split by '/' to get registry/org/image parts
-	parts := strings.Split(imageWithoutTag, "/")
-	if len(parts) == 0 {
-		return "sbd-agent:" + tag
-	}
-
-	// Replace the last part (image name) with sbd-agent
-	parts[len(parts)-1] = "sbd-agent"
-
-	// Reconstruct the image
-	return strings.Join(parts, "/") + ":" + tag
 }
