@@ -357,10 +357,12 @@ cleanup_environment() {
     
     # Clean up test resources
     $KUBECTL delete sbdconfig --all --ignore-not-found=true || true
-    $KUBECTL delete daemonset sbd-agent-test-sbdconfig -n sbd-system --ignore-not-found=true || true
+    $KUBECTL delete sbdconfig --all -n sbd-test --ignore-not-found=true || true
+    $KUBECTL delete daemonset -l app=sbd-agent -n sbd-test --ignore-not-found=true || true
     $KUBECTL delete clusterrolebinding -l app.kubernetes.io/managed-by=sbd-operator --ignore-not-found=true || true
     $KUBECTL delete clusterrole -l app.kubernetes.io/managed-by=sbd-operator --ignore-not-found=true || true
     $KUBECTL delete ns sbd-operator-system --ignore-not-found=true || true
+    $KUBECTL delete ns sbd-test --ignore-not-found=true || true
     $KUBECTL delete ns sbd-system --ignore-not-found=true || true
     sleep 60
     
@@ -529,6 +531,46 @@ deploy_operator() {
     log_success "Operator deployed and ready"
 }
 
+# Function to create test namespace for SBDConfig resources
+create_test_namespace() {
+    log_info "Creating test namespace for SBDConfig resources"
+    
+    # Set up kubectl context based on environment
+    case "$TEST_ENVIRONMENT" in
+        "crc")
+            eval $(crc oc-env)
+            ;;
+        "kind")
+            kubectl config use-context "kind-$CRC_CLUSTER"
+            ;;
+        "cluster")
+            # Use current context
+            ;;
+    esac
+    
+    # Create the test namespace where SBDConfig will be deployed
+    # This is needed because the controller now deploys in the same namespace as the SBDConfig CR
+    local test_namespace="sbd-test"
+    
+    log_info "Creating namespace: $test_namespace"
+    $KUBECTL create namespace "$test_namespace" --dry-run=client -o yaml | $KUBECTL apply -f - || {
+        log_warning "Namespace $test_namespace may already exist"
+    }
+    
+    # For OpenShift, apply security context constraints
+    if [[ "$TEST_ENVIRONMENT" == "crc" ]]; then
+        log_info "Applying OpenShift security labels to namespace: $test_namespace"
+        $KUBECTL label namespace "$test_namespace" \
+            security.openshift.io/scc.podSecurityLabelSync=false \
+            pod-security.kubernetes.io/enforce=privileged \
+            pod-security.kubernetes.io/audit=privileged \
+            pod-security.kubernetes.io/warn=privileged \
+            --overwrite || true
+    fi
+    
+    log_success "Test namespace created: $test_namespace"
+}
+
 # Function to run tests
 run_tests() {
     log_info "Running $TEST_TYPE tests"
@@ -545,6 +587,9 @@ run_tests() {
             # Use current context
             ;;
     esac
+    
+    # Create test namespace before running tests
+    create_test_namespace
     
     # Set environment variables for tests
     export QUAY_REGISTRY

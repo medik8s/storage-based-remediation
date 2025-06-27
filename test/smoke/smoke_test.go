@@ -34,6 +34,9 @@ import (
 // namespace where the project is deployed in
 const namespace = "sbd-operator-system"
 
+// testNamespace where SBDConfig resources and their DaemonSets are deployed
+const testNamespace = "sbd-test"
+
 // serviceAccountName created for the project
 const serviceAccountName = "sbd-operator-controller-manager"
 
@@ -75,11 +78,11 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 		_, _ = utils.Run(cmd)
 
 		By("cleaning up any test SBDConfigs")
-		cmd = exec.Command("kubectl", "delete", "sbdconfig", "--all", "--ignore-not-found=true")
+		cmd = exec.Command("kubectl", "delete", "sbdconfig", "--all", "-n", testNamespace, "--ignore-not-found=true")
 		_, _ = utils.Run(cmd)
 
 		By("cleaning up test namespaces")
-		cmd = exec.Command("kubectl", "delete", "ns", "sbd-system", "--ignore-not-found=true")
+		cmd = exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found=true")
 		_, _ = utils.Run(cmd)
 	})
 
@@ -271,7 +274,7 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 
 			// Clean up any remaining DaemonSets
 			By("cleaning up SBD agent DaemonSets")
-			cmd = exec.Command("kubectl", "delete", "daemonset", "-l", "app.kubernetes.io/name=sbd-agent", "-n", "sbd-system", "--ignore-not-found=true")
+			cmd = exec.Command("kubectl", "delete", "daemonset", "-l", "app.kubernetes.io/name=sbd-agent", "-n", testNamespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
 
 			// Clean up SCC (note: SCC is managed by operator installation, not by individual tests)
@@ -308,14 +311,14 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 			Expect(err).NotTo(HaveOccurred(), "Failed to read temporary SBDConfig file")
 			fmt.Printf("SBDConfig YAML contents:\n%s\n", string(tmpFileContents))
 
-			// Apply the SBDConfig
-			cmd := exec.Command("kubectl", "apply", "-f", tmpFile)
+			// Apply the SBDConfig to the test namespace
+			cmd := exec.Command("kubectl", "apply", "-f", tmpFile, "-n", testNamespace)
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDConfig")
 
 			By("verifying the SBDConfig resource exists")
 			verifySBDConfigExists := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-o", "jsonpath={.metadata.name}")
+				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-n", testNamespace, "-n", testNamespace, "-o", "jsonpath={.metadata.name}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal(sbdConfigName))
@@ -325,7 +328,7 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 			By("verifying the SBD agent DaemonSet is created")
 			expectedDaemonSetName := fmt.Sprintf("sbd-agent-%s", sbdConfigName)
 			verifyDaemonSetCreated := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", "sbd-system", "-o", "jsonpath={.metadata.name}")
+				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", testNamespace, "-o", "jsonpath={.metadata.name}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal(expectedDaemonSetName))
@@ -336,19 +339,19 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 			verifyDaemonSetConfig := func(g Gomega) {
 				// Check image - should be automatically derived from operator image
 				// (same registry/org/tag as operator, but with sbd-agent as image name)
-				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", "sbd-system", "-o", "jsonpath={.spec.template.spec.containers[0].image}")
+				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", testNamespace, "-o", "jsonpath={.spec.template.spec.containers[0].image}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal(agentImage))
 
 				// Check image pull policy
-				cmd = exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", "sbd-system", "-o", "jsonpath={.spec.template.spec.containers[0].imagePullPolicy}")
+				cmd = exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", testNamespace, "-o", "jsonpath={.spec.template.spec.containers[0].imagePullPolicy}")
 				output, err = utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal("Always"))
 
 				// Check watchdog path argument
-				cmd = exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", "sbd-system", "-o", "jsonpath={.spec.template.spec.containers[0].args}")
+				cmd = exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", testNamespace, "-o", "jsonpath={.spec.template.spec.containers[0].args}")
 				output, err = utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(ContainSubstring("--watchdog-path=/dev/watchdog"))
@@ -357,7 +360,7 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 
 			By("verifying the DaemonSet has expected number of pods scheduled")
 			verifyDaemonSetScheduled := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", "sbd-system", "-o", "jsonpath={.status.desiredNumberScheduled}")
+				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", testNamespace, "-o", "jsonpath={.status.desiredNumberScheduled}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				// Should have at least 1 pod scheduled (for the single CRC node)
@@ -368,7 +371,7 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 
 			By("verifying the SBDConfig status reflects DaemonSet creation")
 			verifySBDConfigStatus := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-o", "jsonpath={.status.totalNodes}")
+				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-n", testNamespace, "-o", "jsonpath={.status.totalNodes}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				// Should have at least 1 node targeted
@@ -396,7 +399,7 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Apply the SBDConfig
-			cmd := exec.Command("kubectl", "apply", "-f", tmpFile)
+			cmd := exec.Command("kubectl", "apply", "-f", tmpFile, "-n", testNamespace)
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDConfig")
 
@@ -414,7 +417,7 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 
 			By("verifying the DaemonSet is created")
 			verifyDaemonSetExists := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", "sbd-system", "-o", "jsonpath={.metadata.name}")
+				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", testNamespace, "-o", "jsonpath={.metadata.name}")
 				output, err := utils.Run(cmd)
 				if err != nil {
 					fmt.Printf("DaemonSet lookup failed: %v, output: %s\n", err, output)
@@ -426,7 +429,7 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 
 			By("verifying SBD agent pods are created")
 			verifySBDPodsExist := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pods", "-n", "sbd-system", "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].metadata.name}")
+				cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].metadata.name}")
 				output, err := utils.Run(cmd)
 				if err != nil {
 					fmt.Printf("Pod lookup failed: %v, output: %s\n", err, output)
@@ -438,7 +441,7 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 
 			By("verifying SBD agent pods are running")
 			verifySBDPodsRunning := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pods", "-n", "sbd-system", "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].status.phase}")
+				cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				// All pods should be Running
@@ -452,7 +455,7 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 
 			By("verifying SBD agent pods are ready")
 			verifySBDPodsReady := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pods", "-n", "sbd-system", "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].status.conditions[?(@.type=='Ready')].status}")
+				cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].status.conditions[?(@.type=='Ready')].status}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				// All pods should have Ready=True
@@ -466,7 +469,7 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 
 			By("verifying SBDConfig status shows pods are ready")
 			verifySBDConfigReady := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-o", "jsonpath={.status.daemonSetReady}")
+				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-n", testNamespace, "-o", "jsonpath={.status.daemonSetReady}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal("true"), "SBDConfig status should show daemonSetReady=true")
@@ -476,13 +479,13 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 			By("verifying SBD agent container logs show successful startup")
 			verifySBDAgentLogs := func(g Gomega) {
 				// Get the first pod name
-				cmd := exec.Command("kubectl", "get", "pods", "-n", "sbd-system", "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[0].metadata.name}")
+				cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[0].metadata.name}")
 				podName, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(podName).ToNot(BeEmpty())
 
 				// Check the logs
-				cmd = exec.Command("kubectl", "logs", podName, "-n", "sbd-system", "-c", "sbd-agent", "--tail=50")
+				cmd = exec.Command("kubectl", "logs", podName, "-n", testNamespace, "-c", "sbd-agent", "--tail=50")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				// Look for signs that the agent started successfully
@@ -536,7 +539,7 @@ spec:
 			Expect(err).NotTo(HaveOccurred())
 
 			// Apply the SBDRemediation
-			cmd := exec.Command("kubectl", "apply", "-f", tmpFile)
+			cmd := exec.Command("kubectl", "apply", "-f", tmpFile, "-n", testNamespace)
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDRemediation")
 
@@ -878,13 +881,13 @@ spec:
 			Expect(err).NotTo(HaveOccurred())
 
 			// Apply the SBDConfig
-			cmd := exec.Command("kubectl", "apply", "-f", tmpFile)
+			cmd := exec.Command("kubectl", "apply", "-f", tmpFile, "-n", testNamespace)
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDConfig")
 
 			By("verifying the SBDConfig resource exists")
 			verifySBDConfigExists := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-o", "jsonpath={.metadata.name}")
+				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-n", testNamespace, "-o", "jsonpath={.metadata.name}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal(sbdConfigName))
@@ -894,7 +897,7 @@ spec:
 			By("verifying the SBD agent DaemonSet is created despite SBD device failure")
 			expectedDaemonSetName := fmt.Sprintf("sbd-agent-%s", sbdConfigName)
 			verifyDaemonSetCreated := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", "sbd-system", "-o", "jsonpath={.metadata.name}")
+				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", testNamespace, "-o", "jsonpath={.metadata.name}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal(expectedDaemonSetName))
@@ -903,7 +906,7 @@ spec:
 
 			By("verifying SBD agent pods are created and running (watchdog-only mode)")
 			verifySBDPodsRunning := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pods", "-n", "sbd-system", "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].status.phase}")
+				cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				// All pods should be Running despite SBD device failure
@@ -918,13 +921,13 @@ spec:
 			By("verifying agent logs show preflight checks passed with watchdog only")
 			verifyPreflightLogs := func(g Gomega) {
 				// Get the first pod name
-				cmd := exec.Command("kubectl", "get", "pods", "-n", "sbd-system", "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[0].metadata.name}")
+				cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[0].metadata.name}")
 				podName, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(podName).ToNot(BeEmpty())
 
 				// Check the logs for preflight check messages
-				cmd = exec.Command("kubectl", "logs", podName, "-n", "sbd-system", "-c", "sbd-agent", "--tail=100")
+				cmd = exec.Command("kubectl", "logs", podName, "-n", testNamespace, "-c", "sbd-agent", "--tail=100")
 				logs, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				// Should show that preflight checks passed despite SBD device failure
@@ -965,13 +968,13 @@ spec:
 			defer os.Remove(mockSBDPath) // Clean up after test
 
 			// Apply the SBDConfig
-			cmd := exec.Command("kubectl", "apply", "-f", tmpFile)
+			cmd := exec.Command("kubectl", "apply", "-f", tmpFile, "-n", testNamespace)
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDConfig")
 
 			By("verifying the SBDConfig resource exists")
 			verifySBDConfigExists := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-o", "jsonpath={.metadata.name}")
+				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-n", testNamespace, "-o", "jsonpath={.metadata.name}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal(sbdConfigName))
@@ -981,7 +984,7 @@ spec:
 			By("verifying the SBD agent DaemonSet is created despite watchdog failure")
 			expectedDaemonSetName := fmt.Sprintf("sbd-agent-%s", sbdConfigName)
 			verifyDaemonSetCreated := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", "sbd-system", "-o", "jsonpath={.metadata.name}")
+				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", testNamespace, "-o", "jsonpath={.metadata.name}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal(expectedDaemonSetName))
@@ -990,7 +993,7 @@ spec:
 
 			By("verifying SBD agent pods are created and running (SBD-only mode)")
 			verifySBDPodsRunning := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pods", "-n", "sbd-system", "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].status.phase}")
+				cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				// All pods should be Running despite watchdog failure
@@ -1005,13 +1008,13 @@ spec:
 			By("verifying agent logs show preflight checks passed with SBD only")
 			verifyPreflightLogs := func(g Gomega) {
 				// Get the first pod name
-				cmd := exec.Command("kubectl", "get", "pods", "-n", "sbd-system", "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[0].metadata.name}")
+				cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[0].metadata.name}")
 				podName, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(podName).ToNot(BeEmpty())
 
 				// Check the logs for preflight check messages
-				cmd = exec.Command("kubectl", "logs", podName, "-n", "sbd-system", "-c", "sbd-agent", "--tail=100")
+				cmd = exec.Command("kubectl", "logs", podName, "-n", testNamespace, "-c", "sbd-agent", "--tail=100")
 				logs, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				// Should show that preflight checks passed despite watchdog failure

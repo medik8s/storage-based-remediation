@@ -221,14 +221,14 @@ spec:
 
 	By("Waiting for SBD agent DaemonSet to be created")
 	Eventually(func() bool {
-		cmd := exec.Command("kubectl", "get", "daemonset", "-n", "sbd-system", "-l", "app=sbd-agent")
+		cmd := exec.Command("kubectl", "get", "daemonset", "-n", testNS, "-l", "app=sbd-agent")
 		output, err := utils.Run(cmd)
 		return err == nil && !strings.Contains(output, "No resources found")
 	}, time.Minute*3, time.Second*15).Should(BeTrue())
 
 	By("Verifying SBD agents are running on worker nodes")
 	Eventually(func() bool {
-		cmd := exec.Command("kubectl", "get", "pods", "-n", "sbd-system", "-l", "app=sbd-agent", "-o", "json")
+		cmd := exec.Command("kubectl", "get", "pods", "-n", testNS, "-l", "app=sbd-agent", "-o", "json")
 		output, err := utils.Run(cmd)
 		if err != nil {
 			return false
@@ -315,7 +315,7 @@ spec:
 	By("Monitoring for SBD agent response to storage issues")
 	// Monitor SBD agent logs for storage access issues
 	Eventually(func() bool {
-		cmd := exec.Command("kubectl", "logs", "-n", "sbd-system", "-l", "app=sbd-agent", "--tail=50")
+		cmd := exec.Command("kubectl", "logs", "-n", testNS, "-l", "app=sbd-agent", "--tail=50")
 		output, err := utils.Run(cmd)
 		if err != nil {
 			return false
@@ -462,7 +462,7 @@ func testSBDAgentCrash(cluster ClusterInfo) {
 	By(fmt.Sprintf("Testing SBD agent crash and recovery on node %s", targetNode.Metadata.Name))
 
 	// Get the SBD agent pod on the target node
-	cmd := exec.Command("kubectl", "get", "pods", "-n", "sbd-system", "-l", "app=sbd-agent",
+	cmd := exec.Command("kubectl", "get", "pods", "-n", testNS, "-l", "app=sbd-agent",
 		"--field-selector", fmt.Sprintf("spec.nodeName=%s", targetNode.Metadata.Name), "-o", "name")
 	output, err := utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred())
@@ -472,13 +472,13 @@ func testSBDAgentCrash(cluster ClusterInfo) {
 
 	By(fmt.Sprintf("Crashing SBD agent pod %s", podName))
 	// Delete the pod to simulate a crash
-	cmd = exec.Command("kubectl", "delete", "pod", podName, "-n", "sbd-system")
+	cmd = exec.Command("kubectl", "delete", "pod", podName, "-n", testNS)
 	_, err = utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred())
 
 	By("Verifying SBD agent pod is recreated by DaemonSet")
 	Eventually(func() bool {
-		cmd := exec.Command("kubectl", "get", "pods", "-n", "sbd-system", "-l", "app=sbd-agent",
+		cmd := exec.Command("kubectl", "get", "pods", "-n", testNS, "-l", "app=sbd-agent",
 			"--field-selector", fmt.Sprintf("spec.nodeName=%s", targetNode.Metadata.Name), "-o", "json")
 		output, err := utils.Run(cmd)
 		if err != nil {
@@ -604,7 +604,7 @@ spec:
 
 	By("Verifying SBD agents continue running normally")
 	Consistently(func() bool {
-		cmd := exec.Command("kubectl", "get", "pods", "-n", "sbd-system", "-l", "app=sbd-agent", "-o", "json")
+		cmd := exec.Command("kubectl", "get", "pods", "-n", testNS, "-l", "app=sbd-agent", "-o", "json")
 		output, err := utils.Run(cmd)
 		if err != nil {
 			return false
@@ -641,7 +641,7 @@ func testLargeClusterCoordination(cluster ClusterInfo) {
 
 	By("Verifying SBD agents coordinate across large cluster")
 	Eventually(func() bool {
-		cmd := exec.Command("kubectl", "get", "pods", "-n", "sbd-system", "-l", "app=sbd-agent", "-o", "json")
+		cmd := exec.Command("kubectl", "get", "pods", "-n", testNS, "-l", "app=sbd-agent", "-o", "json")
 		output, err := utils.Run(cmd)
 		if err != nil {
 			return false
