@@ -393,7 +393,7 @@ type SBDConfigStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Cluster
+// +kubebuilder:resource:scope=Namespaced
 
 // SBDConfig is the Schema for the sbdconfigs API.
 type SBDConfig struct {

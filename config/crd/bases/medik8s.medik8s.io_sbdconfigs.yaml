@@ -12,7 +12,7 @@ spec:
     listKind: SBDConfigList
     plural: sbdconfigs
     singular: sbdconfig
-  scope: Cluster
+  scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
