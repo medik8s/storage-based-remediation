@@ -83,11 +83,21 @@ spec:
   # DEPLOYMENT CONFIGURATION
   # ========================================================================
   
-  # Namespace where the SBD Agent DaemonSet will be deployed
-  # - Default: "sbd-system"
-  # - Namespace will be created if it doesn't exist
-  # - Use different namespaces for multi-cluster environments
-  namespace: "sbd-system"
+  # Node selector for controlling which nodes the SBD Agent runs on
+  # - Default: worker nodes only (node-role.kubernetes.io/worker: "")
+  # - Automatically merged with Linux OS requirement (kubernetes.io/os: linux)
+  # - Customize to target specific nodes by labels
+  # 
+  # Examples:
+  # - Default behavior (worker nodes only) - no configuration needed
+  # - All nodes: nodeSelector: {}
+  # - Specific zone: nodeSelector: {"topology.kubernetes.io/zone": "us-east-1a"}
+  # - Custom labels: nodeSelector: {"sbd-enabled": "true", "tier": "compute"}
+  # 
+  # Note: The controller automatically adds "kubernetes.io/os: linux" requirement
+  # The SBD Agent DaemonSet will be deployed in the same namespace as this SBDConfig resource
+  # nodeSelector:
+  #   node-role.kubernetes.io/worker: ""
   
   # ========================================================================
   # NODE LIFECYCLE CONFIGURATION
@@ -113,29 +123,28 @@ spec:
 # Basic Production Configuration (image auto-derived from operator):
 # -------------------------------------------------------------------
 # spec:
-#   namespace: "sbd-system"
 #   staleNodeTimeout: "30m"
 #
 # Production with Custom Image:
 # -----------------------------
 # spec:
 #   image: "quay.io/medik8s/sbd-agent:v1.2.3"
-#   namespace: "sbd-system"
 #   staleNodeTimeout: "30m"
 #
 # High-Availability Configuration:
 # --------------------------------
 # spec:
 #   sbdWatchdogPath: "/dev/watchdog1"
-#   namespace: "high-availability"
 #   staleNodeTimeout: "2h"
 #
 # Development/Testing Configuration:
 # ----------------------------------
 # spec:
 #   imagePullPolicy: "Always"
-#   namespace: "sbd-dev"
 #   staleNodeTimeout: "5m"
+#
+# Note: The SBD Agent DaemonSet will be deployed in the same namespace 
+# as the SBDConfig resource. Create the SBDConfig in the desired namespace.
 #
 # ========================================================================
 # DEPLOYMENT COMMANDS
@@ -149,7 +158,8 @@ spec:
 #   kubectl describe sbdconfig sbdconfig-sample
 #
 # Monitor deployment:
-#   kubectl get pods -n sbd-system
-#   kubectl logs -n sbd-system -l app=sbd-agent
+#   kubectl get pods -n <namespace>
+#   kubectl logs -n <namespace> -l app=sbd-agent
+#   (Replace <namespace> with the namespace where you created the SBDConfig)
 #
 # ========================================================================

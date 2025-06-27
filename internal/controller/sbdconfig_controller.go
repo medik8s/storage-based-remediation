@@ -51,12 +51,10 @@ const (
 	// Event reasons for SBDConfig operations
 	ReasonSBDConfigReconciled       = "SBDConfigReconciled"
 	ReasonDaemonSetManaged          = "DaemonSetManaged"
-	ReasonNamespaceCreated          = "NamespaceCreated"
 	ReasonServiceAccountCreated     = "ServiceAccountCreated"
 	ReasonClusterRoleBindingCreated = "ClusterRoleBindingCreated"
 	ReasonReconcileError            = "ReconcileError"
 	ReasonDaemonSetError            = "DaemonSetError"
-	ReasonNamespaceError            = "NamespaceError"
 	ReasonServiceAccountError       = "ServiceAccountError"
 	ReasonValidationError           = "ValidationError"
 
@@ -196,7 +194,6 @@ func (r *SBDConfigReconciler) getOperatorImage(ctx context.Context, logger logr.
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdconfigs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdconfigs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
@@ -265,7 +262,7 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	logger.V(1).Info("Starting SBDConfig reconciliation",
 		"spec.image", sbdConfig.Spec.GetImageWithOperatorImage(operatorImage),
-		"spec.namespace", sbdConfig.Spec.Namespace,
+		"namespace", sbdConfig.Namespace,
 		"spec.sbdWatchdogPath", sbdConfig.Spec.GetSbdWatchdogPath(),
 		"spec.staleNodeTimeout", sbdConfig.Spec.GetStaleNodeTimeout(),
 		"spec.watchdogTimeout", sbdConfig.Spec.GetWatchdogTimeout(),
@@ -281,42 +278,18 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, fmt.Errorf("SBDConfig validation failed: %w", err)
 	}
 
-	// Set defaults if not specified
-	if sbdConfig.Spec.Namespace == "" {
-		sbdConfig.Spec.Namespace = "sbd-system"
-		logger.V(1).Info("Set default namespace", "namespace", sbdConfig.Spec.Namespace)
-	}
-
-	// Ensure the namespace exists with retry logic
-	err = r.performKubernetesAPIOperationWithRetry(ctx, "ensure namespace", func() error {
-		return r.ensureNamespace(ctx, &sbdConfig, sbdConfig.Spec.Namespace, logger)
-	}, logger)
-
-	if err != nil {
-		logger.Error(err, "Failed to ensure namespace exists after retries",
-			"namespace", sbdConfig.Spec.Namespace,
-			"operation", "namespace-creation")
-		r.emitEventf(&sbdConfig, EventTypeWarning, ReasonNamespaceError,
-			"Failed to ensure namespace '%s' exists: %v", sbdConfig.Spec.Namespace, err)
-
-		// Return requeue with backoff for transient errors
-		if r.isTransientKubernetesError(err) {
-			return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
-		}
-		return ctrl.Result{}, err
-	}
-
 	// Ensure the service account and RBAC resources exist with retry logic
+	// Deploy in the same namespace as the SBDConfig CR
 	err = r.performKubernetesAPIOperationWithRetry(ctx, "ensure service account", func() error {
-		return r.ensureServiceAccount(ctx, &sbdConfig, sbdConfig.Spec.Namespace, logger)
+		return r.ensureServiceAccount(ctx, &sbdConfig, sbdConfig.Namespace, logger)
 	}, logger)
 
 	if err != nil {
 		logger.Error(err, "Failed to ensure service account exists after retries",
-			"namespace", sbdConfig.Spec.Namespace,
+			"namespace", sbdConfig.Namespace,
 			"operation", "serviceaccount-creation")
 		r.emitEventf(&sbdConfig, EventTypeWarning, ReasonServiceAccountError,
-			"Failed to ensure service account 'sbd-agent' exists in namespace '%s': %v", sbdConfig.Spec.Namespace, err)
+			"Failed to ensure service account 'sbd-agent' exists in namespace '%s': %v", sbdConfig.Namespace, err)
 
 		// Return requeue with backoff for transient errors
 		if r.isTransientKubernetesError(err) {
@@ -420,54 +393,6 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
-// ensureNamespace creates the namespace if it doesn't exist
-func (r *SBDConfigReconciler) ensureNamespace(ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, namespaceName string, logger logr.Logger) error {
-	namespace := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: namespaceName,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":       "sbd-operator",
-				"app.kubernetes.io/component":  "sbd-system",
-				"app.kubernetes.io/part-of":    "sbd-operator",
-				"app.kubernetes.io/managed-by": "sbd-operator",
-				// OpenShift specific labels to allow privileged workloads
-				"security.openshift.io/scc.podSecurityLabelSync": "false",
-				"pod-security.kubernetes.io/enforce":             "privileged",
-				"pod-security.kubernetes.io/audit":               "privileged",
-				"pod-security.kubernetes.io/warn":                "privileged",
-			},
-		},
-	}
-
-	result, err := controllerutil.CreateOrUpdate(ctx, r.Client, namespace, func() error {
-		// Ensure labels are set on updates too
-		if namespace.Labels == nil {
-			namespace.Labels = make(map[string]string)
-		}
-		namespace.Labels["app.kubernetes.io/name"] = "sbd-operator"
-		namespace.Labels["app.kubernetes.io/component"] = "sbd-system"
-		namespace.Labels["app.kubernetes.io/part-of"] = "sbd-operator"
-		namespace.Labels["app.kubernetes.io/managed-by"] = "sbd-operator"
-		// OpenShift specific labels to allow privileged workloads
-		namespace.Labels["security.openshift.io/scc.podSecurityLabelSync"] = "false"
-		namespace.Labels["pod-security.kubernetes.io/enforce"] = "privileged"
-		namespace.Labels["pod-security.kubernetes.io/audit"] = "privileged"
-		namespace.Labels["pod-security.kubernetes.io/warn"] = "privileged"
-		return nil
-	})
-
-	if err == nil && result == controllerutil.OperationResultCreated {
-		// Emit event for namespace creation
-		logger.Info("Namespace created for SBD system with privileged security profile", "namespace", namespaceName)
-		r.emitEventf(sbdConfig, EventTypeNormal, ReasonNamespaceCreated,
-			"Namespace '%s' created for SBD system with privileged security profile", namespaceName)
-	} else if err == nil && result == controllerutil.OperationResultUpdated {
-		logger.Info("Namespace updated for SBD system with privileged security profile", "namespace", namespaceName)
-	}
-
-	return err
-}
-
 // ensureServiceAccount creates the service account and RBAC resources if they don't exist
 func (r *SBDConfigReconciler) ensureServiceAccount(ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, namespaceName string, logger logr.Logger) error {
 	// Create the service account
@@ -559,7 +484,7 @@ func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfi
 	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      daemonSetName,
-			Namespace: sbdConfig.Spec.Namespace,
+			Namespace: sbdConfig.Namespace,
 			Labels:    labels,
 		},
 		Spec: appsv1.DaemonSetSpec{

@@ -362,6 +362,7 @@ cleanup_environment() {
     $KUBECTL delete clusterrole -l app.kubernetes.io/managed-by=sbd-operator --ignore-not-found=true || true
     $KUBECTL delete ns sbd-operator-system --ignore-not-found=true || true
     $KUBECTL delete ns sbd-system --ignore-not-found=true || true
+    sleep 60
     
     # Clean up environment-specific resources
     if [[ "$TEST_ENVIRONMENT" == "crc" ]]; then

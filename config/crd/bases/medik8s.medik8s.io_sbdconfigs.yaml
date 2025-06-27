@@ -55,11 +55,6 @@ spec:
                 - Never
                 - IfNotPresent
                 type: string
-              namespace:
-                default: sbd-system
-                description: Namespace is the namespace where the SBD agent DaemonSet
-                  will be deployed
-                type: string
               nodeSelector:
                 additionalProperties:
                   type: string

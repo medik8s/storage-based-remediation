@@ -75,10 +75,6 @@ type SBDConfigSpec struct {
 	// +optional
 	ImagePullPolicy string `json:"imagePullPolicy,omitempty"`
 
-	// Namespace is the namespace where the SBD agent DaemonSet will be deployed
-	// +kubebuilder:default="sbd-system"
-	Namespace string `json:"namespace,omitempty"`
-
 	// SharedStoragePVC is the name of a ReadWriteMany (RWX) PersistentVolumeClaim
 	// that provides shared storage for coordination between SBD agents across nodes.
 	// When specified, the controller will mount this PVC in the agent DaemonSet
