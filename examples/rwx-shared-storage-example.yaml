@@ -20,136 +20,29 @@ data:
     - Cross-node communication files
 
 ---
-apiVersion: apps/v1
-kind: DaemonSet
+# SBDConfig with RWX shared storage integration
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDConfig
 metadata:
-  name: sbd-agent-with-shared-storage
+  name: sbd-config-with-shared-storage
   namespace: sbd-system
-  labels:
-    app: sbd-agent
-    storage-type: rwx-shared
 spec:
-  selector:
-    matchLabels:
-      app: sbd-agent
-  template:
-    metadata:
-      labels:
-        app: sbd-agent
-    spec:
-      serviceAccountName: sbd-agent
-      hostNetwork: true
-      hostPID: true
-      containers:
-      - name: sbd-agent
-        image: quay.io/medik8s/sbd-agent:latest
-        imagePullPolicy: IfNotPresent
-        
-        # Security context for SBD operations
-        securityContext:
-          privileged: true
-          capabilities:
-            add:
-            - SYS_ADMIN
-            - SYS_BOOT
-            - SYS_TIME
-        
-        # Environment variables
-        env:
-        - name: NODE_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-        - name: SHARED_STORAGE_PATH
-          value: "/shared-storage"
-        - name: SBD_DEVICE
-          value: "/dev/disk/by-id/scsi-36001405example"
-        
-        # Volume mounts
-        volumeMounts:
-        # Shared RWX storage - accessible from all nodes
-        - name: shared-storage
-          mountPath: /shared-storage
-        
-        # Host paths for SBD operations
-        - name: dev
-          mountPath: /dev
-        - name: sys
-          mountPath: /sys
-        - name: proc
-          mountPath: /proc
-        
-        # Configuration
-        - name: config
-          mountPath: /etc/sbd-agent
-        
-        # Startup command
-        command:
-        - /bin/bash
-        - -c
-        - |
-          set -e
-          
-          echo "Starting SBD agent on node: $NODE_NAME"
-          echo "Shared storage mounted at: $SHARED_STORAGE_PATH"
-          
-          # Create node-specific directory in shared storage
-          mkdir -p "$SHARED_STORAGE_PATH/nodes/$NODE_NAME"
-          
-          # Write node status to shared storage
-          cat > "$SHARED_STORAGE_PATH/nodes/$NODE_NAME/status.json" << EOF
-          {
-            "node": "$NODE_NAME",
-            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "status": "starting",
-            "sbd_device": "$SBD_DEVICE"
-          }
-          EOF
-          
-          # List all nodes in shared storage
-          echo "Nodes in shared storage:"
-          ls -la "$SHARED_STORAGE_PATH/nodes/" || echo "No other nodes yet"
-          
-          # Start the actual SBD agent
-          exec /usr/local/bin/sbd-agent \
-            --watchdog-path=/dev/watchdog \
-            --watchdog-timeout=30s \
-            --sbd-device="$SBD_DEVICE" \
-            --shared-storage="$SHARED_STORAGE_PATH" \
-            --log-level=info
-      
-      # Volumes
-      volumes:
-      # RWX Persistent Volume - shared across all nodes
-      - name: shared-storage
-        persistentVolumeClaim:
-          claimName: sbd-shared-pvc
-      
-      # Host paths for hardware access
-      - name: dev
-        hostPath:
-          path: /dev
-      - name: sys
-        hostPath:
-          path: /sys
-      - name: proc
-        hostPath:
-          path: /proc
-      
-      # Configuration from ConfigMap
-      - name: config
-        configMap:
-          name: sbd-shared-config
-      
-      # Node selection and tolerations
-      nodeSelector:
-        node-role.kubernetes.io/worker: ""
-      
-      tolerations:
-      - operator: Exists
-        effect: NoSchedule
-      - operator: Exists
-        effect: NoExecute
+  # SBD agent image configuration
+  image: "quay.io/medik8s/sbd-agent:latest"
+  imagePullPolicy: "IfNotPresent"
+  
+  # Watchdog configuration
+  sbdWatchdogPath: "/dev/watchdog"
+  watchdogTimeout: "60s"
+  petIntervalMultiple: 4
+  
+  # Node management
+  staleNodeTimeout: "1h"
+  
+  # Shared storage configuration
+  # The PVC must be ReadWriteMany (RWX) and exist in the same namespace
+  sharedStoragePVC: "sbd-shared-pvc"
+  sharedStorageMountPath: "/shared-storage"
 
 ---
 # Example Pod to test RWX storage functionality

@@ -161,7 +161,7 @@ func (r *SBDConfigReconciler) getOperatorImage(ctx context.Context, logger logr.
 	podNamespace := os.Getenv("POD_NAMESPACE")
 
 	if podName == "" || podNamespace == "" {
-		logger.V(1).Info("POD_NAME or POD_NAMESPACE environment variables not set, using fallback")
+		logger.Error(nil, "POD_NAME or POD_NAMESPACE environment variables not set, using fallback")
 		return "sbd-agent:latest", nil
 	}
 
@@ -176,7 +176,7 @@ func (r *SBDConfigReconciler) getOperatorImage(ctx context.Context, logger logr.
 	// Find the manager container (operator container)
 	for _, container := range pod.Spec.Containers {
 		if container.Name == "manager" {
-			logger.V(1).Info("Found operator image", "image", container.Image)
+			logger.Info("Found operator image", "image", container.Image)
 			return container.Image, nil
 		}
 	}
@@ -184,11 +184,11 @@ func (r *SBDConfigReconciler) getOperatorImage(ctx context.Context, logger logr.
 	// If manager container not found, use the first container's image
 	if len(pod.Spec.Containers) > 0 {
 		image := pod.Spec.Containers[0].Image
-		logger.V(1).Info("Using first container image as operator image", "image", image)
+		logger.Error(nil, "Using first container image as operator image", "image", image)
 		return image, nil
 	}
 
-	logger.V(1).Info("No containers found in operator pod, using fallback")
+	logger.Error(nil, "No containers found in operator pod, using fallback")
 	return "sbd-agent:latest", nil
 }
 
@@ -203,6 +203,7 @@ func (r *SBDConfigReconciler) getOperatorImage(ctx context.Context, logger logr.
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -555,14 +556,6 @@ func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfi
 		"sbdconfig":  sbdConfig.Name,
 	}
 
-	// Get configured watchdog timeout and calculate pet interval
-	watchdogTimeout := sbdConfig.Spec.GetWatchdogTimeout()
-	petInterval := sbdConfig.Spec.GetPetInterval()
-
-	// Convert to command line arguments
-	watchdogTimeoutArg := fmt.Sprintf("--watchdog-timeout=%s", watchdogTimeout.String())
-	petIntervalArg := fmt.Sprintf("--pet-interval=%s", petInterval.String())
-
 	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      daemonSetName,
@@ -676,18 +669,8 @@ func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfi
 									},
 								},
 							},
-							Args: []string{
-								fmt.Sprintf("--watchdog-path=%s", sbdConfig.Spec.GetSbdWatchdogPath()),
-								watchdogTimeoutArg,
-								petIntervalArg,
-								"--log-level=info",
-								fmt.Sprintf("--stale-node-timeout=%s", sbdConfig.Spec.GetStaleNodeTimeout().String()),
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{Name: "dev", MountPath: "/dev"},
-								{Name: "sys", MountPath: "/sys", ReadOnly: true},
-								{Name: "proc", MountPath: "/proc", ReadOnly: true},
-							},
+							Args:         r.buildSBDAgentArgs(sbdConfig),
+							VolumeMounts: r.buildVolumeMounts(sbdConfig),
 							LivenessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									Exec: &corev1.ExecAction{
@@ -726,40 +709,101 @@ func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfi
 							},
 						},
 					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "dev",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: "/dev",
-									Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
-								},
-							},
-						},
-						{
-							Name: "sys",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: "/sys",
-									Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
-								},
-							},
-						},
-						{
-							Name: "proc",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: "/proc",
-									Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
-								},
-							},
-						},
-					},
+					Volumes:                       r.buildVolumes(sbdConfig),
 					TerminationGracePeriodSeconds: &[]int64{30}[0],
 				},
 			},
 		},
 	}
+}
+
+// buildSBDAgentArgs builds the command line arguments for the sbd-agent container
+func (r *SBDConfigReconciler) buildSBDAgentArgs(sbdConfig *medik8sv1alpha1.SBDConfig) []string {
+	// Get configured watchdog timeout and calculate pet interval
+	watchdogTimeout := sbdConfig.Spec.GetWatchdogTimeout()
+	petInterval := sbdConfig.Spec.GetPetInterval()
+
+	// Base arguments
+	args := []string{
+		fmt.Sprintf("--watchdog-path=%s", sbdConfig.Spec.GetSbdWatchdogPath()),
+		fmt.Sprintf("--watchdog-timeout=%s", watchdogTimeout.String()),
+		fmt.Sprintf("--pet-interval=%s", petInterval.String()),
+		"--log-level=info",
+		fmt.Sprintf("--stale-node-timeout=%s", sbdConfig.Spec.GetStaleNodeTimeout().String()),
+	}
+
+	// Add shared storage arguments if configured
+	if sbdConfig.Spec.HasSharedStorage() {
+		args = append(args, fmt.Sprintf("--shared-storage=%s", sbdConfig.Spec.GetSharedStorageMountPath()))
+	}
+
+	return args
+}
+
+// buildVolumeMounts builds the volume mounts for the sbd-agent container
+func (r *SBDConfigReconciler) buildVolumeMounts(sbdConfig *medik8sv1alpha1.SBDConfig) []corev1.VolumeMount {
+	mounts := []corev1.VolumeMount{
+		{Name: "dev", MountPath: "/dev"},
+		{Name: "sys", MountPath: "/sys", ReadOnly: true},
+		{Name: "proc", MountPath: "/proc", ReadOnly: true},
+	}
+
+	// Add shared storage mount if configured
+	if sbdConfig.Spec.HasSharedStorage() {
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      "shared-storage",
+			MountPath: sbdConfig.Spec.GetSharedStorageMountPath(),
+		})
+	}
+
+	return mounts
+}
+
+// buildVolumes builds the volumes for the DaemonSet pod spec
+func (r *SBDConfigReconciler) buildVolumes(sbdConfig *medik8sv1alpha1.SBDConfig) []corev1.Volume {
+	volumes := []corev1.Volume{
+		{
+			Name: "dev",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/dev",
+					Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+				},
+			},
+		},
+		{
+			Name: "sys",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/sys",
+					Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+				},
+			},
+		},
+		{
+			Name: "proc",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/proc",
+					Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+				},
+			},
+		},
+	}
+
+	// Add shared storage volume if configured
+	if sbdConfig.Spec.HasSharedStorage() {
+		volumes = append(volumes, corev1.Volume{
+			Name: "shared-storage",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: sbdConfig.Spec.GetSharedStoragePVC(),
+				},
+			},
+		})
+	}
+
+	return volumes
 }
 
 // updateStatus updates the SBDConfig status based on the DaemonSet state

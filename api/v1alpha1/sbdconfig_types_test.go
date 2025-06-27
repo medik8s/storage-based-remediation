@@ -777,3 +777,366 @@ func TestGetImageWithOperatorImage(t *testing.T) {
 		})
 	}
 }
+
+func TestSBDConfigSpec_GetSharedStoragePVC(t *testing.T) {
+	tests := []struct {
+		name     string
+		spec     SBDConfigSpec
+		expected string
+	}{
+		{
+			name:     "empty PVC name",
+			spec:     SBDConfigSpec{},
+			expected: "",
+		},
+		{
+			name: "explicit PVC name",
+			spec: SBDConfigSpec{
+				SharedStoragePVC: "my-shared-pvc",
+			},
+			expected: "my-shared-pvc",
+		},
+		{
+			name: "complex PVC name",
+			spec: SBDConfigSpec{
+				SharedStoragePVC: "sbd-shared-storage-pvc",
+			},
+			expected: "sbd-shared-storage-pvc",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.spec.GetSharedStoragePVC()
+			if result != tt.expected {
+				t.Errorf("GetSharedStoragePVC() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSBDConfigSpec_GetSharedStorageMountPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		spec     SBDConfigSpec
+		expected string
+	}{
+		{
+			name:     "default mount path",
+			spec:     SBDConfigSpec{},
+			expected: "/shared-storage",
+		},
+		{
+			name: "explicit mount path",
+			spec: SBDConfigSpec{
+				SharedStorageMountPath: "/custom/shared",
+			},
+			expected: "/custom/shared",
+		},
+		{
+			name: "empty mount path returns default",
+			spec: SBDConfigSpec{
+				SharedStorageMountPath: "",
+			},
+			expected: "/shared-storage",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.spec.GetSharedStorageMountPath()
+			if result != tt.expected {
+				t.Errorf("GetSharedStorageMountPath() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSBDConfigSpec_HasSharedStorage(t *testing.T) {
+	tests := []struct {
+		name     string
+		spec     SBDConfigSpec
+		expected bool
+	}{
+		{
+			name:     "no shared storage configured",
+			spec:     SBDConfigSpec{},
+			expected: false,
+		},
+		{
+			name: "shared storage PVC configured",
+			spec: SBDConfigSpec{
+				SharedStoragePVC: "my-pvc",
+			},
+			expected: true,
+		},
+		{
+			name: "empty PVC name means no shared storage",
+			spec: SBDConfigSpec{
+				SharedStoragePVC: "",
+			},
+			expected: false,
+		},
+		{
+			name: "mount path alone doesn't enable shared storage",
+			spec: SBDConfigSpec{
+				SharedStorageMountPath: "/custom/path",
+			},
+			expected: false,
+		},
+		{
+			name: "both PVC and mount path configured",
+			spec: SBDConfigSpec{
+				SharedStoragePVC:       "my-pvc",
+				SharedStorageMountPath: "/custom/path",
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.spec.HasSharedStorage()
+			if result != tt.expected {
+				t.Errorf("HasSharedStorage() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSBDConfigSpec_ValidateSharedStoragePVC(t *testing.T) {
+	tests := []struct {
+		name      string
+		spec      SBDConfigSpec
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name:      "empty PVC name is valid",
+			spec:      SBDConfigSpec{},
+			wantError: false,
+		},
+		{
+			name: "valid PVC name",
+			spec: SBDConfigSpec{
+				SharedStoragePVC: "my-shared-pvc",
+			},
+			wantError: false,
+		},
+		{
+			name: "PVC name with hyphens",
+			spec: SBDConfigSpec{
+				SharedStoragePVC: "sbd-shared-storage-pvc",
+			},
+			wantError: false,
+		},
+		{
+			name: "PVC name starting with hyphen",
+			spec: SBDConfigSpec{
+				SharedStoragePVC: "-invalid-pvc",
+			},
+			wantError: true,
+			errorMsg:  "cannot start or end with '-'",
+		},
+		{
+			name: "PVC name ending with hyphen",
+			spec: SBDConfigSpec{
+				SharedStoragePVC: "invalid-pvc-",
+			},
+			wantError: true,
+			errorMsg:  "cannot start or end with '-'",
+		},
+		{
+			name: "PVC name too long",
+			spec: SBDConfigSpec{
+				SharedStoragePVC: strings.Repeat("a", 254),
+			},
+			wantError: true,
+			errorMsg:  "too long",
+		},
+		{
+			name: "PVC name at maximum length",
+			spec: SBDConfigSpec{
+				SharedStoragePVC: strings.Repeat("a", 253),
+			},
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.spec.ValidateSharedStoragePVC()
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("ValidateSharedStoragePVC() expected error but got none")
+				} else if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("ValidateSharedStoragePVC() error = %v, expected to contain %v", err, tt.errorMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateSharedStoragePVC() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestSBDConfigSpec_ValidateSharedStorageMountPath(t *testing.T) {
+	tests := []struct {
+		name      string
+		spec      SBDConfigSpec
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name:      "default mount path is valid",
+			spec:      SBDConfigSpec{},
+			wantError: false,
+		},
+		{
+			name: "valid custom mount path",
+			spec: SBDConfigSpec{
+				SharedStorageMountPath: "/custom/shared",
+			},
+			wantError: false,
+		},
+		{
+			name: "relative path is invalid",
+			spec: SBDConfigSpec{
+				SharedStorageMountPath: "relative/path",
+			},
+			wantError: true,
+			errorMsg:  "must be an absolute path",
+		},
+		{
+			name: "root directory is invalid",
+			spec: SBDConfigSpec{
+				SharedStorageMountPath: "/",
+			},
+			wantError: true,
+			errorMsg:  "cannot be root directory",
+		},
+		{
+			name: "conflicts with /dev",
+			spec: SBDConfigSpec{
+				SharedStorageMountPath: "/dev",
+			},
+			wantError: true,
+			errorMsg:  "conflicts with system path",
+		},
+		{
+			name: "conflicts with /proc",
+			spec: SBDConfigSpec{
+				SharedStorageMountPath: "/proc/something",
+			},
+			wantError: true,
+			errorMsg:  "conflicts with system path",
+		},
+		{
+			name: "conflicts with /sys",
+			spec: SBDConfigSpec{
+				SharedStorageMountPath: "/sys/something",
+			},
+			wantError: true,
+			errorMsg:  "conflicts with system path",
+		},
+		{
+			name: "conflicts with /etc",
+			spec: SBDConfigSpec{
+				SharedStorageMountPath: "/etc/shared",
+			},
+			wantError: true,
+			errorMsg:  "conflicts with system path",
+		},
+		{
+			name: "valid path under /opt",
+			spec: SBDConfigSpec{
+				SharedStorageMountPath: "/opt/shared-storage",
+			},
+			wantError: false,
+		},
+		{
+			name: "valid path under /mnt",
+			spec: SBDConfigSpec{
+				SharedStorageMountPath: "/mnt/shared",
+			},
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.spec.ValidateSharedStorageMountPath()
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("ValidateSharedStorageMountPath() expected error but got none")
+				} else if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("ValidateSharedStorageMountPath() error = %v, expected to contain %v", err, tt.errorMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateSharedStorageMountPath() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestSBDConfigSpec_ValidateAll_WithSharedStorage(t *testing.T) {
+	tests := []struct {
+		name      string
+		spec      SBDConfigSpec
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name: "valid config with shared storage",
+			spec: SBDConfigSpec{
+				SharedStoragePVC:       "valid-pvc",
+				SharedStorageMountPath: "/shared-storage",
+			},
+			wantError: false,
+		},
+		{
+			name: "invalid PVC name",
+			spec: SBDConfigSpec{
+				SharedStoragePVC: "-invalid-pvc",
+			},
+			wantError: true,
+			errorMsg:  "shared storage PVC validation failed",
+		},
+		{
+			name: "invalid mount path",
+			spec: SBDConfigSpec{
+				SharedStoragePVC:       "valid-pvc",
+				SharedStorageMountPath: "/dev/invalid",
+			},
+			wantError: true,
+			errorMsg:  "shared storage mount path validation failed",
+		},
+		{
+			name: "valid config without shared storage",
+			spec: SBDConfigSpec{
+				// No shared storage configured
+			},
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.spec.ValidateAll()
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("ValidateAll() expected error but got none")
+				} else if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("ValidateAll() error = %v, expected to contain %v", err, tt.errorMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateAll() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}

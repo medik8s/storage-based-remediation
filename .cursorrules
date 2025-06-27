@@ -30,6 +30,7 @@ GO CODING STANDARDS:
 - Error handling: always check and handle errors appropriately
 - Use context.Context for cancellation and timeouts
 - Prefer interfaces for testability
+- Scripts should be idempotent and include the ability to delete anything they create
 
 KUBERNETES OPERATOR PATTERNS:
 - Implement proper controller reconciliation logic

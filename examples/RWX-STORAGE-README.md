@@ -101,35 +101,29 @@ oc logs job/verify-rwx-storage -n sbd-system
 
 ## Usage Examples
 
-### Example 1: Basic SBD Agent with Shared Storage
+### Example 1: SBDConfig with Shared Storage
 
 ```yaml
-apiVersion: apps/v1
-kind: DaemonSet
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDConfig
 metadata:
-  name: sbd-agent
+  name: sbd-config-with-shared-storage
   namespace: sbd-system
 spec:
-  selector:
-    matchLabels:
-      app: sbd-agent
-  template:
-    spec:
-      containers:
-      - name: sbd-agent
-        image: quay.io/medik8s/sbd-agent:latest
-        volumeMounts:
-        - name: shared-storage
-          mountPath: /shared
-        - name: dev
-          mountPath: /dev
-      volumes:
-      - name: shared-storage
-        persistentVolumeClaim:
-          claimName: sbd-shared-pvc
-      - name: dev
-        hostPath:
-          path: /dev
+  # SBD agent image configuration
+  image: "quay.io/medik8s/sbd-agent:latest"
+  imagePullPolicy: "IfNotPresent"
+  
+  # Watchdog configuration
+  sbdWatchdogPath: "/dev/watchdog"
+  watchdogTimeout: "60s"
+  petIntervalMultiple: 4
+  
+  # Node management
+  staleNodeTimeout: "1h"
+  
+  # Note: Additional volumes for shared storage would require
+  # extending the SBDConfig CRD to support custom volumes
 ```
 
 ### Example 2: Coordination Between Agents
@@ -314,4 +308,62 @@ The RWX storage can be integrated with the SBD operator for:
 3. **Configuration distribution**: Share SBD device configurations
 4. **Log aggregation**: Collect logs from all nodes
 
-See `rwx-shared-storage-example.yaml` for detailed integration examples. 
+### Current Integration
+
+Currently, the SBDConfig CRD doesn't support additional volumes. The examples show:
+- How to create the RWX storage independently
+- How the operator controller would generate DaemonSets with shared storage
+- The desired integration pattern for future enhancements
+
+### Future Enhancement: Extending SBDConfig CRD
+
+To fully integrate RWX storage, the SBDConfig CRD could be extended:
+
+```yaml
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDConfig
+metadata:
+  name: sbd-config-with-shared-storage
+spec:
+  # Existing fields...
+  sbdWatchdogPath: "/dev/watchdog"
+  watchdogTimeout: "60s"
+  
+  # New fields for shared storage
+  sharedStorage:
+    enabled: true
+    persistentVolumeClaim: "sbd-shared-pvc"
+    mountPath: "/shared-storage"
+    
+  # Additional volumes support
+  additionalVolumes:
+  - name: shared-storage
+    persistentVolumeClaim:
+      claimName: sbd-shared-pvc
+    mountPath: /shared-storage
+    
+  # Coordination settings
+  coordination:
+    enabled: true
+    slotAssignmentFile: "/shared-storage/coordination/slot-assignments.json"
+    nodeRegistrationPath: "/shared-storage/nodes"
+```
+
+### Implementation in Controller
+
+The SBD operator controller would then:
+
+1. **Detect shared storage configuration** in SBDConfig
+2. **Validate PVC exists** and is RWX capable
+3. **Add volumes to DaemonSet** template
+4. **Configure agent with shared storage paths**
+5. **Enable coordination features** when shared storage is available
+
+### Benefits of Integration
+
+- **Simplified deployment**: Single SBDConfig resource configures everything
+- **Automatic validation**: Controller ensures storage is properly configured
+- **Enhanced features**: Coordination and shared state management
+- **Consistent configuration**: All agents use same shared storage settings
+
+See `rwx-shared-storage-example.yaml` for detailed integration examples and the generated DaemonSet structure. 

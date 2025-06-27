@@ -77,6 +77,21 @@ spec:
                   SbdWatchdogPath is the path to the watchdog device on the host
                   If not specified, defaults to "/dev/watchdog"
                 type: string
+              sharedStorageMountPath:
+                default: /shared-storage
+                description: |-
+                  SharedStorageMountPath is the path where the shared storage PVC will be mounted
+                  in the sbd-agent containers. Defaults to "/shared-storage" if not specified.
+                  This path will be passed to the sbd-agent via command line arguments.
+                type: string
+              sharedStoragePVC:
+                description: |-
+                  SharedStoragePVC is the name of a ReadWriteMany (RWX) PersistentVolumeClaim
+                  that provides shared storage for coordination between SBD agents across nodes.
+                  When specified, the controller will mount this PVC in the agent DaemonSet
+                  and configure the sbd-agent to use it for cross-node coordination, slot assignment,
+                  and shared configuration data. The PVC must exist in the same namespace as the SBDConfig.
+                type: string
               staleNodeTimeout:
                 default: 1h
                 description: |-

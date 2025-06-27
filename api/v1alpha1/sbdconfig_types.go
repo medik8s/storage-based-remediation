@@ -79,6 +79,21 @@ type SBDConfigSpec struct {
 	// +kubebuilder:default="sbd-system"
 	Namespace string `json:"namespace,omitempty"`
 
+	// SharedStoragePVC is the name of a ReadWriteMany (RWX) PersistentVolumeClaim
+	// that provides shared storage for coordination between SBD agents across nodes.
+	// When specified, the controller will mount this PVC in the agent DaemonSet
+	// and configure the sbd-agent to use it for cross-node coordination, slot assignment,
+	// and shared configuration data. The PVC must exist in the same namespace as the SBDConfig.
+	// +optional
+	SharedStoragePVC string `json:"sharedStoragePVC,omitempty"`
+
+	// SharedStorageMountPath is the path where the shared storage PVC will be mounted
+	// in the sbd-agent containers. Defaults to "/shared-storage" if not specified.
+	// This path will be passed to the sbd-agent via command line arguments.
+	// +kubebuilder:default="/shared-storage"
+	// +optional
+	SharedStorageMountPath string `json:"sharedStorageMountPath,omitempty"`
+
 	// StaleNodeTimeout defines how long to wait before considering a node stale and removing it from slot mapping
 	// This timeout determines when inactive nodes are cleaned up from the shared SBD device slot assignments.
 	// Nodes that haven't updated their heartbeat within this duration will be considered stale and their slots
@@ -173,6 +188,24 @@ func (s *SBDConfigSpec) GetPetInterval() time.Duration {
 	return petInterval
 }
 
+// GetSharedStoragePVC returns the shared storage PVC name
+func (s *SBDConfigSpec) GetSharedStoragePVC() string {
+	return s.SharedStoragePVC
+}
+
+// GetSharedStorageMountPath returns the shared storage mount path with default fallback
+func (s *SBDConfigSpec) GetSharedStorageMountPath() string {
+	if s.SharedStorageMountPath != "" {
+		return s.SharedStorageMountPath
+	}
+	return "/shared-storage"
+}
+
+// HasSharedStorage returns true if shared storage is configured
+func (s *SBDConfigSpec) HasSharedStorage() bool {
+	return s.SharedStoragePVC != ""
+}
+
 // ValidateStaleNodeTimeout validates the stale node timeout value
 func (s *SBDConfigSpec) ValidateStaleNodeTimeout() error {
 	timeout := s.GetStaleNodeTimeout()
@@ -257,6 +290,59 @@ func (s *SBDConfigSpec) ValidateImagePullPolicy() error {
 	}
 }
 
+// ValidateSharedStoragePVC validates the shared storage PVC name
+func (s *SBDConfigSpec) ValidateSharedStoragePVC() error {
+	pvcName := s.GetSharedStoragePVC()
+
+	// Empty PVC name is valid (shared storage is optional)
+	if pvcName == "" {
+		return nil
+	}
+
+	// Validate PVC name follows Kubernetes naming conventions
+	// Names must be lowercase alphanumeric characters or '-', and must start and end with an alphanumeric character
+	if len(pvcName) == 0 {
+		return fmt.Errorf("shared storage PVC name cannot be empty when specified")
+	}
+
+	if len(pvcName) > 253 {
+		return fmt.Errorf("shared storage PVC name %q is too long (max 253 characters)", pvcName)
+	}
+
+	// Basic validation - more comprehensive validation would require regex
+	// but keeping it simple for now as Kubernetes API server will validate it
+	if strings.HasPrefix(pvcName, "-") || strings.HasSuffix(pvcName, "-") {
+		return fmt.Errorf("shared storage PVC name %q cannot start or end with '-'", pvcName)
+	}
+
+	return nil
+}
+
+// ValidateSharedStorageMountPath validates the shared storage mount path
+func (s *SBDConfigSpec) ValidateSharedStorageMountPath() error {
+	mountPath := s.GetSharedStorageMountPath()
+
+	// Mount path must be an absolute path
+	if !strings.HasPrefix(mountPath, "/") {
+		return fmt.Errorf("shared storage mount path %q must be an absolute path", mountPath)
+	}
+
+	// Mount path cannot be just "/"
+	if mountPath == "/" {
+		return fmt.Errorf("shared storage mount path cannot be root directory '/'")
+	}
+
+	// Mount path should not conflict with common system paths
+	systemPaths := []string{"/dev", "/proc", "/sys", "/etc", "/var", "/usr", "/bin", "/sbin", "/lib", "/lib64"}
+	for _, sysPath := range systemPaths {
+		if strings.HasPrefix(mountPath, sysPath+"/") || mountPath == sysPath {
+			return fmt.Errorf("shared storage mount path %q conflicts with system path %q", mountPath, sysPath)
+		}
+	}
+
+	return nil
+}
+
 // ValidateAll validates all configuration values
 func (s *SBDConfigSpec) ValidateAll() error {
 	if err := s.ValidateStaleNodeTimeout(); err != nil {
@@ -277,6 +363,14 @@ func (s *SBDConfigSpec) ValidateAll() error {
 
 	if err := s.ValidateImagePullPolicy(); err != nil {
 		return fmt.Errorf("image pull policy validation failed: %w", err)
+	}
+
+	if err := s.ValidateSharedStoragePVC(); err != nil {
+		return fmt.Errorf("shared storage PVC validation failed: %w", err)
+	}
+
+	if err := s.ValidateSharedStorageMountPath(); err != nil {
+		return fmt.Errorf("shared storage mount path validation failed: %w", err)
 	}
 
 	return nil
