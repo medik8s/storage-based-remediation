@@ -475,10 +475,11 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 
 			By("verifying SBDConfig status shows pods are ready")
 			verifySBDConfigReady := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-n", testNamespace, "-o", "jsonpath={.status.daemonSetReady}")
+				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-n", testNamespace, "-o", "jsonpath={.status.conditions[?(@.type=='DaemonSetReady')].status}")
 				output, err := utils.Run(cmd)
+				fmt.Printf("SBDConfig status: %s\n", output) // TODO: remove this
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("true"), "SBDConfig status should show daemonSetReady=true")
+				g.Expect(output).To(Equal("True"), "SBDConfig status should show DaemonSetReady condition as True")
 			}
 			Eventually(verifySBDConfigReady, 3*time.Minute).Should(Succeed())
 

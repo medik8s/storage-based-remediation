@@ -982,10 +982,83 @@ func (r *SBDConfigReconciler) updateStatus(ctx context.Context, sbdConfig *medik
 		return err
 	}
 
-	// Update status fields
+	// Update numeric status fields
 	sbdConfig.Status.TotalNodes = latestDaemonSet.Status.DesiredNumberScheduled
 	sbdConfig.Status.ReadyNodes = latestDaemonSet.Status.NumberReady
-	sbdConfig.Status.DaemonSetReady = latestDaemonSet.Status.NumberReady == latestDaemonSet.Status.DesiredNumberScheduled && latestDaemonSet.Status.DesiredNumberScheduled > 0
+
+	// Determine DaemonSet readiness status
+	daemonSetReady := latestDaemonSet.Status.NumberReady == latestDaemonSet.Status.DesiredNumberScheduled && latestDaemonSet.Status.DesiredNumberScheduled > 0
+
+	// Set DaemonSet readiness condition
+	if daemonSetReady {
+		sbdConfig.SetCondition(
+			medik8sv1alpha1.SBDConfigConditionDaemonSetReady,
+			metav1.ConditionTrue,
+			"DaemonSetReady",
+			fmt.Sprintf("All %d SBD agent pods are ready", latestDaemonSet.Status.NumberReady),
+		)
+	} else {
+		var reason, message string
+		if latestDaemonSet.Status.DesiredNumberScheduled == 0 {
+			reason = "NoNodesScheduled"
+			message = "No nodes are scheduled to run SBD agent pods"
+		} else {
+			reason = "PodsNotReady"
+			message = fmt.Sprintf("%d of %d SBD agent pods are ready",
+				latestDaemonSet.Status.NumberReady,
+				latestDaemonSet.Status.DesiredNumberScheduled)
+		}
+		sbdConfig.SetCondition(
+			medik8sv1alpha1.SBDConfigConditionDaemonSetReady,
+			metav1.ConditionFalse,
+			reason,
+			message,
+		)
+	}
+
+	// Set shared storage readiness condition
+	if sbdConfig.Spec.HasSharedStorage() {
+		// For now, we'll assume shared storage is ready if the PVC name is specified
+		// In the future, we could add more sophisticated checks
+		sbdConfig.SetCondition(
+			medik8sv1alpha1.SBDConfigConditionSharedStorageReady,
+			metav1.ConditionTrue,
+			"SharedStorageConfigured",
+			fmt.Sprintf("Shared storage PVC '%s' is configured", sbdConfig.Spec.GetSharedStoragePVC()),
+		)
+	} else {
+		sbdConfig.SetCondition(
+			medik8sv1alpha1.SBDConfigConditionSharedStorageReady,
+			metav1.ConditionTrue,
+			"SharedStorageNotRequired",
+			"Shared storage is not configured and not required",
+		)
+	}
+
+	// Set overall readiness condition
+	if daemonSetReady && (sbdConfig.IsConditionTrue(medik8sv1alpha1.SBDConfigConditionSharedStorageReady)) {
+		sbdConfig.SetCondition(
+			medik8sv1alpha1.SBDConfigConditionReady,
+			metav1.ConditionTrue,
+			"Ready",
+			"SBDConfig is ready and all components are operational",
+		)
+	} else {
+		var reasons []string
+		if !daemonSetReady {
+			reasons = append(reasons, "DaemonSet not ready")
+		}
+		if !sbdConfig.IsConditionTrue(medik8sv1alpha1.SBDConfigConditionSharedStorageReady) {
+			reasons = append(reasons, "Shared storage not ready")
+		}
+
+		sbdConfig.SetCondition(
+			medik8sv1alpha1.SBDConfigConditionReady,
+			metav1.ConditionFalse,
+			"NotReady",
+			fmt.Sprintf("SBDConfig is not ready: %s", strings.Join(reasons, ", ")),
+		)
+	}
 
 	// Update the status
 	return r.Status().Update(ctx, sbdConfig)

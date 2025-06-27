@@ -51,6 +51,18 @@ const (
 	MaxPetIntervalMultiple = 20
 )
 
+// SBDConfigConditionType represents the type of condition for SBDConfig
+type SBDConfigConditionType string
+
+const (
+	// SBDConfigConditionDaemonSetReady indicates whether the SBD agent DaemonSet is ready
+	SBDConfigConditionDaemonSetReady SBDConfigConditionType = "DaemonSetReady"
+	// SBDConfigConditionSharedStorageReady indicates whether shared storage is properly configured
+	SBDConfigConditionSharedStorageReady SBDConfigConditionType = "SharedStorageReady"
+	// SBDConfigConditionReady indicates the overall readiness of the SBDConfig
+	SBDConfigConditionReady SBDConfigConditionType = "Ready"
+)
+
 // SBDConfigSpec defines the desired state of SBDConfig.
 type SBDConfigSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
@@ -440,8 +452,12 @@ type SBDConfigStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// DaemonSetReady indicates whether the SBD agent DaemonSet is ready
-	DaemonSetReady bool `json:"daemonSetReady,omitempty"`
+	// Conditions represent the latest available observations of the SBDConfig's current state
+	// +patchMergeKey=type
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 
 	// ReadyNodes is the number of nodes where the SBD agent is ready
 	ReadyNodes int32 `json:"readyNodes,omitempty"`
@@ -474,4 +490,81 @@ type SBDConfigList struct {
 
 func init() {
 	SchemeBuilder.Register(&SBDConfig{}, &SBDConfigList{})
+}
+
+// GetCondition returns the condition with the given type if it exists
+func (c *SBDConfig) GetCondition(conditionType SBDConfigConditionType) *metav1.Condition {
+	for i := range c.Status.Conditions {
+		if c.Status.Conditions[i].Type == string(conditionType) {
+			return &c.Status.Conditions[i]
+		}
+	}
+	return nil
+}
+
+// SetCondition sets the given condition on the SBDConfig
+func (c *SBDConfig) SetCondition(conditionType SBDConfigConditionType, status metav1.ConditionStatus, reason, message string) {
+	now := metav1.Now()
+
+	// Find existing condition
+	for i := range c.Status.Conditions {
+		if c.Status.Conditions[i].Type == string(conditionType) {
+			// Update existing condition
+			condition := &c.Status.Conditions[i]
+
+			// Only update LastTransitionTime if status changed
+			if condition.Status != status {
+				condition.LastTransitionTime = now
+			}
+
+			condition.Status = status
+			condition.Reason = reason
+			condition.Message = message
+			condition.ObservedGeneration = c.Generation
+			return
+		}
+	}
+
+	// Add new condition
+	c.Status.Conditions = append(c.Status.Conditions, metav1.Condition{
+		Type:               string(conditionType),
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		LastTransitionTime: now,
+		ObservedGeneration: c.Generation,
+	})
+}
+
+// IsConditionTrue returns true if the condition is set to True
+func (c *SBDConfig) IsConditionTrue(conditionType SBDConfigConditionType) bool {
+	condition := c.GetCondition(conditionType)
+	return condition != nil && condition.Status == metav1.ConditionTrue
+}
+
+// IsConditionFalse returns true if the condition is set to False
+func (c *SBDConfig) IsConditionFalse(conditionType SBDConfigConditionType) bool {
+	condition := c.GetCondition(conditionType)
+	return condition != nil && condition.Status == metav1.ConditionFalse
+}
+
+// IsConditionUnknown returns true if the condition is set to Unknown or doesn't exist
+func (c *SBDConfig) IsConditionUnknown(conditionType SBDConfigConditionType) bool {
+	condition := c.GetCondition(conditionType)
+	return condition == nil || condition.Status == metav1.ConditionUnknown
+}
+
+// IsDaemonSetReady returns true if the DaemonSet is ready
+func (c *SBDConfig) IsDaemonSetReady() bool {
+	return c.IsConditionTrue(SBDConfigConditionDaemonSetReady)
+}
+
+// IsSharedStorageReady returns true if shared storage is ready
+func (c *SBDConfig) IsSharedStorageReady() bool {
+	return c.IsConditionTrue(SBDConfigConditionSharedStorageReady)
+}
+
+// IsReady returns true if the SBDConfig is ready overall
+func (c *SBDConfig) IsReady() bool {
+	return c.IsConditionTrue(SBDConfigConditionReady)
 }
