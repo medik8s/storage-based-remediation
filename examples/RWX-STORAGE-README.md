@@ -310,14 +310,7 @@ The RWX storage can be integrated with the SBD operator for:
 
 ### Current Integration
 
-Currently, the SBDConfig CRD doesn't support additional volumes. The examples show:
-- How to create the RWX storage independently
-- How the operator controller would generate DaemonSets with shared storage
-- The desired integration pattern for future enhancements
-
-### Future Enhancement: Extending SBDConfig CRD
-
-To fully integrate RWX storage, the SBDConfig CRD could be extended:
+The SBDConfig CRD now supports shared storage through the following fields:
 
 ```yaml
 apiVersion: medik8s.medik8s.io/v1alpha1
@@ -325,45 +318,35 @@ kind: SBDConfig
 metadata:
   name: sbd-config-with-shared-storage
 spec:
-  # Existing fields...
+  # Standard SBD configuration
   sbdWatchdogPath: "/dev/watchdog"
   watchdogTimeout: "60s"
+  petIntervalMultiple: 4
+  staleNodeTimeout: "1h"
   
-  # New fields for shared storage
-  sharedStorage:
-    enabled: true
-    persistentVolumeClaim: "sbd-shared-pvc"
-    mountPath: "/shared-storage"
-    
-  # Additional volumes support
-  additionalVolumes:
-  - name: shared-storage
-    persistentVolumeClaim:
-      claimName: sbd-shared-pvc
-    mountPath: /shared-storage
-    
-  # Coordination settings
-  coordination:
-    enabled: true
-    slotAssignmentFile: "/shared-storage/coordination/slot-assignments.json"
-    nodeRegistrationPath: "/shared-storage/nodes"
+  # Shared storage configuration
+  sharedStoragePVC: "sbd-shared-pvc"           # Name of RWX PVC
+  sharedStorageMountPath: "/shared-storage"    # Mount path (optional, defaults to /shared-storage)
 ```
 
 ### Implementation in Controller
 
-The SBD operator controller would then:
+The SBD operator controller automatically:
 
-1. **Detect shared storage configuration** in SBDConfig
-2. **Validate PVC exists** and is RWX capable
-3. **Add volumes to DaemonSet** template
-4. **Configure agent with shared storage paths**
-5. **Enable coordination features** when shared storage is available
+1. **Detects shared storage configuration** when `sharedStoragePVC` is specified
+2. **Validates PVC name** follows Kubernetes naming conventions
+3. **Validates mount path** is absolute and doesn't conflict with system paths
+4. **Adds PVC volume to DaemonSet** template
+5. **Mounts shared storage** at the specified path in all agent pods
+6. **Configures sbd-agent** with `--shared-storage` command line argument
+7. **Enables coordination features** for cross-node communication
 
 ### Benefits of Integration
 
 - **Simplified deployment**: Single SBDConfig resource configures everything
-- **Automatic validation**: Controller ensures storage is properly configured
-- **Enhanced features**: Coordination and shared state management
+- **Automatic validation**: Controller ensures storage configuration is valid
+- **Seamless integration**: Shared storage is automatically mounted when configured
 - **Consistent configuration**: All agents use same shared storage settings
+- **Optional feature**: Existing deployments continue to work without changes
 
 See `rwx-shared-storage-example.yaml` for detailed integration examples and the generated DaemonSet structure. 

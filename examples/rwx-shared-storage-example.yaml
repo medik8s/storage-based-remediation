@@ -21,6 +21,7 @@ data:
 
 ---
 # SBDConfig with RWX shared storage integration
+# This demonstrates the native shared storage support in SBDConfig CRD
 apiVersion: medik8s.medik8s.io/v1alpha1
 kind: SBDConfig
 metadata:
@@ -39,10 +40,18 @@ spec:
   # Node management
   staleNodeTimeout: "1h"
   
-  # Shared storage configuration
-  # The PVC must be ReadWriteMany (RWX) and exist in the same namespace
-  sharedStoragePVC: "sbd-shared-pvc"
-  sharedStorageMountPath: "/shared-storage"
+  # ✅ SHARED STORAGE CONFIGURATION ✅
+  # These fields enable automatic shared storage integration
+  # The controller will mount the PVC and configure the sbd-agent accordingly
+  sharedStoragePVC: "sbd-shared-pvc"           # Required: Name of RWX PVC
+  sharedStorageMountPath: "/shared-storage"    # Optional: Defaults to /shared-storage
+  
+  # When shared storage is configured, the controller automatically:
+  # 1. Validates the PVC name and mount path
+  # 2. Adds the PVC as a volume in the DaemonSet
+  # 3. Mounts it at the specified path in sbd-agent containers
+  # 4. Passes --shared-storage=/shared-storage to the sbd-agent command
+  # 5. Enables cross-node coordination features
 
 ---
 # Example Pod to test RWX storage functionality
