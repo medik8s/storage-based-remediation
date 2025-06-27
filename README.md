@@ -2,6 +2,14 @@
 
 The SBD (STONITH Block Device) operator provides watchdog-based fencing for Kubernetes clusters to ensure high availability through automatic node remediation.
 
+## Key Features
+
+- **Automatic Node Fencing**: Unresponsive nodes are automatically rebooted via watchdog timeout
+- **Flexible Deployment**: Support for multiple SBDConfig resources per namespace for advanced scenarios
+- **OpenShift Integration**: Automatic SecurityContextConstraints management for privileged operations
+- **Shared Storage Support**: Optional coordination via shared block devices for split-brain prevention
+- **Comprehensive Monitoring**: Built-in Prometheus metrics and observability
+
 ## Documentation
 
 ### User Documentation

@@ -1,5 +1,34 @@
 # SBDConfig Quick Reference
 
+Quick reference for common SBDConfig operations and configurations.
+
+## Multiple SBDConfig Support
+
+**NEW**: Multiple SBDConfig resources can coexist in the same namespace.
+
+### Quick Commands
+```bash
+# Deploy multiple configs in same namespace
+kubectl apply -f production-sbd.yaml -f canary-sbd.yaml
+
+# List all SBDConfigs in namespace
+kubectl get sbdconfig -n my-app
+
+# Check DaemonSets for each config
+kubectl get daemonset -n my-app -l app=sbd-agent
+
+# View logs for specific config
+kubectl logs -n my-app -l sbdconfig=production-sbd
+kubectl logs -n my-app -l sbdconfig=canary-sbd
+```
+
+### Resource Naming Pattern
+- Service Account: `sbd-agent` (shared)
+- DaemonSet: `sbd-agent-{config-name}`
+- ClusterRoleBinding: `sbd-agent-{namespace}-{config-name}`
+
+## Basic Operations
+
 ## Essential Commands
 
 ### Deployment

@@ -11,6 +11,7 @@ SBDConfig is a cluster-scoped Kubernetes custom resource that configures the SBD
 - **Flexible Watchdog Support**: Works with hardware watchdogs or software fallback (softdog)
 - **File Locking Coordination**: Configurable file locking for shared storage environments
 - **Prometheus Metrics**: Built-in monitoring and observability
+- **Multiple Configurations**: Support for multiple SBDConfig resources in the same namespace for different use cases
 
 ## Prerequisites
 
@@ -22,6 +23,60 @@ SBDConfig is a cluster-scoped Kubernetes custom resource that configures the SBD
 ### Optional (for shared storage mode)
 - Shared block storage accessible from all nodes
 - Storage that supports POSIX file locking (NFS, CephFS, GlusterFS)
+
+## Multiple SBDConfig Support
+
+**New in v1.1+**: The SBD operator now supports multiple SBDConfig resources in the same namespace, enabling advanced deployment scenarios:
+
+### Use Cases
+- **A/B Testing**: Deploy different SBD agent versions side by side
+- **Gradual Rollouts**: Roll out new configurations incrementally
+- **Environment Separation**: Separate dev/staging configs in the same namespace
+- **Different Requirements**: Multiple teams with different SBD settings
+
+### How It Works
+- **Shared Service Account**: All SBDConfigs in a namespace share the same `sbd-agent` service account
+- **Separate DaemonSets**: Each SBDConfig creates its own DaemonSet with unique naming
+- **Independent Configurations**: Each SBDConfig can have different images, timeouts, and settings
+- **Automatic Cleanup**: Deleting an SBDConfig only removes its specific resources
+
+### Resource Naming
+- Service Account: `sbd-agent` (shared across all SBDConfigs in namespace)
+- DaemonSet: `sbd-agent-{sbdconfig-name}` (unique per SBDConfig)
+- ClusterRoleBinding: `sbd-agent-{namespace}-{sbdconfig-name}` (globally unique)
+
+### Example: Multiple Configurations
+```yaml
+# Production configuration
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDConfig
+metadata:
+  name: production-sbd
+  namespace: my-app
+spec:
+  image: "quay.io/medik8s/sbd-agent:v1.2.3"
+  imagePullPolicy: "IfNotPresent"
+  staleNodeTimeout: "1h"
+---
+# Canary configuration for testing
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDConfig
+metadata:
+  name: canary-sbd
+  namespace: my-app
+spec:
+  image: "quay.io/medik8s/sbd-agent:v1.3.0-beta"
+  imagePullPolicy: "Always"
+  staleNodeTimeout: "30m"
+  nodeSelector:
+    canary: "true"
+```
+
+This creates:
+- Shared service account: `my-app/sbd-agent`
+- Production DaemonSet: `my-app/sbd-agent-production-sbd`
+- Canary DaemonSet: `my-app/sbd-agent-canary-sbd`
+- Separate ClusterRoleBindings for each configuration
 
 ## Installation
 

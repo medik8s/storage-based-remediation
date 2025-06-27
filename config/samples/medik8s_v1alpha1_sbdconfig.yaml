@@ -117,6 +117,30 @@ spec:
   staleNodeTimeout: "1h"
 
 # ========================================================================
+# MULTIPLE SBDCONFIG SUPPORT (NEW in v1.1+)
+# ========================================================================
+#
+# The SBD operator now supports multiple SBDConfig resources in the same namespace!
+# This enables advanced deployment scenarios like A/B testing, gradual rollouts,
+# and different configurations for different teams.
+#
+# KEY FEATURES:
+# - Shared service account across all SBDConfigs in a namespace
+# - Separate DaemonSets with unique names for each SBDConfig
+# - Independent configurations (images, timeouts, node selectors, etc.)
+# - Automatic cleanup when SBDConfigs are deleted
+#
+# RESOURCE NAMING:
+# - Service Account: sbd-agent (shared across all SBDConfigs in namespace)
+# - DaemonSet: sbd-agent-{sbdconfig-name} (unique per SBDConfig)
+# - ClusterRoleBinding: sbd-agent-{namespace}-{sbdconfig-name} (globally unique)
+#
+# EXAMPLE USAGE:
+# kubectl apply -f production-sbd.yaml -f canary-sbd.yaml
+# kubectl get sbdconfig -n my-app
+# kubectl get daemonset -n my-app -l app=sbd-agent
+#
+# ========================================================================
 # CONFIGURATION EXAMPLES
 # ========================================================================
 #
@@ -131,6 +155,26 @@ spec:
 #   image: "quay.io/medik8s/sbd-agent:latest"
 #   staleNodeTimeout: "30m"
 #
+# Multiple Configurations in Same Namespace:
+# ------------------------------------------
+# # Production config
+# metadata:
+#   name: production-sbd
+#   namespace: my-app
+# spec:
+#   image: "quay.io/medik8s/sbd-agent:v1.2.3"
+#   imagePullPolicy: "IfNotPresent"
+# ---
+# # Canary config  
+# metadata:
+#   name: canary-sbd
+#   namespace: my-app
+# spec:
+#   image: "quay.io/medik8s/sbd-agent:v1.3.0-beta"
+#   imagePullPolicy: "Always"
+#   nodeSelector:
+#     canary: "true"
+#
 # High-Availability Configuration:
 # --------------------------------
 # spec:
@@ -143,8 +187,9 @@ spec:
 #   imagePullPolicy: "Always"
 #   staleNodeTimeout: "5m"
 #
-# Note: The SBD Agent DaemonSet will be deployed in the same namespace 
-# as the SBDConfig resource. Create the SBDConfig in the desired namespace.
+# Note: Each SBDConfig creates its own DaemonSet in the specified namespace.
+# Multiple SBDConfigs in the same namespace share the service account but
+# have separate DaemonSets and configurations.
 #
 # ========================================================================
 # DEPLOYMENT COMMANDS
