@@ -21,7 +21,7 @@ controlPlane:
   name: master
   platform:
     aws:
-      type: m5.xlarge
+      type: __INSTANCE_TYPE__
       zones:
       - __REGION__a
   replicas: 3
