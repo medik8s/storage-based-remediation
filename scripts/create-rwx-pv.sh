@@ -391,8 +391,16 @@ check_aws_permissions() {
         missing_permissions+=("elasticfilesystem:DescribeFileSystems")
     fi
     
-    if ! aws efs describe-mount-targets --region "$AWS_REGION" --max-items 1 >/dev/null 2>&1; then
-        missing_permissions+=("elasticfilesystem:DescribeMountTargets")
+    if ! aws efs describe-mount-targets --file-system-id fs-12345678 --region "$AWS_REGION" >/dev/null 2>&1; then
+        # Check if it's a permission error vs file system not found error
+        local mount_describe_output
+        mount_describe_output=$(aws efs describe-mount-targets --file-system-id fs-12345678 --region "$AWS_REGION" 2>&1 || true)
+        if [[ "$mount_describe_output" == *"AccessDenied"* ]] || [[ "$mount_describe_output" == *"not authorized"* ]]; then
+            missing_permissions+=("elasticfilesystem:DescribeMountTargets")
+        elif [[ "$mount_describe_output" == *"FileSystemNotFound"* ]]; then
+            # This is expected - means we have permission but the file system doesn't exist
+            log_info "DescribeMountTargets permission appears to be available"
+        fi
     fi
     
     # Test EFS creation permissions (will be tested with dry-run if available)
