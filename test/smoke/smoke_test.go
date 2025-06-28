@@ -477,7 +477,6 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 			verifySBDConfigReady := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-n", testNamespace, "-o", "jsonpath={.status.conditions[?(@.type=='DaemonSetReady')].status}")
 				output, err := utils.Run(cmd)
-				fmt.Printf("SBDConfig status: %s\n", output) // TODO: remove this
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal("True"), "SBDConfig status should show DaemonSetReady condition as True")
 			}
@@ -616,10 +615,8 @@ spec:
 				cmd := exec.Command("kubectl", "get", "-n", testNamespace, "sbdconfig", "test-sbdconfig", "-o", "jsonpath={.status.conditions}")
 				output, err := utils.Run(cmd)
 				if err != nil {
-					fmt.Printf("SBDConfig status error: %v\n", err)
 					return false
 				}
-				fmt.Printf("SBDConfig status: %s\n", output) // TODO: remove this
 				return strings.Contains(output, "Ready")
 			}, 4*time.Minute).Should(BeTrue())
 
@@ -894,11 +891,11 @@ spec:
 			sbdConfigYAML := strings.ReplaceAll(string(sampleData), "sbdconfig-sample", sbdConfigName)
 			// Ensure imagePullPolicy is Always for testing
 			sbdConfigYAML = strings.ReplaceAll(sbdConfigYAML, `imagePullPolicy: "IfNotPresent"`, `imagePullPolicy: "Always"`)
-			// Add a non-existent SBD device path to force SBD device check to fail
-			// This tests the either/or logic: watchdog works, SBD fails, should still pass
+			// Add a non-existent shared storage PVC to force shared storage check to fail
+			// This tests the either/or logic: watchdog works, shared storage fails, should still pass
 			sbdConfigYAML = strings.ReplaceAll(sbdConfigYAML, `sbdWatchdogPath: "/dev/watchdog"`, `sbdWatchdogPath: "/dev/watchdog"
-  # Non-existent SBD device to test preflight either/or logic
-  sbdDevice: "/dev/non-existent-sbd-device"`)
+  # Non-existent shared storage PVC to test preflight either/or logic
+  sharedStoragePVC: "non-existent-pvc"`)
 
 			// Write SBDConfig to temporary file
 			tmpFile = filepath.Join("/tmp", fmt.Sprintf("sbdconfig-preflight-watchdog-%s.yaml", sbdConfigName))
@@ -919,7 +916,7 @@ spec:
 			}
 			Eventually(verifySBDConfigExists, 30*time.Second).Should(Succeed())
 
-			By("verifying the SBD agent DaemonSet is created despite SBD device failure")
+			By("verifying the SBD agent DaemonSet is created despite shared storage failure")
 			expectedDaemonSetName := fmt.Sprintf("sbd-agent-%s", sbdConfigName)
 			verifyDaemonSetCreated := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", testNamespace, "-o", "jsonpath={.metadata.name}")
@@ -934,7 +931,7 @@ spec:
 				cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				// All pods should be Running despite SBD device failure
+				// All pods should be Running despite shared storage failure
 				phases := strings.Fields(output)
 				for _, phase := range phases {
 					g.Expect(phase).To(Equal("Running"), fmt.Sprintf("Pod phase is %s, expected Running", phase))
@@ -955,14 +952,14 @@ spec:
 				cmd = exec.Command("kubectl", "logs", podName, "-n", testNamespace, "-c", "sbd-agent", "--tail=100")
 				logs, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				// Should show that preflight checks passed despite SBD device failure
+				// Should show that preflight checks passed despite shared storage failure
 				g.Expect(logs).To(ContainSubstring("Pre-flight checks passed"), "Should show preflight checks passed")
 				g.Expect(logs).To(ContainSubstring("watchdog device available"), "Should show watchdog is available")
 			}
 			Eventually(verifyPreflightLogs, 2*time.Minute).Should(Succeed())
 		})
 
-		It("should pass preflight checks with working SBD device and failing watchdog", func() {
+		It("should pass preflight checks with working shared storage and failing watchdog", func() {
 			By("creating an SBDConfig with a non-existent watchdog path")
 			// Load sample configuration and customize for this test
 			samplePath := "../../config/samples/medik8s_v1alpha1_sbdconfig.yaml"
@@ -974,26 +971,47 @@ spec:
 			// Ensure imagePullPolicy is Always for testing
 			sbdConfigYAML = strings.ReplaceAll(sbdConfigYAML, `imagePullPolicy: "IfNotPresent"`, `imagePullPolicy: "Always"`)
 			// Use a non-existent watchdog path to force watchdog check to fail
-			// This tests the either/or logic: SBD works, watchdog fails, should still pass
+			// This tests the either/or logic: shared storage works, watchdog fails, should still pass
 			sbdConfigYAML = strings.ReplaceAll(sbdConfigYAML, `sbdWatchdogPath: "/dev/watchdog"`, `sbdWatchdogPath: "/dev/non-existent-watchdog"
-  # Add a mock SBD device path (will be created as a file for testing)
-  sbdDevice: "/tmp/mock-sbd-device"`)
+  # Add a mock shared storage PVC (will be created for testing)
+  sharedStoragePVC: "mock-shared-storage"`)
 
 			// Write SBDConfig to temporary file
 			tmpFile = filepath.Join("/tmp", fmt.Sprintf("sbdconfig-preflight-sbd-%s.yaml", sbdConfigName))
 			err = os.WriteFile(tmpFile, []byte(sbdConfigYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("creating a mock SBD device file for testing")
-			mockSBDPath := "/tmp/mock-sbd-device"
-			// Create a file with sufficient size for SBD operations
-			mockSBDData := make([]byte, 1024*1024) // 1MB
-			err = os.WriteFile(mockSBDPath, mockSBDData, 0644)
+			By("creating a mock shared storage PVC for testing")
+			// Note: In a real scenario, this would be a proper RWX PVC
+			// For testing, we'll create a simple PVC that the operator can find
+			mockPVCYAML := `apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mock-shared-storage
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi`
+
+			pvcFile := filepath.Join("/tmp", "mock-pvc.yaml")
+			err = os.WriteFile(pvcFile, []byte(mockPVCYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
-			defer os.Remove(mockSBDPath) // Clean up after test
+			defer os.Remove(pvcFile)
+
+			// Create the PVC
+			cmd := exec.Command("kubectl", "apply", "-f", pvcFile, "-n", testNamespace)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() {
+				// Clean up PVC
+				cleanupCmd := exec.Command("kubectl", "delete", "pvc", "mock-shared-storage", "-n", testNamespace, "--ignore-not-found=true")
+				utils.Run(cleanupCmd)
+			}()
 
 			// Apply the SBDConfig
-			cmd := exec.Command("kubectl", "apply", "-f", tmpFile, "-n", testNamespace)
+			cmd = exec.Command("kubectl", "apply", "-f", tmpFile, "-n", testNamespace)
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDConfig")
 
@@ -1016,7 +1034,7 @@ spec:
 			}
 			Eventually(verifyDaemonSetCreated, 60*time.Second).Should(Succeed())
 
-			By("verifying SBD agent pods are created and running (SBD-only mode)")
+			By("verifying SBD agent pods are created and running (shared storage mode)")
 			verifySBDPodsRunning := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].status.phase}")
 				output, err := utils.Run(cmd)
@@ -1030,7 +1048,7 @@ spec:
 			}
 			Eventually(verifySBDPodsRunning, 2*time.Minute).Should(Succeed())
 
-			By("verifying agent logs show preflight checks passed with SBD only")
+			By("verifying agent logs show preflight checks passed with shared storage")
 			verifyPreflightLogs := func(g Gomega) {
 				// Get the first pod name
 				cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[0].metadata.name}")
@@ -1044,7 +1062,7 @@ spec:
 				g.Expect(err).NotTo(HaveOccurred())
 				// Should show that preflight checks passed despite watchdog failure
 				g.Expect(logs).To(ContainSubstring("Pre-flight checks passed"), "Should show preflight checks passed")
-				g.Expect(logs).To(ContainSubstring("SBD device available"), "Should show SBD device is available")
+				g.Expect(logs).To(ContainSubstring("shared storage available"), "Should show shared storage is available")
 			}
 			Eventually(verifyPreflightLogs, 2*time.Minute).Should(Succeed())
 		})
