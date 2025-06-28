@@ -36,7 +36,7 @@ CLEANUP="false"
 DRY_RUN="false"
 SKIP_PERMISSION_CHECK="false"
 EXISTING_SECURITY_GROUP=""
-SKIP_VPC_VALIDATION="false"
+AUTO_DETECT_SECURITY_GROUP="true"
 
 # Functions
 log_info() {
@@ -72,22 +72,25 @@ OPTIONS:
     --performance-mode MODE   EFS performance mode: generalPurpose|maxIO (default: generalPurpose)
     --throughput-mode MODE    EFS throughput mode: provisioned|burstingThroughput (default: provisioned)
     --provisioned-tp MBPS     Provisioned throughput in MiB/s (default: 100, only for provisioned mode)
-    --existing-sg SG_ID       Use existing security group instead of creating new one
-    --skip-vpc-validation     Skip VPC validation (reduces required permissions)
+    --existing-sg SG_ID       Use specific security group instead of auto-detection
+    --no-auto-detect-sg       Disable security group auto-detection (will create new SG)
     --cleanup                 Delete existing EFS and Kubernetes resources
     --dry-run                 Show what would be created without actually creating
     --skip-permission-check   Skip AWS permission validation (use with caution)
     -h, --help                Show this help message
 
 EXAMPLES:
-    # Basic usage (auto-detect cluster and region)
+    # Basic usage (auto-detect cluster, region, and security group)
     $0
 
-    # Specify cluster and region
+    # Specify cluster and region, auto-detect security group
     $0 --cluster-name my-cluster --region us-west-2
 
-    # Use existing security group (avoids CreateSecurityGroup permission)
+    # Use specific security group (no auto-detection)
     $0 --existing-sg sg-1234567890abcdef0
+
+    # Force creation of new security group (no auto-detection)
+    $0 --no-auto-detect-sg
 
     # Clean up resources
     $0 --cleanup
@@ -110,9 +113,8 @@ AWS PERMISSIONS REQUIRED:
     - ec2:DescribeSecurityGroups
     
     Conditionally required (can be avoided with options):
-    - ec2:CreateSecurityGroup (not needed with --existing-sg)
-    - ec2:AuthorizeSecurityGroupIngress (not needed with --existing-sg)
-    - ec2:DescribeVpcs (not needed with --skip-vpc-validation)
+    - ec2:CreateSecurityGroup (not needed with --existing-sg or successful auto-detection)
+    - ec2:AuthorizeSecurityGroupIngress (not needed with --existing-sg or successful auto-detection)
     
     Optional permissions (for tagging):
     - elasticfilesystem:CreateTags
@@ -169,10 +171,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --existing-sg)
             EXISTING_SECURITY_GROUP="$2"
+            AUTO_DETECT_SECURITY_GROUP="false"  # Disable auto-detection when specific SG provided
             shift 2
             ;;
-        --skip-vpc-validation)
-            SKIP_VPC_VALIDATION="true"
+        --no-auto-detect-sg)
+            AUTO_DETECT_SECURITY_GROUP="false"
             shift
             ;;
         --cleanup)
@@ -381,11 +384,7 @@ check_aws_permissions() {
         missing_permissions+=("ec2:DescribeSubnets")
     fi
     
-    if [[ "$SKIP_VPC_VALIDATION" != "true" ]]; then
-        if ! aws ec2 describe-vpcs --region "$AWS_REGION" --max-items 1 >/dev/null 2>&1; then
-            missing_permissions+=("ec2:DescribeVpcs")
-        fi
-    fi
+    # VPC validation removed - VPC ID is obtained from describe-instances, no separate validation needed
     
     # Test EFS permissions (core functionality)
     if ! aws efs describe-file-systems --region "$AWS_REGION" --max-items 1 >/dev/null 2>&1; then
@@ -422,8 +421,8 @@ check_aws_permissions() {
             fi
         fi
         
-        # Test security group creation permission (only if not using existing SG)
-        if [[ -z "$EXISTING_SECURITY_GROUP" ]]; then
+        # Test security group creation permission (only if not using existing SG and auto-detection disabled)
+        if [[ -z "$EXISTING_SECURITY_GROUP" && "$AUTO_DETECT_SECURITY_GROUP" != "true" ]]; then
             if ! aws ec2 create-security-group --region "$AWS_REGION" --group-name "test-sg" --description "test" --vpc-id "vpc-test" --dry-run >/dev/null 2>&1; then
                 local sg_test_output
                 sg_test_output=$(aws ec2 create-security-group --region "$AWS_REGION" --group-name "test-sg" --description "test" --vpc-id "vpc-test" --dry-run 2>&1 || true)
@@ -445,7 +444,11 @@ check_aws_permissions() {
                 fi
             fi
         else
-            log_info "Using existing security group, skipping creation permission checks"
+            if [[ -n "$EXISTING_SECURITY_GROUP" ]]; then
+                log_info "Using specified security group, skipping creation permission checks"
+            else
+                log_info "Auto-detection enabled, will try to find suitable security group before creating new one"
+            fi
         fi
     fi
     
@@ -480,11 +483,11 @@ check_aws_permissions() {
         log_error "Please ensure your AWS credentials have the following permissions:"
         log_error "  EFS: CreateFileSystem, DescribeFileSystems, CreateMountTarget, DescribeMountTargets"
         log_error "  EC2: DescribeInstances, DescribeSecurityGroups, DescribeSubnets"
-        if [[ "$SKIP_VPC_VALIDATION" != "true" ]]; then
-            log_error "       DescribeVpcs (or use --skip-vpc-validation)"
-        fi
-        if [[ -z "$EXISTING_SECURITY_GROUP" ]]; then
-            log_error "       CreateSecurityGroup, AuthorizeSecurityGroupIngress (or use --existing-sg)"
+        if [[ -z "$EXISTING_SECURITY_GROUP" && "$AUTO_DETECT_SECURITY_GROUP" != "true" ]]; then
+            log_error "       CreateSecurityGroup, AuthorizeSecurityGroupIngress"
+            log_error "       (or use --existing-sg or enable auto-detection)"
+        elif [[ "$AUTO_DETECT_SECURITY_GROUP" == "true" ]]; then
+            log_error "       AuthorizeSecurityGroupIngress (may be needed for auto-detected SGs)"
         fi
         log_error "  Optional: CreateTags (for both EFS and EC2 resources)"
         exit 1
@@ -535,6 +538,95 @@ get_worker_subnets() {
         --output text | tr '\t' '\n' | sort -u
 }
 
+# Function to auto-detect suitable security group for EFS
+auto_detect_security_group() {
+    local vpc_id="$1"
+    
+    log_info "Auto-detecting suitable security group for EFS..."
+    
+    # Strategy 1: Look for existing EFS security groups with NFS rules
+    log_info "Looking for existing EFS security groups..."
+    local efs_sgs
+    efs_sgs=$(aws ec2 describe-security-groups \
+        --region "$AWS_REGION" \
+        --filters "Name=vpc-id,Values=$vpc_id" "Name=group-name,Values=*efs*" \
+        --query 'SecurityGroups[?IpPermissions[?FromPort==`2049` && ToPort==`2049`]].GroupId' \
+        --output text 2>/dev/null || echo "")
+    
+    if [[ -n "$efs_sgs" && "$efs_sgs" != "None" ]]; then
+        local first_sg=$(echo "$efs_sgs" | awk '{print $1}')
+        log_success "Found existing EFS security group with NFS rules: $first_sg"
+        echo "$first_sg"
+        return
+    fi
+    
+    # Strategy 2: Look for worker node security groups that allow NFS traffic
+    log_info "Looking for worker node security groups with NFS access..."
+    local worker_sgs
+    worker_sgs=$(aws ec2 describe-instances \
+        --region "$AWS_REGION" \
+        --filters "Name=tag:Name,Values=${CLUSTER_NAME}-*-worker-*" "Name=instance-state-name,Values=running" \
+        --query 'Reservations[].Instances[].SecurityGroups[].GroupId' \
+        --output text 2>/dev/null | tr '\t' '\n' | sort -u || echo "")
+    
+    if [[ -n "$worker_sgs" ]]; then
+        for sg_id in $worker_sgs; do
+            local nfs_check
+            nfs_check=$(aws ec2 describe-security-groups \
+                --region "$AWS_REGION" \
+                --group-ids "$sg_id" \
+                --query 'SecurityGroups[0].IpPermissions[?FromPort==`2049` && ToPort==`2049`]' \
+                --output text 2>/dev/null || echo "")
+            
+            if [[ -n "$nfs_check" ]]; then
+                log_success "Found worker security group with NFS rules: $sg_id"
+                echo "$sg_id"
+                return
+            fi
+        done
+    fi
+    
+    # Strategy 3: Look for cluster security groups that might be suitable
+    log_info "Looking for cluster security groups..."
+    local cluster_sgs
+    cluster_sgs=$(aws ec2 describe-security-groups \
+        --region "$AWS_REGION" \
+        --filters "Name=vpc-id,Values=$vpc_id" "Name=tag:kubernetes.io/cluster/${CLUSTER_NAME},Values=owned" \
+        --query 'SecurityGroups[].GroupId' \
+        --output text 2>/dev/null || echo "")
+    
+    if [[ -n "$cluster_sgs" && "$cluster_sgs" != "None" ]]; then
+        for sg_id in $cluster_sgs; do
+            # Check if this SG allows traffic from itself (common pattern for cluster SGs)
+            local self_ref_check
+            self_ref_check=$(aws ec2 describe-security-groups \
+                --region "$AWS_REGION" \
+                --group-ids "$sg_id" \
+                --query "SecurityGroups[0].IpPermissions[?UserIdGroupPairs[?GroupId=='$sg_id']]" \
+                --output text 2>/dev/null || echo "")
+            
+            if [[ -n "$self_ref_check" ]]; then
+                log_info "Found cluster security group with self-referencing rules: $sg_id"
+                log_info "This can be used for EFS access (will add NFS rule if needed)"
+                echo "$sg_id"
+                return
+            fi
+        done
+    fi
+    
+    # Strategy 4: Use the first worker node security group as fallback
+    if [[ -n "$worker_sgs" ]]; then
+        local first_worker_sg=$(echo "$worker_sgs" | head -1)
+        log_warning "No ideal security group found, using first worker SG: $first_worker_sg"
+        log_warning "Will attempt to add NFS rules to this security group"
+        echo "$first_worker_sg"
+        return
+    fi
+    
+    log_warning "Could not auto-detect suitable security group"
+    echo ""
+}
+
 # Function to get or create security group for EFS
 get_efs_security_group() {
     local vpc_id="$1"
@@ -575,6 +667,44 @@ get_efs_security_group() {
         
         echo "$EXISTING_SECURITY_GROUP"
         return
+    fi
+    
+    # Try auto-detection if enabled
+    if [[ "$AUTO_DETECT_SECURITY_GROUP" == "true" ]]; then
+        local detected_sg
+        detected_sg=$(auto_detect_security_group "$vpc_id")
+        
+        if [[ -n "$detected_sg" ]]; then
+            log_success "Auto-detected security group: $detected_sg"
+            
+            # Check if we need to add NFS rules
+            local nfs_rule_check
+            nfs_rule_check=$(aws ec2 describe-security-groups \
+                --region "$AWS_REGION" \
+                --group-ids "$detected_sg" \
+                --query 'SecurityGroups[0].IpPermissions[?FromPort==`2049` && ToPort==`2049`]' \
+                --output text 2>/dev/null || echo "")
+            
+            if [[ -z "$nfs_rule_check" ]]; then
+                log_info "Adding NFS rule to detected security group..."
+                if [[ "$DRY_RUN" != "true" ]]; then
+                    aws ec2 authorize-security-group-ingress \
+                        --region "$AWS_REGION" \
+                        --group-id "$detected_sg" \
+                        --protocol tcp \
+                        --port 2049 \
+                        --source-group "$detected_sg" >/dev/null 2>&1 || \
+                        log_warning "Could not add NFS rule to security group (permission issue), please ensure NFS access is allowed"
+                else
+                    log_info "[DRY RUN] Would add NFS rule to security group $detected_sg"
+                fi
+            fi
+            
+            echo "$detected_sg"
+            return
+        else
+            log_warning "Auto-detection failed, will create new security group"
+        fi
     fi
     
     # Check if EFS security group already exists
