@@ -17,6 +17,7 @@ limitations under the License.
 package smoke
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -27,7 +28,16 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
 	"github.com/medik8s/sbd-operator/test/utils"
 )
 
@@ -46,40 +56,104 @@ const metricsServiceName = "sbd-operator-controller-manager-metrics-service"
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "sbd-operator-metrics-binding"
 
+var (
+	// Kubernetes clients
+	k8sClient client.Client
+	clientset *kubernetes.Clientset
+	ctx       = context.Background()
+)
+
+// setupKubernetesClients initializes the Kubernetes clients
+func setupKubernetesClients() error {
+	// Load kubeconfig - try environment variable first, then default location
+	kubeconfig := os.Getenv("KUBECONFIG")
+	if kubeconfig == "" {
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			kubeconfig = filepath.Join(homeDir, ".kube", "config")
+		}
+	}
+
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to build kubeconfig: %w", err)
+	}
+
+	// Create scheme with core Kubernetes types and add our CRDs
+	clientScheme := runtime.NewScheme()
+	err = scheme.AddToScheme(clientScheme)
+	if err != nil {
+		return fmt.Errorf("failed to add core types to scheme: %w", err)
+	}
+	err = medik8sv1alpha1.AddToScheme(clientScheme)
+	if err != nil {
+		return fmt.Errorf("failed to add SBD types to scheme: %w", err)
+	}
+
+	// Create controller-runtime client
+	k8sClient, err = client.New(config, client.Options{Scheme: clientScheme})
+	if err != nil {
+		return fmt.Errorf("failed to create controller-runtime client: %w", err)
+	}
+
+	// Create standard clientset
+	clientset, err = kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
+	}
+
+	return nil
+}
+
 var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 	var controllerPodName string
 
 	// Verify the environment is set up correctly (setup handled by Makefile)
 	BeforeAll(func() {
+		By("initializing Kubernetes clients")
+		err := setupKubernetesClients()
+		Expect(err).NotTo(HaveOccurred(), "Failed to setup Kubernetes clients")
+
 		By("verifying the controller-manager namespace exists")
-		cmd := exec.Command("kubectl", "get", "ns", namespace)
-		_, err := utils.Run(cmd)
+		ns := &corev1.Namespace{}
+		err = k8sClient.Get(ctx, client.ObjectKey{Name: namespace}, ns)
 		Expect(err).NotTo(HaveOccurred(), "Expected namespace to exist (should be created by Makefile setup)")
 
 		By("verifying CRDs are installed")
-		cmd = exec.Command("kubectl", "get", "crd", "sbdconfigs.medik8s.medik8s.io")
+		cmd := exec.Command("kubectl", "get", "crd", "sbdconfigs.medik8s.medik8s.io")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Expected CRDs to be installed (should be done by Makefile setup)")
 
 		By("verifying the controller-manager is deployed")
-		cmd = exec.Command("kubectl", "get", "deployment", "sbd-operator-controller-manager", "-n", namespace)
-		_, err = utils.Run(cmd)
+		deployment := &appsv1.Deployment{}
+		err = k8sClient.Get(ctx, client.ObjectKey{
+			Name:      "sbd-operator-controller-manager",
+			Namespace: namespace,
+		}, deployment)
 		Expect(err).NotTo(HaveOccurred(), "Expected controller-manager to be deployed (should be done by Makefile setup)")
 	})
 
 	// Clean up test-specific resources (overall cleanup handled by Makefile)
 	AfterAll(func() {
 		By("cleaning up the curl pod for metrics")
-		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace, "--ignore-not-found=true")
-		_, _ = utils.Run(cmd)
+		pod := &corev1.Pod{}
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: "curl-metrics", Namespace: namespace}, pod)
+		if err == nil {
+			_ = k8sClient.Delete(ctx, pod)
+		}
 
 		By("cleaning up metrics ClusterRoleBinding")
-		cmd = exec.Command("kubectl", "delete", "clusterrolebinding", metricsRoleBindingName, "--ignore-not-found=true")
+		cmd := exec.Command("kubectl", "delete", "clusterrolebinding", metricsRoleBindingName, "--ignore-not-found=true")
 		_, _ = utils.Run(cmd)
 
 		By("cleaning up any test SBDConfigs")
-		cmd = exec.Command("kubectl", "delete", "sbdconfig", "--all", "-n", testNamespace, "--ignore-not-found=true")
-		_, _ = utils.Run(cmd)
+		sbdConfigs := &medik8sv1alpha1.SBDConfigList{}
+		err = k8sClient.List(ctx, sbdConfigs, client.InNamespace(testNamespace))
+		if err == nil {
+			for _, sbdConfig := range sbdConfigs.Items {
+				_ = k8sClient.Delete(ctx, &sbdConfig)
+			}
+		}
 	})
 
 	// After each test, check for failures and collect logs, events,
@@ -132,31 +206,27 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 		It("should run successfully", func() {
 			By("validating that the controller-manager pod is running as expected")
 			verifyControllerUp := func(g Gomega) {
-				// Get the name of the controller-manager pod
-				cmd := exec.Command("kubectl", "get",
-					"pods", "-l", "control-plane=controller-manager",
-					"-o", "go-template={{ range .items }}"+
-						"{{ if not .metadata.deletionTimestamp }}"+
-						"{{ .metadata.name }}"+
-						"{{ \"\\n\" }}{{ end }}{{ end }}",
-					"-n", namespace,
-				)
-
-				podOutput, err := utils.Run(cmd)
+				// Get controller-manager pods
+				pods := &corev1.PodList{}
+				err := k8sClient.List(ctx, pods,
+					client.InNamespace(namespace),
+					client.MatchingLabels{"control-plane": "controller-manager"})
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve controller-manager pod information")
-				podNames := utils.GetNonEmptyLines(podOutput)
-				g.Expect(podNames).To(HaveLen(1), "expected 1 controller pod running")
-				controllerPodName = podNames[0]
+
+				// Filter out pods that are being deleted
+				var activePods []corev1.Pod
+				for _, pod := range pods.Items {
+					if pod.DeletionTimestamp == nil {
+						activePods = append(activePods, pod)
+					}
+				}
+				g.Expect(activePods).To(HaveLen(1), "expected 1 controller pod running")
+
+				controllerPodName = activePods[0].Name
 				g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
 
 				// Validate the pod's status
-				cmd = exec.Command("kubectl", "get",
-					"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
-					"-n", namespace,
-				)
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Running"), "Incorrect controller-manager pod status")
+				g.Expect(activePods[0].Status.Phase).To(Equal(corev1.PodRunning), "Incorrect controller-manager pod status")
 			}
 			Eventually(verifyControllerUp).Should(Succeed())
 		})
@@ -323,7 +393,7 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 
 			By("verifying the SBDConfig resource exists")
 			verifySBDConfigExists := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-n", testNamespace, "-n", testNamespace, "-o", "jsonpath={.metadata.name}")
+				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-n", testNamespace, "-o", "jsonpath={.metadata.name}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal(sbdConfigName))
@@ -423,62 +493,93 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 
 			By("verifying the DaemonSet is created")
 			verifyDaemonSetExists := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "daemonset", expectedDaemonSetName, "-n", testNamespace, "-o", "jsonpath={.metadata.name}")
-				output, err := utils.Run(cmd)
+				daemonSet := &appsv1.DaemonSet{}
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      expectedDaemonSetName,
+					Namespace: testNamespace,
+				}, daemonSet)
 				if err != nil {
-					fmt.Printf("DaemonSet lookup failed: %v, output: %s\n", err, output)
+					fmt.Printf("DaemonSet lookup failed: %v\n", err)
 				}
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal(expectedDaemonSetName))
+				g.Expect(daemonSet.Name).To(Equal(expectedDaemonSetName))
 			}
 			Eventually(verifyDaemonSetExists, 60*time.Second).Should(Succeed())
 
 			By("verifying SBD agent pods are created")
 			verifySBDPodsExist := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].metadata.name}")
-				output, err := utils.Run(cmd)
+				pods := &corev1.PodList{}
+				err := k8sClient.List(ctx, pods,
+					client.InNamespace(testNamespace),
+					client.MatchingLabels{"sbdconfig": sbdConfigName})
 				if err != nil {
-					fmt.Printf("Pod lookup failed: %v, output: %s\n", err, output)
+					fmt.Printf("Pod lookup failed: %v\n", err)
 				}
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).ToNot(BeEmpty(), "No SBD agent pods found")
+				g.Expect(len(pods.Items)).To(BeNumerically(">", 0), "No SBD agent pods found")
 			}
 			Eventually(verifySBDPodsExist, 90*time.Second).Should(Succeed())
 
 			By("verifying SBD agent pods are running")
 			verifySBDPodsRunning := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].status.phase}")
-				output, err := utils.Run(cmd)
+				pods := &corev1.PodList{}
+				err := k8sClient.List(ctx, pods,
+					client.InNamespace(testNamespace),
+					client.MatchingLabels{"sbdconfig": sbdConfigName})
 				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(len(pods.Items)).To(BeNumerically(">", 0), "No pods found")
+
 				// All pods should be Running
-				phases := strings.Fields(output)
-				for _, phase := range phases {
-					g.Expect(phase).To(Equal("Running"), fmt.Sprintf("Pod phase is %s, expected Running", phase))
+				for _, pod := range pods.Items {
+					fmt.Printf("Pod phase is %s, expected Running\n", pod.Status.Phase)
+					g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning), fmt.Sprintf("Pod %s phase is %s, expected Running", pod.Name, pod.Status.Phase))
 				}
-				g.Expect(len(phases)).To(BeNumerically(">", 0), "No pods found")
 			}
 			Eventually(verifySBDPodsRunning, 2*time.Minute).Should(Succeed())
 
 			By("verifying SBD agent pods are ready")
 			verifySBDPodsReady := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", fmt.Sprintf("sbdconfig=%s", sbdConfigName), "-o", "jsonpath={.items[*].status.conditions[?(@.type=='Ready')].status}")
-				output, err := utils.Run(cmd)
+				pods := &corev1.PodList{}
+				err := k8sClient.List(ctx, pods,
+					client.InNamespace(testNamespace),
+					client.MatchingLabels{"sbdconfig": sbdConfigName})
 				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(len(pods.Items)).To(BeNumerically(">", 0), "No pods found")
+
 				// All pods should have Ready=True
-				readyStatuses := strings.Fields(output)
-				for _, status := range readyStatuses {
-					g.Expect(status).To(Equal("True"), fmt.Sprintf("Pod ready status is %s, expected True", status))
+				for _, pod := range pods.Items {
+					var readyCondition *corev1.PodCondition
+					for i := range pod.Status.Conditions {
+						if pod.Status.Conditions[i].Type == corev1.PodReady {
+							readyCondition = &pod.Status.Conditions[i]
+							break
+						}
+					}
+					g.Expect(readyCondition).ToNot(BeNil(), fmt.Sprintf("Pod %s has no Ready condition", pod.Name))
+					g.Expect(readyCondition.Status).To(Equal(corev1.ConditionTrue), fmt.Sprintf("Pod %s ready status is %s, expected True", pod.Name, readyCondition.Status))
 				}
-				g.Expect(len(readyStatuses)).To(BeNumerically(">", 0), "No ready status found")
 			}
 			Eventually(verifySBDPodsReady, 6*time.Minute).Should(Succeed())
 
 			By("verifying SBDConfig status shows pods are ready")
 			verifySBDConfigReady := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "sbdconfig", sbdConfigName, "-n", testNamespace, "-o", "jsonpath={.status.conditions[?(@.type=='DaemonSetReady')].status}")
-				output, err := utils.Run(cmd)
+				sbdConfig := &medik8sv1alpha1.SBDConfig{}
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      sbdConfigName,
+					Namespace: testNamespace,
+				}, sbdConfig)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("True"), "SBDConfig status should show DaemonSetReady condition as True")
+
+				// Check for DaemonSetReady condition
+				var daemonSetReadyCondition *metav1.Condition
+				for i := range sbdConfig.Status.Conditions {
+					if sbdConfig.Status.Conditions[i].Type == "DaemonSetReady" {
+						daemonSetReadyCondition = &sbdConfig.Status.Conditions[i]
+						break
+					}
+				}
+				g.Expect(daemonSetReadyCondition).ToNot(BeNil(), "SBDConfig should have DaemonSetReady condition")
+				g.Expect(daemonSetReadyCondition.Status).To(Equal(metav1.ConditionTrue), "SBDConfig status should show DaemonSetReady condition as True")
 			}
 			Eventually(verifySBDConfigReady, 3*time.Minute).Should(Succeed())
 
@@ -934,6 +1035,7 @@ spec:
 				// All pods should be Running despite shared storage failure
 				phases := strings.Fields(output)
 				for _, phase := range phases {
+					fmt.Printf("Pod phase is %s, expected Running\n", phase)
 					g.Expect(phase).To(Equal("Running"), fmt.Sprintf("Pod phase is %s, expected Running", phase))
 				}
 				g.Expect(len(phases)).To(BeNumerically(">", 0), "No pods found")
