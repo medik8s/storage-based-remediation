@@ -23,6 +23,7 @@ SBDConfig is a cluster-scoped Kubernetes custom resource that configures the SBD
 ### Optional (for shared storage mode)
 - Shared block storage accessible from all nodes
 - Storage that supports POSIX file locking (NFS, CephFS, GlusterFS)
+- **StorageClass** with ReadWriteMany (RWX) access mode support
 
 ## Multiple SBDConfig Support
 
@@ -118,6 +119,20 @@ kubectl apply -f https://github.com/medik8s/sbd-operator/releases/latest/downloa
 - **Description**: Time before inactive nodes are cleaned up from slot mapping
 - **Purpose**: Determines when node slots in shared storage are freed for reuse
 - **Format**: Go duration format (e.g., `30m`, `2h`, `90s`)
+
+#### `sharedStorageClass` (string, optional)
+- **Default**: None (shared storage disabled)
+- **Description**: StorageClass name for automatic shared storage provisioning
+- **Requirements**: 
+  - StorageClass must support ReadWriteMany (RWX) access mode
+  - Storage backend must support POSIX file locking for coordination
+- **Examples**: `"efs-sc"`, `"nfs-client"`, `"cephfs"`, `"glusterfs"`
+- **Behavior**: When specified, the controller automatically creates a PVC using this StorageClass
+
+#### `sharedStorageMountPath` (string, optional)
+- **Default**: `/sbd-block`
+- **Description**: Mount path for shared storage within sbd-agent containers
+- **Notes**: Must be an absolute path and should not conflict with system paths
 
 ### SBDConfig Status Fields
 
@@ -286,6 +301,69 @@ The SBD operator automatically detects storage capabilities:
 - **File locking enabled**: Used with NFS, CephFS, GlusterFS
 - **Jitter coordination**: Used with block storage without file locking
 - **Watchdog-only**: Used when no shared storage is configured
+
+## Shared Storage Configuration
+
+### StorageClass-Based Approach (Recommended)
+
+The SBD operator supports automatic shared storage provisioning using Kubernetes StorageClasses. This approach simplifies configuration and ensures proper PVC lifecycle management.
+
+#### Requirements
+- **StorageClass**: Must support ReadWriteMany (RWX) access mode
+- **Storage Backend**: Must support POSIX file locking (NFS, CephFS, GlusterFS, EFS)
+- **Permissions**: Controller needs permissions to create/manage PVCs
+
+#### Configuration
+```yaml
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDConfig
+metadata:
+  name: shared-storage-example
+spec:
+  # Basic configuration
+  image: "quay.io/medik8s/sbd-agent:v1.0.0"
+  watchdogTimeout: "60s"
+  
+  # Shared storage configuration
+  sharedStorageClass: "efs-sc"              # Required: StorageClass name
+  sharedStorageMountPath: "/sbd-block"      # Optional: Custom mount path
+```
+
+#### How It Works
+1. **Automatic PVC Creation**: Controller creates a PVC using the specified StorageClass
+2. **RWX Validation**: Ensures the StorageClass supports ReadWriteMany access mode
+3. **DaemonSet Integration**: Mounts the PVC in all sbd-agent pods
+4. **Coordination**: Enables cross-node coordination via shared storage
+5. **Lifecycle Management**: PVC is owned by SBDConfig and cleaned up automatically
+
+#### Supported Storage Types
+- **AWS EFS**: `efs-sc` (via EFS CSI driver)
+- **NFS**: `nfs-client` (via NFS CSI driver)
+- **CephFS**: `cephfs` (via Ceph CSI driver)
+- **GlusterFS**: `glusterfs` (via GlusterFS CSI driver)
+- **Azure Files**: `azurefile-csi` (via Azure Files CSI driver)
+
+### Legacy PVC Reference (Deprecated)
+
+**Note**: Direct PVC references are deprecated. Use the StorageClass approach instead.
+
+### Shared Storage with Custom StorageClass
+
+For environments with specific storage requirements:
+
+```yaml
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDConfig
+metadata:
+  name: custom-storage-sbd
+spec:
+  # Use custom StorageClass with specific parameters
+  sharedStorageClass: "custom-nfs-sc"
+  sharedStorageMountPath: "/shared/sbd"
+  
+  # Faster cleanup for dynamic environments
+  staleNodeTimeout: "15m"
+```
 
 ## Monitoring and Observability
 

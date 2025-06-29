@@ -35,7 +35,7 @@ Current Kubernetes node remediation solutions often rely on IPMI/iDRAC for fenci
 * **SBD Operator:** A dedicated Kubernetes Operator will manage the lifecycle of all SBD components (CRDs, DaemonSets, RBAC).
 * **Installation:** Via Helm Chart (recommended) or Kustomize.
 * **Custom Resources:**
-    * `SBDConfig` (Cluster-scoped): Defines cluster-wide SBD parameters (e.g., `sbdDevicePVCName`, `sbdTimeoutSeconds`, `sbdWatchdogPath`, `nodeExclusionList`, `rebootMethod`).
+    * `SBDConfig` (Cluster-scoped): Defines cluster-wide SBD parameters (e.g., `sharedStorageClass`, `watchdogTimeout`, `sbdWatchdogPath`, `staleNodeTimeout`).
     * `SBDRemediation` (Namespaced): A new CRD created by Node Healthcheck Operator to request SBD-based fencing for a specific node. Contains `nodeName`, `remediationRequestTime`, `status` (Phase, Message).
 * **Monitoring:**
     * **Prometheus Metrics:** SBD Agent will expose comprehensive metrics (e.g., `sbd_agent_status_healthy`, `sbd_device_io_errors_total`, `sbd_watchdog_pets_total`, `sbd_peer_status`, `sbd_self_fenced_total`). `ServiceMonitor` provided for Prometheus Operator.

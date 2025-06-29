@@ -755,3 +755,3292 @@ Implement advanced error handling, exponential backoff, and retry mechanisms for
 - Add comments explaining the retry logic.
 - Update relevant tests to cover retry scenarios.
 ```
+
+---
+
+### **Prompt 26: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 27: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 28: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 29: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 30: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 31: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 32: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 33: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 34: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 35: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 36: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 37: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 38: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 39: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 40: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 41: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 42: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 43: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 44: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 45: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 46: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 47: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 48: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 49: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 50: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 51: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 52: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 53: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 54: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 55: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 56: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 57: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 58: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 59: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 60: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 61: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 62: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 63: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 64: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 65: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 66: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 67: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 68: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 69: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 70: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 71: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 72: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 73: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 74: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 75: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 76: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 77: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 78: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 79: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 80: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 81: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 82: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 83: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 84: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 85: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 86: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 87: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 88: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 89: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 90: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 91: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 92: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 93: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 94: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 95: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 96: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 97: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 98: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 99: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 100: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 101: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 102: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 103: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 104: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 105: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 106: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 107: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 108: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 109: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 110: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 111: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 112: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 113: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 114: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 115: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 116: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 117: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 118: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 119: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 120: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 121: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 122: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 123: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 124: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 125: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 126: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 127: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 128: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 129: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 130: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 131: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 132: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 133: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 134: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-fencing (e.g., "panic", "systemctl-reboot").
+
+**Description:**
+The `SBDConfig` CRD defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+
+**Validation:**
+- `sbdTimeoutSeconds` must be a positive integer.
+- `sbdDevicePVCName` and `sbdWatchdogPath` must not be empty.
+- `rebootMethod` should validate against "panic" or "systemctl-reboot".
+
+Please provide the complete YAML for the CRD.
+```
+
+---
+
+### **Prompt 135: Updated SBDConfig API**
+
+```text
+Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfig`.
+
+**CRD Name:** `sbdconfigs.medik8s.io`
+**Group:** `medik8s.io`
+**Version:** `v1alpha1`
+**Scope:** `Cluster`
+
+**Spec Fields:**
+- `sbdDevicePVCName` (string, required): The name of the PVC providing the shared block device.
+- `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
+- `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
+- `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-
