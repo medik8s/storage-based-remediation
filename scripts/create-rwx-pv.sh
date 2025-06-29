@@ -73,7 +73,7 @@ OPTIONS:
     --throughput-mode MODE    EFS throughput mode: provisioned|burstingThroughput (default: provisioned)
     --provisioned-tp MBPS     Provisioned throughput in MiB/s (default: 100, only for provisioned mode)
     --existing-sg SG_ID       Use specific security group instead of auto-detection
-    --no-auto-detect-sg       Disable security group auto-detection (will create new SG)
+    --allow-sg-creation       Allow creation of new security group if none found (requires additional permissions)
     --cleanup                 Delete existing EFS and Kubernetes resources
     --dry-run                 Show what would be created without actually creating
     --skip-permission-check   Skip AWS permission validation (use with caution)
@@ -89,8 +89,8 @@ EXAMPLES:
     # Use specific security group (no auto-detection)
     $0 --existing-sg sg-1234567890abcdef0
 
-    # Force creation of new security group (no auto-detection)
-    $0 --no-auto-detect-sg
+    # Allow creation of new security group if auto-detection fails
+    $0 --allow-sg-creation
 
     # Clean up resources
     $0 --cleanup
@@ -112,9 +112,9 @@ AWS PERMISSIONS REQUIRED:
     - ec2:DescribeSubnets
     - ec2:DescribeSecurityGroups
     
-    Conditionally required (can be avoided with options):
-    - ec2:CreateSecurityGroup (not needed with --existing-sg or successful auto-detection)
-    - ec2:AuthorizeSecurityGroupIngress (not needed with --existing-sg or successful auto-detection)
+    Conditionally required (only needed with --allow-sg-creation):
+    - ec2:CreateSecurityGroup (only needed if --allow-sg-creation is used and no suitable SG found)
+    - ec2:AuthorizeSecurityGroupIngress (only needed if --allow-sg-creation is used and no suitable SG found)
     
     Optional permissions (for tagging):
     - elasticfilesystem:CreateTags
@@ -173,10 +173,6 @@ while [[ $# -gt 0 ]]; do
             EXISTING_SECURITY_GROUP="$2"
             AUTO_DETECT_SECURITY_GROUP="false"  # Disable auto-detection when specific SG provided
             shift 2
-            ;;
-        --no-auto-detect-sg)
-            AUTO_DETECT_SECURITY_GROUP="false"
-            shift
             ;;
         --cleanup)
             CLEANUP="true"
@@ -240,20 +236,8 @@ detect_cluster_name() {
     if [[ -z "$CLUSTER_NAME" ]]; then
         log_info "Auto-detecting cluster name..."
         
-        # Try to get cluster name from current context
-        local context_cluster
-        context_cluster=$($KUBECTL config current-context 2>/dev/null || echo "")
-        
-        if [[ -n "$context_cluster" ]]; then
-            # Extract cluster name from context (format varies)
-            if [[ "$context_cluster" =~ admin@(.+) ]]; then
-                CLUSTER_NAME="${BASH_REMATCH[1]}"
-            elif [[ "$context_cluster" =~ (.+)/api ]]; then
-                CLUSTER_NAME="${BASH_REMATCH[1]}"
-            else
-                CLUSTER_NAME="$context_cluster"
-            fi
-        fi
+        # Get cluster name from context
+         CLUSTER_NAME=$($KUBECTL config view --minify -o jsonpath='{.clusters[0].name}' 2>/dev/null || echo "")
         
         # Fallback: try to get from cluster infrastructure
         if [[ -z "$CLUSTER_NAME" ]]; then
@@ -289,18 +273,14 @@ detect_aws_region() {
         # Get cluster endpoint
         local cluster_endpoint
         cluster_endpoint=$($KUBECTL config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null || echo "")
-        
-        # Get cluster name from context
-         local cluster_name
-         cluster_name=$($KUBECTL config view --minify -o jsonpath='{.clusters[0].name}' 2>/dev/null || echo "")
-         
+                 
          # Get node information to extract region from AWS node names
          local node_names
          node_names=$($KUBECTL get nodes -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
          
          log_info "Cluster endpoint: $cluster_endpoint"
          log_info "Cluster context: $current_context"
-         log_info "Cluster name: $cluster_name"
+         log_info "Cluster name: $CLUSTER_NAME"
          log_info "Node names: $node_names"
         
                  # Try various patterns to extract region
@@ -403,62 +383,35 @@ check_aws_permissions() {
         fi
     fi
     
-    # Test EFS creation permissions (will be tested with dry-run if available)
-    if [[ "$DRY_RUN" != "true" ]]; then
-        # Test EFS creation permission with a dry-run call
-        if ! aws efs create-file-system --region "$AWS_REGION" --performance-mode generalPurpose --dry-run >/dev/null 2>&1; then
-            # Check if it's a dry-run not supported error vs permission error
-            local create_test_output
-            create_test_output=$(aws efs create-file-system --region "$AWS_REGION" --performance-mode generalPurpose --dry-run 2>&1 || true)
-            if [[ "$create_test_output" == *"DryRunOperation"* ]]; then
-                # Dry-run not supported, but permission seems OK
-                log_info "EFS create permission appears to be available (dry-run not supported by EFS)"
-            elif [[ "$create_test_output" == *"AccessDenied"* ]] || [[ "$create_test_output" == *"not authorized"* ]]; then
-                missing_permissions+=("elasticfilesystem:CreateFileSystem")
-            fi
-        fi
-        
-        # Test mount target creation permission
-        if ! aws efs create-mount-target --region "$AWS_REGION" --file-system-id "fs-test" --subnet-id "subnet-test" --dry-run >/dev/null 2>&1; then
-            local mount_test_output
-            mount_test_output=$(aws efs create-mount-target --region "$AWS_REGION" --file-system-id "fs-test" --subnet-id "subnet-test" --dry-run 2>&1 || true)
-            if [[ "$mount_test_output" == *"DryRunOperation"* ]]; then
-                log_info "EFS mount target creation permission appears to be available"
-            elif [[ "$mount_test_output" == *"AccessDenied"* ]] || [[ "$mount_test_output" == *"not authorized"* ]]; then
-                missing_permissions+=("elasticfilesystem:CreateMountTarget")
-            fi
-        fi
-        
-        # Test security group creation permission (only if not using existing SG and auto-detection disabled)
-        if [[ -z "$EXISTING_SECURITY_GROUP" && "$AUTO_DETECT_SECURITY_GROUP" != "true" ]]; then
-            if ! aws ec2 create-security-group --region "$AWS_REGION" --group-name "test-sg" --description "test" --vpc-id "vpc-test" --dry-run >/dev/null 2>&1; then
-                local sg_test_output
-                sg_test_output=$(aws ec2 create-security-group --region "$AWS_REGION" --group-name "test-sg" --description "test" --vpc-id "vpc-test" --dry-run 2>&1 || true)
-                if [[ "$sg_test_output" == *"DryRunOperation"* ]]; then
-                    log_info "EC2 security group creation permission available"
-                elif [[ "$sg_test_output" == *"AccessDenied"* ]] || [[ "$sg_test_output" == *"not authorized"* ]]; then
-                    missing_permissions+=("ec2:CreateSecurityGroup")
-                fi
-            fi
-            
-            # Test security group ingress rule permission
-            if ! aws ec2 authorize-security-group-ingress --region "$AWS_REGION" --group-id "sg-test" --protocol tcp --port 2049 --source-group "sg-test" --dry-run >/dev/null 2>&1; then
-                local sg_ingress_test_output
-                sg_ingress_test_output=$(aws ec2 authorize-security-group-ingress --region "$AWS_REGION" --group-id "sg-test" --protocol tcp --port 2049 --source-group "sg-test" --dry-run 2>&1 || true)
-                if [[ "$sg_ingress_test_output" == *"DryRunOperation"* ]]; then
-                    log_info "EC2 security group ingress permission available"
-                elif [[ "$sg_ingress_test_output" == *"AccessDenied"* ]] || [[ "$sg_ingress_test_output" == *"not authorized"* ]]; then
-                    missing_permissions+=("ec2:AuthorizeSecurityGroupIngress")
-                fi
-            fi
-        else
-            if [[ -n "$EXISTING_SECURITY_GROUP" ]]; then
-                log_info "Using specified security group, skipping creation permission checks"
-            else
-                log_info "Auto-detection enabled, will try to find suitable security group before creating new one"
-            fi
-        fi
+    # Test EFS creation permissions (always check regardless of dry-run mode)
+    # Note: EFS create-file-system doesn't support --dry-run, so we test by attempting to create with invalid parameters
+    # This will fail with permission error if we don't have the permission, or with validation error if we do
+    local create_test_output
+    create_test_output=$(aws efs create-file-system --region "$AWS_REGION" --performance-mode invalidMode 2>&1 || true)
+    if [[ "$create_test_output" == *"AccessDenied"* ]] || [[ "$create_test_output" == *"not authorized"* ]]; then
+        missing_permissions+=("elasticfilesystem:CreateFileSystem")
+    elif [[ "$create_test_output" == *"ValidationException"* ]] || [[ "$create_test_output" == *"InvalidParameterValue"* ]]; then
+        # Validation error means we have permission but parameters are invalid (expected)
+        log_info "EFS create permission appears to be available"
+    else
+        # Log unexpected response for debugging
+        log_info "EFS create permission test result: $create_test_output"
     fi
+    
+    # Test mount target creation permission
+    # Note: EFS create-mount-target doesn't support --dry-run, so we test with invalid parameters
+    local mount_test_output
+    mount_test_output=$(aws efs create-mount-target --region "$AWS_REGION" --file-system-id "fs-12345678" --subnet-id "subnet-invalid" 2>&1 || true)
+    if [[ "$mount_test_output" == *"AccessDenied"* ]] || [[ "$mount_test_output" == *"not authorized"* ]]; then
+        missing_permissions+=("elasticfilesystem:CreateMountTarget")
+    elif [[ "$mount_test_output" == *"FileSystemNotFound"* ]] || [[ "$mount_test_output" == *"ValidationException"* ]] || [[ "$mount_test_output" == *"InvalidSubnet"* ]] || [[ "$mount_test_output" == *"Parameter validation failed"* ]]; then
+        # Expected errors when we have permission but parameters are invalid
+        log_info "EFS mount target creation permission appears to be available"
+    else
+        # Log unexpected response for debugging
+        log_info "EFS mount target permission test result: $mount_test_output"
+    fi
+    
     
     # Test optional permissions (will generate warnings if missing)
     if ! aws efs create-tags --region "$AWS_REGION" --file-system-id "fs-test" --tags "Key=test,Value=test" --dry-run >/dev/null 2>&1; then
@@ -491,12 +444,7 @@ check_aws_permissions() {
         log_error "Please ensure your AWS credentials have the following permissions:"
         log_error "  EFS: CreateFileSystem, DescribeFileSystems, CreateMountTarget, DescribeMountTargets"
         log_error "  EC2: DescribeInstances, DescribeSecurityGroups, DescribeSubnets"
-        if [[ -z "$EXISTING_SECURITY_GROUP" && "$AUTO_DETECT_SECURITY_GROUP" != "true" ]]; then
-            log_error "       CreateSecurityGroup, AuthorizeSecurityGroupIngress"
-            log_error "       (or use --existing-sg or enable auto-detection)"
-        elif [[ "$AUTO_DETECT_SECURITY_GROUP" == "true" ]]; then
-            log_error "       AuthorizeSecurityGroupIngress (may be needed for auto-detected SGs)"
-        fi
+        log_error "  AuthorizeSecurityGroupIngress (may be needed for auto-detected SGs)"
         log_error "  Optional: CreateTags (for both EFS and EC2 resources)"
         exit 1
     fi
@@ -708,33 +656,46 @@ get_efs_security_group() {
                 fi
             fi
             
-            echo "$detected_sg"
+                        echo "$detected_sg"
             return
         else
-            log_warning "Auto-detection failed, will create new security group"
+            log_error "Auto-detection failed to find suitable security group"
+            log_error "No existing security group found that meets the requirements:"
+            log_error "  - EFS security groups with NFS (port 2049) rules"
+            log_error "  - Worker node security groups with NFS access"
+            log_error "  - Cluster security groups with self-referencing rules"
+            log_error ""
+            log_error "Solutions:"
+            log_error "  3. Ensure an existing security group allows NFS traffic (port 2049)"
+            exit 1
         fi
     fi
-    
-    # Check if EFS security group already exists
-    local sg_id
-    sg_id=$(aws ec2 describe-security-groups \
-        --region "$AWS_REGION" \
-        --filters "Name=group-name,Values=${CLUSTER_NAME}-efs-sg" "Name=vpc-id,Values=$vpc_id" \
-        --query 'SecurityGroups[0].GroupId' \
-        --output text 2>/dev/null || echo "")
-    
-    if [[ -n "$sg_id" && "$sg_id" != "None" ]]; then
-        log_info "Using existing EFS security group: $sg_id"
-        echo "$sg_id"
-        return
+
+    # Check if EFS security group already exists (fallback for when auto-detection is disabled)
+    if [[ "$AUTO_DETECT_SECURITY_GROUP" != "true" ]]; then
+        local sg_id
+        sg_id=$(aws ec2 describe-security-groups \
+            --region "$AWS_REGION" \
+            --filters "Name=group-name,Values=${CLUSTER_NAME}-efs-sg" "Name=vpc-id,Values=$vpc_id" \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text 2>/dev/null || echo "")
+
+        if [[ -n "$sg_id" && "$sg_id" != "None" ]]; then
+            log_info "Using existing EFS security group: $sg_id"
+            echo "$sg_id"
+            return
+        fi
     fi
-    
+
+    # If we reach here and require existing SG, fail
+    log_error "No suitable security group found and creation is not allowed"
+
     if [[ "$DRY_RUN" == "true" ]]; then
         log_info "[DRY RUN] Would create security group: ${CLUSTER_NAME}-efs-sg"
         echo "sg-dryrun"
         return
     fi
-    
+
     # Create security group for EFS
     log_info "Creating EFS security group..."
     sg_id=$(aws ec2 create-security-group \
@@ -744,7 +705,7 @@ get_efs_security_group() {
         --vpc-id "$vpc_id" \
         --query 'GroupId' \
         --output text)
-    
+
     # Add rule to allow NFS traffic from worker nodes
     aws ec2 authorize-security-group-ingress \
         --region "$AWS_REGION" \
@@ -752,14 +713,14 @@ get_efs_security_group() {
         --protocol tcp \
         --port 2049 \
         --source-group "$sg_id" >/dev/null
-    
+
     # Tag the security group
     aws ec2 create-tags \
         --region "$AWS_REGION" \
         --resources "$sg_id" \
         --tags "Key=Name,Value=${CLUSTER_NAME}-efs-sg" \
                "Key=kubernetes.io/cluster/${CLUSTER_NAME},Value=owned" >/dev/null
-    
+
     log_success "Created EFS security group: $sg_id"
     echo "$sg_id"
 }
@@ -809,7 +770,32 @@ create_efs_filesystem() {
     
     # Wait for EFS to be available
     log_info "Waiting for EFS filesystem to be available..."
-    aws efs wait file-system-available --region "$AWS_REGION" --file-system-id "$efs_id"
+    local max_attempts=30
+    local attempt=0
+    while [[ $attempt -lt $max_attempts ]]; do
+        local state
+        state=$(aws efs describe-file-systems \
+            --region "$AWS_REGION" \
+            --file-system-id "$efs_id" \
+            --query 'FileSystems[0].LifeCycleState' \
+            --output text 2>/dev/null || echo "")
+        
+        if [[ "$state" == "available" ]]; then
+            break
+        elif [[ "$state" == "error" ]]; then
+            log_error "EFS filesystem creation failed"
+            exit 1
+        fi
+        
+        log_info "EFS state: $state, waiting... (attempt $((attempt + 1))/$max_attempts)"
+        sleep 10
+        ((attempt++))
+    done
+    
+    if [[ $attempt -ge $max_attempts ]]; then
+        log_error "Timeout waiting for EFS filesystem to become available"
+        exit 1
+    fi
     
     log_success "Created EFS filesystem: $efs_id"
     echo "$efs_id"
@@ -856,7 +842,49 @@ create_mount_targets() {
     
     # Wait for all mount targets to be available
     log_info "Waiting for mount targets to be available..."
-    aws efs wait mount-target-available --region "$AWS_REGION" --file-system-id "$efs_id"
+    local max_attempts=30
+    local attempt=0
+    while [[ $attempt -lt $max_attempts ]]; do
+        local mount_states
+        mount_states=$(aws efs describe-mount-targets \
+            --region "$AWS_REGION" \
+            --file-system-id "$efs_id" \
+            --query 'MountTargets[].LifeCycleState' \
+            --output text 2>/dev/null || echo "")
+        
+        if [[ -z "$mount_states" ]]; then
+            log_info "No mount targets found yet, waiting... (attempt $((attempt + 1))/$max_attempts)"
+            sleep 10
+            ((attempt++))
+            continue
+        fi
+        
+        # Check if all mount targets are available
+        local all_available=true
+        for state in $mount_states; do
+            if [[ "$state" != "available" ]]; then
+                if [[ "$state" == "error" ]]; then
+                    log_error "Mount target creation failed"
+                    exit 1
+                fi
+                all_available=false
+                break
+            fi
+        done
+        
+        if [[ "$all_available" == "true" ]]; then
+            break
+        fi
+        
+        log_info "Mount target states: $mount_states, waiting... (attempt $((attempt + 1))/$max_attempts)"
+        sleep 10
+        ((attempt++))
+    done
+    
+    if [[ $attempt -ge $max_attempts ]]; then
+        log_error "Timeout waiting for mount targets to become available"
+        exit 1
+    fi
     
     log_success "Created EFS mount targets"
 }

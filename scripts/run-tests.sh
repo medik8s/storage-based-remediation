@@ -215,9 +215,9 @@ if [[ "$TEST_ENVIRONMENT" != "crc" && "$TEST_ENVIRONMENT" != "kind" && "$TEST_EN
 fi
 
 # Set verbose output if requested
-if [[ "$VERBOSE" == "true" ]]; then
-    set -x
-fi
+#if [[ "$VERBOSE" == "true" ]]; then
+#    set -x
+#fi
 
 if [[ "$CLEANUP_ONLY" == "true" ]]; then
     log_info "Starting SBD Operator cleanup"

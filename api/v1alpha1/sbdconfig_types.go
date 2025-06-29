@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -87,13 +88,12 @@ type SBDConfigSpec struct {
 	// +optional
 	ImagePullPolicy string `json:"imagePullPolicy,omitempty"`
 
-	// SharedStoragePVC is the name of a ReadWriteMany (RWX) PersistentVolumeClaim
-	// that provides shared storage for coordination between SBD agents across nodes.
-	// When specified, the controller will mount this PVC in the agent DaemonSet
-	// and configure the sbd-agent to use it for cross-node coordination, slot assignment,
-	// and shared configuration data. The PVC must exist in the same namespace as the SBDConfig.
+	// SharedStorageClass is the name of a StorageClass to use for creating shared storage.
+	// When specified, the controller will create a PVC using this StorageClass and mount it
+	// in the agent DaemonSet for cross-node coordination, slot assignment, and shared configuration data.
+	// The StorageClass must support ReadWriteMany (RWX) access mode.
 	// +optional
-	SharedStoragePVC string `json:"sharedStoragePVC,omitempty"`
+	SharedStorageClass string `json:"sharedStorageClass,omitempty"`
 
 	// SharedStorageMountPath is the path where the shared storage PVC will be mounted
 	// in the sbd-agent containers. Defaults to "/sbd-block" if not specified.
@@ -203,9 +203,33 @@ func (s *SBDConfigSpec) GetPetInterval() time.Duration {
 	return petInterval
 }
 
-// GetSharedStoragePVC returns the shared storage PVC name
-func (s *SBDConfigSpec) GetSharedStoragePVC() string {
-	return s.SharedStoragePVC
+// GetSharedStoragePVCName returns the generated PVC name for shared storage
+func (s *SBDConfigSpec) GetSharedStoragePVCName(sbdConfigName string) string {
+	if s.SharedStorageClass == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s-shared-storage", sbdConfigName)
+}
+
+// GetSharedStorageStorageClass returns the storage class name for shared storage
+func (s *SBDConfigSpec) GetSharedStorageStorageClass() string {
+	return s.SharedStorageClass
+}
+
+// GetSharedStorageSize returns the fixed storage size
+func (s *SBDConfigSpec) GetSharedStorageSize() string {
+	if s.SharedStorageClass == "" {
+		return ""
+	}
+	return "10Gi"
+}
+
+// GetSharedStorageAccessModes returns the fixed access modes
+func (s *SBDConfigSpec) GetSharedStorageAccessModes() []string {
+	if s.SharedStorageClass == "" {
+		return nil
+	}
+	return []string{"ReadWriteMany"}
 }
 
 // GetSharedStorageMountPath returns the shared storage mount path with default fallback
@@ -218,7 +242,7 @@ func (s *SBDConfigSpec) GetSharedStorageMountPath() string {
 
 // HasSharedStorage returns true if shared storage is configured
 func (s *SBDConfigSpec) HasSharedStorage() bool {
-	return s.SharedStoragePVC != ""
+	return s.SharedStorageClass != ""
 }
 
 // GetNodeSelector returns the node selector with default fallback to worker nodes only
@@ -317,29 +341,33 @@ func (s *SBDConfigSpec) ValidateImagePullPolicy() error {
 	}
 }
 
-// ValidateSharedStoragePVC validates the shared storage PVC name
-func (s *SBDConfigSpec) ValidateSharedStoragePVC() error {
-	pvcName := s.GetSharedStoragePVC()
-
-	// Empty PVC name is valid (shared storage is optional)
-	if pvcName == "" {
-		return nil
+// ValidateSharedStorageClass validates the shared storage class configuration
+func (s *SBDConfigSpec) ValidateSharedStorageClass() error {
+	storageClassName := s.SharedStorageClass
+	if storageClassName == "" {
+		return nil // Optional field
 	}
 
-	// Validate PVC name follows Kubernetes naming conventions
-	// Names must be lowercase alphanumeric characters or '-', and must start and end with an alphanumeric character
-	if len(pvcName) == 0 {
-		return fmt.Errorf("shared storage PVC name cannot be empty when specified")
+	// Validate storage class name follows Kubernetes naming conventions
+	if len(storageClassName) > 253 {
+		return fmt.Errorf("shared storage class name must be no more than 253 characters")
 	}
 
-	if len(pvcName) > 253 {
-		return fmt.Errorf("shared storage PVC name %q is too long (max 253 characters)", pvcName)
+	// Must start and end with alphanumeric character
+	if len(storageClassName) > 0 {
+		if !unicode.IsLetter(rune(storageClassName[0])) && !unicode.IsDigit(rune(storageClassName[0])) {
+			return fmt.Errorf("shared storage class name must start with alphanumeric character")
+		}
+		if !unicode.IsLetter(rune(storageClassName[len(storageClassName)-1])) && !unicode.IsDigit(rune(storageClassName[len(storageClassName)-1])) {
+			return fmt.Errorf("shared storage class name must end with alphanumeric character")
+		}
 	}
 
-	// Basic validation - more comprehensive validation would require regex
-	// but keeping it simple for now as Kubernetes API server will validate it
-	if strings.HasPrefix(pvcName, "-") || strings.HasSuffix(pvcName, "-") {
-		return fmt.Errorf("shared storage PVC name %q cannot start or end with '-'", pvcName)
+	// Check for valid characters (lowercase letters, numbers, hyphens, dots)
+	for _, char := range storageClassName {
+		if !unicode.IsLower(char) && !unicode.IsDigit(char) && char != '-' && char != '.' {
+			return fmt.Errorf("shared storage class name must contain only lowercase letters, numbers, hyphens, and dots")
+		}
 	}
 
 	return nil
@@ -392,7 +420,7 @@ func (s *SBDConfigSpec) ValidateAll() error {
 		return fmt.Errorf("image pull policy validation failed: %w", err)
 	}
 
-	if err := s.ValidateSharedStoragePVC(); err != nil {
+	if err := s.ValidateSharedStorageClass(); err != nil {
 		return fmt.Errorf("shared storage PVC validation failed: %w", err)
 	}
 

@@ -1,7 +1,7 @@
 ---
-# Example: Using RWX Persistent Volume for SBD Shared Storage
-# This example shows how to use the RWX PV created by create-rwx-pv.sh
-# for sharing data between SBD agent pods across multiple nodes
+# Example: Using RWX Storage Class for SBD Shared Storage
+# This example shows how to use a StorageClass for automatic shared storage
+# provisioning for SBD agent coordination across multiple nodes
 
 apiVersion: v1
 kind: ConfigMap
@@ -41,20 +41,28 @@ spec:
   staleNodeTimeout: "1h"
   
   # ✅ SHARED STORAGE CONFIGURATION ✅
-  # These fields enable automatic shared storage integration
-  # The controller will mount the PVC and configure the sbd-agent accordingly
-  sharedStoragePVC: "sbd-shared-pvc"           # Required: Name of RWX PVC
+  # This field enables automatic shared storage integration
+  # The controller will create a PVC using this StorageClass and configure the sbd-agent accordingly
+  sharedStorageClass: "efs-sc"                 # Required: Name of RWX StorageClass
   sharedStorageMountPath: "/sbd-block"         # Optional: Defaults to /sbd-block
   
   # When shared storage is configured, the controller automatically:
-  # 1. Validates the PVC name and mount path
-  # 2. Adds the PVC as a volume in the DaemonSet
-  # 3. Mounts it at the specified path in sbd-agent containers
-  # 4. Passes --shared-storage=/sbd-block to the sbd-agent command
-  # 5. Enables cross-node coordination features
+  # 1. Creates a PVC using the specified StorageClass with RWX access mode
+  # 2. Validates the StorageClass name and mount path
+  # 3. Adds the PVC as a volume in the DaemonSet
+  # 4. Mounts it at the specified path in sbd-agent containers
+  # 5. Passes --shared-storage=/sbd-block to the sbd-agent command
+  # 6. Enables cross-node coordination features
+  #
+  # Common StorageClass names:
+  # - AWS EFS: "efs-sc"
+  # - NFS: "nfs-client"
+  # - CephFS: "cephfs"
+  # - GlusterFS: "glusterfs"
 
 ---
 # Example Pod to test RWX storage functionality
+# This pod will use the auto-generated PVC created by the SBDConfig controller
 apiVersion: v1
 kind: Pod
 metadata:
@@ -96,7 +104,8 @@ spec:
   volumes:
   - name: shared-storage
     persistentVolumeClaim:
-      claimName: sbd-shared-pvc
+      # Use the auto-generated PVC name: {sbdconfig-name}-shared-storage
+      claimName: sbd-config-with-shared-storage-shared-storage
   
   restartPolicy: Always
 
@@ -156,7 +165,8 @@ spec:
       volumes:
       - name: shared-storage
         persistentVolumeClaim:
-          claimName: sbd-shared-pvc
+          # Use the auto-generated PVC name: {sbdconfig-name}-shared-storage
+          claimName: sbd-config-with-shared-storage-shared-storage
       
       restartPolicy: Never
   backoffLimit: 3 

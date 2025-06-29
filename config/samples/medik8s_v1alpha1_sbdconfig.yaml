@@ -115,6 +115,25 @@ spec:
   # - Production (stable): "30m" - "2h"  
   # - Production (critical): "2h" - "6h"
   staleNodeTimeout: "1h"
+  
+  # ========================================================================
+  # SHARED STORAGE CONFIGURATION (OPTIONAL)
+  # ========================================================================
+  
+  # Storage class name for creating shared storage for cross-node coordination
+  # - When specified, the controller creates a PVC using this StorageClass
+  # - The PVC is mounted in all SBD agent pods for coordination and slot assignment
+  # - The StorageClass must support ReadWriteMany (RWX) access mode
+  # - Common RWX storage classes: "efs-sc", "nfs-client", "cephfs", "glusterfs"
+  # 
+  # Examples:
+  # - AWS EFS: "efs-sc"
+  # - NFS: "nfs-client" 
+  # - CephFS: "cephfs"
+  # - GlusterFS: "glusterfs"
+  # 
+  # Note: If not specified, SBD agents will operate independently without coordination
+  # sharedStorageClass: "efs-sc"
 
 # ========================================================================
 # MULTIPLE SBDCONFIG SUPPORT (NEW in v1.1+)

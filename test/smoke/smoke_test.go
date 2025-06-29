@@ -30,6 +30,7 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -916,11 +917,11 @@ spec:
 			sbdConfigYAML := strings.ReplaceAll(string(sampleData), "sbdconfig-sample", sbdConfigName)
 			// Ensure imagePullPolicy is Always for testing
 			sbdConfigYAML = strings.ReplaceAll(sbdConfigYAML, `imagePullPolicy: "IfNotPresent"`, `imagePullPolicy: "Always"`)
-			// Add a non-existent shared storage PVC to force shared storage check to fail
+			// Add a non-existent shared storage class to force shared storage check to fail
 			// This tests the either/or logic: watchdog works, shared storage fails, should still pass
 			sbdConfigYAML = strings.ReplaceAll(sbdConfigYAML, `sbdWatchdogPath: "/dev/watchdog"`, `sbdWatchdogPath: "/dev/watchdog"
-  # Non-existent shared storage PVC to test preflight either/or logic
-  sharedStoragePVC: "non-existent-pvc"`)
+  # Non-existent shared storage class to test preflight either/or logic
+  sharedStorageClass: "non-existent-sc"`)
 
 			// Write SBDConfig to temporary file
 			tmpFile = filepath.Join("/tmp", fmt.Sprintf("sbdconfig-preflight-watchdog-%s.yaml", sbdConfigName))
@@ -1006,40 +1007,37 @@ spec:
 			// Use a non-existent watchdog path to force watchdog check to fail
 			// This tests the either/or logic: shared storage works, watchdog fails, should still pass
 			sbdConfigYAML = strings.ReplaceAll(sbdConfigYAML, `sbdWatchdogPath: "/dev/watchdog"`, `sbdWatchdogPath: "/dev/non-existent-watchdog"
-  # Add a mock shared storage PVC (will be created for testing)
-  sharedStoragePVC: "mock-shared-storage"`)
+  # Add a mock shared storage class (will be created for testing)
+  sharedStorageClass: "mock-storage-class"`)
 
 			// Write SBDConfig to temporary file
 			tmpFile = filepath.Join("/tmp", fmt.Sprintf("sbdconfig-preflight-sbd-%s.yaml", sbdConfigName))
 			err = os.WriteFile(tmpFile, []byte(sbdConfigYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("creating a mock shared storage PVC for testing")
-			// Note: In a real scenario, this would be a proper RWX PVC
-			// For testing, we'll create a simple PVC that the operator can find
-			mockPVCYAML := `apiVersion: v1
-kind: PersistentVolumeClaim
+			By("creating a mock shared storage class for testing")
+			// Note: In a real scenario, this would be a proper RWX storage class
+			// For testing, we'll create a simple storage class that the operator can find
+			mockSCYAML := `apiVersion: storage.k8s.io/v1
+kind: StorageClass
 metadata:
-  name: mock-shared-storage
-spec:
-  accessModes:
-    - ReadWriteMany
-  resources:
-    requests:
-      storage: 1Gi`
+  name: mock-storage-class
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true`
 
-			pvcFile := filepath.Join("/tmp", "mock-pvc.yaml")
-			err = os.WriteFile(pvcFile, []byte(mockPVCYAML), 0644)
+			scFile := filepath.Join("/tmp", "mock-sc.yaml")
+			err = os.WriteFile(scFile, []byte(mockSCYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
-			defer os.Remove(pvcFile)
+			defer os.Remove(scFile)
 
-			// Create the PVC
-			cmd := exec.Command("kubectl", "apply", "-f", pvcFile, "-n", testNamespace)
+			// Create the StorageClass
+			cmd := exec.Command("kubectl", "apply", "-f", scFile)
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 			defer func() {
-				// Clean up PVC
-				cleanupCmd := exec.Command("kubectl", "delete", "pvc", "mock-shared-storage", "-n", testNamespace, "--ignore-not-found=true")
+				// Clean up StorageClass
+				cleanupCmd := exec.Command("kubectl", "delete", "storageclass", "mock-storage-class", "--ignore-not-found=true")
 				utils.Run(cleanupCmd)
 			}()
 
@@ -1093,58 +1091,33 @@ spec:
 			By("skipping agent log verification since pods remain pending due to mock PVC without backing storage (expected behavior in test environment)")
 		})
 
-		It("should discover and test SharedStoragePVC functionality with RWX block storage", func() {
-			By("looking for PVCs with 'sbd-' prefix in the test namespace")
-			pvcs := &corev1.PersistentVolumeClaimList{}
-			err := k8sClient.List(ctx, pvcs, client.InNamespace(testNamespace))
-			Expect(err).NotTo(HaveOccurred(), "Failed to list PVCs")
+		It("should discover and test SharedStorageClass functionality with RWX storage", func() {
+			By("looking for StorageClasses that support ReadWriteMany access mode")
+			storageClasses := &storagev1.StorageClassList{}
+			err := k8sClient.List(ctx, storageClasses)
+			Expect(err).NotTo(HaveOccurred(), "Failed to list StorageClasses")
 
-			var sbdPVC *corev1.PersistentVolumeClaim
-			for _, pvc := range pvcs.Items {
-				if strings.HasPrefix(pvc.Name, "sbd-") {
-					sbdPVC = &pvc
+			var rwxStorageClass *storagev1.StorageClass
+			for _, sc := range storageClasses.Items {
+				// Look for storage classes that are likely to support RWX
+				// Common patterns: efs, nfs, cephfs, glusterfs
+				scName := strings.ToLower(sc.Name)
+				if strings.Contains(scName, "efs") || strings.Contains(scName, "nfs") ||
+					strings.Contains(scName, "cephfs") || strings.Contains(scName, "glusterfs") ||
+					strings.Contains(scName, "sbd") {
+					rwxStorageClass = &sc
 					break
 				}
 			}
 
-			if sbdPVC == nil {
-				Skip("No PVC with 'sbd-' prefix found in test namespace - skipping SharedStoragePVC test")
+			if rwxStorageClass == nil {
+				Skip("No RWX-compatible StorageClass found (efs, nfs, cephfs, glusterfs, sbd) - skipping SharedStorageClass test")
 			}
 
-			By(fmt.Sprintf("found PVC with sbd- prefix: %s", sbdPVC.Name))
-			GinkgoWriter.Printf("Testing with PVC: %s\n", sbdPVC.Name)
+			By(fmt.Sprintf("found RWX-compatible StorageClass: %s", rwxStorageClass.Name))
+			GinkgoWriter.Printf("Testing with StorageClass: %s\n", rwxStorageClass.Name)
 
-			By("verifying the PVC has ReadWriteMany (RWX) access mode")
-			hasRWX := false
-			for _, accessMode := range sbdPVC.Spec.AccessModes {
-				if accessMode == corev1.ReadWriteMany {
-					hasRWX = true
-					break
-				}
-			}
-			Expect(hasRWX).To(BeTrue(), fmt.Sprintf("PVC %s must have ReadWriteMany access mode for shared storage", sbdPVC.Name))
-
-			By("checking if the PVC is bound and has block storage characteristics")
-			Eventually(func() corev1.PersistentVolumeClaimPhase {
-				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      sbdPVC.Name,
-					Namespace: testNamespace,
-				}, sbdPVC)
-				if err != nil {
-					return corev1.ClaimPending
-				}
-				return sbdPVC.Status.Phase
-			}, 2*time.Minute, 10*time.Second).Should(Equal(corev1.ClaimBound),
-				fmt.Sprintf("PVC %s should be bound for testing", sbdPVC.Name))
-
-			// Check if it's block storage (optional - some storage classes might not specify this)
-			if sbdPVC.Spec.VolumeMode != nil && *sbdPVC.Spec.VolumeMode == corev1.PersistentVolumeBlock {
-				GinkgoWriter.Printf("PVC %s is configured for block storage mode\n", sbdPVC.Name)
-			} else {
-				GinkgoWriter.Printf("PVC %s is using filesystem mode (block mode not explicitly set)\n", sbdPVC.Name)
-			}
-
-			By("creating an SBDConfig using the discovered SharedStoragePVC")
+			By("creating an SBDConfig using the discovered StorageClass")
 			sbdConfigName := fmt.Sprintf("test-shared-storage-%s", strings.ToLower(fmt.Sprintf("%d", time.Now().Unix())))
 
 			sbdConfig := &medik8sv1alpha1.SBDConfig{
@@ -1154,7 +1127,7 @@ spec:
 				},
 				Spec: medik8sv1alpha1.SBDConfigSpec{
 					SbdWatchdogPath:        "/dev/watchdog",
-					SharedStoragePVC:       sbdPVC.Name,
+					SharedStorageClass:     rwxStorageClass.Name,
 					SharedStorageMountPath: "/sbd-shared",
 					ImagePullPolicy:        "Always",
 					StaleNodeTimeout:       &metav1.Duration{Duration: 90 * time.Second},
@@ -1162,7 +1135,7 @@ spec:
 			}
 
 			err = k8sClient.Create(ctx, sbdConfig)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDConfig with SharedStoragePVC")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDConfig with SharedStorageClass")
 
 			// Cleanup function
 			defer func() {
@@ -1186,6 +1159,21 @@ spec:
 					}
 					return true
 				}, 2*time.Minute, 10*time.Second).Should(BeTrue(), "DaemonSet should be cleaned up")
+
+				// Clean up the auto-generated PVC
+				By("cleaning up the auto-generated PVC")
+				expectedPVCName := fmt.Sprintf("%s-shared-storage", sbdConfigName)
+				pvc := &corev1.PersistentVolumeClaim{}
+				err = k8sClient.Get(ctx, client.ObjectKey{
+					Name:      expectedPVCName,
+					Namespace: testNamespace,
+				}, pvc)
+				if err == nil {
+					err = k8sClient.Delete(ctx, pvc)
+					if err != nil {
+						GinkgoWriter.Printf("Warning: failed to delete PVC %s: %v\n", expectedPVCName, err)
+					}
+				}
 			}()
 
 			By("verifying the SBDConfig was created successfully")
@@ -1196,6 +1184,36 @@ spec:
 					Namespace: testNamespace,
 				}, retrievedConfig)
 			}, 30*time.Second, 5*time.Second).Should(Succeed(), "SBDConfig should be created")
+
+			By("verifying the controller creates a PVC from the StorageClass")
+			expectedPVCName := fmt.Sprintf("%s-shared-storage", sbdConfigName)
+			var createdPVC *corev1.PersistentVolumeClaim
+
+			Eventually(func() bool {
+				pvc := &corev1.PersistentVolumeClaim{}
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      expectedPVCName,
+					Namespace: testNamespace,
+				}, pvc)
+				if err != nil {
+					return false
+				}
+				createdPVC = pvc
+				return true
+			}, 2*time.Minute, 10*time.Second).Should(BeTrue(), "Controller should create a PVC from the StorageClass")
+
+			By("verifying the PVC has the correct StorageClass and ReadWriteMany access mode")
+			Expect(createdPVC.Spec.StorageClassName).NotTo(BeNil())
+			Expect(*createdPVC.Spec.StorageClassName).To(Equal(rwxStorageClass.Name))
+
+			hasRWX := false
+			for _, accessMode := range createdPVC.Spec.AccessModes {
+				if accessMode == corev1.ReadWriteMany {
+					hasRWX = true
+					break
+				}
+			}
+			Expect(hasRWX).To(BeTrue(), "Created PVC should have ReadWriteMany access mode")
 
 			By("verifying the SBD agent DaemonSet is created with shared storage configuration")
 			expectedDaemonSetName := fmt.Sprintf("sbd-agent-%s", sbdConfigName)
@@ -1220,7 +1238,7 @@ spec:
 			for _, volume := range createdDaemonSet.Spec.Template.Spec.Volumes {
 				if volume.Name == "shared-storage" &&
 					volume.PersistentVolumeClaim != nil &&
-					volume.PersistentVolumeClaim.ClaimName == sbdPVC.Name {
+					volume.PersistentVolumeClaim.ClaimName == expectedPVCName {
 					hasSharedStorageVolume = true
 					break
 				}
@@ -1274,14 +1292,14 @@ spec:
 				return len(retrievedConfig.Status.Conditions) > 0
 			}, 3*time.Minute, 15*time.Second).Should(BeTrue(), "SBDConfig should have status conditions set")
 
-			By("verifying the SharedStoragePVC field is correctly configured")
+			By("verifying the SharedStorageClass field is correctly configured")
 			retrievedConfig := &medik8sv1alpha1.SBDConfig{}
 			err = k8sClient.Get(ctx, client.ObjectKey{
 				Name:      sbdConfigName,
 				Namespace: testNamespace,
 			}, retrievedConfig)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(retrievedConfig.Spec.SharedStoragePVC).To(Equal(sbdPVC.Name))
+			Expect(retrievedConfig.Spec.SharedStorageClass).To(Equal(rwxStorageClass.Name))
 			Expect(retrievedConfig.Spec.SharedStorageMountPath).To(Equal("/sbd-shared"))
 
 			By("displaying final SBDConfig status for debugging")
@@ -1290,7 +1308,7 @@ spec:
 				GinkgoWriter.Printf("Final SBDConfig YAML:\n%s\n", string(yamlData))
 			}
 
-			GinkgoWriter.Printf("SharedStoragePVC functionality test completed successfully with PVC: %s\n", sbdPVC.Name)
+			GinkgoWriter.Printf("SharedStorageClass functionality test completed successfully with StorageClass: %s\n", rwxStorageClass.Name)
 		})
 	})
 })

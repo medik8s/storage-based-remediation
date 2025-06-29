@@ -103,6 +103,8 @@ PROJECT-SPECIFIC GUIDELINES:
 - Status updates should reflect actual system state
 - Consider split-brain scenarios in remediation logic
 - Use concise summaries for commit messages
+- Run all git commands with --no-pager
+- Run All aws commands with AWS_PAGER=""
 
 DEPENDENCIES:
 - Use controller-runtime for Kubernetes operations

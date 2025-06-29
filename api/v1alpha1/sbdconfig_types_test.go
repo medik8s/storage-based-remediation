@@ -778,38 +778,79 @@ func TestGetImageWithOperatorImage(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_GetSharedStoragePVC(t *testing.T) {
+func TestSBDConfigSpec_GetSharedStoragePVCName(t *testing.T) {
+	tests := []struct {
+		name          string
+		spec          SBDConfigSpec
+		sbdConfigName string
+		expected      string
+	}{
+		{
+			name:          "no storage class configured",
+			spec:          SBDConfigSpec{},
+			sbdConfigName: "test-config",
+			expected:      "",
+		},
+		{
+			name: "storage class configured",
+			spec: SBDConfigSpec{
+				SharedStorageClass: "efs-sc",
+			},
+			sbdConfigName: "my-sbd-config",
+			expected:      "my-sbd-config-shared-storage",
+		},
+		{
+			name: "complex storage class name",
+			spec: SBDConfigSpec{
+				SharedStorageClass: "nfs-client",
+			},
+			sbdConfigName: "sbd-config-with-shared-storage",
+			expected:      "sbd-config-with-shared-storage-shared-storage",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.spec.GetSharedStoragePVCName(tt.sbdConfigName)
+			if result != tt.expected {
+				t.Errorf("GetSharedStoragePVCName() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSBDConfigSpec_GetSharedStorageStorageClass(t *testing.T) {
 	tests := []struct {
 		name     string
 		spec     SBDConfigSpec
 		expected string
 	}{
 		{
-			name:     "empty PVC name",
+			name:     "no storage class configured",
 			spec:     SBDConfigSpec{},
 			expected: "",
 		},
 		{
-			name: "explicit PVC name",
+			name: "storage class configured",
 			spec: SBDConfigSpec{
-				SharedStoragePVC: "my-shared-pvc",
+				SharedStorageClass: "efs-sc",
 			},
-			expected: "my-shared-pvc",
+			expected: "efs-sc",
 		},
 		{
-			name: "complex PVC name",
+			name: "complex storage class name",
 			spec: SBDConfigSpec{
-				SharedStoragePVC: "sbd-shared-storage-pvc",
+				SharedStorageClass: "nfs-client",
 			},
-			expected: "sbd-shared-storage-pvc",
+			expected: "nfs-client",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetSharedStoragePVC()
+			result := tt.spec.GetSharedStorageStorageClass()
 			if result != tt.expected {
-				t.Errorf("GetSharedStoragePVC() = %v, expected %v", result, tt.expected)
+				t.Errorf("GetSharedStorageStorageClass() = %v, expected %v", result, tt.expected)
 			}
 		})
 	}
@@ -847,201 +888,6 @@ func TestSBDConfigSpec_GetSharedStorageMountPath(t *testing.T) {
 			result := tt.spec.GetSharedStorageMountPath()
 			if result != tt.expected {
 				t.Errorf("GetSharedStorageMountPath() = %v, expected %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestSBDConfigSpec_HasSharedStorage(t *testing.T) {
-	tests := []struct {
-		name     string
-		spec     SBDConfigSpec
-		expected bool
-	}{
-		{
-			name:     "no shared storage configured",
-			spec:     SBDConfigSpec{},
-			expected: false,
-		},
-		{
-			name: "shared storage PVC configured",
-			spec: SBDConfigSpec{
-				SharedStoragePVC: "my-pvc",
-			},
-			expected: true,
-		},
-		{
-			name: "empty PVC name means no shared storage",
-			spec: SBDConfigSpec{
-				SharedStoragePVC: "",
-			},
-			expected: false,
-		},
-		{
-			name: "mount path alone doesn't enable shared storage",
-			spec: SBDConfigSpec{
-				SharedStorageMountPath: "/custom/path",
-			},
-			expected: false,
-		},
-		{
-			name: "both PVC and mount path configured",
-			spec: SBDConfigSpec{
-				SharedStoragePVC:       "my-pvc",
-				SharedStorageMountPath: "/custom/path",
-			},
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.HasSharedStorage()
-			if result != tt.expected {
-				t.Errorf("HasSharedStorage() = %v, expected %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestSBDConfigSpec_GetNodeSelector(t *testing.T) {
-	tests := []struct {
-		name     string
-		spec     SBDConfigSpec
-		expected map[string]string
-	}{
-		{
-			name: "default node selector - worker nodes only",
-			spec: SBDConfigSpec{},
-			expected: map[string]string{
-				"node-role.kubernetes.io/worker": "",
-			},
-		},
-		{
-			name: "explicit node selector",
-			spec: SBDConfigSpec{
-				NodeSelector: map[string]string{
-					"custom-label": "custom-value",
-				},
-			},
-			expected: map[string]string{
-				"custom-label": "custom-value",
-			},
-		},
-		{
-			name: "multiple node selector labels",
-			spec: SBDConfigSpec{
-				NodeSelector: map[string]string{
-					"zone":        "us-east-1a",
-					"node-type":   "compute",
-					"environment": "production",
-				},
-			},
-			expected: map[string]string{
-				"zone":        "us-east-1a",
-				"node-type":   "compute",
-				"environment": "production",
-			},
-		},
-		{
-			name: "empty node selector map returns default",
-			spec: SBDConfigSpec{
-				NodeSelector: map[string]string{},
-			},
-			expected: map[string]string{
-				"node-role.kubernetes.io/worker": "",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetNodeSelector()
-			if len(result) != len(tt.expected) {
-				t.Errorf("GetNodeSelector() length = %v, expected %v", len(result), len(tt.expected))
-				return
-			}
-			for k, v := range tt.expected {
-				if result[k] != v {
-					t.Errorf("GetNodeSelector()[%q] = %v, expected %v", k, result[k], v)
-				}
-			}
-		})
-	}
-}
-
-func TestSBDConfigSpec_ValidateSharedStoragePVC(t *testing.T) {
-	tests := []struct {
-		name      string
-		spec      SBDConfigSpec
-		wantError bool
-		errorMsg  string
-	}{
-		{
-			name:      "empty PVC name is valid",
-			spec:      SBDConfigSpec{},
-			wantError: false,
-		},
-		{
-			name: "valid PVC name",
-			spec: SBDConfigSpec{
-				SharedStoragePVC: "my-shared-pvc",
-			},
-			wantError: false,
-		},
-		{
-			name: "PVC name with hyphens",
-			spec: SBDConfigSpec{
-				SharedStoragePVC: "sbd-shared-storage-pvc",
-			},
-			wantError: false,
-		},
-		{
-			name: "PVC name starting with hyphen",
-			spec: SBDConfigSpec{
-				SharedStoragePVC: "-invalid-pvc",
-			},
-			wantError: true,
-			errorMsg:  "cannot start or end with '-'",
-		},
-		{
-			name: "PVC name ending with hyphen",
-			spec: SBDConfigSpec{
-				SharedStoragePVC: "invalid-pvc-",
-			},
-			wantError: true,
-			errorMsg:  "cannot start or end with '-'",
-		},
-		{
-			name: "PVC name too long",
-			spec: SBDConfigSpec{
-				SharedStoragePVC: strings.Repeat("a", 254),
-			},
-			wantError: true,
-			errorMsg:  "too long",
-		},
-		{
-			name: "PVC name at maximum length",
-			spec: SBDConfigSpec{
-				SharedStoragePVC: strings.Repeat("a", 253),
-			},
-			wantError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.spec.ValidateSharedStoragePVC()
-			if tt.wantError {
-				if err == nil {
-					t.Errorf("ValidateSharedStoragePVC() expected error but got none")
-				} else if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
-					t.Errorf("ValidateSharedStoragePVC() error = %v, expected to contain %v", err, tt.errorMsg)
-				}
-			} else {
-				if err != nil {
-					t.Errorf("ValidateSharedStoragePVC() unexpected error = %v", err)
-				}
 			}
 		})
 	}
@@ -1148,54 +994,242 @@ func TestSBDConfigSpec_ValidateSharedStorageMountPath(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_ValidateAll_WithSharedStorage(t *testing.T) {
+func TestSBDConfigSpec_HasSharedStorage(t *testing.T) {
 	tests := []struct {
-		name      string
-		spec      SBDConfigSpec
-		wantError bool
-		errorMsg  string
+		name     string
+		spec     SBDConfigSpec
+		expected bool
 	}{
 		{
-			name: "valid config with shared storage",
-			spec: SBDConfigSpec{
-				SharedStoragePVC:       "valid-pvc",
-				SharedStorageMountPath: "/sbd-block",
-			},
-			wantError: false,
+			name:     "no shared storage configured",
+			spec:     SBDConfigSpec{},
+			expected: false,
 		},
 		{
-			name: "invalid PVC name",
+			name: "shared storage class configured",
 			spec: SBDConfigSpec{
-				SharedStoragePVC: "-invalid-pvc",
+				SharedStorageClass: "efs-sc",
 			},
-			wantError: true,
-			errorMsg:  "shared storage PVC validation failed",
+			expected: true,
+		},
+		{
+			name: "empty storage class name means no shared storage",
+			spec: SBDConfigSpec{
+				SharedStorageClass: "",
+			},
+			expected: false,
+		},
+		{
+			name: "mount path alone doesn't enable shared storage",
+			spec: SBDConfigSpec{
+				SharedStorageMountPath: "/custom/path",
+			},
+			expected: false,
+		},
+		{
+			name: "both storage class and mount path configured",
+			spec: SBDConfigSpec{
+				SharedStorageClass:     "efs-sc",
+				SharedStorageMountPath: "/custom/path",
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.spec.HasSharedStorage()
+			if result != tt.expected {
+				t.Errorf("HasSharedStorage() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSBDConfigSpec_GetNodeSelector(t *testing.T) {
+	tests := []struct {
+		name     string
+		spec     SBDConfigSpec
+		expected map[string]string
+	}{
+		{
+			name: "default node selector - worker nodes only",
+			spec: SBDConfigSpec{},
+			expected: map[string]string{
+				"node-role.kubernetes.io/worker": "",
+			},
+		},
+		{
+			name: "explicit node selector",
+			spec: SBDConfigSpec{
+				NodeSelector: map[string]string{
+					"custom-label": "custom-value",
+				},
+			},
+			expected: map[string]string{
+				"custom-label": "custom-value",
+			},
+		},
+		{
+			name: "multiple node selector labels",
+			spec: SBDConfigSpec{
+				NodeSelector: map[string]string{
+					"zone":        "us-east-1a",
+					"node-type":   "compute",
+					"environment": "production",
+				},
+			},
+			expected: map[string]string{
+				"zone":        "us-east-1a",
+				"node-type":   "compute",
+				"environment": "production",
+			},
+		},
+		{
+			name: "empty node selector map returns default",
+			spec: SBDConfigSpec{
+				NodeSelector: map[string]string{},
+			},
+			expected: map[string]string{
+				"node-role.kubernetes.io/worker": "",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.spec.GetNodeSelector()
+			if len(result) != len(tt.expected) {
+				t.Errorf("GetNodeSelector() length = %v, expected %v", len(result), len(tt.expected))
+				return
+			}
+			for k, v := range tt.expected {
+				if result[k] != v {
+					t.Errorf("GetNodeSelector()[%q] = %v, expected %v", k, result[k], v)
+				}
+			}
+		})
+	}
+}
+
+func TestSBDConfigSpec_ValidateSharedStorageClass(t *testing.T) {
+	tests := []struct {
+		name     string
+		spec     SBDConfigSpec
+		wantErr  bool
+		errorMsg string
+	}{
+		{
+			name:    "no storage class configured - valid",
+			spec:    SBDConfigSpec{},
+			wantErr: false,
+		},
+		{
+			name: "valid storage class name",
+			spec: SBDConfigSpec{
+				SharedStorageClass: "efs-sc",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid complex storage class name",
+			spec: SBDConfigSpec{
+				SharedStorageClass: "nfs-client",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid storage class name - starts with hyphen",
+			spec: SBDConfigSpec{
+				SharedStorageClass: "-invalid-sc",
+			},
+			wantErr:  true,
+			errorMsg: "must start with alphanumeric character",
+		},
+		{
+			name: "invalid storage class name - ends with hyphen",
+			spec: SBDConfigSpec{
+				SharedStorageClass: "invalid-sc-",
+			},
+			wantErr:  true,
+			errorMsg: "must end with alphanumeric character",
+		},
+		{
+			name: "invalid storage class name - too long",
+			spec: SBDConfigSpec{
+				SharedStorageClass: strings.Repeat("a", 254),
+			},
+			wantErr:  true,
+			errorMsg: "must be no more than 253 characters",
+		},
+		{
+			name: "valid storage class name - max length",
+			spec: SBDConfigSpec{
+				SharedStorageClass: strings.Repeat("a", 253),
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.spec.ValidateSharedStorageClass()
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidateSharedStorageClass() expected error but got none")
+				} else if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("ValidateSharedStorageClass() error = %v, expected to contain %v", err, tt.errorMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateSharedStorageClass() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestSBDConfigSpec_ValidateAll_WithSharedStorage(t *testing.T) {
+	tests := []struct {
+		name     string
+		spec     SBDConfigSpec
+		wantErr  bool
+		errorMsg string
+	}{
+		{
+			name: "valid shared storage configuration",
+			spec: SBDConfigSpec{
+				SharedStorageClass:     "efs-sc",
+				SharedStorageMountPath: "/sbd-block",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid storage class name",
+			spec: SBDConfigSpec{
+				SharedStorageClass: "-invalid-sc",
+			},
+			wantErr:  true,
+			errorMsg: "shared storage PVC validation failed",
 		},
 		{
 			name: "invalid mount path",
 			spec: SBDConfigSpec{
-				SharedStoragePVC:       "valid-pvc",
+				SharedStorageClass:     "efs-sc",
 				SharedStorageMountPath: "/dev/invalid",
 			},
-			wantError: true,
-			errorMsg:  "shared storage mount path validation failed",
-		},
-		{
-			name: "valid config without shared storage",
-			spec: SBDConfigSpec{
-				// No shared storage configured
-			},
-			wantError: false,
+			wantErr:  true,
+			errorMsg: "shared storage mount path validation failed",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.spec.ValidateAll()
-			if tt.wantError {
+			if tt.wantErr {
 				if err == nil {
 					t.Errorf("ValidateAll() expected error but got none")
-				} else if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+				} else if !strings.Contains(err.Error(), tt.errorMsg) {
 					t.Errorf("ValidateAll() error = %v, expected to contain %v", err, tt.errorMsg)
 				}
 			} else {

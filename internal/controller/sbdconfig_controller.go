@@ -63,6 +63,8 @@ const (
 	ReasonValidationError           = "ValidationError"
 	ReasonCleanupCompleted          = "CleanupCompleted"
 	ReasonCleanupError              = "CleanupError"
+	ReasonPVCManaged                = "PVCManaged"
+	ReasonPVCError                  = "PVCError"
 
 	// Finalizer for cleanup operations
 	SBDConfigFinalizerName = "sbd-operator.medik8s.io/cleanup"
@@ -313,6 +315,101 @@ func (r *SBDConfigReconciler) ensureSCCPermissions(ctx context.Context, sbdConfi
 	return nil
 }
 
+// ensurePVC ensures that a PVC exists for shared storage when SharedStorageClass is specified
+func (r *SBDConfigReconciler) ensurePVC(ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, logger logr.Logger) error {
+	if !sbdConfig.Spec.HasSharedStorage() {
+		// No shared storage configured, nothing to do
+		return nil
+	}
+
+	pvcName := sbdConfig.Spec.GetSharedStoragePVCName(sbdConfig.Name)
+	storageClassName := sbdConfig.Spec.GetSharedStorageStorageClass()
+
+	logger = logger.WithValues(
+		"pvc.name", pvcName,
+		"pvc.namespace", sbdConfig.Namespace,
+		"storageClass", storageClassName,
+	)
+
+	// Define the desired PVC
+	desiredPVC := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName,
+			Namespace: sbdConfig.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "sbd-operator",
+				"app.kubernetes.io/component":  "shared-storage",
+				"app.kubernetes.io/managed-by": "sbd-operator",
+				"sbdconfig":                    sbdConfig.Name,
+			},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{
+				corev1.ReadWriteMany,
+			},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: resource.MustParse(sbdConfig.Spec.GetSharedStorageSize()),
+				},
+			},
+			StorageClassName: &storageClassName,
+		},
+	}
+
+	// Set controller reference
+	if err := controllerutil.SetControllerReference(sbdConfig, desiredPVC, r.Scheme); err != nil {
+		return fmt.Errorf("failed to set controller reference on PVC: %w", err)
+	}
+
+	// Use CreateOrUpdate to manage the PVC
+	actualPVC := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName,
+			Namespace: sbdConfig.Namespace,
+		},
+	}
+
+	result, err := controllerutil.CreateOrUpdate(ctx, r.Client, actualPVC, func() error {
+		// Update the PVC spec with the desired configuration
+		// Note: Most PVC fields are immutable after creation, so we only update what we can
+		actualPVC.Labels = desiredPVC.Labels
+
+		// Only set spec if PVC is being created (empty ResourceVersion means it's new)
+		if actualPVC.ResourceVersion == "" {
+			actualPVC.Spec = desiredPVC.Spec
+		}
+
+		// Set the controller reference
+		return controllerutil.SetControllerReference(sbdConfig, actualPVC, r.Scheme)
+	})
+
+	if err != nil {
+		logger.Error(err, "Failed to create or update PVC")
+		return fmt.Errorf("failed to create or update PVC '%s': %w", pvcName, err)
+	}
+
+	logger.Info("PVC operation completed",
+		"operation", result,
+		"pvc.generation", actualPVC.Generation,
+		"pvc.resourceVersion", actualPVC.ResourceVersion,
+		"pvc.status.phase", actualPVC.Status.Phase)
+
+	// Emit event for PVC management
+	if result == controllerutil.OperationResultCreated {
+		r.emitEventf(sbdConfig, EventTypeNormal, ReasonPVCManaged,
+			"PVC '%s' for shared storage created successfully using StorageClass '%s'", pvcName, storageClassName)
+		logger.Info("PVC created successfully")
+	} else if result == controllerutil.OperationResultUpdated {
+		r.emitEventf(sbdConfig, EventTypeNormal, ReasonPVCManaged,
+			"PVC '%s' for shared storage updated successfully", pvcName)
+		logger.Info("PVC updated successfully")
+	} else {
+		logger.V(1).Info("PVC unchanged")
+	}
+
+	return nil
+}
+
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdconfigs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdconfigs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdconfigs/finalizers,verbs=update
@@ -323,7 +420,7 @@ func (r *SBDConfigReconciler) ensureSCCPermissions(ctx context.Context, sbdConfi
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
-// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,verbs=get;list;watch;update;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -446,6 +543,25 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			"operation", "scc-permissions")
 		r.emitEventf(&sbdConfig, EventTypeWarning, ReasonSCCError,
 			"Failed to ensure SCC permissions for service account 'sbd-agent' in namespace '%s': %v", sbdConfig.Namespace, err)
+
+		// Return requeue with backoff for transient errors
+		if r.isTransientKubernetesError(err) {
+			return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+		}
+		return ctrl.Result{}, err
+	}
+
+	// Ensure PVC exists for shared storage
+	err = r.performKubernetesAPIOperationWithRetry(ctx, "ensure PVC", func() error {
+		return r.ensurePVC(ctx, &sbdConfig, logger)
+	}, logger)
+
+	if err != nil {
+		logger.Error(err, "Failed to ensure PVC after retries",
+			"namespace", sbdConfig.Namespace,
+			"operation", "pvc-creation")
+		r.emitEventf(&sbdConfig, EventTypeWarning, ReasonPVCError,
+			"Failed to ensure PVC for shared storage in namespace '%s': %v", sbdConfig.Namespace, err)
 
 		// Return requeue with backoff for transient errors
 		if r.isTransientKubernetesError(err) {
@@ -961,7 +1077,7 @@ func (r *SBDConfigReconciler) buildVolumes(sbdConfig *medik8sv1alpha1.SBDConfig)
 			Name: "shared-storage",
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: sbdConfig.Spec.GetSharedStoragePVC(),
+					ClaimName: sbdConfig.Spec.GetSharedStoragePVCName(sbdConfig.Name),
 				},
 			},
 		})
@@ -1024,7 +1140,7 @@ func (r *SBDConfigReconciler) updateStatus(ctx context.Context, sbdConfig *medik
 			medik8sv1alpha1.SBDConfigConditionSharedStorageReady,
 			metav1.ConditionTrue,
 			"SharedStorageConfigured",
-			fmt.Sprintf("Shared storage PVC '%s' is configured", sbdConfig.Spec.GetSharedStoragePVC()),
+			fmt.Sprintf("Shared storage PVC '%s' is configured", sbdConfig.Spec.GetSharedStoragePVCName(sbdConfig.Name)),
 		)
 	} else {
 		sbdConfig.SetCondition(
@@ -1082,6 +1198,7 @@ func (r *SBDConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&medik8sv1alpha1.SBDConfig{}).
 		Owns(&appsv1.DaemonSet{}).
+		Owns(&corev1.PersistentVolumeClaim{}).
 		Named("sbdconfig").
 		Complete(r)
 
