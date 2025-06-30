@@ -67,12 +67,13 @@ type NodeCondition struct {
 }
 
 var (
-	clusterInfo    ClusterInfo
-	testNS         string
-	awsSession     *session.Session
-	ec2Client      *ec2.EC2
-	awsRegion      string
-	awsInitialized bool // Track if AWS was successfully initialized
+	clusterInfo      ClusterInfo
+	testNS           string
+	awsSession       *session.Session
+	ec2Client        *ec2.EC2
+	awsRegion        string
+	awsInitialized   bool // Track if AWS was successfully initialized
+	awsInitAttempted bool // Track if AWS initialization was already attempted
 )
 
 var _ = Describe("SBD Operator E2E Tests", func() {
@@ -83,15 +84,19 @@ var _ = Describe("SBD Operator E2E Tests", func() {
 		// Generate unique namespace for each test
 		testNS = fmt.Sprintf("sbd-e2e-test-%d", rand.Intn(10000))
 
-		// Try to initialize AWS clients for disruption testing
-		By("Checking AWS availability for disruption tests")
-		awsInitialized = false // Reset flag
-		err := initAWS()
-		if err != nil {
-			By(fmt.Sprintf("AWS not available for disruption tests: %v", err))
-			// Don't skip - some tests can run without AWS
-		} else {
-			By("AWS initialized successfully for disruption tests")
+		// Try to initialize AWS clients for disruption testing (one-time only)
+		if !awsInitAttempted {
+			By("Checking AWS availability for disruption tests (one-time setup)")
+			awsInitAttempted = true
+			err := initAWS()
+			if err != nil {
+				By(fmt.Sprintf("AWS not available for disruption tests: %v", err))
+				awsInitialized = false
+				// Don't skip - some tests can run without AWS
+			} else {
+				By("AWS initialized successfully for disruption tests")
+				awsInitialized = true
+			}
 		}
 
 		// Create test namespace
@@ -101,7 +106,7 @@ var _ = Describe("SBD Operator E2E Tests", func() {
 				Name: testNS,
 			},
 		}
-		err = k8sClient.Create(ctx, namespace)
+		err := k8sClient.Create(ctx, namespace)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Discover cluster topology
