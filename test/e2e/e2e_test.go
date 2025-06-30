@@ -77,6 +77,9 @@ var (
 
 var _ = Describe("SBD Operator E2E Tests", func() {
 	BeforeEach(func() {
+		// Seed random number generator for node selection
+		rand.Seed(time.Now().UnixNano())
+
 		// Generate unique namespace for each test
 		testNS = fmt.Sprintf("sbd-e2e-test-%d", rand.Intn(10000))
 
@@ -135,8 +138,8 @@ var _ = Describe("SBD Operator E2E Tests", func() {
 		})
 
 		It("should trigger fencing when SBD agent loses storage access", func() {
-			if len(clusterInfo.WorkerNodes) < 4 {
-				Skip("Test requires at least 4 worker nodes for safe storage disruption testing")
+			if len(clusterInfo.WorkerNodes) < 3 {
+				Skip("Test requires at least 3 worker nodes for safe storage disruption testing")
 			}
 			testStorageAccessInterruption(clusterInfo)
 		})
@@ -396,8 +399,9 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 	By("Setting up SBD configuration for storage access test")
 	testBasicSBDConfiguration(cluster)
 
-	targetNode := cluster.WorkerNodes[0]
-	By(fmt.Sprintf("Testing storage access interruption on node %s", targetNode.Metadata.Name))
+	// Select a random worker node for testing
+	targetNode := cluster.WorkerNodes[rand.Intn(len(cluster.WorkerNodes))]
+	By(fmt.Sprintf("Testing storage access interruption on randomly selected node %s", targetNode.Metadata.Name))
 
 	// Get AWS instance ID for the target node
 	instanceID, err := getInstanceIDFromNode(targetNode.Metadata.Name)
@@ -514,8 +518,9 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 	By("Setting up SBD configuration for kubelet communication test")
 	testBasicSBDConfiguration(cluster)
 
-	targetNode := cluster.WorkerNodes[1] // Use different node than storage test
-	By(fmt.Sprintf("Testing kubelet communication failure on node %s", targetNode.Metadata.Name))
+	// Select a random worker node for testing
+	targetNode := cluster.WorkerNodes[rand.Intn(len(cluster.WorkerNodes))]
+	By(fmt.Sprintf("Testing kubelet communication failure on randomly selected node %s", targetNode.Metadata.Name))
 
 	// Get AWS instance ID for the target node
 	instanceID, err := getInstanceIDFromNode(targetNode.Metadata.Name)
@@ -634,7 +639,7 @@ func testSBDAgentCrash(cluster ClusterInfo) {
 	By("Setting up SBD configuration for agent crash test")
 	testBasicSBDConfiguration(cluster)
 
-	targetNode := cluster.WorkerNodes[2] // Use different node
+	targetNode := cluster.WorkerNodes[rand.Intn(len(cluster.WorkerNodes))]
 	By(fmt.Sprintf("Testing SBD agent crash and recovery on node %s", targetNode.Metadata.Name))
 
 	// Get the SBD agent pod on the target node
