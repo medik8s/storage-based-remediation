@@ -3,22 +3,21 @@
 # ARM64 vs AMD64 Watchdog Comparison Script
 # This script deploys and tests watchdog behavior on both architectures
 
-set -euo pipefail
+set -eo pipefail
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DEBUG_TOOL_SOURCE="${PROJECT_ROOT}/debug-watchdog-arm64.go"
-AWS_REGION="${AWS_REGION:-us-west-2}"
-KEY_NAME="${AWS_KEY_NAME:-sbd-debug-key}"
+AWS_REGION="${AWS_REGION:-ap-southeast-2}"
+KEY_NAME="${AWS_KEY_NAME:-aws-linux}"
 SECURITY_GROUP_NAME="sbd-watchdog-debug-sg"
 INSTANCE_TAG_NAME="sbd-watchdog-debug"
 
-# Instance configurations - using current region AMIs
-declare -A INSTANCE_CONFIGS=(
-    ["amd64"]="ami-0c02fb55956c7d316 t3.micro x86_64"  # Amazon Linux 2 AMD64
-    ["arm64"]="ami-0f69dd1d0d03ad669 t4g.micro arm64"  # Amazon Linux 2 ARM64
-)
+# Instance configurations - using ap-southeast-2 region AMIs
+# Format: AMI_ID INSTANCE_TYPE ARCHITECTURE
+AMD64_CONFIG="ami-0e6874cbf738602e7 t3.micro x86_64"  # Amazon Linux 2 AMD64
+ARM64_CONFIG="ami-06494f9d4da11dbad t4g.micro arm64"  # Amazon Linux 2 ARM64
 
 # Colors for output
 RED='\033[0;31m'
@@ -50,8 +49,8 @@ Usage: ./debug-watchdog-comparison.sh [OPTIONS]
 Compare watchdog behavior between ARM64 and AMD64 instances on AWS.
 
 OPTIONS:
-    -r, --region REGION     AWS region (default: us-west-2)
-    -k, --key-name NAME     EC2 key pair name (default: sbd-debug-key)
+    -r, --region REGION     AWS region (default: ap-southeast-2)
+    -k, --key-name NAME     EC2 key pair name (default: aws-linux)
     -c, --cleanup-only      Only cleanup existing resources
     -t, --test-only         Only run tests on existing instances
     -h, --help              Show this help message
@@ -74,7 +73,7 @@ cleanup_resources() {
     log "Cleaning up AWS resources..."
     
     # Terminate instances
-    for arch in "${!INSTANCE_CONFIGS[@]}"; do
+    for arch in amd64 arm64; do
         local instance_id
         instance_id=$(aws ec2 describe-instances \
             --region "${AWS_REGION}" \
@@ -146,32 +145,27 @@ setup_security_group() {
 
 create_instance() {
     local arch="$1"
-    local config="${INSTANCE_CONFIGS[$arch]}"
+    local config=""
+    if [ "$arch" = "amd64" ]; then
+        config="$AMD64_CONFIG"
+    else
+        config="$ARM64_CONFIG"
+    fi
     local ami_id instance_type cpu_arch
     read -r ami_id instance_type cpu_arch <<< "${config}"
     
     log "Creating ${arch} instance (${instance_type}, ${ami_id})..."
     
     local sg_id="$2"
-    local user_data
-    user_data=$(cat << 'USERDATA'
-#!/bin/bash
+    local user_data_raw="#!/bin/bash
 yum update -y
 yum install -y golang git gcc kernel-devel
-
-# Enable watchdog-related kernel modules
 modprobe softdog soft_margin=60 || true
-
-# Create debug directory
 mkdir -p /opt/sbd-debug
 chmod 755 /opt/sbd-debug
-
-# Make sure watchdog devices have proper permissions
 chmod 666 /dev/watchdog* 2>/dev/null || true
-
-echo "Instance setup completed at $(date)" > /opt/sbd-debug/setup.log
-USERDATA
-    )
+echo 'Instance setup completed' > /opt/sbd-debug/setup.log"
+    local user_data=$(echo "${user_data_raw}" | base64)
     
     local instance_id
     instance_id=$(aws ec2 run-instances \
@@ -181,7 +175,7 @@ USERDATA
         --key-name "${KEY_NAME}" \
         --security-group-ids "${sg_id}" \
         --user-data "${user_data}" \
-        --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${INSTANCE_TAG_NAME}-${arch}},{Key=Architecture,Value=${arch}},{Key=Purpose,Value=watchdog-debug}]" \
+        --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${INSTANCE_TAG_NAME}-${arch}}]" \
         --query 'Instances[0].InstanceId' \
         --output text)
     
@@ -313,7 +307,7 @@ analyze_results() {
     elif grep -q "ENOTTY" "${amd64_output}" 2>/dev/null && grep -q "ENOTTY" "${arm64_output}" 2>/dev/null; then
         echo ""
         log_warning "Both architectures show ENOTTY error - may be a broader kernel issue"
-    elif ! grep -q "❌.*WDIOC_KEEPALIVE" "${amd64_output}" 2>/dev/null && ! grep -q "❌.*WDIOC_KEEPALIVE" "${arm64_output}" 2>/dev/null; then
+    elif ! grep -q "ERROR.*WDIOC_KEEPALIVE\|FAILED.*WDIOC_KEEPALIVE" "${amd64_output}" 2>/dev/null && ! grep -q "ERROR.*WDIOC_KEEPALIVE\|FAILED.*WDIOC_KEEPALIVE" "${arm64_output}" 2>/dev/null; then
         echo ""
         log_success "Both architectures support WDIOC_KEEPALIVE - issue may be environment-specific"
     fi
@@ -410,21 +404,30 @@ main() {
         sg_id=$(setup_security_group)
         
         # Create instances
-        declare -A instance_ids
-        declare -A instance_ips
+        local amd64_instance_id arm64_instance_id
+        local amd64_instance_ip arm64_instance_ip
         
-        for arch in "${!INSTANCE_CONFIGS[@]}"; do
-            instance_ids[$arch]=$(create_instance "${arch}" "${sg_id}")
-            instance_ips[$arch]=$(get_instance_ip "${instance_ids[$arch]}")
+        for arch in amd64 arm64; do
+            local instance_id=$(create_instance "${arch}" "${sg_id}")
+            local instance_ip=$(get_instance_ip "${instance_id}")
+            
+            # Store in variables based on architecture
+            if [ "$arch" = "amd64" ]; then
+                amd64_instance_id="$instance_id"
+                amd64_instance_ip="$instance_ip"
+            else
+                arm64_instance_id="$instance_id"
+                arm64_instance_ip="$instance_ip"
+            fi
             
             # Wait for SSH and deploy
-            wait_for_ssh "${instance_ips[$arch]}" "${arch}"
-            deploy_debug_tool "${instance_ips[$arch]}" "${arch}"
+            wait_for_ssh "${instance_ip}" "${arch}"
+            deploy_debug_tool "${instance_ip}" "${arch}"
         done
     else
         # Get existing instances
-        declare -A instance_ips
-        for arch in "${!INSTANCE_CONFIGS[@]}"; do
+        local amd64_instance_ip arm64_instance_ip
+        for arch in amd64 arm64; do
             local instance_id
             instance_id=$(aws ec2 describe-instances \
                 --region "${AWS_REGION}" \
@@ -438,18 +441,22 @@ main() {
                 exit 1
             fi
             
-            instance_ips[$arch]=$(get_instance_ip "${instance_id}")
+            local instance_ip=$(get_instance_ip "${instance_id}")
+            if [ "$arch" = "amd64" ]; then
+                amd64_instance_ip="$instance_ip"
+            else
+                arm64_instance_ip="$instance_ip"
+            fi
         done
     fi
     
     # Run debug tests
-    declare -A test_results
-    for arch in "${!INSTANCE_CONFIGS[@]}"; do
-        test_results[$arch]=$(run_debug_test "${instance_ips[$arch]}" "${arch}")
-    done
+    local amd64_test_results arm64_test_results
+    amd64_test_results=$(run_debug_test "${amd64_instance_ip}" "amd64")
+    arm64_test_results=$(run_debug_test "${arm64_instance_ip}" "arm64")
     
     # Analyze results
-    analyze_results "${test_results[amd64]}" "${test_results[arm64]}"
+    analyze_results "${amd64_test_results}" "${arm64_test_results}"
     
     # Cleanup unless test-only mode
     if [[ "${test_only}" != true ]]; then

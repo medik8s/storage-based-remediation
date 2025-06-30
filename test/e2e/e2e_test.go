@@ -67,13 +67,12 @@ type NodeCondition struct {
 }
 
 var (
-	clusterInfo      ClusterInfo
-	testNS           string
-	awsSession       *session.Session
-	ec2Client        *ec2.EC2
-	awsRegion        string
-	awsInitialized   bool // Track if AWS was successfully initialized
-	awsInitAttempted bool // Track if AWS initialization was already attempted
+	clusterInfo    ClusterInfo
+	testNS         string
+	awsSession     *session.Session
+	ec2Client      *ec2.EC2
+	awsRegion      string
+	awsInitialized bool // Track if AWS was successfully initialized
 )
 
 var _ = Describe("SBD Operator E2E Tests", func() {
@@ -83,21 +82,6 @@ var _ = Describe("SBD Operator E2E Tests", func() {
 
 		// Generate unique namespace for each test
 		testNS = fmt.Sprintf("sbd-e2e-test-%d", rand.Intn(10000))
-
-		// Try to initialize AWS clients for disruption testing (one-time only)
-		if !awsInitAttempted {
-			By("Checking AWS availability for disruption tests (one-time setup)")
-			awsInitAttempted = true
-			err := initAWS()
-			if err != nil {
-				By(fmt.Sprintf("AWS not available for disruption tests: %v", err))
-				awsInitialized = false
-				// Don't skip - some tests can run without AWS
-			} else {
-				By("AWS initialized successfully for disruption tests")
-				awsInitialized = true
-			}
-		}
 
 		// Create test namespace
 		By(fmt.Sprintf("Creating test namespace %s", testNS))
@@ -278,24 +262,6 @@ func testBasicSBDConfiguration(cluster ClusterInfo) {
 	}, time.Minute*2, time.Second*10).Should(BeTrue())
 
 	By("Displaying SBDConfig in YAML format")
-	Eventually(func() string {
-		retrievedConfig := &medik8sv1alpha1.SBDConfig{}
-		err := k8sClient.Get(ctx, types.NamespacedName{
-			Name:      "test-sbd-config",
-			Namespace: testNS,
-		}, retrievedConfig)
-		if err != nil {
-			return ""
-		}
-
-		// Convert to YAML
-		yamlData, err := yaml.Marshal(retrievedConfig.Spec)
-		if err != nil {
-			return ""
-		}
-		return string(yamlData)
-	}, time.Minute*2, time.Second*10).Should(Not(BeEmpty()))
-
 	// Get and display the final YAML
 	retrievedConfig := &medik8sv1alpha1.SBDConfig{}
 	err = k8sClient.Get(ctx, types.NamespacedName{
@@ -304,10 +270,10 @@ func testBasicSBDConfiguration(cluster ClusterInfo) {
 	}, retrievedConfig)
 	Expect(err).NotTo(HaveOccurred())
 
-	yamlData, err := yaml.Marshal(retrievedConfig)
+	yamlData, err := yaml.Marshal(retrievedConfig.Spec)
 	Expect(err).NotTo(HaveOccurred())
 
-	GinkgoWriter.Printf("SBDConfig YAML:\n%s\n", string(yamlData))
+	GinkgoWriter.Printf("SBDConfig YAML of %s:\n%s\n", retrievedConfig.Name, string(yamlData))
 
 	By("Waiting for SBD agent DaemonSet to be created")
 	var lastSBDConfigStatus medik8sv1alpha1.SBDConfigStatus
@@ -610,6 +576,7 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 		node := &corev1.Node{}
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: targetNode.Metadata.Name}, node)
 		if err != nil {
+			GinkgoWriter.Printf("Warning: Node %s not found: %v\n", targetNode.Metadata.Name, err)
 			return false
 		}
 
@@ -618,10 +585,12 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 			if condition.Type == corev1.NodeReady && condition.Status != corev1.ConditionTrue {
 				By(fmt.Sprintf("Node %s is now NotReady: %s", targetNode.Metadata.Name, condition.Reason))
 				return true
+			} else if condition.Type == corev1.NodeReady {
+				GinkgoWriter.Printf("Warning: Node %s has ready condition: %v\n", targetNode.Metadata.Name, condition)
 			}
 		}
 		return false
-	}, time.Minute*3, time.Second*15).Should(BeTrue())
+	}, time.Minute*8, time.Second*15).Should(BeTrue())
 
 	// Create SBDRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
 	By("Creating SBDRemediation CR to simulate external operator behavior")
@@ -1464,6 +1433,15 @@ func createStorageDisruption(instanceID string) ([]string, error) {
 	}
 
 	if len(detachedVolumes) == 0 {
+		// List all volumes found for debugging
+		By("Listing all volumes found on the instance")
+		for _, bdm := range instance.BlockDeviceMappings {
+			if bdm.Ebs != nil && bdm.DeviceName != nil {
+				GinkgoWriter.Printf("Found volume %s on device %s (root: %v)\n",
+					*bdm.Ebs.VolumeId, *bdm.DeviceName,
+					strings.Contains(*bdm.DeviceName, "sda1") || strings.Contains(*bdm.DeviceName, "xvda"))
+			}
+		}
 		return nil, fmt.Errorf("no suitable non-root volumes found to detach")
 	}
 

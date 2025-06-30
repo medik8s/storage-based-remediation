@@ -373,14 +373,17 @@ func NewWithLogger(path string, logger logr.Logger) (*Watchdog, error) {
 // configured timeout value.
 //
 // This method includes retry logic for transient errors, as watchdog petting
-// is critical for system stability.
+// is critical for system stability. It uses a two-tier approach:
+// 1. Primary: WDIOC_KEEPALIVE ioctl command (preferred method)
+// 2. Fallback: Write-based keep-alive when ioctl is not supported (ENOTTY)
 //
 // Returns:
 //   - error: An error if the watchdog cannot be pet after retries, or if the device is not open
 //
-// This method uses the WDIOC_KEEPALIVE ioctl command to communicate with
-// the kernel watchdog driver. If the ioctl fails consistently, the watchdog timer
-// continues counting down and may reset the system.
+// This method automatically falls back to write-based keep-alive when the
+// WDIOC_KEEPALIVE ioctl is not supported by the watchdog driver (such as
+// some softdog implementations). This ensures compatibility across different
+// kernel configurations and architectures.
 func (w *Watchdog) Pet() error {
 	if !w.isOpen {
 		return fmt.Errorf("watchdog device is not open")
@@ -393,19 +396,42 @@ func (w *Watchdog) Pet() error {
 	// Retry watchdog pet operations for transient errors
 	ctx := context.Background()
 	err := retry.Do(ctx, w.retryConfig, "pet watchdog", func() error {
-		// Use WDIOC_KEEPALIVE ioctl to reset the watchdog timer
+		// Primary method: Use WDIOC_KEEPALIVE ioctl to reset the watchdog timer
 		// The third parameter (0) is ignored for WDIOC_KEEPALIVE
 		_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(w.file.Fd()), WDIOC_KEEPALIVE, 0)
-		if errno != 0 {
-			// Convert syscall error to Go error and determine if it's retryable
-			syscallErr := fmt.Errorf("ioctl WDIOC_KEEPALIVE failed: %w", errno)
-			return retry.NewRetryableError(syscallErr, retry.IsTransientError(errno), "pet watchdog")
+		if errno == 0 {
+			// Success with ioctl method
+			w.logger.V(3).Info("Watchdog pet successful using WDIOC_KEEPALIVE ioctl")
+			return nil
 		}
-		return nil
+
+		// Check if the error is ENOTTY (inappropriate ioctl for device)
+		// This indicates the watchdog driver doesn't support WDIOC_KEEPALIVE
+		if errno == unix.ENOTTY {
+			w.logger.V(2).Info("WDIOC_KEEPALIVE not supported, falling back to write-based keep-alive")
+
+			// Fallback method: Use write-based keep-alive
+			// Many watchdog devices accept any write as a keep-alive signal
+			dummy := []byte{0}
+			_, writeErr := w.file.Write(dummy)
+			if writeErr != nil {
+				return retry.NewRetryableError(
+					fmt.Errorf("write-based keep-alive failed: %w", writeErr),
+					retry.IsTransientError(writeErr),
+					"write-based watchdog keep-alive")
+			}
+
+			w.logger.V(3).Info("Watchdog pet successful using write-based keep-alive")
+			return nil
+		}
+
+		// Other ioctl error - treat as retryable
+		syscallErr := fmt.Errorf("ioctl WDIOC_KEEPALIVE failed: %w", errno)
+		return retry.NewRetryableError(syscallErr, retry.IsTransientError(errno), "pet watchdog")
 	})
 
 	if err != nil {
-		w.logger.Error(err, "Failed to pet watchdog after retries")
+		w.logger.Error(err, "Failed to pet watchdog after retries with both ioctl and write methods")
 		return fmt.Errorf("failed to pet watchdog at %s: %w", w.path, err)
 	}
 

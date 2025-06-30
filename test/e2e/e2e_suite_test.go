@@ -177,6 +177,15 @@ var _ = BeforeSuite(func() {
 			_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: CertManager is already installed. Skipping installation...\n")
 		}
 	}
+
+	By("Checking AWS availability for disruption tests (one-time setup)")
+	if err := initAWS(); err != nil {
+		By(fmt.Sprintf("AWS not available for disruption tests: %v", err))
+		awsInitialized = false
+	} else {
+		By("AWS initialized successfully for disruption tests")
+		awsInitialized = true
+	}
 })
 
 var _ = AfterSuite(func() {

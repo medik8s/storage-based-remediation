@@ -21,8 +21,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/medik8s/sbd-operator/pkg/retry"
 )
 
 // TestNew tests the New function with various scenarios
@@ -161,7 +163,7 @@ func TestPet(t *testing.T) {
 			errorMsg:    "watchdog file descriptor is nil",
 		},
 		{
-			name: "pet valid watchdog (will fail ioctl on regular file)",
+			name: "pet valid watchdog (ioctl fails, write-based fallback succeeds)",
 			setup: func() *Watchdog {
 				tmpDir := t.TempDir()
 				tmpFile := filepath.Join(tmpDir, "mock_watchdog")
@@ -177,8 +179,45 @@ func TestPet(t *testing.T) {
 				}
 				return wd
 			},
+			expectError: false, // Should succeed with write-based fallback
+		},
+		{
+			name: "pet read-only watchdog file (both ioctl and write fail)",
+			setup: func() *Watchdog {
+				tmpDir := t.TempDir()
+				tmpFile := filepath.Join(tmpDir, "mock_watchdog_readonly")
+				file, err := os.Create(tmpFile)
+				if err != nil {
+					t.Fatalf("Failed to create mock file: %v", err)
+				}
+				file.Close()
+
+				// Change to read-only
+				err = os.Chmod(tmpFile, 0444)
+				if err != nil {
+					t.Fatalf("Failed to change file permissions: %v", err)
+				}
+
+				// Open as read-only (this will fail for watchdog, but for test purposes)
+				file, err = os.OpenFile(tmpFile, os.O_RDONLY, 0)
+				if err != nil {
+					t.Fatalf("Failed to open read-only file: %v", err)
+				}
+
+				wd := &Watchdog{
+					file:   file,
+					path:   tmpFile,
+					isOpen: true,
+					logger: logr.Discard(),
+					retryConfig: retry.Config{
+						MaxRetries:   1,
+						InitialDelay: 1 * time.Millisecond,
+					},
+				}
+				return wd
+			},
 			expectError: true,
-			errorMsg:    "failed to pet watchdog", // ioctl will fail on regular file
+			errorMsg:    "failed to pet watchdog", // Both ioctl and write should fail
 		},
 	}
 
@@ -361,10 +400,10 @@ func TestWatchdogLifecycle(t *testing.T) {
 		t.Error("Expected new watchdog to be open")
 	}
 
-	// Try to pet (will fail with ioctl error on regular file, but that's expected)
+	// Try to pet (ioctl will fail on regular file, but write-based fallback should succeed)
 	err = wd.Pet()
-	if err == nil {
-		t.Error("Expected pet to fail on regular file")
+	if err != nil {
+		t.Errorf("Expected pet to succeed with write-based fallback on regular file, got: %v", err)
 	}
 
 	// Close watchdog
