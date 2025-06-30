@@ -95,7 +95,7 @@ test-e2e: ## Run e2e tests using the test runner script (auto-detects environmen
 .PHONY: test-smoke
 test-smoke: ## Run smoke tests with building images.
 	@echo "Running smoke tests with image building..."
-	@scripts/run-tests.sh --type smoke --env cluster
+	@scripts/run-tests.sh --type smoke --env cluster -v
 
 .PHONY: load-images
 load-images:
