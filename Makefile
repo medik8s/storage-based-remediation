@@ -90,7 +90,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 .PHONY: test-e2e
 test-e2e: ## Run e2e tests using the test runner script (auto-detects environment).
 	@echo "Running e2e tests using test runner script..."
-	@scripts/run-tests.sh --type e2e  --env cluster
+	@scripts/run-tests.sh --type e2e -v --env cluster
 
 .PHONY: test-smoke
 test-smoke: ## Run smoke tests with building images.

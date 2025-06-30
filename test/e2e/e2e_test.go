@@ -19,9 +19,14 @@ package e2e
 import (
 	"fmt"
 	"math/rand"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/ec2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -64,12 +69,22 @@ type NodeCondition struct {
 var (
 	clusterInfo ClusterInfo
 	testNS      string
+	awsSession  *session.Session
+	ec2Client   *ec2.EC2
+	awsRegion   string
 )
 
 var _ = Describe("SBD Operator E2E Tests", func() {
 	BeforeEach(func() {
 		// Generate unique namespace for each test
 		testNS = fmt.Sprintf("sbd-e2e-test-%d", rand.Intn(10000))
+
+		// Initialize AWS clients for disruption testing
+		By("Initializing AWS clients")
+		err := initAWS()
+		if err != nil {
+			Skip(fmt.Sprintf("Skipping AWS-based tests: %v", err))
+		}
 
 		// Create test namespace
 		By(fmt.Sprintf("Creating test namespace %s", testNS))
@@ -78,7 +93,7 @@ var _ = Describe("SBD Operator E2E Tests", func() {
 				Name: testNS,
 			},
 		}
-		err := k8sClient.Create(ctx, namespace)
+		err = k8sClient.Create(ctx, namespace)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Discover cluster topology
@@ -374,106 +389,110 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 	targetNode := cluster.WorkerNodes[0]
 	By(fmt.Sprintf("Testing storage access interruption on node %s", targetNode.Metadata.Name))
 
-	// Create a disruption pod that will interfere with storage access
-	disruptionPodYAML := fmt.Sprintf(`apiVersion: v1
-kind: Pod
-metadata:
-  name: storage-disruptor
-  namespace: %s
-spec:
-  nodeSelector:
-    kubernetes.io/hostname: %s
-  hostNetwork: true
-  hostPID: true
-  containers:
-  - name: disruptor
-    image: registry.access.redhat.com/ubi9/ubi-minimal:latest
-    command:
-    - /bin/bash
-    - -c
-    - |
-      echo "Starting storage access disruption simulation..."
-      # Simulate storage I/O issues by creating high I/O load
-      # This simulates the scenario where SBD device becomes inaccessible
-      for i in {1..10}; do
-        timeout 30s dd if=/dev/zero of=/tmp/storage-load-$i bs=1M count=100 2>/dev/null || true &
-      done
-      
-      # Wait and monitor for SBD agent response
-      sleep 60
-      
-      echo "Storage disruption simulation completed"
-      # Clean up
-      pkill -f "dd if=/dev/zero" || true
-      rm -f /tmp/storage-load-* || true
-    securityContext:
-      privileged: true
-      runAsUser: 0
-  restartPolicy: Never
-  tolerations:
-  - operator: Exists`, testNS, targetNode.Metadata.Name)
-
-	By("Creating storage disruption pod")
-	var disruptionPod corev1.Pod
-	err := yaml.Unmarshal([]byte(disruptionPodYAML), &disruptionPod)
+	// Get AWS instance ID for the target node
+	instanceID, err := getInstanceIDFromNode(targetNode.Metadata.Name)
 	Expect(err).NotTo(HaveOccurred())
-	err = k8sClient.Create(ctx, &disruptionPod)
-	Expect(err).NotTo(HaveOccurred())
+	By(fmt.Sprintf("Target node %s has AWS instance ID: %s", targetNode.Metadata.Name, instanceID))
 
-	By("Monitoring for SBD agent response to storage issues")
-	// Monitor SBD agent logs for storage access issues
+	// Create storage disruption by detaching EBS volumes
+	By("Creating AWS storage disruption by detaching EBS volumes")
+	detachedVolumes, err := createStorageDisruption(instanceID)
+	if err != nil {
+		// If no additional volumes to detach, skip this test
+		Skip(fmt.Sprintf("Skipping storage disruption test: %v", err))
+	}
+	By(fmt.Sprintf("Detached %d EBS volumes from node %s", len(detachedVolumes), targetNode.Metadata.Name))
+
+	// Ensure cleanup happens even if test fails
+	defer func() {
+		By("Cleaning up AWS storage disruption")
+		err := restoreStorageDisruption(instanceID, detachedVolumes)
+		if err != nil {
+			GinkgoWriter.Printf("Warning: failed to restore storage disruption: %v\n", err)
+		} else {
+			By("Successfully restored detached volumes")
+		}
+	}()
+
+	// Wait for storage disruption to take effect
+	By("Waiting for storage disruption to take effect")
+	time.Sleep(30 * time.Second)
+
+	// Monitor for node becoming NotReady due to storage issues
+	By("Verifying node becomes NotReady due to storage disruption")
 	Eventually(func() bool {
-		pods := &corev1.PodList{}
-		err := k8sClient.List(ctx, pods, client.InNamespace(testNS), client.MatchingLabels{"app": "sbd-agent"})
-		if err != nil || len(pods.Items) == 0 {
-			return false
-		}
-
-		// Get logs from the first pod using clientset (as controller-runtime doesn't support logs)
-		podLogOptions := &corev1.PodLogOptions{
-			TailLines: func(i int64) *int64 { return &i }(50),
-		}
-		req := k8sClientset.CoreV1().Pods(testNS).GetLogs(pods.Items[0].Name, podLogOptions)
-		logs, err := req.Stream(ctx)
-		if err != nil {
-			return false
-		}
-		defer logs.Close()
-
-		// Read logs (simplified check)
-		buf := make([]byte, 1024)
-		n, _ := logs.Read(buf)
-		output := string(buf[:n])
-
-		// Look for storage-related warnings or errors
-		return strings.Contains(output, "storage") ||
-			strings.Contains(output, "watchdog") ||
-			strings.Contains(output, "device")
-	}, time.Minute*3, time.Second*15).Should(BeTrue())
-
-	By("Verifying cluster stability after storage disruption")
-	// Ensure the cluster remains stable and other nodes are healthy
-	Consistently(func() bool {
-		nodes := &corev1.NodeList{}
-		err := k8sClient.List(ctx, nodes)
+		node := &corev1.Node{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: targetNode.Metadata.Name}, node)
 		if err != nil {
 			return false
 		}
 
-		// Count Ready nodes - should remain stable
-		readyNodes := 0
-		for _, node := range nodes.Items {
-			for _, condition := range node.Status.Conditions {
-				if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
-					readyNodes++
-					break
-				}
+		// Check if node is NotReady or has storage-related issues
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady && condition.Status != corev1.ConditionTrue {
+				By(fmt.Sprintf("Node %s is now NotReady: %s", targetNode.Metadata.Name, condition.Reason))
+				return true
+			}
+			// Also check for disk pressure or other storage-related conditions
+			if condition.Type == corev1.NodeDiskPressure && condition.Status == corev1.ConditionTrue {
+				By(fmt.Sprintf("Node %s has disk pressure: %s", targetNode.Metadata.Name, condition.Reason))
+				return true
 			}
 		}
-		return readyNodes >= len(cluster.WorkerNodes)-1 // Allow for one potentially affected node
-	}, time.Minute*2, time.Second*30).Should(BeTrue())
+		return false
+	}, time.Minute*5, time.Second*20).Should(BeTrue())
 
-	GinkgoWriter.Printf("Storage access interruption test completed\n")
+	// Verify SBD remediation is triggered for storage failure
+	By("Verifying SBD remediation is triggered for storage failure")
+	Eventually(func() bool {
+		remediations := &medik8sv1alpha1.SBDRemediationList{}
+		err := k8sClient.List(ctx, remediations, client.InNamespace(testNS))
+		if err != nil {
+			return false
+		}
+
+		for _, remediation := range remediations.Items {
+			if remediation.Spec.NodeName == targetNode.Metadata.Name {
+				By(fmt.Sprintf("SBD remediation created for node %s: %+v", targetNode.Metadata.Name, remediation.Status))
+				return true
+			}
+		}
+		return false
+	}, time.Minute*5, time.Second*30).Should(BeTrue())
+
+	// Restore storage early to allow recovery testing
+	By("Restoring storage access to test node recovery")
+	err = restoreStorageDisruption(instanceID, detachedVolumes)
+	Expect(err).NotTo(HaveOccurred())
+	detachedVolumes = nil // Prevent double cleanup in defer
+
+	// Wait for node to potentially recover (though it may need manual intervention)
+	By("Monitoring node recovery after storage restoration")
+	time.Sleep(60 * time.Second) // Give time for recovery
+
+	// Verify other nodes remained stable during storage disruption
+	By("Verifying other nodes remained stable during storage disruption")
+	for _, node := range cluster.WorkerNodes {
+		if node.Metadata.Name == targetNode.Metadata.Name {
+			continue // Skip the target node
+		}
+
+		currentNode := &corev1.Node{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: node.Metadata.Name}, currentNode)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Verify node is Ready
+		nodeReady := false
+		for _, condition := range currentNode.Status.Conditions {
+			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+				nodeReady = true
+				break
+			}
+		}
+		Expect(nodeReady).To(BeTrue(), fmt.Sprintf("Node %s should remain Ready", node.Metadata.Name))
+	}
+
+	GinkgoWriter.Printf("AWS-based storage access interruption test completed\n")
 }
 
 func testKubeletCommunicationFailure(cluster ClusterInfo) {
@@ -481,121 +500,119 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 	testBasicSBDConfiguration(cluster)
 
 	targetNode := cluster.WorkerNodes[1] // Use different node than storage test
-	By(fmt.Sprintf("Testing kubelet communication failure simulation on node %s", targetNode.Metadata.Name))
+	By(fmt.Sprintf("Testing kubelet communication failure on node %s", targetNode.Metadata.Name))
 
-	// Instead of actually disrupting network communication (which is complex and environment-dependent),
-	// we'll simulate a communication failure by creating a scenario that tests the SBD operator's
-	// resilience to node communication issues.
-
-	By("Creating a test pod that simulates high load to stress the kubelet")
-	// Create a pod that puts stress on the kubelet without actually breaking communication
-	stressPodYAML := fmt.Sprintf(`apiVersion: v1
-kind: Pod
-metadata:
-  name: kubelet-stress-test
-  namespace: %s
-spec:
-  nodeSelector:
-    kubernetes.io/hostname: %s
-  containers:
-  - name: stress
-    image: registry.access.redhat.com/ubi9/ubi-minimal:latest
-    command:
-    - /bin/bash
-    - -c
-    - |
-      echo "Starting kubelet stress test..."
-      
-      # Create multiple processes to stress the kubelet
-      for i in {1..5}; do
-        (
-          while true; do
-            # Create and delete files rapidly to stress the filesystem
-            touch /tmp/stress_file_$i
-            rm -f /tmp/stress_file_$i
-            sleep 0.1
-          done
-        ) &
-      done
-      
-      echo "Stress test running for 30 seconds..."
-      sleep 30
-      
-      # Clean up background processes
-      pkill -f "stress_file" || true
-      
-      echo "Kubelet stress test completed"
-      sleep 10
-    resources:
-      requests:
-        cpu: "200m"
-        memory: "256Mi"
-      limits:
-        cpu: "1000m"
-        memory: "512Mi"
-  restartPolicy: Never
-  tolerations:
-  - operator: Exists`, testNS, targetNode.Metadata.Name)
-
-	By("Creating kubelet stress test pod")
-	var stressPod corev1.Pod
-	err := yaml.Unmarshal([]byte(stressPodYAML), &stressPod)
+	// Get AWS instance ID for the target node
+	instanceID, err := getInstanceIDFromNode(targetNode.Metadata.Name)
 	Expect(err).NotTo(HaveOccurred())
-	err = k8sClient.Create(ctx, &stressPod)
-	Expect(err).NotTo(HaveOccurred())
+	By(fmt.Sprintf("Target node %s has AWS instance ID: %s", targetNode.Metadata.Name, instanceID))
 
-	// Wait for pod to complete
-	By("Waiting for stress test to complete")
-	Eventually(func() bool {
-		pod := &corev1.Pod{}
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: "kubelet-stress-test", Namespace: testNS}, pod)
+	// Create network disruption using AWS security groups
+	By("Creating AWS network disruption to block kubelet communication")
+	securityGroupID, err := createNetworkDisruption(instanceID)
+	Expect(err).NotTo(HaveOccurred())
+	By(fmt.Sprintf("Created temporary security group %s to disrupt network", *securityGroupID))
+
+	// Ensure cleanup happens even if test fails
+	defer func() {
+		By("Cleaning up AWS network disruption")
+		err := removeNetworkDisruption(securityGroupID, instanceID)
 		if err != nil {
-			return false
+			GinkgoWriter.Printf("Warning: failed to clean up network disruption: %v\n", err)
+		} else {
+			By("Successfully removed network disruption")
 		}
-		return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
-	}, time.Minute*2, time.Second*10).Should(BeTrue())
+	}()
 
-	By("Verifying node remains stable during stress test")
-	// Verify that the node remains Ready throughout the test
-	Consistently(func() bool {
+	// Wait for network disruption to take effect
+	By("Waiting for network disruption to take effect")
+	time.Sleep(30 * time.Second)
+
+	// Verify that the node becomes NotReady due to kubelet communication failure
+	By("Verifying node becomes NotReady due to network disruption")
+	Eventually(func() bool {
 		node := &corev1.Node{}
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: targetNode.Metadata.Name}, node)
 		if err != nil {
 			return false
 		}
 
-		// Check if node remains Ready
+		// Check if node is NotReady
 		for _, condition := range node.Status.Conditions {
-			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+			if condition.Type == corev1.NodeReady && condition.Status != corev1.ConditionTrue {
+				By(fmt.Sprintf("Node %s is now NotReady: %s", targetNode.Metadata.Name, condition.Reason))
 				return true
 			}
 		}
 		return false
-	}, time.Minute*1, time.Second*10).Should(BeTrue())
+	}, time.Minute*3, time.Second*15).Should(BeTrue())
 
-	By("Verifying SBD agents continue operating normally during stress")
-	// Verify SBD agents remain functional
-	Consistently(func() bool {
-		pods := &corev1.PodList{}
-		err := k8sClient.List(ctx, pods,
-			client.InNamespace(testNS),
-			client.MatchingLabels{"app": "sbd-agent"})
+	// Verify SBD remediation is triggered
+	By("Verifying SBD remediation is triggered for the disrupted node")
+	Eventually(func() bool {
+		remediations := &medik8sv1alpha1.SBDRemediationList{}
+		err := k8sClient.List(ctx, remediations, client.InNamespace(testNS))
 		if err != nil {
 			return false
 		}
 
-		runningAgents := 0
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == corev1.PodRunning {
-				runningAgents++
+		for _, remediation := range remediations.Items {
+			if remediation.Spec.NodeName == targetNode.Metadata.Name {
+				By(fmt.Sprintf("SBD remediation created for node %s: %+v", targetNode.Metadata.Name, remediation.Status))
+				return true
 			}
 		}
+		return false
+	}, time.Minute*5, time.Second*30).Should(BeTrue())
 
-		// Expect at least 2 agents to be running (allowing for some scheduling constraints)
-		return runningAgents >= 2
-	}, time.Minute*1, time.Second*15).Should(BeTrue())
+	// Remove network disruption early to allow recovery
+	By("Removing network disruption to allow node recovery")
+	err = removeNetworkDisruption(securityGroupID, instanceID)
+	Expect(err).NotTo(HaveOccurred())
+	securityGroupID = nil // Prevent double cleanup in defer
 
-	GinkgoWriter.Printf("Kubelet communication resilience test completed successfully\n")
+	// Wait for node to recover
+	By("Waiting for node to recover after network disruption is removed")
+	Eventually(func() bool {
+		node := &corev1.Node{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: targetNode.Metadata.Name}, node)
+		if err != nil {
+			return false
+		}
+
+		// Check if node is Ready again
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+				By(fmt.Sprintf("Node %s has recovered and is Ready", targetNode.Metadata.Name))
+				return true
+			}
+		}
+		return false
+	}, time.Minute*5, time.Second*30).Should(BeTrue())
+
+	// Verify other nodes remain stable during the disruption
+	By("Verifying other nodes remained stable during network disruption")
+	for _, node := range cluster.WorkerNodes {
+		if node.Metadata.Name == targetNode.Metadata.Name {
+			continue // Skip the target node
+		}
+
+		currentNode := &corev1.Node{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: node.Metadata.Name}, currentNode)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Verify node is Ready
+		nodeReady := false
+		for _, condition := range currentNode.Status.Conditions {
+			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+				nodeReady = true
+				break
+			}
+		}
+		Expect(nodeReady).To(BeTrue(), fmt.Sprintf("Node %s should remain Ready", node.Metadata.Name))
+	}
+
+	GinkgoWriter.Printf("AWS-based kubelet communication failure test completed successfully\n")
 }
 
 func testSBDAgentCrash(cluster ClusterInfo) {
@@ -685,45 +702,33 @@ spec:
     - |
       echo "Starting non-critical resource consumption..."
       
-      # Simple CPU and memory consumption using basic shell operations
-      # This creates a controlled load without external dependencies
-      
-      # Function to consume CPU cycles
-      cpu_load() {
-        local duration=$1
-        local end_time=$(($(date +%%s) + duration))
-        while [ $(date +%%s) -lt $end_time ]; do
-          : # No-op operation in a tight loop
+      # Simple resource consumption using basic shell operations
+      # Create some CPU load by running calculations
+      echo "Creating CPU load..."
+      for i in {1..10}; do
+        # Simple arithmetic operations to consume CPU
+        result=0
+        for j in {1..10000}; do
+          result=$((result + j))
         done
-      }
+        echo "Iteration $i completed, result: $result"
+        sleep 1
+      done
       
-      # Function to consume memory
-      memory_load() {
-        # Create a variable with repeated data to consume memory
-        local data=""
-        for i in {1..1000}; do
-          data="${data}$(printf 'x%%.0s' {1..1000})"
-        done
-        sleep 30
-      }
+      # Create some memory usage by storing data in variables
+      echo "Creating memory load..."
+      data1="$(yes 'x' | head -n 10000 | tr -d '\n')"
+      data2="$(yes 'y' | head -n 10000 | tr -d '\n')"
+      data3="$(yes 'z' | head -n 10000 | tr -d '\n')"
       
-      # Run CPU load in background
-      cpu_load 60 &
-      cpu_pid=$!
+      echo "Resource consumption active for 30 seconds..."
+      sleep 30
       
-      # Run memory load in background  
-      memory_load &
-      memory_pid=$!
-      
-      echo "Resource consumption active for 60 seconds..."
-      sleep 60
-      
-      # Clean up background processes
-      kill $cpu_pid 2>/dev/null || true
-      kill $memory_pid 2>/dev/null || true
+      # Clear variables
+      unset data1 data2 data3
       
       echo "Non-critical resource consumption completed"
-      sleep 30
+      sleep 5
     resources:
       requests:
         cpu: "100m"
@@ -850,4 +855,328 @@ func cleanupTestArtifacts() {
 
 	// Wait a moment for cleanup
 	time.Sleep(5 * time.Second)
+}
+
+// AWS helper functions for disruption testing
+
+// initAWS initializes AWS session and clients
+func initAWS() error {
+	// Get AWS region from environment or detect from node names
+	awsRegion = os.Getenv("AWS_REGION")
+	if awsRegion == "" {
+		awsRegion = "ap-southeast-2" // Default based on node names
+	}
+
+	var err error
+	awsSession, err = session.NewSession(&aws.Config{
+		Region: aws.String(awsRegion),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create AWS session: %w", err)
+	}
+
+	ec2Client = ec2.New(awsSession)
+	return nil
+}
+
+// getInstanceIDFromNode extracts AWS instance ID from node provider ID
+func getInstanceIDFromNode(nodeName string) (string, error) {
+	node := &corev1.Node{}
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, node)
+	if err != nil {
+		return "", fmt.Errorf("failed to get node %s: %w", nodeName, err)
+	}
+
+	// Extract instance ID from provider ID like "aws:///ap-southeast-2a/i-0435c40fb88349161"
+	providerID := node.Spec.ProviderID
+	re := regexp.MustCompile(`aws:///[^/]+/(i-[a-f0-9]+)`)
+	matches := re.FindStringSubmatch(providerID)
+	if len(matches) < 2 {
+		return "", fmt.Errorf("could not extract instance ID from provider ID: %s", providerID)
+	}
+
+	return matches[1], nil
+}
+
+// createNetworkDisruption creates a temporary security group rule to block traffic
+func createNetworkDisruption(instanceID string) (*string, error) {
+	// Get instance details
+	result, err := ec2Client.DescribeInstances(&ec2.DescribeInstancesInput{
+		InstanceIds: []*string{aws.String(instanceID)},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe instance: %w", err)
+	}
+
+	if len(result.Reservations) == 0 || len(result.Reservations[0].Instances) == 0 {
+		return nil, fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	instance := result.Reservations[0].Instances[0]
+	vpcID := instance.VpcId
+
+	// Create a temporary security group that blocks kubelet traffic
+	sgResult, err := ec2Client.CreateSecurityGroup(&ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String(fmt.Sprintf("sbd-e2e-network-disruptor-%d", time.Now().Unix())),
+		Description: aws.String("Temporary security group for SBD e2e network disruption testing"),
+		VpcId:       vpcID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create security group: %w", err)
+	}
+
+	securityGroupID := sgResult.GroupId
+
+	// Add rule to block all outbound traffic (more effective than just kubelet)
+	_, err = ec2Client.RevokeSecurityGroupEgress(&ec2.RevokeSecurityGroupEgressInput{
+		GroupId: securityGroupID,
+		IpPermissions: []*ec2.IpPermission{
+			{
+				IpProtocol: aws.String("-1"), // All protocols
+				IpRanges: []*ec2.IpRange{
+					{
+						CidrIp: aws.String("0.0.0.0/0"),
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		// Clean up security group if rule creation fails
+		ec2Client.DeleteSecurityGroup(&ec2.DeleteSecurityGroupInput{
+			GroupId: securityGroupID,
+		})
+		return nil, fmt.Errorf("failed to remove default egress rule: %w", err)
+	}
+
+	// Get current security groups and add our disruptor group
+	var allGroups []*string
+	for _, sg := range instance.SecurityGroups {
+		allGroups = append(allGroups, sg.GroupId)
+	}
+	allGroups = append(allGroups, securityGroupID)
+
+	// Attach security group to instance (add to existing groups)
+	_, err = ec2Client.ModifyInstanceAttribute(&ec2.ModifyInstanceAttributeInput{
+		InstanceId: aws.String(instanceID),
+		Groups:     allGroups,
+	})
+	if err != nil {
+		// Clean up security group if attachment fails
+		ec2Client.DeleteSecurityGroup(&ec2.DeleteSecurityGroupInput{
+			GroupId: securityGroupID,
+		})
+		return nil, fmt.Errorf("failed to attach security group: %w", err)
+	}
+
+	return securityGroupID, nil
+}
+
+// removeNetworkDisruption removes the temporary security group
+func removeNetworkDisruption(securityGroupID *string, instanceID string) error {
+	if securityGroupID == nil {
+		return nil
+	}
+
+	// Get instance details to find current security groups
+	result, err := ec2Client.DescribeInstances(&ec2.DescribeInstancesInput{
+		InstanceIds: []*string{aws.String(instanceID)},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to describe instance: %w", err)
+	}
+
+	if len(result.Reservations) == 0 || len(result.Reservations[0].Instances) == 0 {
+		return fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	instance := result.Reservations[0].Instances[0]
+	var originalGroups []*string
+	var hasDisruptorGroup bool
+
+	// Find all security groups except our disruptor group
+	for _, sg := range instance.SecurityGroups {
+		if *sg.GroupId != *securityGroupID {
+			originalGroups = append(originalGroups, sg.GroupId)
+		} else {
+			hasDisruptorGroup = true
+		}
+	}
+
+	// Only proceed if the disruptor security group is actually attached
+	if hasDisruptorGroup {
+		// Restore original security groups (this removes the disruptor group)
+		if len(originalGroups) > 0 {
+			By(fmt.Sprintf("Restoring original security groups for instance %s", instanceID))
+			_, err = ec2Client.ModifyInstanceAttribute(&ec2.ModifyInstanceAttributeInput{
+				InstanceId: aws.String(instanceID),
+				Groups:     originalGroups,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to restore original security groups: %w", err)
+			}
+
+			// Wait a moment for the security group to be detached
+			time.Sleep(10 * time.Second)
+		}
+	}
+
+	// Delete the temporary security group
+	By(fmt.Sprintf("Deleting temporary security group %s", *securityGroupID))
+	_, err = ec2Client.DeleteSecurityGroup(&ec2.DeleteSecurityGroupInput{
+		GroupId: securityGroupID,
+	})
+	if err != nil {
+		// If it still fails due to dependency, wait a bit longer and retry
+		if strings.Contains(err.Error(), "DependencyViolation") {
+			By("Security group still has dependencies, waiting longer before retry...")
+			time.Sleep(30 * time.Second)
+			_, err = ec2Client.DeleteSecurityGroup(&ec2.DeleteSecurityGroupInput{
+				GroupId: securityGroupID,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to delete security group after retry: %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to delete security group: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// createStorageDisruption detaches EBS volumes to simulate storage failure
+func createStorageDisruption(instanceID string) ([]string, error) {
+	// Get instance details to find attached volumes
+	result, err := ec2Client.DescribeInstances(&ec2.DescribeInstancesInput{
+		InstanceIds: []*string{aws.String(instanceID)},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe instance: %w", err)
+	}
+
+	if len(result.Reservations) == 0 || len(result.Reservations[0].Instances) == 0 {
+		return nil, fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	instance := result.Reservations[0].Instances[0]
+	var detachedVolumes []string
+
+	// Find non-root EBS volumes to detach (avoid detaching root volume)
+	for _, bdm := range instance.BlockDeviceMappings {
+		if bdm.Ebs != nil && bdm.DeviceName != nil {
+			// Skip root volume (typically /dev/sda1 or /dev/xvda)
+			if strings.Contains(*bdm.DeviceName, "sda1") || strings.Contains(*bdm.DeviceName, "xvda") {
+				continue
+			}
+
+			volumeID := *bdm.Ebs.VolumeId
+			By(fmt.Sprintf("Detaching EBS volume %s from device %s", volumeID, *bdm.DeviceName))
+
+			// Detach the volume
+			_, err := ec2Client.DetachVolume(&ec2.DetachVolumeInput{
+				VolumeId:   aws.String(volumeID),
+				InstanceId: aws.String(instanceID),
+				Device:     bdm.DeviceName,
+				Force:      aws.Bool(false), // Graceful detach first
+			})
+			if err != nil {
+				// If graceful detach fails, try force detach
+				By(fmt.Sprintf("Graceful detach failed, trying force detach for volume %s", volumeID))
+				_, err = ec2Client.DetachVolume(&ec2.DetachVolumeInput{
+					VolumeId:   aws.String(volumeID),
+					InstanceId: aws.String(instanceID),
+					Device:     bdm.DeviceName,
+					Force:      aws.Bool(true),
+				})
+				if err != nil {
+					return detachedVolumes, fmt.Errorf("failed to detach volume %s: %w", volumeID, err)
+				}
+			}
+
+			detachedVolumes = append(detachedVolumes, volumeID)
+		}
+	}
+
+	if len(detachedVolumes) == 0 {
+		return nil, fmt.Errorf("no suitable non-root volumes found to detach")
+	}
+
+	// Wait for volumes to be detached
+	for _, volumeID := range detachedVolumes {
+		By(fmt.Sprintf("Waiting for volume %s to be detached", volumeID))
+		Eventually(func() bool {
+			result, err := ec2Client.DescribeVolumes(&ec2.DescribeVolumesInput{
+				VolumeIds: []*string{aws.String(volumeID)},
+			})
+			if err != nil {
+				return false
+			}
+			if len(result.Volumes) == 0 {
+				return false
+			}
+			// Volume is detached when state is "available"
+			return *result.Volumes[0].State == "available"
+		}, time.Minute*2, time.Second*5).Should(BeTrue())
+	}
+
+	return detachedVolumes, nil
+}
+
+// restoreStorageDisruption reattaches the detached EBS volumes
+func restoreStorageDisruption(instanceID string, volumeIDs []string) error {
+	if len(volumeIDs) == 0 {
+		return nil
+	}
+
+	// Get instance details to determine available device names
+	result, err := ec2Client.DescribeInstances(&ec2.DescribeInstancesInput{
+		InstanceIds: []*string{aws.String(instanceID)},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to describe instance: %w", err)
+	}
+
+	if len(result.Reservations) == 0 || len(result.Reservations[0].Instances) == 0 {
+		return fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	// Get available device names (simple approach - use /dev/sdf, /dev/sdg, etc.)
+	deviceNames := []string{"/dev/sdf", "/dev/sdg", "/dev/sdh", "/dev/sdi", "/dev/sdj"}
+
+	for i, volumeID := range volumeIDs {
+		if i >= len(deviceNames) {
+			return fmt.Errorf("too many volumes to reattach, ran out of device names")
+		}
+
+		deviceName := deviceNames[i]
+		By(fmt.Sprintf("Reattaching volume %s to device %s", volumeID, deviceName))
+
+		_, err := ec2Client.AttachVolume(&ec2.AttachVolumeInput{
+			VolumeId:   aws.String(volumeID),
+			InstanceId: aws.String(instanceID),
+			Device:     aws.String(deviceName),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to attach volume %s: %w", volumeID, err)
+		}
+
+		// Wait for volume to be attached
+		By(fmt.Sprintf("Waiting for volume %s to be attached", volumeID))
+		Eventually(func() bool {
+			result, err := ec2Client.DescribeVolumes(&ec2.DescribeVolumesInput{
+				VolumeIds: []*string{aws.String(volumeID)},
+			})
+			if err != nil {
+				return false
+			}
+			if len(result.Volumes) == 0 {
+				return false
+			}
+			// Volume is attached when state is "in-use"
+			return *result.Volumes[0].State == "in-use"
+		}, time.Minute*2, time.Second*5).Should(BeTrue())
+	}
+
+	return nil
 }
