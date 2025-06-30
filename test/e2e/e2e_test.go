@@ -494,6 +494,7 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 	Expect(err).NotTo(HaveOccurred())
 
 	// Create a temporary SCC for network testing that includes NET_ADMIN capability
+	By("Creating temporary SCC for network testing")
 	sccYAML := fmt.Sprintf(`apiVersion: security.openshift.io/v1
 kind: SecurityContextConstraints
 metadata:
@@ -531,11 +532,11 @@ volumes:
 - projected
 - secret`, testNS)
 
-	// Apply the temporary SCC
-	By("Creating temporary SCC for network testing")
+	// Apply the temporary SCC using kubectl since it's simpler for OpenShift resources
 	err = k8sClientset.RESTClient().
 		Post().
 		AbsPath("/apis/security.openshift.io/v1/securitycontextconstraints").
+		SetHeader("Content-Type", "application/yaml").
 		Body([]byte(sccYAML)).
 		Do(ctx).
 		Error()
@@ -754,8 +755,8 @@ spec:
       # Function to consume CPU cycles
       cpu_load() {
         local duration=$1
-        local end_time=$(($(date +%s) + duration))
-        while [ $(date +%s) -lt $end_time ]; do
+        local end_time=$(($(date +%%s) + duration))
+        while [ $(date +%%s) -lt $end_time ]; do
           : # No-op operation in a tight loop
         done
       }
@@ -765,7 +766,7 @@ spec:
         # Create a variable with repeated data to consume memory
         local data=""
         for i in {1..1000}; do
-          data="${data}$(printf 'x%.0s' {1..1000})"
+          data="${data}$(printf 'x%%.0s' {1..1000})"
         done
         sleep 30
       }
