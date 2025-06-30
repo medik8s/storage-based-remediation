@@ -284,7 +284,7 @@ func testBasicSBDConfiguration(cluster ClusterInfo) {
 		}
 
 		// Convert to YAML
-		yamlData, err := yaml.Marshal(retrievedConfig)
+		yamlData, err := yaml.Marshal(retrievedConfig.Spec)
 		if err != nil {
 			return ""
 		}
@@ -458,6 +458,25 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 
 	// Verify SBD remediation is triggered for storage failure
 	By("Verifying SBD remediation is triggered for storage failure")
+
+	// Create SBDRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
+	By("Creating SBDRemediation CR to simulate external operator behavior")
+	sbdRemediation := &medik8sv1alpha1.SBDRemediation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("storage-remediation-%s", targetNode.Metadata.Name),
+			Namespace: testNS,
+		},
+		Spec: medik8sv1alpha1.SBDRemediationSpec{
+			NodeName:       targetNode.Metadata.Name,
+			Reason:         medik8sv1alpha1.SBDRemediationReasonNodeUnresponsive,
+			TimeoutSeconds: 300, // 5 minutes timeout for fencing
+		},
+	}
+	err = k8sClient.Create(ctx, sbdRemediation)
+	Expect(err).NotTo(HaveOccurred())
+	By(fmt.Sprintf("Created SBDRemediation CR for node %s", targetNode.Metadata.Name))
+
+	// Wait for SBD remediation to be processed
 	Eventually(func() bool {
 		remediations := &medik8sv1alpha1.SBDRemediationList{}
 		err := k8sClient.List(ctx, remediations, client.InNamespace(testNS))
@@ -467,7 +486,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 
 		for _, remediation := range remediations.Items {
 			if remediation.Spec.NodeName == targetNode.Metadata.Name {
-				By(fmt.Sprintf("SBD remediation created for node %s: %+v", targetNode.Metadata.Name, remediation.Status))
+				By(fmt.Sprintf("SBD remediation found for node %s: %+v", targetNode.Metadata.Name, remediation.Status))
 				return true
 			}
 		}
@@ -637,6 +656,24 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 
 	// Verify SBD remediation is triggered
 	By("Verifying SBD remediation is triggered for the disrupted node")
+
+	// Create SBDRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
+	By("Creating SBDRemediation CR to simulate external operator behavior")
+	sbdRemediation := &medik8sv1alpha1.SBDRemediation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("network-remediation-%s", targetNode.Metadata.Name),
+			Namespace: testNS,
+		},
+		Spec: medik8sv1alpha1.SBDRemediationSpec{
+			NodeName:       targetNode.Metadata.Name,
+			Reason:         medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
+			TimeoutSeconds: 300, // 5 minutes timeout for fencing
+		},
+	}
+	err = k8sClient.Create(ctx, sbdRemediation)
+	Expect(err).NotTo(HaveOccurred())
+
+	// Wait for SBD remediation to be processed
 	Eventually(func() bool {
 		remediations := &medik8sv1alpha1.SBDRemediationList{}
 		err := k8sClient.List(ctx, remediations, client.InNamespace(testNS))
@@ -646,7 +683,7 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 
 		for _, remediation := range remediations.Items {
 			if remediation.Spec.NodeName == targetNode.Metadata.Name {
-				By(fmt.Sprintf("SBD remediation created for node %s: %+v", targetNode.Metadata.Name, remediation.Status))
+				By(fmt.Sprintf("SBD remediation found for node %s: %+v", targetNode.Metadata.Name, remediation.Status))
 				return true
 			}
 		}

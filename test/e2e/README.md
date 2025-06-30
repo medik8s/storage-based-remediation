@@ -127,7 +127,8 @@ The e2e tests include several scenarios to validate SBD operator functionality:
 - **Method**: Detaches non-root EBS volumes from target EC2 instance
 - **Validation**: 
   - Node becomes NotReady due to storage issues
-  - SBD remediation is triggered
+  - **Test creates SBDRemediation CR (simulating Node Healthcheck Operator)**
+  - SBD remediation is triggered and processed
   - **Node actually panics/reboots (actual fencing verification)**
   - Storage is restored and node recovers
 - **Safety**: Only detaches additional volumes, never touches root volume
@@ -137,7 +138,8 @@ The e2e tests include several scenarios to validate SBD operator functionality:
 - **Method**: Creates temporary security group blocking all outbound traffic
 - **Validation**:
   - Node becomes NotReady due to kubelet communication failure
-  - SBD remediation is triggered
+  - **Test creates SBDRemediation CR (simulating Node Healthcheck Operator)**
+  - SBD remediation is triggered and processed
   - **Node actually panics/reboots (actual fencing verification)**
   - Network access is restored and node recovers
 - **Safety**: Preserves existing security groups, only adds temporary blocking group
@@ -161,6 +163,32 @@ The e2e tests include several scenarios to validate SBD operator functionality:
   4. Disruption is removed and node recovers (5-10 minutes)
 
 **This is the correct behavior** - SBD is designed to fence (reboot) unresponsive nodes, and the tests now properly validate this critical functionality.
+
+## SBD Architecture and Component Responsibilities
+
+**Important**: Understanding who creates SBDRemediation CRs is crucial for proper testing:
+
+### Production Architecture:
+1. **Node Healthcheck Operator** (or similar external monitoring)
+   - Monitors node health and responsiveness
+   - Detects when nodes become unhealthy/unresponsive
+   - **Creates SBDRemediation CRs** to request fencing
+
+2. **SBD Operator** (this project)
+   - Watches for SBDRemediation CRs
+   - Processes fencing requests
+   - Writes fence messages to shared SBD device
+   - Updates SBDRemediation status
+
+3. **SBD Agent** (DaemonSet on each node)
+   - Monitors its slot in the SBD device
+   - Initiates self-fencing when fence message detected
+   - Provides watchdog functionality
+
+### Test Architecture:
+Since the e2e tests don't have a Node Healthcheck Operator, **the tests simulate this external component** by:
+- Creating SBDRemediation CRs after detecting node issues
+- This simulates what would happen in a real cluster with monitoring
 
 ## Test Skipping and Failures
 
