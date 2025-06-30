@@ -25,6 +25,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -108,6 +109,10 @@ func setupKubernetesClients() error {
 	err = corev1.AddToScheme(scheme)
 	if err != nil {
 		return fmt.Errorf("failed to add core types to scheme: %w", err)
+	}
+	err = appsv1.AddToScheme(scheme)
+	if err != nil {
+		return fmt.Errorf("failed to add apps types to scheme: %w", err)
 	}
 	err = medik8sv1alpha1.AddToScheme(scheme)
 	if err != nil {

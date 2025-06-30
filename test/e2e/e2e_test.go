@@ -122,8 +122,8 @@ var _ = Describe("SBD Operator E2E Tests", func() {
 		})
 
 		It("should trigger fencing when kubelet communication is interrupted", func() {
-			if len(clusterInfo.WorkerNodes) < 4 {
-				Skip("Test requires at least 4 worker nodes for safe communication disruption testing")
+			if len(clusterInfo.WorkerNodes) < 3 {
+				Skip("Test requires at least 3 worker nodes for safe communication disruption testing")
 			}
 			testKubeletCommunicationFailure(clusterInfo)
 		})
@@ -483,6 +483,66 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 	targetNode := cluster.WorkerNodes[1] // Use different node than storage test
 	By(fmt.Sprintf("Testing kubelet communication failure on node %s", targetNode.Metadata.Name))
 
+	// Create a service account for the network disruptor pod
+	serviceAccount := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "network-disruptor",
+			Namespace: testNS,
+		},
+	}
+	err := k8sClient.Create(ctx, serviceAccount)
+	Expect(err).NotTo(HaveOccurred())
+
+	// Create a temporary SCC for network testing that includes NET_ADMIN capability
+	sccYAML := fmt.Sprintf(`apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: sbd-e2e-network-test
+allowHostDirVolumePlugin: true
+allowHostIPC: false
+allowHostNetwork: true
+allowHostPID: true
+allowHostPorts: false
+allowPrivilegedContainer: true
+allowedCapabilities:
+- SYS_ADMIN
+- SYS_MODULE
+- NET_ADMIN
+defaultAddCapabilities: null
+fsGroup:
+  type: RunAsAny
+priority: 10
+readOnlyRootFilesystem: false
+requiredDropCapabilities: null
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+users:
+- system:serviceaccount:%s:network-disruptor
+volumes:
+- configMap
+- downwardAPI
+- emptyDir
+- hostPath
+- persistentVolumeClaim
+- projected
+- secret`, testNS)
+
+	// Apply the temporary SCC
+	By("Creating temporary SCC for network testing")
+	err = k8sClientset.RESTClient().
+		Post().
+		AbsPath("/apis/security.openshift.io/v1/securitycontextconstraints").
+		Body([]byte(sccYAML)).
+		Do(ctx).
+		Error()
+	if err != nil && !strings.Contains(err.Error(), "already exists") {
+		Expect(err).NotTo(HaveOccurred())
+	}
+
 	// Create a network disruption pod that interferes with kubelet communication
 	networkDisruptorYAML := fmt.Sprintf(`apiVersion: v1
 kind: Pod
@@ -490,6 +550,7 @@ metadata:
   name: network-disruptor
   namespace: %s
 spec:
+  serviceAccountName: network-disruptor
   nodeSelector:
     kubernetes.io/hostname: %s
   hostNetwork: true
@@ -525,16 +586,28 @@ spec:
       capabilities:
         add:
         - NET_ADMIN
+        - SYS_ADMIN
   restartPolicy: Never
   tolerations:
   - operator: Exists`, testNS, targetNode.Metadata.Name)
 
 	By("Creating network disruption pod")
 	var networkPod corev1.Pod
-	err := yaml.Unmarshal([]byte(networkDisruptorYAML), &networkPod)
+	err = yaml.Unmarshal([]byte(networkDisruptorYAML), &networkPod)
 	Expect(err).NotTo(HaveOccurred())
 	err = k8sClient.Create(ctx, &networkPod)
 	Expect(err).NotTo(HaveOccurred())
+
+	// Wait for pod to start
+	By("Waiting for network disruption pod to start")
+	Eventually(func() bool {
+		pod := &corev1.Pod{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: "network-disruptor", Namespace: testNS}, pod)
+		if err != nil {
+			return false
+		}
+		return pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodSucceeded
+	}, time.Minute*2, time.Second*10).Should(BeTrue())
 
 	By("Monitoring node status during communication disruption")
 	// Monitor for node becoming NotReady
@@ -573,6 +646,17 @@ spec:
 		}
 		return false
 	}, time.Minute*3, time.Second*15).Should(BeTrue())
+
+	// Clean up the temporary SCC
+	By("Cleaning up temporary SCC")
+	err = k8sClientset.RESTClient().
+		Delete().
+		AbsPath("/apis/security.openshift.io/v1/securitycontextconstraints/sbd-e2e-network-test").
+		Do(ctx).
+		Error()
+	if err != nil && !strings.Contains(err.Error(), "not found") {
+		GinkgoWriter.Printf("Warning: Failed to clean up temporary SCC: %v\n", err)
+	}
 
 	GinkgoWriter.Printf("Kubelet communication failure test completed\n")
 }
@@ -663,15 +747,44 @@ spec:
     - -c
     - |
       echo "Starting non-critical resource consumption..."
-      # Consume some CPU and memory but not enough to trigger fencing
-      stress-ng --cpu 1 --cpu-load 50 --timeout 60s 2>/dev/null || (
-        # Fallback if stress-ng is not available
-        for i in {1..2}; do
-          dd if=/dev/zero of=/dev/null bs=1M count=1 &
+      
+      # Simple CPU and memory consumption using basic shell operations
+      # This creates a controlled load without external dependencies
+      
+      # Function to consume CPU cycles
+      cpu_load() {
+        local duration=$1
+        local end_time=$(($(date +%s) + duration))
+        while [ $(date +%s) -lt $end_time ]; do
+          : # No-op operation in a tight loop
         done
-        sleep 60
-        pkill dd || true
-      )
+      }
+      
+      # Function to consume memory
+      memory_load() {
+        # Create a variable with repeated data to consume memory
+        local data=""
+        for i in {1..1000}; do
+          data="${data}$(printf 'x%.0s' {1..1000})"
+        done
+        sleep 30
+      }
+      
+      # Run CPU load in background
+      cpu_load 60 &
+      cpu_pid=$!
+      
+      # Run memory load in background  
+      memory_load &
+      memory_pid=$!
+      
+      echo "Resource consumption active for 60 seconds..."
+      sleep 60
+      
+      # Clean up background processes
+      kill $cpu_pid 2>/dev/null || true
+      kill $memory_pid 2>/dev/null || true
+      
       echo "Non-critical resource consumption completed"
       sleep 30
     resources:
@@ -783,6 +896,19 @@ func cleanupTestArtifacts() {
 			},
 		}
 		_ = k8sClient.Delete(ctx, pod)
+	}
+
+	// Clean up temporary SCCs that might be left over from failed tests
+	tempSCCs := []string{"sbd-e2e-network-test", "sbd-e2e-storage-test"}
+	for _, sccName := range tempSCCs {
+		err := k8sClientset.RESTClient().
+			Delete().
+			AbsPath("/apis/security.openshift.io/v1/securitycontextconstraints/" + sccName).
+			Do(ctx).
+			Error()
+		if err != nil && !strings.Contains(err.Error(), "not found") {
+			_, _ = fmt.Fprintf(GinkgoWriter, "Warning: Failed to clean up temporary SCC %s: %v\n", sccName, err)
+		}
 	}
 
 	// Wait a moment for cleanup
