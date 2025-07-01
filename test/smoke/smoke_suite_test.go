@@ -19,11 +19,17 @@ package smoke
 import (
 	"fmt"
 	"os"
-	"os/exec"
+	"strings"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/medik8s/sbd-operator/test/utils"
 )
@@ -112,11 +118,28 @@ var _ = BeforeSuite(func() {
 	_, _ = fmt.Fprintf(GinkgoWriter, "Project image: %s\n", projectImage)
 	_, _ = fmt.Fprintf(GinkgoWriter, "Agent image: %s\n", agentImage)
 
+	By("initializing Kubernetes clients for watchdog tests if needed")
+	if k8sClient == nil {
+		err := setupKubernetesClients()
+		Expect(err).NotTo(HaveOccurred(), "Failed to setup Kubernetes clients")
+	}
+
 	// Verify we can connect to the cluster
 	By("verifying cluster connection")
-	cmd := exec.Command("kubectl", "cluster-info")
-	_, err := utils.Run(cmd)
+	serverVersion, err := clientset.Discovery().ServerVersion()
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to connect to cluster")
+	_, _ = fmt.Fprintf(GinkgoWriter, "Connected to Kubernetes cluster version: %s\n", serverVersion.String())
+
+	By("creating test namespace for watchdog smoke tests if it doesn't exist")
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: namespace,
+		},
+	}
+	err = k8sClient.Create(ctx, ns)
+	if err != nil && !strings.Contains(err.Error(), "already exists") {
+		Expect(err).NotTo(HaveOccurred())
+	}
 
 	// The smoke tests are intended to run on a temporary cluster that is created and destroyed for testing.
 	// To prevent errors when tests run in environments with CertManager already installed,
@@ -132,6 +155,26 @@ var _ = BeforeSuite(func() {
 			_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: CertManager is already installed. Skipping installation...\n")
 		}
 	}
+
+	By("verifying CRDs are installed")
+	sbdConfigCRD := &apiextensionsv1.CustomResourceDefinition{}
+	err = k8sClient.Get(ctx, client.ObjectKey{Name: "sbdconfigs.medik8s.medik8s.io"}, sbdConfigCRD)
+	Expect(err).NotTo(HaveOccurred(), "Expected CRDs to be installed (should be done by Makefile setup)")
+
+	By("verifying the controller-manager is deployed")
+	deployment := &appsv1.Deployment{}
+	err = k8sClient.Get(ctx, client.ObjectKey{
+		Name:      "sbd-operator-controller-manager",
+		Namespace: namespace,
+	}, deployment)
+	Expect(err).NotTo(HaveOccurred(), "Expected controller-manager to be deployed (should be done by Makefile setup)")
+
+	// Confirm the operator is running
+	By("confirming the operator is running")
+	Eventually(func() bool {
+		operatorPod, err := clientset.CoreV1().Pods(namespace).Get(ctx, "sbd-operator-controller-manager-0", metav1.GetOptions{})
+		return err == nil && operatorPod.Status.Phase == corev1.PodRunning
+	}, 10*time.Second, 1*time.Second).Should(BeTrue(), "Operator pod is not running")
 })
 
 var _ = AfterSuite(func() {
