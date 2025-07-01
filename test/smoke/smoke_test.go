@@ -115,24 +115,6 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke"), func() {
 		By("initializing Kubernetes clients")
 		err := setupKubernetesClients()
 		Expect(err).NotTo(HaveOccurred(), "Failed to setup Kubernetes clients")
-
-		By("verifying the controller-manager namespace exists")
-		ns := &corev1.Namespace{}
-		err = k8sClient.Get(ctx, client.ObjectKey{Name: namespace}, ns)
-		Expect(err).NotTo(HaveOccurred(), "Expected namespace to exist (should be created by Makefile setup)")
-
-		By("verifying CRDs are installed")
-		cmd := exec.Command("kubectl", "get", "crd", "sbdconfigs.medik8s.medik8s.io")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Expected CRDs to be installed (should be done by Makefile setup)")
-
-		By("verifying the controller-manager is deployed")
-		deployment := &appsv1.Deployment{}
-		err = k8sClient.Get(ctx, client.ObjectKey{
-			Name:      "sbd-operator-controller-manager",
-			Namespace: namespace,
-		}, deployment)
-		Expect(err).NotTo(HaveOccurred(), "Expected controller-manager to be deployed (should be done by Makefile setup)")
 	})
 
 	// Clean up test-specific resources (overall cleanup handled by Makefile)

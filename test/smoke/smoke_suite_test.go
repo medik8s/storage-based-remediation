@@ -27,7 +27,6 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -157,23 +156,40 @@ var _ = BeforeSuite(func() {
 	}
 
 	By("verifying CRDs are installed")
-	sbdConfigCRD := &apiextensionsv1.CustomResourceDefinition{}
-	err = k8sClient.Get(ctx, client.ObjectKey{Name: "sbdconfigs.medik8s.medik8s.io"}, sbdConfigCRD)
-	Expect(err).NotTo(HaveOccurred(), "Expected CRDs to be installed (should be done by Makefile setup)")
+	// Check for SBD CRDs by looking for API resources in the medik8s.medik8s.io group
+	apiResourceList, err := clientset.Discovery().ServerResourcesForGroupVersion("medik8s.medik8s.io/v1alpha1")
+	Expect(err).NotTo(HaveOccurred(), "Failed to get API resources for medik8s.medik8s.io/v1alpha1")
+
+	var foundSBDConfig, foundSBDRemediation bool
+	for _, resource := range apiResourceList.APIResources {
+		if resource.Kind == "SBDConfig" {
+			foundSBDConfig = true
+		}
+		if resource.Kind == "SBDRemediation" {
+			foundSBDRemediation = true
+		}
+	}
+	Expect(foundSBDConfig).To(BeTrue(), "Expected SBDConfig CRD to be installed (should be done by Makefile setup)")
+	Expect(foundSBDRemediation).To(BeTrue(), "Expected SBDRemediation CRD to be installed (should be done by Makefile setup)")
 
 	By("verifying the controller-manager is deployed")
 	deployment := &appsv1.Deployment{}
 	err = k8sClient.Get(ctx, client.ObjectKey{
 		Name:      "sbd-operator-controller-manager",
-		Namespace: namespace,
+		Namespace: "sbd-operator-system",
 	}, deployment)
 	Expect(err).NotTo(HaveOccurred(), "Expected controller-manager to be deployed (should be done by Makefile setup)")
 
 	// Confirm the operator is running
 	By("confirming the operator is running")
 	Eventually(func() bool {
-		operatorPod, err := clientset.CoreV1().Pods(namespace).Get(ctx, "sbd-operator-controller-manager-0", metav1.GetOptions{})
-		return err == nil && operatorPod.Status.Phase == corev1.PodRunning
+		podList, err := clientset.CoreV1().Pods("sbd-operator-system").List(ctx, metav1.ListOptions{
+			LabelSelector: "control-plane=controller-manager",
+		})
+		if err != nil || len(podList.Items) == 0 {
+			return false
+		}
+		return podList.Items[0].Status.Phase == corev1.PodRunning
 	}, 10*time.Second, 1*time.Second).Should(BeTrue(), "Operator pod is not running")
 })
 

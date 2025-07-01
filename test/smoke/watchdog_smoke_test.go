@@ -41,17 +41,6 @@ var _ = Describe("SBD Watchdog Smoke Tests", Ordered, Label("Smoke", "Watchdog")
 			err := setupKubernetesClients()
 			Expect(err).NotTo(HaveOccurred(), "Failed to setup Kubernetes clients")
 		}
-
-		By("creating test namespace for watchdog smoke tests if it doesn't exist")
-		ns := &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: watchdogTestNamespace,
-			},
-		}
-		err := k8sClient.Create(ctx, ns)
-		if err != nil && !strings.Contains(err.Error(), "already exists") {
-			Expect(err).NotTo(HaveOccurred())
-		}
 	})
 
 	AfterAll(func() {
