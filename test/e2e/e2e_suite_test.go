@@ -144,39 +144,20 @@ func TestE2E(t *testing.T) {
 	RunSpecs(t, "e2e suite")
 }
 
+const testNS = "sbd-test"
+
 var _ = BeforeSuite(func() {
-	// Initialize context
-	ctx = context.Background()
+	var err error
+	testClients, err = utils.SuiteSetup(testNS)
+	Expect(err).NotTo(HaveOccurred(), "Failed to setup test clients")
 
-	By("verifying e2e test environment setup")
-	_, _ = fmt.Fprintf(GinkgoWriter, "E2E test environment setup completed by Makefile\n")
-	_, _ = fmt.Fprintf(GinkgoWriter, "Project image: %s\n", projectImage)
+	// Update global clients for backward compatibility
+	k8sClient = testClients.Client
+	ctx = testClients.Context
 
-	// Initialize Kubernetes clients
-	By("setting up Kubernetes clients")
-	err := setupKubernetesClients()
-	Expect(err).NotTo(HaveOccurred(), "Failed to setup Kubernetes clients")
-
-	// Verify we can connect to the cluster
-	By("verifying cluster connection")
-	nodes := &corev1.NodeList{}
-	err = k8sClient.List(ctx, nodes)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to connect to cluster")
-
-	// The e2e tests are intended to run on an existing cluster that supports comprehensive testing.
-	// To prevent errors when tests run in environments with CertManager already installed,
-	// we check for its presence before execution.
-	// Setup CertManager before the suite if not skipped and if not already installed
-	if !skipCertManagerInstall {
-		By("checking if cert manager is installed already")
-		isCertManagerAlreadyInstalled = utils.IsCertManagerCRDsInstalled()
-		if !isCertManagerAlreadyInstalled {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Installing CertManager...\n")
-			Expect(utils.InstallCertManager()).To(Succeed(), "Failed to install CertManager")
-		} else {
-			_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: CertManager is already installed. Skipping installation...\n")
-		}
-	}
+	By("creating e2e test namespace")
+	testNamespace, err = testClients.CreateTestNamespace(testNS)
+	Expect(err).NotTo(HaveOccurred(), "Failed to create e2e test namespace")
 
 	By("Checking AWS availability for disruption tests (one-time setup)")
 	if err := initAWS(); err != nil {
@@ -189,9 +170,10 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = AfterSuite(func() {
-	// Teardown CertManager after the suite if not skipped and if it was not already installed
-	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling CertManager...\n")
-		utils.UninstallCertManager()
-	}
+	utils.UninstallCertManager()
+})
+
+var _ = BeforeEach(func() {
+	GinkgoWriter.Printf("Cleaning up SBDConfigs before each test: %v %v\n", testClients, testNamespace)
+	utils.CleanupSBDConfigs(testClients.Client, *testNamespace, testClients.Context)
 })

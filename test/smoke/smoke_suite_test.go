@@ -64,7 +64,9 @@ func TestSmoke(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	utils.SuiteSetup(testNamespace)
+	var err error
+	testClients, err = utils.SuiteSetup(testNamespace)
+	Expect(err).NotTo(HaveOccurred(), "Failed to setup test clients")
 })
 
 var _ = AfterSuite(func() {

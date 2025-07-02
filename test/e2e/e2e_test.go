@@ -29,7 +29,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/ec2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -71,7 +70,6 @@ type NodeCondition struct {
 
 var (
 	clusterInfo    ClusterInfo
-	testNS         string
 	awsSession     *session.Session
 	ec2Client      *ec2.EC2
 	awsRegion      string
@@ -84,27 +82,9 @@ var (
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to
 // http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
 
+var testNamespace *utils.TestNamespace
 var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
-	const namespace = "sbd-e2e-test"
-
-	var testNamespace *utils.TestNamespace
-
 	BeforeAll(func() {
-		By("initializing Kubernetes clients")
-		var err error
-		testClients, err = utils.SetupKubernetesClients()
-		Expect(err).NotTo(HaveOccurred(), "Failed to setup Kubernetes clients")
-
-		// Update global clients for backward compatibility
-		k8sClient = testClients.Client
-		ctx = testClients.Context
-
-		By("creating e2e test namespace")
-		testNamespace, err = testClients.CreateTestNamespace("sbd-e2e-test")
-		Expect(err).NotTo(HaveOccurred(), "Failed to create e2e test namespace")
-
-		// Update the global testNS variable to use the new namespace name
-		testNS = testNamespace.Name
 
 		// Discover cluster topology
 		discoverClusterTopology()
@@ -276,130 +256,22 @@ func testBasicSBDConfiguration(cluster ClusterInfo) {
 	testStorageClassName := rwxStorageClass.Name
 	GinkgoWriter.Printf("Selected storage class for testing: %s\n", testStorageClassName)
 
-	sbdConfig := &medik8sv1alpha1.SBDConfig{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-sbd-config",
-			Namespace: testNS,
-		},
-		Spec: medik8sv1alpha1.SBDConfigSpec{
-			SbdWatchdogPath:    "/dev/watchdog",
-			SharedStorageClass: testStorageClassName,
-			StaleNodeTimeout:   &metav1.Duration{Duration: 90 * time.Second},
-		},
+	sbdConfig, err := testNamespace.CreateSBDConfig("test-sbd-config", func(config *medik8sv1alpha1.SBDConfig) {
+		config.Spec.SbdWatchdogPath = "/dev/watchdog"
+		config.Spec.SharedStorageClass = testStorageClassName
+		config.Spec.StaleNodeTimeout = &metav1.Duration{Duration: 2 * time.Hour}
+		config.Spec.WatchdogTimeout = &metav1.Duration{Duration: 90 * time.Second}
+	})
+	Expect(err).NotTo(HaveOccurred())
+
+	validator := testNamespace.NewSBDAgentValidator()
+	opts := utils.DefaultValidateAgentDeploymentOptions(sbdConfig.Name)
+	opts.ExpectedArgs = []string{
+		"--watchdog-path=/dev/watchdog",
+		"--watchdog-timeout=1m30s",
 	}
-
-	// Create the SBDConfig
-	err = k8sClient.Create(ctx, sbdConfig)
+	err = validator.ValidateAgentDeployment(opts)
 	Expect(err).NotTo(HaveOccurred())
-
-	By("Verifying SBDConfig was created and processed")
-	Eventually(func() bool {
-		retrievedConfig := &medik8sv1alpha1.SBDConfig{}
-		err := k8sClient.Get(ctx, types.NamespacedName{
-			Name:      "test-sbd-config",
-			Namespace: testNS,
-		}, retrievedConfig)
-		return err == nil
-	}, time.Minute*2, time.Second*10).Should(BeTrue())
-
-	By("Displaying SBDConfig in YAML format")
-	// Get and display the final YAML
-	retrievedConfig := &medik8sv1alpha1.SBDConfig{}
-	err = k8sClient.Get(ctx, types.NamespacedName{
-		Name:      "test-sbd-config",
-		Namespace: testNS,
-	}, retrievedConfig)
-	Expect(err).NotTo(HaveOccurred())
-
-	yamlData, err := yaml.Marshal(retrievedConfig.Spec)
-	Expect(err).NotTo(HaveOccurred())
-
-	GinkgoWriter.Printf("SBDConfig YAML of %s:\n%s\n", retrievedConfig.Name, string(yamlData))
-
-	By("Waiting for SBD agent DaemonSet to be created")
-	var lastSBDConfigStatus medik8sv1alpha1.SBDConfigStatus
-	Eventually(func() bool {
-		// First, check if the SBDConfig has been processed by the controller
-		retrievedConfig := &medik8sv1alpha1.SBDConfig{}
-		err := k8sClient.Get(ctx, types.NamespacedName{
-			Name:      "test-sbd-config",
-			Namespace: testNS,
-		}, retrievedConfig)
-		if err != nil {
-			GinkgoWriter.Printf("Error retrieving SBDConfig: %v\n", err)
-			return false
-		}
-
-		lastSBDConfigStatus = retrievedConfig.Status
-		GinkgoWriter.Printf("SBDConfig Status: ReadyNodes=%d, TotalNodes=%d, Generation=%d, Conditions=%d\n",
-			retrievedConfig.Status.ReadyNodes, retrievedConfig.Status.TotalNodes, retrievedConfig.Generation, len(retrievedConfig.Status.Conditions))
-
-		// Print condition details
-		for _, condition := range retrievedConfig.Status.Conditions {
-			GinkgoWriter.Printf("  Condition: Type=%s, Status=%s, Reason=%s, Message=%s\n",
-				condition.Type, condition.Status, condition.Reason, condition.Message)
-		}
-
-		// Check if controller is running by looking for controller manager deployment
-		deployments := &appsv1.DeploymentList{}
-		err = k8sClient.List(ctx, deployments, client.InNamespace("sbd-operator-system"), client.MatchingLabels{"control-plane": "controller-manager"})
-		if err == nil && len(deployments.Items) > 0 {
-			deployment := deployments.Items[0]
-			GinkgoWriter.Printf("Controller deployment found: %s, Ready replicas: %d/%d\n",
-				deployment.Name, deployment.Status.ReadyReplicas, deployment.Status.Replicas)
-		} else {
-			GinkgoWriter.Printf("Controller deployment not found or error: %v\n", err)
-		}
-
-		daemonSets := &appsv1.DaemonSetList{}
-		err = k8sClient.List(ctx, daemonSets, client.InNamespace(testNS), client.MatchingLabels{"app": "sbd-agent"})
-
-		// Always list all DaemonSets in the test namespace for debugging
-		By("Listing all DaemonSets in the test namespace")
-		daemonSetsT := &appsv1.DaemonSetList{}
-		errT := k8sClient.List(ctx, daemonSetsT, client.InNamespace(testNS))
-		if errT == nil {
-			GinkgoWriter.Printf("Found %d DaemonSets in namespace %s:\n", len(daemonSetsT.Items), testNS)
-			for i, ds := range daemonSetsT.Items {
-				GinkgoWriter.Printf("  %d. Name: %s, Labels: %v, Desired: %d, Current: %d, Ready: %d\n",
-					i+1, ds.Name, ds.Labels, ds.Status.DesiredNumberScheduled, ds.Status.CurrentNumberScheduled, ds.Status.NumberReady)
-			}
-		} else {
-			GinkgoWriter.Printf("Error listing DaemonSets in namespace %s: %v\n", testNS, errT)
-		}
-
-		// Log the specific search results
-		if err == nil {
-			GinkgoWriter.Printf("Found %d DaemonSets with label app=sbd-agent in namespace %s\n", len(daemonSets.Items), testNS)
-		} else {
-			GinkgoWriter.Printf("Error searching for DaemonSets with label app=sbd-agent: %v\n", err)
-		}
-
-		return err == nil && len(daemonSets.Items) > 0
-	}, time.Minute*6, time.Second*15).Should(BeTrue())
-
-	GinkgoWriter.Printf("Final SBDConfig Status: %+v\n", lastSBDConfigStatus)
-
-	By("Verifying SBD agents are running on worker nodes")
-	Eventually(func() bool {
-		pods := &corev1.PodList{}
-		err := k8sClient.List(ctx, pods, client.InNamespace(testNS), client.MatchingLabels{"app": "sbd-agent"})
-		if err != nil {
-			return false
-		}
-
-		runningPods := 0
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == corev1.PodRunning {
-				runningPods++
-			}
-		}
-
-		// Expect at least 2 running pods (minimum for meaningful SBD testing)
-		return runningPods >= 2
-	}, time.Minute*5, time.Second*15).Should(BeTrue())
-
-	GinkgoWriter.Printf("SBD configuration test completed successfully\n")
 }
 
 func testStorageAccessInterruption(cluster ClusterInfo) {

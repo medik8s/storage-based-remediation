@@ -96,6 +96,7 @@ test-e2e: ## Run e2e tests using the test runner script (auto-detects environmen
 test-smoke: ## Run smoke tests with building images.
 	@echo "Running smoke tests with image building..."
 	@scripts/run-tests.sh --type smoke --env cluster -v
+# -ginkgo.label-filter="Remediation" 
 
 .PHONY: load-images
 load-images:

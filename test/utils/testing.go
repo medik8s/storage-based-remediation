@@ -944,7 +944,7 @@ func CleanupSBDConfigs(k8sClient client.Client, testNS TestNamespace, ctx contex
 	}
 }
 
-func SuiteSetup(namespace string) (TestClients, error) {
+func SuiteSetup(namespace string) (*TestClients, error) {
 
 	By("verifying smoke test environment setup")
 	_, _ = fmt.Fprintf(GinkgoWriter, "Smoke test environment setup completed by Makefile\n")
@@ -1024,5 +1024,5 @@ func SuiteSetup(namespace string) (TestClients, error) {
 		return podList.Items[0].Status.Phase == corev1.PodRunning
 	}, 10*time.Second, 1*time.Second).Should(BeTrue(), "Operator pod is not running")
 
-	return *testClients, nil
+	return testClients, nil
 }
