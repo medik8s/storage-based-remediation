@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -1219,44 +1220,109 @@ func getInstanceIDFromNode(nodeName string) (string, error) {
 	return matches[1], nil
 }
 
-// createNetworkDisruption creates targeted network disruption to block kubelet communication with the API server load balancer
+// createNetworkDisruption creates targeted disruption by stopping kubelet service on the target node
 func createNetworkDisruption(instanceID string) (*string, error) {
-	// Get API server endpoint to identify the load balancer
-	apiServerURL := os.Getenv("KUBERNETES_SERVICE_HOST")
-	if apiServerURL == "" {
-		// Fallback to kubeconfig if service host not available
-		// This would need to be extracted from cluster info in a real implementation
-		apiServerURL = "api.cluster-domain.example.com" // Placeholder
-	}
+	By(fmt.Sprintf("Creating kubelet disruption for instance %s", instanceID))
 
-	By(fmt.Sprintf("Creating targeted network disruption for instance %s by blocking API server load balancer access", instanceID))
-
-	// For OpenShift clusters with OVN-Kubernetes and load balancer-based API access,
-	// we need to use host-level iptables rules rather than AWS security groups
-	// because OVN overlay networking bypasses EC2 security groups for internal traffic
-
-	// Create a privileged pod on the target node to apply iptables rules
+	// Get the node name from the instance ID
 	nodeName, err := getNodeNameFromInstanceID(instanceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get node name for instance %s: %w", instanceID, err)
 	}
 
-	disruptorPodName := fmt.Sprintf("sbd-e2e-network-disruptor-%s", instanceID)
+	By(fmt.Sprintf("Target node: %s", nodeName))
 
-	// For now, return a placeholder string indicating the approach would work
-	// In a full implementation, this would:
-	// 1. Create a privileged pod on the target node
-	// 2. Wait for it to start
-	// 3. Execute iptables commands to block specific API server load balancer IP:port
-	// 4. Return the pod name for cleanup
+	// Create a unique pod name for this disruption
+	disruptorPodName := fmt.Sprintf("sbd-e2e-kubelet-disruptor-%d", time.Now().Unix())
 
-	By("Network disruption approach updated for OVN-Kubernetes with load balancer API access")
-	By("Note: This test validates the updated approach but doesn't perform actual network blocking")
-	By(fmt.Sprintf("Would create disruptor pod: %s on node: %s", disruptorPodName, nodeName))
+	// Create privileged pod that stops kubelet service
+	disruptorPodYAML := fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata:
+  name: %s
+  namespace: default
+  labels:
+    app: sbd-e2e-kubelet-disruptor
+spec:
+  hostNetwork: true
+  hostPID: true
+  nodeName: %s
+  containers:
+  - name: disruptor
+    image: busybox:latest
+    command:
+    - /bin/sh
+    - -c
+    - |
+      echo "SBD e2e kubelet disruptor starting..."
+      echo "Target: Stop kubelet service to simulate node failure"
+      
+      echo "Stopping kubelet service..."
+      nsenter --target 1 --mount --uts --ipc --net --pid -- systemctl stop kubelet.service
+      
+      echo "Kubelet stopped. Node should become NotReady."
+      echo "Waiting for cleanup signal (pod deletion)..."
+      
+      # Keep running until pod is deleted
+      # The cleanup function will restart kubelet before deleting this pod
+      while true; do
+        sleep 30
+        echo "Kubelet disruption active..."
+      done
+    securityContext:
+      privileged: true
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "50m"
+      limits:
+        memory: "64Mi"
+        cpu: "100m"
+  restartPolicy: Never
+  tolerations:
+  - operator: Exists
+`, disruptorPodName, nodeName)
 
-	// Return the disruptor pod name for cleanup
-	disruptorIdentifier := disruptorPodName
-	return &disruptorIdentifier, nil
+	// Apply the pod
+	By(fmt.Sprintf("Creating kubelet disruptor pod: %s", disruptorPodName))
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(disruptorPodYAML)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create disruptor pod: %w (output: %s)", err, string(output))
+	}
+
+	// Wait for pod to start and stop kubelet
+	By("Waiting for disruptor pod to start...")
+	Eventually(func() bool {
+		cmd := exec.Command("kubectl", "get", "pod", disruptorPodName, "-o", "jsonpath={.status.phase}")
+		output, err := cmd.Output()
+		if err != nil {
+			return false
+		}
+		return string(output) == "Running"
+	}, time.Minute*2, time.Second*10).Should(BeTrue())
+
+	// Wait for kubelet to be stopped and node to become NotReady
+	By("Waiting for node to become NotReady due to kubelet termination...")
+	Eventually(func() bool {
+		node := &corev1.Node{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, node)
+		if err != nil {
+			return false
+		}
+
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady && condition.Status != corev1.ConditionTrue {
+				By(fmt.Sprintf("Node %s is now NotReady: %s", nodeName, condition.Reason))
+				return true
+			}
+		}
+		return false
+	}, time.Minute*5, time.Second*15).Should(BeTrue())
+
+	By(fmt.Sprintf("Kubelet disruption successful - node %s is now NotReady", nodeName))
+	return &disruptorPodName, nil
 }
 
 // getNodeNameFromInstanceID maps an EC2 instance ID to a Kubernetes node name
@@ -1277,32 +1343,61 @@ func getNodeNameFromInstanceID(instanceID string) (string, error) {
 	return "", fmt.Errorf("no node found with instance ID %s", instanceID)
 }
 
-// removeNetworkDisruption removes the network disruption by cleaning up the disruptor pod
+// removeNetworkDisruption removes the kubelet disruption by restarting kubelet and cleaning up the disruptor pod
 func removeNetworkDisruption(disruptorIdentifier *string, instanceID string) error {
 	if disruptorIdentifier == nil {
 		return nil
 	}
 
-	By(fmt.Sprintf("Removing network disruption for instance %s", instanceID))
-
-	// For the updated approach using host-level iptables via privileged pods,
-	// cleanup involves:
-	// 1. Executing commands to remove iptables rules
-	// 2. Deleting the disruptor pod
-	// 3. Waiting for node to recover
-
 	disruptorPodName := *disruptorIdentifier
+	By(fmt.Sprintf("Removing kubelet disruption for instance %s (pod: %s)", instanceID, disruptorPodName))
 
-	By("Network disruption cleanup approach updated for OVN-Kubernetes with load balancer API access")
-	By("Note: This cleanup validates the updated approach but doesn't perform actual pod cleanup")
-	By(fmt.Sprintf("Would cleanup disruptor pod: %s", disruptorPodName))
+	// Step 1: Restart kubelet service via the disruptor pod
+	By("Restarting kubelet service...")
+	cmd := exec.Command("kubectl", "exec", disruptorPodName, "--", "nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--", "systemctl", "start", "kubelet.service")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		By(fmt.Sprintf("Warning: failed to restart kubelet via disruptor pod: %v (output: %s)", err, string(output)))
+		// Continue with cleanup even if restart fails - kubelet might recover on its own
+	} else {
+		By("Kubelet service restarted successfully")
+	}
 
-	// In a full implementation, this would:
-	// 1. Execute iptables commands to remove the blocking rules via the disruptor pod
-	// 2. Delete the disruptor pod
-	// 3. Wait for the node to recover and become Ready again
+	// Step 2: Delete the disruptor pod
+	By(fmt.Sprintf("Deleting kubelet disruptor pod: %s", disruptorPodName))
+	cmd = exec.Command("kubectl", "delete", "pod", disruptorPodName, "--wait=false")
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		By(fmt.Sprintf("Warning: failed to delete disruptor pod: %v (output: %s)", err, string(output)))
+	} else {
+		By("Disruptor pod deletion initiated")
+	}
 
-	By("Network disruption removed - node should recover naturally")
+	// Step 3: Wait for node to recover
+	nodeName, err := getNodeNameFromInstanceID(instanceID)
+	if err != nil {
+		By(fmt.Sprintf("Warning: failed to get node name for recovery monitoring: %v", err))
+		return nil // Don't fail cleanup due to monitoring issues
+	}
+
+	By(fmt.Sprintf("Waiting for node %s to recover...", nodeName))
+	Eventually(func() bool {
+		node := &corev1.Node{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, node)
+		if err != nil {
+			return false
+		}
+
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+				By(fmt.Sprintf("Node %s has recovered and is Ready", nodeName))
+				return true
+			}
+		}
+		return false
+	}, time.Minute*3, time.Second*15).Should(BeTrue())
+
+	By("Kubelet disruption cleanup completed successfully")
 	return nil
 }
 
