@@ -1033,17 +1033,19 @@ func validateAWSPermissions() error {
 		name   string
 		testFn func() error
 	}{
+		// Core permissions always needed
 		{"ec2:DescribeInstances", testDescribeInstances},
+		{"ec2:RebootInstances", testRebootInstances}, // CRITICAL: For kubelet disruption recovery
+
+		// Storage disruption test permissions
 		{"ec2:DescribeVolumes", testDescribeVolumes},
-		{"ec2:DescribeSecurityGroups", testDescribeSecurityGroups},
-		{"ec2:CreateSecurityGroup", testCreateSecurityGroup},
-		{"ec2:DeleteSecurityGroup", testDeleteSecurityGroup},
-		{"ec2:ModifyInstanceAttribute", testModifyInstanceAttribute},
 		{"ec2:AttachVolume", testAttachVolume},
 		{"ec2:DetachVolume", testDetachVolume},
-		{"ec2:RevokeSecurityGroupEgress", testRevokeSecurityGroupEgress},
-		{"ec2:AuthorizeSecurityGroupIngress", testAuthorizeSecurityGroupIngress},
-		{"ec2:AuthorizeSecurityGroupEgress", testAuthorizeSecurityGroupEgress},
+
+		// Legacy cleanup permissions (for cleaning up from old test runs)
+		{"ec2:DescribeSecurityGroups", testDescribeSecurityGroups},
+		{"ec2:DeleteSecurityGroup", testDeleteSecurityGroup},
+		{"ec2:ModifyInstanceAttribute", testModifyInstanceAttribute},
 	}
 
 	var failedPermissions []string
@@ -1072,6 +1074,14 @@ func testDescribeInstances() error {
 	return checkAWSPermissionError(err)
 }
 
+func testRebootInstances() error {
+	// Test with non-existent instance ID to check permission
+	_, err := ec2Client.RebootInstances(&ec2.RebootInstancesInput{
+		InstanceIds: []*string{aws.String("i-nonexistent")},
+	})
+	return checkAWSPermissionError(err)
+}
+
 func testDescribeVolumes() error {
 	_, err := ec2Client.DescribeVolumes(&ec2.DescribeVolumesInput{
 		MaxResults: aws.Int64(5),
@@ -1082,16 +1092,6 @@ func testDescribeVolumes() error {
 func testDescribeSecurityGroups() error {
 	_, err := ec2Client.DescribeSecurityGroups(&ec2.DescribeSecurityGroupsInput{
 		MaxResults: aws.Int64(5),
-	})
-	return checkAWSPermissionError(err)
-}
-
-func testCreateSecurityGroup() error {
-	// Test with invalid parameters to check permission without actually creating
-	_, err := ec2Client.CreateSecurityGroup(&ec2.CreateSecurityGroupInput{
-		GroupName:   aws.String("test-sg"),
-		Description: aws.String("test"),
-		VpcId:       aws.String("vpc-nonexistent"), // Non-existent VPC to trigger validation error
 	})
 	return checkAWSPermissionError(err)
 }
@@ -1127,51 +1127,6 @@ func testDetachVolume() error {
 	// Test with invalid parameters to check permission
 	_, err := ec2Client.DetachVolume(&ec2.DetachVolumeInput{
 		VolumeId: aws.String("vol-nonexistent"),
-	})
-	return checkAWSPermissionError(err)
-}
-
-func testRevokeSecurityGroupEgress() error {
-	// Test with invalid parameters to check permission
-	_, err := ec2Client.RevokeSecurityGroupEgress(&ec2.RevokeSecurityGroupEgressInput{
-		GroupId: aws.String("sg-nonexistent"),
-		IpPermissions: []*ec2.IpPermission{
-			{
-				IpProtocol: aws.String("tcp"),
-				FromPort:   aws.Int64(80),
-				ToPort:     aws.Int64(80),
-			},
-		},
-	})
-	return checkAWSPermissionError(err)
-}
-
-func testAuthorizeSecurityGroupIngress() error {
-	// Test with invalid parameters to check permission
-	_, err := ec2Client.AuthorizeSecurityGroupIngress(&ec2.AuthorizeSecurityGroupIngressInput{
-		GroupId: aws.String("sg-nonexistent"),
-		IpPermissions: []*ec2.IpPermission{
-			{
-				IpProtocol: aws.String("tcp"),
-				FromPort:   aws.Int64(80),
-				ToPort:     aws.Int64(80),
-			},
-		},
-	})
-	return checkAWSPermissionError(err)
-}
-
-func testAuthorizeSecurityGroupEgress() error {
-	// Test with invalid parameters to check permission
-	_, err := ec2Client.AuthorizeSecurityGroupEgress(&ec2.AuthorizeSecurityGroupEgressInput{
-		GroupId: aws.String("sg-nonexistent"),
-		IpPermissions: []*ec2.IpPermission{
-			{
-				IpProtocol: aws.String("tcp"),
-				FromPort:   aws.Int64(80),
-				ToPort:     aws.Int64(80),
-			},
-		},
 	})
 	return checkAWSPermissionError(err)
 }
