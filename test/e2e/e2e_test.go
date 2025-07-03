@@ -1339,7 +1339,7 @@ func getNodeNameFromInstanceID(instanceID string) (string, error) {
 	return "", fmt.Errorf("no node found with instance ID %s", instanceID)
 }
 
-// removeNetworkDisruption removes the kubelet disruption by rebooting the node (since kubelet is stopped)
+// removeNetworkDisruption removes the kubelet disruption by checking node status and rebooting only if necessary
 func removeNetworkDisruption(disruptorIdentifier *string, instanceID string) error {
 	if disruptorIdentifier == nil {
 		return nil
@@ -1348,12 +1348,55 @@ func removeNetworkDisruption(disruptorIdentifier *string, instanceID string) err
 	disruptorPodName := *disruptorIdentifier
 	By(fmt.Sprintf("Removing kubelet disruption for instance %s (pod: %s)", instanceID, disruptorPodName))
 
+	// Get the node name first
+	nodeName, err := getNodeNameFromInstanceID(instanceID)
+	if err != nil {
+		By(fmt.Sprintf("Warning: failed to get node name: %v", err))
+		return fmt.Errorf("cannot proceed without node name: %w", err)
+	}
+
+	// Check current node status first
+	By(fmt.Sprintf("Checking current status of node %s...", nodeName))
+	node := &corev1.Node{}
+	err = k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, node)
+	if err != nil {
+		By(fmt.Sprintf("Warning: cannot get node status: %v", err))
+	} else {
+		// Check if node is already Ready
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+				By(fmt.Sprintf("Node %s is already Ready - no reboot needed", nodeName))
+				By("Attempting to clean up disruptor pod...")
+
+				// Try to delete the disruptor pod (might work if kubelet recovered)
+				cmd := exec.Command("kubectl", "delete", "pod", disruptorPodName, "--wait=false", "--ignore-not-found=true")
+				output, err := cmd.CombinedOutput()
+				if err != nil {
+					By(fmt.Sprintf("Note: Could not delete disruptor pod (expected if kubelet was stopped): %v", err))
+				} else {
+					By(fmt.Sprintf("Disruptor pod cleanup initiated: %s", string(output)))
+				}
+
+				By("Kubelet disruption cleanup completed - node already recovered")
+				return nil
+			}
+		}
+
+		// Log current status
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady {
+				By(fmt.Sprintf("Node %s current status: %s (%s) - reboot required", nodeName, condition.Status, condition.Reason))
+				break
+			}
+		}
+	}
+
+	// Node is not Ready, proceed with reboot
+	By("Node is not Ready - proceeding with reboot to restore kubelet service")
+
 	// CRITICAL: When kubelet is stopped, we cannot exec into pods or delete pods
 	// because kubelet manages the pod lifecycle. The only reliable way to restore
 	// the node is to reboot it using AWS EC2 API.
-
-	By("Note: Cannot exec into disruptor pod or delete it because kubelet is stopped")
-	By("Using AWS EC2 reboot to restore node functionality...")
 
 	// Check if AWS is available for reboot
 	if !awsInitialized {
@@ -1362,7 +1405,7 @@ func removeNetworkDisruption(disruptorIdentifier *string, instanceID string) err
 
 	// Reboot the instance to restore kubelet service
 	By(fmt.Sprintf("Rebooting AWS instance %s to restore kubelet service", instanceID))
-	_, err := ec2Client.RebootInstances(&ec2.RebootInstancesInput{
+	_, err = ec2Client.RebootInstances(&ec2.RebootInstancesInput{
 		InstanceIds: []*string{aws.String(instanceID)},
 	})
 	if err != nil {
@@ -1370,13 +1413,6 @@ func removeNetworkDisruption(disruptorIdentifier *string, instanceID string) err
 	}
 
 	By("Reboot initiated successfully")
-
-	// Wait for node to come back online
-	nodeName, err := getNodeNameFromInstanceID(instanceID)
-	if err != nil {
-		By(fmt.Sprintf("Warning: failed to get node name for recovery monitoring: %v", err))
-		return nil // Don't fail cleanup due to monitoring issues
-	}
 
 	By(fmt.Sprintf("Waiting for node %s to reboot and become Ready...", nodeName))
 	Eventually(func() bool {
