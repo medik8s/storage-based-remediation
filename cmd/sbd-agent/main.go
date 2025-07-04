@@ -1413,7 +1413,7 @@ func runPreflightChecks(watchdogPath, sbdDevicePath, nodeName string, nodeID uin
 	// Check if at least one critical component (watchdog OR SBD) is working
 	if sbdDevicePath == "" {
 		// Watchdog-only mode: only watchdog needs to work
-		if watchdogPath != "" {
+		if watchdogPath != "" && watchdogErr == nil {
 			logger.Info("Pre-flight checks passed - watchdog device available (watchdog-only mode)")
 			return nil
 		} else {
@@ -1421,10 +1421,10 @@ func runPreflightChecks(watchdogPath, sbdDevicePath, nodeName string, nodeID uin
 		}
 	} else {
 		// SBD mode: either watchdog OR SBD needs to work
-		if watchdogPath != "" || sbdErr == nil {
-			if watchdogPath != "" && sbdErr == nil {
+		if (watchdogPath != "" && watchdogErr == nil) || sbdErr == nil {
+			if watchdogPath != "" && watchdogErr == nil && sbdErr == nil {
 				logger.Info("All pre-flight checks passed successfully - both watchdog and SBD device available")
-			} else if watchdogPath != "" {
+			} else if watchdogPath != "" && watchdogErr == nil {
 				logger.Info("Pre-flight checks passed - watchdog device available (SBD device failed)")
 			} else {
 				logger.Info("Pre-flight checks passed - SBD device available (watchdog device failed)")
@@ -1436,13 +1436,14 @@ func runPreflightChecks(watchdogPath, sbdDevicePath, nodeName string, nodeID uin
 	}
 }
 
-// checkWatchdogDevice verifies the watchdog device exists and can be opened, with softdog fallback
+// checkWatchdogDevice verifies the watchdog device exists and can be opened
+// Note: This function does NOT use softdog fallback - it strictly checks the specified device
 func checkWatchdogDevice(watchdogPath string) error {
 	logger.V(1).Info("Checking watchdog device availability", "watchdogPath", watchdogPath)
 
-	// Try to create a watchdog instance using the same logic as the main application
-	// This includes softdog fallback if no hardware watchdog is available
-	wd, err := watchdog.NewWithSoftdogFallbackAndTestMode(watchdogPath, false, logger.WithName("preflight-watchdog"))
+	// For preflight checks, we want to be strict about the specified device
+	// Don't use softdog fallback here - if the specified device doesn't work, it should fail
+	wd, err := watchdog.NewWithLogger(watchdogPath, logger.WithName("preflight-watchdog"))
 	if err != nil {
 		return fmt.Errorf("watchdog device pre-flight check failed: %w", err)
 	}
@@ -1453,14 +1454,8 @@ func checkWatchdogDevice(watchdogPath string) error {
 		}
 	}()
 
-	if wd.IsSoftdog() {
-		logger.Info("Pre-flight check: using software watchdog (softdog)",
-			"requestedPath", watchdogPath,
-			"actualPath", wd.Path())
-	} else {
-		logger.Info("Pre-flight check: using hardware watchdog device",
-			"watchdogPath", wd.Path())
-	}
+	logger.Info("Pre-flight check: using hardware watchdog device",
+		"watchdogPath", wd.Path())
 
 	logger.V(1).Info("Watchdog device successfully opened and closed", "watchdogPath", wd.Path())
 	return nil

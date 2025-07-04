@@ -1601,6 +1601,7 @@ func TestPreflightChecks_BothFailing(t *testing.T) {
 	err := runPreflightChecks(watchdogPath, sbdPath, "test-node", 1)
 	if err == nil {
 		t.Error("Expected pre-flight checks to fail with both watchdog and SBD device missing, but they succeeded")
+		return
 	}
 
 	// Should mention both failures
