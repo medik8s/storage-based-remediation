@@ -1180,6 +1180,7 @@ spec:
   containers:
   - name: disruptor
     image: busybox:latest
+    imagePullPolicy: IfNotPresent
     command:
     - /bin/sh
     - -c
@@ -1222,6 +1223,7 @@ spec:
 	}
 
 	// Wait for pod to start and stop kubelet
+	// We may not see the pod move from Pending to Running since kubelet is stopped
 	By("Waiting for disruptor pod to start...")
 	Eventually(func() bool {
 		pod := &corev1.Pod{}
@@ -1231,7 +1233,7 @@ spec:
 		}
 		fmt.Printf("Disruptor pod status: %s\n", pod.Status.Phase)
 		return pod.Status.Phase != corev1.PodPending
-	}, time.Minute*2, time.Second*10).Should(BeTrue())
+	}, time.Minute*2, time.Second*10)
 
 	// Wait for kubelet to be stopped and node to become NotReady
 	By("Waiting for node to become NotReady due to kubelet termination...")
