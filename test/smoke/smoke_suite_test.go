@@ -64,4 +64,9 @@ var _ = BeforeSuite(func() {
 var _ = AfterSuite(func() {
 	// Teardown CertManager after the suite if not skipped and if it was not already installed
 	utils.UninstallCertManager()
+	By("cleaning up watchdog smoke test namespace")
+	if testNamespace != nil {
+		_ = testNamespace.Cleanup()
+	}
+
 })

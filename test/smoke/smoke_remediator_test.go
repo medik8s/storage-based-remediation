@@ -280,8 +280,10 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 						Namespace: testNamespace.Name,
 					}, foundSBDRemediation)
 					if err != nil {
+						fmt.Println("Error getting SBDRemediation", err)
 						return false
 					}
+					fmt.Println("SBDRemediation", foundSBDRemediation.Status.Conditions)
 					return foundSBDRemediation.Status.Conditions != nil && len(foundSBDRemediation.Status.Conditions) > 0 && foundSBDRemediation.Status.Conditions[0].Type == "Ready" && foundSBDRemediation.Status.Conditions[0].Status == "True"
 				}).Should(BeTrue(), fmt.Sprintf("SBDRemediation %d should be ready", i))
 			}

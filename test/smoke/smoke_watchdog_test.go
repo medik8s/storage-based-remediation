@@ -62,11 +62,6 @@ var _ = Describe("SBD Watchdog Smoke Tests", Ordered, Label("Smoke", "Watchdog")
 
 	AfterAll(func() {
 		utils.CleanupSBDConfigs(testClients.Client, *testNamespace, testClients.Context)
-
-		By("cleaning up watchdog smoke test namespace")
-		if testNamespace != nil {
-			_ = testNamespace.Cleanup()
-		}
 	})
 
 	Context("Watchdog Compatibility and Stability", func() {
