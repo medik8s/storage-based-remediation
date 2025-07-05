@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -44,7 +45,8 @@ var _ = Describe("SBDRemediation Controller", func() {
 
 		BeforeEach(func() {
 			ctx = context.Background()
-			resourceName = "test-remediation"
+			// Use unique resource name for each test to avoid conflicts
+			resourceName = fmt.Sprintf("test-remediation-%d", time.Now().UnixNano())
 			namespacedName = types.NamespacedName{
 				Name:      resourceName,
 				Namespace: "default",

@@ -28,36 +28,73 @@ func nodeSelectorOverlaps(selector1, selector2 map[string]string) bool {
 	}
 
 	// For two selectors to overlap, they must be compatible (not contradictory)
-	// This means for each label key that appears in both selectors,
-	// the values must be compatible (same value or at least one is empty)
+	// Check all keys from both selectors to detect incompatibilities
 
-	// Find common label keys
-	commonKeys := make(map[string]bool)
+	// Collect all unique keys from both selectors
+	allKeys := make(map[string]bool)
 	for key := range selector1 {
-		if _, exists := selector2[key]; exists {
-			commonKeys[key] = true
+		allKeys[key] = true
+	}
+	for key := range selector2 {
+		allKeys[key] = true
+	}
+
+	// Check each key for compatibility
+	for key := range allKeys {
+		value1, exists1 := selector1[key]
+		value2, exists2 := selector2[key]
+
+		// If key exists in both selectors
+		if exists1 && exists2 {
+			// If values are different and both are non-empty, selectors are disjoint
+			if value1 != value2 && value1 != "" && value2 != "" {
+				return false
+			}
+		}
+		// If key exists in only one selector, we need to check for mutual exclusion
+		// Special case: node role labels are mutually exclusive
+		if exists1 && !exists2 {
+			// Check if this key represents a mutually exclusive role
+			if isMutuallyExclusiveRole(key) {
+				// Check if the other selector has a conflicting role
+				for otherKey := range selector2 {
+					if isMutuallyExclusiveRole(otherKey) && key != otherKey {
+						return false
+					}
+				}
+			}
+		}
+		if exists2 && !exists1 {
+			// Check if this key represents a mutually exclusive role
+			if isMutuallyExclusiveRole(key) {
+				// Check if the other selector has a conflicting role
+				for otherKey := range selector1 {
+					if isMutuallyExclusiveRole(otherKey) && key != otherKey {
+						return false
+					}
+				}
+			}
 		}
 	}
 
-	// If there are no common keys, the selectors could select overlapping nodes
-	// (each selector constrains different dimensions)
-	if len(commonKeys) == 0 {
-		return true
-	}
-
-	// Check if the common keys have compatible values
-	for key := range commonKeys {
-		value1 := selector1[key]
-		value2 := selector2[key]
-
-		// If values are different and both are non-empty, selectors are disjoint
-		if value1 != value2 && value1 != "" && value2 != "" {
-			return false
-		}
-	}
-
-	// If we get here, all common keys have compatible values, so there's potential overlap
+	// If we get here, no incompatibilities were found, so there's potential overlap
 	return true
+}
+
+// isMutuallyExclusiveRole checks if a label key represents a mutually exclusive node role
+func isMutuallyExclusiveRole(key string) bool {
+	mutuallyExclusiveRoles := []string{
+		"node-role.kubernetes.io/worker",
+		"node-role.kubernetes.io/control-plane",
+		"node-role.kubernetes.io/master", // Legacy key
+	}
+
+	for _, role := range mutuallyExclusiveRoles {
+		if key == role {
+			return true
+		}
+	}
+	return false
 }
 
 func Test_nodeSelectorOverlaps(t *testing.T) {

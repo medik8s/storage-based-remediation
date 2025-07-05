@@ -70,11 +70,6 @@ var (
 	rebootMethod      = flag.String(agent.FlagRebootMethod, agent.DefaultRebootMethod, "Method to use for self-fencing (panic, systemctl-reboot)")
 	metricsPort       = flag.Int(agent.FlagMetricsPort, agent.DefaultMetricsPort, "Port for Prometheus metrics endpoint")
 	staleNodeTimeout  = flag.Duration(agent.FlagStaleNodeTimeout, 1*time.Hour, "Timeout for considering nodes stale and removing them from slot mapping")
-
-	// Kubernetes client configuration flags
-	kubeconfig    = flag.String("kubeconfig", "", "Path to kubeconfig file (optional, uses in-cluster config if not specified)")
-	namespace     = flag.String("namespace", "", "Namespace to watch for SBDRemediation CRs (optional, watches all namespaces if not specified)")
-	enableFencing = flag.Bool("enable-fencing", true, "Enable agent-based fencing capabilities (watch and process SBDRemediation CRs)")
 )
 
 const (
@@ -1649,6 +1644,13 @@ func checkNodeIDNameResolution(nodeName string, nodeID uint16) error {
 
 // validateWatchdogTiming validates the relationship between pet interval and watchdog timeout
 func validateWatchdogTiming(petInterval, watchdogTimeout time.Duration) (bool, string) {
+	// Check for minimum pet interval (should be at least 1 second)
+	minimumPetInterval := 1 * time.Second
+	if petInterval < minimumPetInterval {
+		return false, fmt.Sprintf("pet interval (%v) is very short, minimum recommended is %v",
+			petInterval, minimumPetInterval)
+	}
+
 	// Pet interval should be significantly less than watchdog timeout
 	// Recommended ratio is at least 3:1 (timeout:interval)
 	minimumRatio := 3.0
@@ -1964,6 +1966,11 @@ func (s *SBDAgent) updateRemediationCondition(ctx context.Context, remediation *
 }
 
 func main() {
+	// Kubernetes client configuration flags
+	kubeconfig := flag.String("kubeconfig", "", "Path to kubeconfig file (optional, uses in-cluster config if not specified)")
+	namespace := flag.String("namespace", "", "Namespace to watch for SBDRemediation CRs (optional, watches all namespaces if not specified)")
+	enableFencing := flag.Bool("enable-fencing", true, "Enable agent-based fencing capabilities (watch and process SBDRemediation CRs)")
+
 	flag.Parse()
 
 	// Initialize structured logger first
