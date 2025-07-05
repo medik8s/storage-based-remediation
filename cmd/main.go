@@ -264,6 +264,13 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "SBDRemediation")
 		os.Exit(1)
 	}
+
+	// Set up admission webhooks
+	sbdConfigValidator := &medik8sv1alpha1.SBDConfigValidator{}
+	if err := sbdConfigValidator.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "SBDConfig")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {

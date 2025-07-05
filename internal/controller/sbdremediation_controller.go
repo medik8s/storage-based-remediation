@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -37,15 +36,16 @@ import (
 
 	"github.com/go-logr/logr"
 	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
+	"github.com/medik8s/sbd-operator/pkg/agent"
 	"github.com/medik8s/sbd-operator/pkg/blockdevice"
 	"github.com/medik8s/sbd-operator/pkg/retry"
 	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 const (
 	SBDRemediationFinalizer = "medik8s.io/sbd-remediation-finalizer"
-	// DefaultSBDDevicePath is the default path where the SBD device is mounted in the operator pod
-	DefaultSBDDevicePath = "/mnt/sbd-operator-device"
 	// OperatorNodeID is the node ID used by the operator when writing fence messages
 	OperatorNodeID = uint16(255)
 	// ReasonCompleted indicates the remediation was completed successfully
@@ -92,6 +92,10 @@ const (
 	ReasonFinalizerProcessed   = "FinalizerProcessed"
 )
 
+// DefaultSBDDevicePath is the default path where the SBD device is mounted for shared storage coordination
+// This must match the path used by SBD agents: /sbd-shared/sbd-device
+const DefaultSBDDevicePath = "/sbd-shared/sbd-device"
+
 // SBDRemediationReconciler reconciles a SBDRemediation object
 type SBDRemediationReconciler struct {
 	client.Client
@@ -104,6 +108,10 @@ type SBDRemediationReconciler struct {
 	// SBD device configuration
 	sbdDevicePath string
 	sbdDevice     *blockdevice.Device
+
+	// Node mapping functionality (same as used by SBD agents)
+	nodeManager *sbdprotocol.NodeManager
+	clusterName string
 
 	// Retry configurations for different operation types
 	fencingRetryConfig retry.Config
@@ -190,29 +198,29 @@ func (r *SBDRemediationReconciler) IsLeader() bool {
 }
 
 // nodeNameToNodeID converts a Kubernetes node name to a numeric node ID for SBD operations
-// This implements a simple mapping strategy: extract the numeric suffix from node names like "node-1", "worker-2", etc.
-// In production, this would likely come from SBDConfig or a more sophisticated mapping mechanism
-func (r *SBDRemediationReconciler) nodeNameToNodeID(nodeName string) (uint16, error) {
-	// Try to extract numeric suffix from node names like "node-1", "worker-2", "k8s-node-3", etc.
-	parts := strings.Split(nodeName, "-")
-	if len(parts) < 2 {
-		return 0, fmt.Errorf("unable to determine node ID from node name %q: expected format like 'node-1' or 'worker-2'", nodeName)
+// This uses the same NodeManager functionality as the SBD agents to ensure consistent slot assignment
+func (r *SBDRemediationReconciler) nodeNameToNodeID(ctx context.Context, nodeName string) (uint16, error) {
+	if nodeName == "" {
+		return 0, fmt.Errorf("node name cannot be empty")
 	}
 
-	// Try the last part first (most common case)
-	lastPart := parts[len(parts)-1]
-	if nodeID, err := strconv.ParseUint(lastPart, 10, 16); err == nil && nodeID > 0 && nodeID < 255 {
-		return uint16(nodeID), nil
+	// Ensure NodeManager is initialized
+	if r.nodeManager == nil {
+		return 0, fmt.Errorf("node manager not initialized - SBD device may not be available")
 	}
 
-	// If that fails, try other parts
-	for i := len(parts) - 2; i >= 0; i-- {
-		if nodeID, err := strconv.ParseUint(parts[i], 10, 16); err == nil && nodeID > 0 && nodeID < 255 {
-			return uint16(nodeID), nil
-		}
+	// Use NodeManager to get the slot for this node (same logic as SBD agents)
+	slotID, err := r.nodeManager.GetSlotForNode(nodeName)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get slot for node %s: %w", nodeName, err)
 	}
 
-	return 0, fmt.Errorf("unable to extract valid node ID from node name %q: no numeric part found in range 1-254", nodeName)
+	// Validate slot ID is in the valid range
+	if slotID < 1 || slotID > sbdprotocol.SBD_MAX_NODES {
+		return 0, fmt.Errorf("invalid slot ID %d for node %s: must be in range [1, %d]", slotID, nodeName, sbdprotocol.SBD_MAX_NODES)
+	}
+
+	return slotID, nil
 }
 
 // getOperatorInstanceID returns a unique identifier for this operator instance
@@ -225,6 +233,132 @@ func (r *SBDRemediationReconciler) getOperatorInstanceID() string {
 		return hostname
 	}
 	return "unknown-operator-instance"
+}
+
+// discoverSBDConfigForNode discovers which SBDConfig manages the target node
+// This ensures the controller uses the correct shared storage and slot assignment for remediation
+func (r *SBDRemediationReconciler) discoverSBDConfigForNode(ctx context.Context, nodeName string, logger logr.Logger) (*medik8sv1alpha1.SBDConfig, error) {
+	// Get the target node to check its labels
+	node := &corev1.Node{}
+	if err := r.Get(ctx, types.NamespacedName{Name: nodeName}, node); err != nil {
+		return nil, fmt.Errorf("failed to get target node %s: %w", nodeName, err)
+	}
+
+	// List all SBDConfig resources across all namespaces
+	sbdConfigs := &medik8sv1alpha1.SBDConfigList{}
+	err := r.List(ctx, sbdConfigs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list SBDConfig resources: %w", err)
+	}
+
+	// Find SBDConfig(s) that would manage this node based on nodeSelector
+	var matchingSBDConfigs []*medik8sv1alpha1.SBDConfig
+	for i := range sbdConfigs.Items {
+		sbdConfig := &sbdConfigs.Items[i]
+
+		// Check if this SBDConfig's nodeSelector matches the target node
+		if r.nodeMatchesSelector(node, sbdConfig.Spec.GetNodeSelector()) {
+			matchingSBDConfigs = append(matchingSBDConfigs, sbdConfig)
+			logger.V(1).Info("Found matching SBDConfig for node",
+				"sbdConfig", sbdConfig.Name,
+				"namespace", sbdConfig.Namespace,
+				"nodeName", nodeName)
+		}
+	}
+
+	if len(matchingSBDConfigs) == 0 {
+		return nil, fmt.Errorf("no SBDConfig found that manages node %s - check nodeSelector configurations", nodeName)
+	}
+
+	if len(matchingSBDConfigs) > 1 {
+		// Multiple SBDConfigs match - this could be a configuration issue
+		logger.Info("Multiple SBDConfigs match the target node - using the first one with shared storage",
+			"nodeName", nodeName,
+			"matchingConfigs", len(matchingSBDConfigs))
+
+		// Prefer SBDConfigs with shared storage
+		for _, sbdConfig := range matchingSBDConfigs {
+			if sbdConfig.Spec.HasSharedStorage() {
+				logger.Info("Selected SBDConfig with shared storage",
+					"sbdConfig", sbdConfig.Name,
+					"namespace", sbdConfig.Namespace,
+					"nodeName", nodeName)
+				return sbdConfig, nil
+			}
+		}
+
+		// If none have shared storage, use the first one
+		logger.Info("No matching SBDConfig has shared storage, using first match",
+			"sbdConfig", matchingSBDConfigs[0].Name,
+			"namespace", matchingSBDConfigs[0].Namespace,
+			"nodeName", nodeName)
+		return matchingSBDConfigs[0], nil
+	}
+
+	// Exactly one match - perfect
+	sbdConfig := matchingSBDConfigs[0]
+	logger.Info("Found unique SBDConfig for node",
+		"sbdConfig", sbdConfig.Name,
+		"namespace", sbdConfig.Namespace,
+		"nodeName", nodeName,
+		"hasSharedStorage", sbdConfig.Spec.HasSharedStorage())
+
+	return sbdConfig, nil
+}
+
+// nodeMatchesSelector checks if a node matches the given nodeSelector
+func (r *SBDRemediationReconciler) nodeMatchesSelector(node *corev1.Node, nodeSelector map[string]string) bool {
+	if len(nodeSelector) == 0 {
+		return true // Empty selector matches all nodes
+	}
+
+	nodeLabels := node.Labels
+	if nodeLabels == nil {
+		nodeLabels = make(map[string]string)
+	}
+
+	// All selector labels must match
+	for key, value := range nodeSelector {
+		nodeValue, exists := nodeLabels[key]
+		if !exists {
+			return false // Node doesn't have required label
+		}
+		if value != "" && nodeValue != value {
+			return false // Label value doesn't match
+		}
+		// If selector value is empty (""), any node with that label key matches
+	}
+
+	return true
+}
+
+// discoverSBDDevicePath discovers the SBD device path from the SBDConfig managing the target node
+func (r *SBDRemediationReconciler) discoverSBDDevicePath(ctx context.Context, nodeName string, logger logr.Logger) (string, *medik8sv1alpha1.SBDConfig, error) {
+	// Find the SBDConfig that manages this node
+	sbdConfig, err := r.discoverSBDConfigForNode(ctx, nodeName, logger)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to discover SBDConfig for node %s: %w", nodeName, err)
+	}
+
+	// Determine the device path based on the SBDConfig
+	var devicePath string
+	if sbdConfig.Spec.HasSharedStorage() {
+		// Use the same path calculation as the SBD agents for shared storage
+		devicePath = fmt.Sprintf("%s/%s", sbdConfig.Spec.GetSharedStorageMountPath(), agent.SharedStorageSBDDeviceFile)
+		logger.Info("Using shared storage device path from SBDConfig",
+			"sbdConfig", sbdConfig.Name,
+			"namespace", sbdConfig.Namespace,
+			"devicePath", devicePath)
+	} else {
+		// No shared storage - use default path
+		devicePath = DefaultSBDDevicePath
+		logger.Info("SBDConfig has no shared storage, using default device path",
+			"sbdConfig", sbdConfig.Name,
+			"namespace", sbdConfig.Namespace,
+			"devicePath", devicePath)
+	}
+
+	return devicePath, sbdConfig, nil
 }
 
 // initializeRetryConfigs initializes the retry configurations for different operation types
@@ -422,7 +556,7 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"operation", "fencing-initiation")
 
 	// Convert node name to node ID
-	targetNodeID, err := r.nodeNameToNodeID(sbdRemediation.Spec.NodeName)
+	targetNodeID, err := r.nodeNameToNodeID(ctx, sbdRemediation.Spec.NodeName)
 	if err != nil {
 		logger.Error(err, "Failed to map node name to node ID",
 			"nodeName", sbdRemediation.Spec.NodeName,
@@ -447,7 +581,7 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Initialize SBD device if needed
 	if r.sbdDevice == nil {
-		if err := r.initializeSBDDevice(ctx, logger); err != nil {
+		if err := r.initializeSBDDevice(ctx, sbdRemediation.Spec.NodeName, logger); err != nil {
 			logger.Error(err, "Failed to initialize SBD device",
 				"sbdDevicePath", r.sbdDevicePath,
 				"operation", "sbd-device-initialization")
@@ -558,32 +692,92 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}, logger)
 }
 
-// initializeSBDDevice initializes the SBD device connection if not already done
-func (r *SBDRemediationReconciler) initializeSBDDevice(ctx context.Context, logger logr.Logger) error {
-	if r.sbdDevice != nil {
-		return nil // Already initialized
+// initializeSBDDevice initializes the SBD device for the controller to perform fencing operations
+func (r *SBDRemediationReconciler) initializeSBDDevice(ctx context.Context, nodeName string, logger logr.Logger) error {
+	// Skip initialization if already done
+	if r.sbdDevice != nil && !r.sbdDevice.IsClosed() && r.nodeManager != nil {
+		return nil
 	}
 
-	// Determine SBD device path
-	if r.sbdDevicePath == "" {
-		// Check environment variable first
-		if envPath := os.Getenv("SBD_DEVICE_PATH"); envPath != "" {
-			r.sbdDevicePath = envPath
-		} else {
-			r.sbdDevicePath = DefaultSBDDevicePath
-		}
+	// Discover the SBD device path from the SBDConfig managing the target node
+	devicePath, sbdConfig, err := r.discoverSBDDevicePath(ctx, nodeName, logger)
+	if err != nil {
+		return fmt.Errorf("failed to discover SBD device path: %w", err)
+	}
+	r.sbdDevicePath = devicePath
+
+	// Store the cluster name from the SBDConfig for NodeManager initialization
+	if sbdConfig.Spec.HasSharedStorage() {
+		// Use the SBDConfig namespace as cluster name for better isolation
+		r.clusterName = fmt.Sprintf("%s-%s", sbdConfig.Namespace, sbdConfig.Name)
+	} else {
+		r.clusterName = "default-cluster"
 	}
 
+	// Open the SBD device
 	device, err := blockdevice.Open(r.sbdDevicePath)
 	if err != nil {
-		return &FencingError{
-			Operation:  "SBD device initialization",
-			Underlying: fmt.Errorf("failed to open SBD device %s: %w", r.sbdDevicePath, err),
-			Retryable:  true, // Device issues might be temporary
-		}
+		return fmt.Errorf("failed to open SBD device %s: %w", r.sbdDevicePath, err)
 	}
 
 	r.sbdDevice = device
+	logger.Info("SBD device initialized successfully",
+		"sbdDevicePath", r.sbdDevicePath,
+		"sbdConfig", sbdConfig.Name,
+		"namespace", sbdConfig.Namespace,
+		"clusterName", r.clusterName)
+
+	// Initialize NodeManager for consistent node-to-slot mapping
+	if err := r.initializeNodeManager(ctx, logger); err != nil {
+		// Close the device if NodeManager initialization fails
+		device.Close()
+		r.sbdDevice = nil
+		return fmt.Errorf("failed to initialize node manager: %w", err)
+	}
+
+	return nil
+}
+
+// initializeNodeManager initializes the NodeManager for consistent node-to-slot mapping
+// This ensures the remediation controller uses the same mapping strategy as SBD agents
+func (r *SBDRemediationReconciler) initializeNodeManager(ctx context.Context, logger logr.Logger) error {
+	if r.sbdDevice == nil {
+		return fmt.Errorf("SBD device must be initialized before NodeManager")
+	}
+
+	// Determine cluster name from environment or use default
+	clusterName := r.clusterName
+	if clusterName == "" {
+		clusterName = os.Getenv("CLUSTER_NAME")
+		if clusterName == "" {
+			clusterName = "default-cluster"
+			logger.Info("Using default cluster name for node mapping", "clusterName", clusterName)
+		} else {
+			logger.Info("Using cluster name from environment", "clusterName", clusterName)
+		}
+		r.clusterName = clusterName
+	}
+
+	// Create NodeManager configuration (same as SBD agents)
+	config := sbdprotocol.NodeManagerConfig{
+		ClusterName:        clusterName,
+		SyncInterval:       30 * time.Second,
+		StaleNodeTimeout:   1 * time.Hour,
+		Logger:             logger.WithName("node-manager"),
+		FileLockingEnabled: true, // Enable file locking for coordination between controller and agents
+	}
+
+	nodeManager, err := sbdprotocol.NewNodeManager(r.sbdDevice, config)
+	if err != nil {
+		return fmt.Errorf("failed to create node manager: %w", err)
+	}
+
+	r.nodeManager = nodeManager
+
+	logger.Info("NodeManager initialized successfully",
+		"clusterName", clusterName,
+		"coordinationStrategy", nodeManager.GetCoordinationStrategy())
+
 	return nil
 }
 
@@ -645,7 +839,7 @@ func (r *SBDRemediationReconciler) performFencing(ctx context.Context, sbdRemedi
 	logger := logf.FromContext(ctx)
 
 	// Initialize SBD device if needed
-	if err := r.initializeSBDDevice(ctx, logger); err != nil {
+	if err := r.initializeSBDDevice(ctx, sbdRemediation.Spec.NodeName, logger); err != nil {
 		return err
 	}
 
@@ -854,6 +1048,42 @@ func (r *SBDRemediationReconciler) updateStatusWithRetry(ctx context.Context, sb
 		logger.V(1).Info("Status update successful")
 		return true, nil
 	})
+}
+
+// Cleanup properly closes the NodeManager and SBD device resources
+func (r *SBDRemediationReconciler) Cleanup() error {
+	var errs []error
+
+	// Close NodeManager if initialized
+	if r.nodeManager != nil {
+		if err := r.nodeManager.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to close node manager: %w", err))
+		}
+		r.nodeManager = nil
+	}
+
+	// Close SBD device if initialized
+	if r.sbdDevice != nil && !r.sbdDevice.IsClosed() {
+		if err := r.sbdDevice.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to close SBD device: %w", err))
+		}
+		r.sbdDevice = nil
+	}
+
+	// Return combined errors if any occurred
+	if len(errs) > 0 {
+		var errMsg strings.Builder
+		errMsg.WriteString("cleanup errors: ")
+		for i, err := range errs {
+			if i > 0 {
+				errMsg.WriteString("; ")
+			}
+			errMsg.WriteString(err.Error())
+		}
+		return fmt.Errorf(errMsg.String())
+	}
+
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

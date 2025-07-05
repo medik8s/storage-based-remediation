@@ -34,6 +34,7 @@ import (
 	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
 	"github.com/medik8s/sbd-operator/pkg/blockdevice"
 	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
+	corev1 "k8s.io/api/core/v1"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -53,33 +54,156 @@ func (r *testableReconciler) IsLeader() bool {
 var _ = Describe("SBDRemediation Controller", func() {
 	Context("Node ID Mapping", func() {
 		var reconciler *SBDRemediationReconciler
+		var tempDir string
+		var mockSBDDevice string
+		var ctx context.Context
 
 		BeforeEach(func() {
+			ctx = context.Background()
+
+			// Create temporary directory for mock SBD device
+			var err error
+			tempDir, err = ioutil.TempDir("", "sbd-nodemanager-test-")
+			Expect(err).NotTo(HaveOccurred())
+
+			// Create directory structure for default SBD device path
+			sbdSharedDir := filepath.Join(tempDir, "sbd-shared")
+			err = os.MkdirAll(sbdSharedDir, 0755)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Create mock SBD device file at the expected default path (512KB to accommodate all slots)
+			mockSBDDevice = filepath.Join(sbdSharedDir, "sbd-device")
+			err = ioutil.WriteFile(mockSBDDevice, make([]byte, 512*1024), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Create a mock Node for testing
+			testNode := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Labels: map[string]string{
+						"node-role.kubernetes.io/worker": "",
+						"kubernetes.io/os":               "linux",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, testNode)).To(Succeed())
+
+			// Create a mock SBDConfig for testing
+			testSBDConfig := &medik8sv1alpha1.SBDConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-sbd-config",
+					Namespace: "default",
+				},
+				Spec: medik8sv1alpha1.SBDConfigSpec{
+					SbdWatchdogPath: "/dev/watchdog",
+					// Configure with no shared storage for simpler test setup
+					NodeSelector: map[string]string{
+						"node-role.kubernetes.io/worker": "",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, testSBDConfig)).To(Succeed())
+
 			reconciler = &SBDRemediationReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				sbdDevicePath: mockSBDDevice,
+				clusterName:   "test-cluster",
+			}
+
+			// Initialize the SBD device directly for tests without path discovery
+			device, err := blockdevice.Open(mockSBDDevice)
+			Expect(err).NotTo(HaveOccurred())
+			reconciler.sbdDevice = device
+
+			// Initialize NodeManager for consistent node-to-slot mapping
+			err = reconciler.initializeNodeManager(ctx, logf.Log.WithName("test"))
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		AfterEach(func() {
+			if reconciler != nil {
+				reconciler.Cleanup()
+			}
+
+			// Clean up mock Node
+			testNode := &corev1.Node{}
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: "test-node"}, testNode)
+			if err == nil {
+				_ = k8sClient.Delete(ctx, testNode)
+			}
+
+			// Clean up mock SBDConfig
+			testSBDConfig := &medik8sv1alpha1.SBDConfig{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: "test-sbd-config", Namespace: "default"}, testSBDConfig)
+			if err == nil {
+				_ = k8sClient.Delete(ctx, testSBDConfig)
+			}
+
+			os.RemoveAll(tempDir)
+		})
+
+		It("should consistently map the same node names to the same slot IDs", func() {
+			testNodes := []string{
+				"worker-1", "worker-2", "node-123",
+				"ip-10-0-1-45.ec2.internal",
+				"gke-cluster-default-pool-a1b2c3d4-xyz5",
+			}
+
+			// Map each node name and verify consistency
+			for _, nodeName := range testNodes {
+				// First mapping
+				nodeID1, err := reconciler.nodeNameToNodeID(ctx, nodeName)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(nodeID1).To(BeNumerically(">=", 1))
+				Expect(nodeID1).To(BeNumerically("<=", sbdprotocol.SBD_MAX_NODES))
+
+				// Second mapping should return the same ID
+				nodeID2, err := reconciler.nodeNameToNodeID(ctx, nodeName)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(nodeID2).To(Equal(nodeID1))
 			}
 		})
 
-		DescribeTable("should correctly map node names to node IDs",
-			func(nodeName string, expectedNodeID uint16, shouldSucceed bool) {
-				nodeID, err := reconciler.nodeNameToNodeID(nodeName)
-				if shouldSucceed {
-					Expect(err).NotTo(HaveOccurred())
-					Expect(nodeID).To(Equal(expectedNodeID))
-				} else {
-					Expect(err).To(HaveOccurred())
+		It("should handle empty node names", func() {
+			_, err := reconciler.nodeNameToNodeID(ctx, "")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("node name cannot be empty"))
+		})
+
+		It("should fail when NodeManager is not initialized", func() {
+			uninitializedReconciler := &SBDRemediationReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := uninitializedReconciler.nodeNameToNodeID(ctx, "test-node")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("node manager not initialized"))
+		})
+
+		It("should assign different slot IDs for different node names", func() {
+			nodeIDs := make(map[uint16]string)
+			testNodes := []string{
+				"node-alpha", "node-beta", "node-gamma", "node-delta",
+			}
+
+			for _, nodeName := range testNodes {
+				nodeID, err := reconciler.nodeNameToNodeID(ctx, nodeName)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Check for slot conflicts
+				if existingNode, exists := nodeIDs[nodeID]; exists {
+					// This should be very rare with good hash distribution
+					// If it happens, the NodeManager should handle collision resolution
+					Fail(fmt.Sprintf("Slot collision: node %s and %s both got slot %d", nodeName, existingNode, nodeID))
 				}
-			},
-			Entry("node-1", "node-1", uint16(1), true),
-			Entry("worker-2", "worker-2", uint16(2), true),
-			Entry("k8s-node-10", "k8s-node-10", uint16(10), true),
-			Entry("control-plane-3", "control-plane-3", uint16(3), true),
-			Entry("invalid-node", "invalid-node", uint16(0), false),
-			Entry("node-0", "node-0", uint16(0), false),     // 0 is invalid
-			Entry("node-255", "node-255", uint16(0), false), // 255 is reserved
-			Entry("single-name", "hostname", uint16(0), false),
-		)
+				nodeIDs[nodeID] = nodeName
+			}
+
+			// Verify we got different IDs for different nodes
+			Expect(len(nodeIDs)).To(Equal(len(testNodes)))
+		})
 	})
 
 	Context("FencingError", func() {
@@ -850,9 +974,9 @@ var _ = Describe("SBDRemediation Controller", func() {
 			ctx := context.Background()
 
 			// Test node mapping error which is non-retryable
-			_, err := reconciler.nodeNameToNodeID("invalid-node-name")
+			_, err := reconciler.nodeNameToNodeID(ctx, "invalid-node-name")
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("unable to extract valid node ID"))
+			Expect(err.Error()).To(ContainSubstring("node manager not initialized"))
 
 			// For the fencing retry test, we need to test with a valid node ID but create
 			// a situation that would cause non-retryable marshaling errors

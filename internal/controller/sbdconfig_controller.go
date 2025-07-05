@@ -877,6 +877,9 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, fmt.Errorf("SBDConfig validation failed: %w", err)
 	}
 
+	// Note: Node selector overlap validation is now handled by the admission webhook
+	// to provide immediate feedback and prevent invalid configurations from being created
+
 	// Ensure the service account and RBAC resources exist with retry logic
 	// Deploy in the same namespace as the SBDConfig CR
 	err = r.performKubernetesAPIOperationWithRetry(ctx, "ensure service account", func() error {
