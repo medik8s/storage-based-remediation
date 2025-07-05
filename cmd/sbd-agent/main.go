@@ -907,6 +907,12 @@ func (s *SBDAgent) Start() error {
 		go s.peerMonitorLoop()
 	}
 
+	// Start fencing loop if enabled
+	if s.enableFencing {
+		s.fencingStopCh = make(chan struct{})
+		go s.fencingLoop()
+	}
+
 	logger.Info("SBD Agent started successfully")
 	return nil
 }
@@ -917,6 +923,11 @@ func (s *SBDAgent) Stop() error {
 
 	// Cancel context to stop all goroutines
 	s.cancel()
+
+	// Stop fencing loop if running
+	if s.fencingStopCh != nil {
+		close(s.fencingStopCh)
+	}
 
 	// Stop node manager if running
 	if s.nodeManagerStop != nil {
@@ -1836,15 +1847,19 @@ func (s *SBDAgent) executeFencing(ctx context.Context, remediation *v1alpha1.SBD
 
 	// Write fence message to target node's slot
 	if err := s.writeFenceMessage(targetNodeID, remediation.Spec.Reason); err != nil {
-		// Update remediation status to failed
-		s.updateRemediationStatus(ctx, remediation, v1alpha1.SBDRemediationPhaseFailed,
-			fmt.Sprintf("Failed to write fence message: %v", err))
+		// Update remediation conditions to failed
+		s.updateRemediationCondition(ctx, remediation, v1alpha1.SBDRemediationConditionFencingSucceeded,
+			metav1.ConditionFalse, "FencingFailed", fmt.Sprintf("Failed to write fence message: %v", err))
+		s.updateRemediationCondition(ctx, remediation, v1alpha1.SBDRemediationConditionReady,
+			metav1.ConditionTrue, "FencingFailed", fmt.Sprintf("Fencing failed: %v", err))
 		return fmt.Errorf("failed to write fence message to target node %d: %w", targetNodeID, err)
 	}
 
-	// Update remediation status to completed
-	s.updateRemediationStatus(ctx, remediation, v1alpha1.SBDRemediationPhaseFencedSuccessfully,
-		fmt.Sprintf("Fence message written to node %s (ID: %d)", targetNodeName, targetNodeID))
+	// Update remediation conditions to completed
+	s.updateRemediationCondition(ctx, remediation, v1alpha1.SBDRemediationConditionFencingSucceeded,
+		metav1.ConditionTrue, "FencingSucceeded", fmt.Sprintf("Fence message written to node %s (ID: %d)", targetNodeName, targetNodeID))
+	s.updateRemediationCondition(ctx, remediation, v1alpha1.SBDRemediationConditionReady,
+		metav1.ConditionTrue, "FencingSucceeded", fmt.Sprintf("Fencing completed successfully"))
 
 	logger.Info("Fencing operation completed successfully",
 		"targetNode", targetNodeName,
@@ -1918,30 +1933,31 @@ func (s *SBDAgent) writeFenceMessage(targetNodeID uint16, reason v1alpha1.SBDRem
 	return nil
 }
 
-// updateRemediationStatus updates the status of an SBDRemediation CR
-func (s *SBDAgent) updateRemediationStatus(ctx context.Context, remediation *v1alpha1.SBDRemediation, phase v1alpha1.SBDRemediationPhase, message string) error {
+// updateRemediationCondition updates a condition on an SBDRemediation CR
+func (s *SBDAgent) updateRemediationCondition(ctx context.Context, remediation *v1alpha1.SBDRemediation, conditionType v1alpha1.SBDRemediationConditionType, status metav1.ConditionStatus, reason, message string) error {
 	// Create a copy for status update
 	updated := remediation.DeepCopy()
-	updated.Status.Phase = phase
-	updated.Status.Message = message
-	updated.Status.LastTransitionTime = metav1.Now()
-
-	// Add operator instance info
+	updated.SetCondition(conditionType, status, reason, message)
 	updated.Status.OperatorInstance = s.nodeName
+	updated.Status.LastUpdateTime = &metav1.Time{Time: metav1.Now().Time}
 
 	if err := s.k8sClient.Status().Update(ctx, updated); err != nil {
-		logger.Error(err, "Failed to update SBDRemediation status",
+		logger.Error(err, "Failed to update SBDRemediation condition",
 			"name", remediation.Name,
 			"namespace", remediation.Namespace,
-			"phase", phase,
+			"conditionType", conditionType,
+			"status", status,
+			"reason", reason,
 			"message", message)
 		return err
 	}
 
-	logger.Info("Updated SBDRemediation status",
+	logger.Info("Updated SBDRemediation condition",
 		"name", remediation.Name,
 		"namespace", remediation.Namespace,
-		"phase", phase,
+		"conditionType", conditionType,
+		"status", status,
+		"reason", reason,
 		"message", message)
 
 	return nil
