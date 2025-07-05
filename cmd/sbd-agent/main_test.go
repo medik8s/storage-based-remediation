@@ -504,7 +504,8 @@ func TestSBDAgent_ReadPeerHeartbeat_NodeIDMismatch(t *testing.T) {
 
 	// Create agent with empty SBD device path to avoid opening real device
 	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, "", "test-node", "test-cluster", 1,
-		1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second, 30, "panic", 8084, 10*time.Minute, true)
+		1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second, 30, "panic", 8084, 10*time.Minute, true,
+		nil, nil, "", false)
 	if err != nil {
 		t.Fatalf("Failed to create SBD agent: %v", err)
 	}
@@ -551,7 +552,7 @@ func TestSBDAgent_PeerMonitorLoop_Integration(t *testing.T) {
 	mockDevice := NewMockBlockDevice("/dev/mock-sbd", int(sbdprotocol.SBD_MAX_NODES*sbdprotocol.SBD_SLOT_SIZE))
 
 	// Create agent with short check interval for testing and empty SBD device path
-	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, "", "test-node", "test-cluster", 1, 30*time.Second, 5*time.Second, 15*time.Second, 100*time.Millisecond, 1, "panic", 8085, 10*time.Minute, true, nil, nil, "", false, nil, nil, "", false)
+	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, "", "test-node", "test-cluster", 1, 30*time.Second, 5*time.Second, 15*time.Second, 100*time.Millisecond, 1, "panic", 8085, 10*time.Minute, true, nil, nil, "", false)
 	if err != nil {
 		t.Fatalf("Failed to create agent: %v", err)
 	}
@@ -629,7 +630,7 @@ func TestSBDAgent_NewSBDAgent(t *testing.T) {
 
 	// Test invalid configurations
 	invalidWatchdog := NewMockWatchdog("")
-	_, err = NewSBDAgentWithWatchdog(invalidWatchdog, "", "", "test-cluster", 0, 0, 0, 0, 0, 0, "invalid", 8087, 10*time.Minute, true, nil, nil, "", false, nil, nil, "", false)
+	_, err = NewSBDAgentWithWatchdog(invalidWatchdog, "", "", "test-cluster", 0, 0, 0, 0, 0, 0, "invalid", 8087, 10*time.Minute, true, nil, nil, "", false)
 	if err == nil {
 		t.Error("Expected error for invalid configuration")
 	}
@@ -844,7 +845,7 @@ func BenchmarkSBDAgent_WriteHeartbeat(b *testing.B) {
 	mockWatchdog := NewMockWatchdog("/dev/watchdog")
 	mockDevice := NewMockBlockDevice("/dev/mock-sbd", int(sbdprotocol.SBD_MAX_NODES*sbdprotocol.SBD_SLOT_SIZE))
 
-	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, "", "test-node", "test-cluster", 1, 30*time.Second, 5*time.Second, 15*time.Second, 5*time.Second, 30, "panic", 8080, 10*time.Minute, true, nil, nil, "", false, nil, nil, "", false)
+	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, "", "test-node", "test-cluster", 1, 30*time.Second, 5*time.Second, 15*time.Second, 5*time.Second, 30, "panic", 8080, 10*time.Minute, true, nil, nil, "", false)
 	if err != nil {
 		b.Fatalf("Failed to create agent: %v", err)
 	}
