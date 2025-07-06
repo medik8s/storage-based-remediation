@@ -1225,16 +1225,16 @@ func TestPreflightChecks_WatchdogMissing(t *testing.T) {
 	watchdogPath := "/non/existent/watchdog"
 
 	// Test pre-flight checks with missing watchdog device and no SBD device
-	// This should fail because both watchdog and SBD are unavailable
+	// This should fail because SBD device is always required now
 	err := runPreflightChecks(watchdogPath, "", "test-node", 1)
 	if err == nil {
-		t.Error("Expected pre-flight checks to fail with missing watchdog and no SBD device, but they succeeded")
+		t.Error("Expected pre-flight checks to fail with empty SBD device path, but they succeeded")
 		return
 	}
 
-	// Should mention both watchdog failure and no SBD device
-	if !strings.Contains(err.Error(), "watchdog device is inaccessible and no SBD device configured") {
-		t.Errorf("Expected error about watchdog inaccessible and no SBD device, but got: %v", err)
+	// Should mention that SBD device path cannot be empty
+	if !strings.Contains(err.Error(), "SBD device path cannot be empty") {
+		t.Errorf("Expected error about empty SBD device path, but got: %v", err)
 	}
 }
 
