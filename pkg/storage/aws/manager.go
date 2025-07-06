@@ -618,50 +618,129 @@ type VPCInfo struct {
 }
 
 func (m *Manager) detectClusterVPC(ctx context.Context) (*VPCInfo, error) {
-	// Find VPC tagged with cluster name
-	result, err := m.ec2Client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{
-		Filters: []ec2types.Filter{
-			{
-				Name:   aws.String(fmt.Sprintf("tag:kubernetes.io/cluster/%s", m.config.ClusterName)),
-				Values: []string{"shared", "owned"},
-			},
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to describe VPCs: %w", err)
+	// Try multiple cluster name patterns to find the VPC
+	clusterPatterns := []string{
+		m.config.ClusterName,                      // Exact cluster name
+		fmt.Sprintf("%s-*", m.config.ClusterName), // Cluster name with suffix pattern
 	}
 
-	if len(result.Vpcs) == 0 {
-		return nil, fmt.Errorf("no VPC found for cluster %s", m.config.ClusterName)
+	var foundVPC *ec2types.Vpc
+	var usedPattern string
+
+	for _, pattern := range clusterPatterns {
+		log.Printf("🔍 Searching for VPC with cluster pattern: %s", pattern)
+
+		// For wildcard patterns, we need to list all VPCs and filter
+		if strings.Contains(pattern, "*") {
+			result, err := m.ec2Client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{})
+			if err != nil {
+				return nil, fmt.Errorf("failed to describe VPCs: %w", err)
+			}
+
+			// Look for VPCs with cluster tags that match our pattern
+			for _, vpc := range result.Vpcs {
+				for _, tag := range vpc.Tags {
+					if tag.Key != nil && tag.Value != nil {
+						// Check for kubernetes.io/cluster/* tags
+						if strings.HasPrefix(*tag.Key, "kubernetes.io/cluster/") {
+							clusterName := strings.TrimPrefix(*tag.Key, "kubernetes.io/cluster/")
+							// Check if this cluster name matches our pattern
+							if strings.HasPrefix(clusterName, strings.TrimSuffix(pattern, "*")) {
+								if *tag.Value == "owned" || *tag.Value == "shared" {
+									foundVPC = &vpc
+									usedPattern = clusterName
+									log.Printf("🎯 Found VPC %s with cluster tag: %s", *vpc.VpcId, clusterName)
+									break
+								}
+							}
+						}
+					}
+				}
+				if foundVPC != nil {
+					break
+				}
+			}
+		} else {
+			// Exact match search
+			result, err := m.ec2Client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{
+				Filters: []ec2types.Filter{
+					{
+						Name:   aws.String(fmt.Sprintf("tag:kubernetes.io/cluster/%s", pattern)),
+						Values: []string{"shared", "owned"},
+					},
+				},
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to describe VPCs: %w", err)
+			}
+
+			if len(result.Vpcs) > 0 {
+				foundVPC = &result.Vpcs[0]
+				usedPattern = pattern
+				log.Printf("🎯 Found VPC %s with exact cluster name: %s", *foundVPC.VpcId, pattern)
+				break
+			}
+		}
+
+		if foundVPC != nil {
+			break
+		}
 	}
 
-	vpcID := *result.Vpcs[0].VpcId
-
-	// Find subnets in this VPC
-	subnetsResult, err := m.ec2Client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{
-		Filters: []ec2types.Filter{
-			{
-				Name:   aws.String("vpc-id"),
-				Values: []string{vpcID},
-			},
-			{
-				Name:   aws.String(fmt.Sprintf("tag:kubernetes.io/cluster/%s", m.config.ClusterName)),
-				Values: []string{"shared", "owned"},
-			},
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to describe subnets: %w", err)
+	if foundVPC == nil {
+		return nil, fmt.Errorf("no VPC found for cluster %s (tried patterns: %v)", m.config.ClusterName, clusterPatterns)
 	}
 
+	vpcID := *foundVPC.VpcId
+	log.Printf("✅ Using VPC %s (cluster: %s)", vpcID, usedPattern)
+
+	// Find subnets in this VPC - try both the detected cluster name and the original
+	subnetPatterns := []string{usedPattern, m.config.ClusterName}
 	var subnetIDs []string
-	for _, subnet := range subnetsResult.Subnets {
-		subnetIDs = append(subnetIDs, *subnet.SubnetId)
+
+	for _, clusterName := range subnetPatterns {
+		subnetsResult, err := m.ec2Client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{
+			Filters: []ec2types.Filter{
+				{
+					Name:   aws.String("vpc-id"),
+					Values: []string{vpcID},
+				},
+				{
+					Name:   aws.String(fmt.Sprintf("tag:kubernetes.io/cluster/%s", clusterName)),
+					Values: []string{"shared", "owned"},
+				},
+			},
+		})
+		if err != nil {
+			continue // Try next pattern
+		}
+
+		for _, subnet := range subnetsResult.Subnets {
+			subnetID := *subnet.SubnetId
+			// Avoid duplicates
+			found := false
+			for _, existing := range subnetIDs {
+				if existing == subnetID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				subnetIDs = append(subnetIDs, subnetID)
+			}
+		}
+
+		if len(subnetIDs) > 0 {
+			log.Printf("🔍 Found %d subnets using cluster name: %s", len(subnetIDs), clusterName)
+			break
+		}
 	}
 
 	if len(subnetIDs) == 0 {
-		return nil, fmt.Errorf("no subnets found for cluster %s", m.config.ClusterName)
+		return nil, fmt.Errorf("no subnets found for cluster %s in VPC %s", m.config.ClusterName, vpcID)
 	}
+
+	log.Printf("✅ Found %d subnets in VPC %s", len(subnetIDs), vpcID)
 
 	return &VPCInfo{
 		VPCID:     vpcID,
