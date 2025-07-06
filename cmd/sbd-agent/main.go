@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"flag"
 	"fmt"
 	"io"
@@ -26,6 +27,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -38,11 +40,16 @@ import (
 	"go.uber.org/zap/zapcore"
 
 	// Kubernetes imports for SBDRemediation CR watching
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/leaderelection"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/medik8s/sbd-operator/api/v1alpha1"
@@ -377,6 +384,107 @@ func (pm *PeerMonitor) updatePeerMetrics(nodeID uint16, isHealthy bool) {
 	}
 }
 
+// LeaderElectionConfig contains configuration for leader election
+type LeaderElectionConfig struct {
+	LeaseDuration time.Duration
+	RenewDeadline time.Duration
+	RetryPeriod   time.Duration
+	Namespace     string
+}
+
+// RemediationLeaderElector manages leader election for a specific SBDRemediation
+type RemediationLeaderElector struct {
+	remediationKey string // namespace/name
+	leaderElector  *leaderelection.LeaderElector
+	isLeader       bool
+	isLeaderMutex  sync.RWMutex
+	stopCh         chan struct{}
+	logger         logr.Logger
+}
+
+// NewRemediationLeaderElector creates a new leader elector for a specific remediation
+func NewRemediationLeaderElector(remediationKey, nodeName string, k8sClientset kubernetes.Interface, config LeaderElectionConfig, logger logr.Logger) (*RemediationLeaderElector, error) {
+	rle := &RemediationLeaderElector{
+		remediationKey: remediationKey,
+		isLeader:       false,
+		stopCh:         make(chan struct{}),
+		logger:         logger,
+	}
+
+	// Create a deterministic but unique lease name for this remediation
+	h := sha256.New()
+	h.Write([]byte(remediationKey))
+	leaseName := fmt.Sprintf("sbd-remediation-%x", h.Sum(nil)[:8])
+
+	// Create resource lock for leader election
+	lock := &resourcelock.LeaseLock{
+		LeaseMeta: metav1.ObjectMeta{
+			Name:      leaseName,
+			Namespace: config.Namespace,
+		},
+		Client: k8sClientset.CoordinationV1(),
+		LockConfig: resourcelock.ResourceLockConfig{
+			Identity: nodeName,
+		},
+	}
+
+	// Configure leader election
+	leaderElectionConfig := leaderelection.LeaderElectionConfig{
+		Lock:          lock,
+		LeaseDuration: config.LeaseDuration,
+		RenewDeadline: config.RenewDeadline,
+		RetryPeriod:   config.RetryPeriod,
+		Callbacks: leaderelection.LeaderCallbacks{
+			OnStartedLeading: func(ctx context.Context) {
+				rle.setLeader(true)
+				rle.logger.Info("Started leading remediation", "remediation", remediationKey, "leaseName", leaseName)
+			},
+			OnStoppedLeading: func() {
+				rle.setLeader(false)
+				rle.logger.Info("Stopped leading remediation", "remediation", remediationKey, "leaseName", leaseName)
+			},
+			OnNewLeader: func(identity string) {
+				rle.logger.V(1).Info("New leader elected for remediation", "remediation", remediationKey, "leader", identity, "leaseName", leaseName)
+			},
+		},
+	}
+
+	elector, err := leaderelection.NewLeaderElector(leaderElectionConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create leader elector for remediation %s: %w", remediationKey, err)
+	}
+
+	rle.leaderElector = elector
+	return rle, nil
+}
+
+// Start begins the leader election process
+func (rle *RemediationLeaderElector) Start(ctx context.Context) {
+	go func() {
+		rle.logger.Info("Starting leader election", "remediation", rle.remediationKey)
+		rle.leaderElector.Run(ctx)
+	}()
+}
+
+// Stop terminates the leader election
+func (rle *RemediationLeaderElector) Stop() {
+	close(rle.stopCh)
+}
+
+// IsLeader returns whether this node is currently the leader for this remediation
+func (rle *RemediationLeaderElector) IsLeader() bool {
+	rle.isLeaderMutex.RLock()
+	defer rle.isLeaderMutex.RUnlock()
+	return rle.isLeader
+}
+
+// setLeader updates the leader status
+func (rle *RemediationLeaderElector) setLeader(leader bool) {
+	rle.isLeaderMutex.Lock()
+	defer rle.isLeaderMutex.Unlock()
+	rle.isLeader = leader
+}
+
 // SBDAgent represents the main SBD agent with self-fencing capabilities
 type SBDAgent struct {
 	watchdog          WatchdogInterface
@@ -420,6 +528,11 @@ type SBDAgent struct {
 	watchNamespace string
 	enableFencing  bool
 	fencingStopCh  chan struct{}
+
+	// Leader election for coordinating SBDRemediation processing across agents
+	leaderElectors       map[string]*RemediationLeaderElector // key: remediation namespace/name
+	leaderElectorsMutex  sync.RWMutex
+	leaderElectionConfig LeaderElectionConfig
 }
 
 // NewSBDAgent creates a new SBD agent with the specified configuration
@@ -433,96 +546,114 @@ func NewSBDAgent(watchdogPath, sbdDevicePath, nodeName, clusterName string, node
 	return NewSBDAgentWithWatchdog(wd, sbdDevicePath, nodeName, clusterName, nodeID, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval, sbdTimeoutSeconds, rebootMethod, metricsPort, staleNodeTimeout, fileLockingEnabled, k8sClient, k8sClientset, watchNamespace, enableFencing)
 }
 
-// NewSBDAgentWithWatchdog creates a new SBD agent with the specified watchdog instance
+// NewSBDAgentWithWatchdog creates a new SBD agent with a provided watchdog interface
 func NewSBDAgentWithWatchdog(wd WatchdogInterface, sbdDevicePath, nodeName, clusterName string, nodeID uint16, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval time.Duration, sbdTimeoutSeconds uint, rebootMethod string, metricsPort int, staleNodeTimeout time.Duration, fileLockingEnabled bool, k8sClient client.Client, k8sClientset kubernetes.Interface, watchNamespace string, enableFencing bool) (*SBDAgent, error) {
-	// Validate required parameters
+	// Input validation
 	if wd == nil {
 		return nil, fmt.Errorf("watchdog interface cannot be nil")
 	}
-
-	if wd.Path() == "" {
-		return nil, fmt.Errorf("watchdog path cannot be empty")
-	}
-
+	// Note: sbdDevicePath can be empty for watchdog-only mode
 	if nodeName == "" {
 		return nil, fmt.Errorf("node name cannot be empty")
 	}
-
-	if nodeID == 0 || nodeID > 255 {
-		return nil, fmt.Errorf("node ID must be between 1 and 255, got %d", nodeID)
+	if nodeID == 0 {
+		return nil, fmt.Errorf("node ID cannot be zero")
 	}
 
+	// Validate timing parameters
 	if petInterval <= 0 {
-		return nil, fmt.Errorf("pet interval must be positive, got %v", petInterval)
+		return nil, fmt.Errorf("pet interval must be positive")
+	}
+	if sbdUpdateInterval <= 0 {
+		return nil, fmt.Errorf("SBD update interval must be positive")
+	}
+	if heartbeatInterval <= 0 {
+		return nil, fmt.Errorf("heartbeat interval must be positive")
+	}
+	if peerCheckInterval <= 0 {
+		return nil, fmt.Errorf("peer check interval must be positive")
 	}
 
-	if rebootMethod != "panic" && rebootMethod != "systemctl-reboot" {
-		return nil, fmt.Errorf("invalid reboot method '%s', must be 'panic' or 'systemctl-reboot'", rebootMethod)
-	}
-
-	if metricsPort <= 0 || metricsPort > 65535 {
-		return nil, fmt.Errorf("metrics port must be between 1 and 65535, got %d", metricsPort)
-	}
-
+	// Create context for the agent
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Configure retry settings for critical operations
+	// Initialize retry configuration
 	retryConfig := retry.Config{
 		MaxRetries:    MaxCriticalRetries,
 		InitialDelay:  InitialCriticalRetryDelay,
 		MaxDelay:      MaxCriticalRetryDelay,
 		BackoffFactor: CriticalRetryBackoffFactor,
-		Logger:        logger.WithName("sbd-agent-retry"),
+	}
+
+	// Configure leader election settings
+	leaderElectionConfig := LeaderElectionConfig{
+		LeaseDuration: 15 * time.Second, // How long the leader holds the lease
+		RenewDeadline: 10 * time.Second, // Deadline for renewing the lease
+		RetryPeriod:   2 * time.Second,  // Frequency of retries
+		Namespace:     watchNamespace,   // Use the watch namespace for leases
+	}
+
+	// If watch namespace is empty, use default namespace
+	if leaderElectionConfig.Namespace == "" {
+		leaderElectionConfig.Namespace = "default"
 	}
 
 	agent := &SBDAgent{
-		watchdog:          wd,
-		sbdDevicePath:     sbdDevicePath,
-		nodeName:          nodeName,
-		nodeID:            nodeID,
-		petInterval:       petInterval,
-		sbdUpdateInterval: sbdUpdateInterval,
-		heartbeatInterval: heartbeatInterval,
-		peerCheckInterval: peerCheckInterval,
-		rebootMethod:      rebootMethod,
-		ctx:               ctx,
-		cancel:            cancel,
-		sbdHealthy:        false,
-		heartbeatSequence: 0,
-		peerMonitor:       NewPeerMonitor(sbdTimeoutSeconds, nodeID, logger),
-		selfFenceDetected: false,
-		metricsPort:       metricsPort,
-		staleNodeTimeout:  staleNodeTimeout,
-
-		// Initialize failure tracking
-		watchdogFailureCount:  0,
-		sbdFailureCount:       0,
-		heartbeatFailureCount: 0,
-		lastFailureReset:      time.Now(),
-		retryConfig:           retryConfig,
-		k8sClient:             k8sClient,
-		k8sClientset:          k8sClientset,
-		watchNamespace:        watchNamespace,
-		enableFencing:         enableFencing,
+		watchdog:             wd,
+		sbdDevicePath:        sbdDevicePath,
+		nodeName:             nodeName,
+		nodeID:               nodeID,
+		petInterval:          petInterval,
+		sbdUpdateInterval:    sbdUpdateInterval,
+		heartbeatInterval:    heartbeatInterval,
+		peerCheckInterval:    peerCheckInterval,
+		rebootMethod:         rebootMethod,
+		ctx:                  ctx,
+		cancel:               cancel,
+		sbdHealthy:           false,
+		heartbeatSequence:    0,
+		selfFenceDetected:    false,
+		metricsPort:          metricsPort,
+		nodeManagerStop:      make(chan struct{}),
+		staleNodeTimeout:     staleNodeTimeout,
+		lastFailureReset:     time.Now(),
+		retryConfig:          retryConfig,
+		k8sClient:            k8sClient,
+		k8sClientset:         k8sClientset,
+		watchNamespace:       watchNamespace,
+		enableFencing:        enableFencing,
+		fencingStopCh:        make(chan struct{}),
+		leaderElectors:       make(map[string]*RemediationLeaderElector),
+		leaderElectionConfig: leaderElectionConfig,
 	}
 
-	// Initialize Prometheus metrics
-	if err := agent.initMetrics(); err != nil {
-		logger.Error(err, "Failed to initialize metrics")
-	}
+	// Initialize the PeerMonitor
+	agent.peerMonitor = NewPeerMonitor(sbdTimeoutSeconds, nodeID, logger)
 
 	// Initialize SBD device if provided
 	if sbdDevicePath != "" {
 		if err := agent.initializeSBDDevice(); err != nil {
-			cancel()
+			agent.cancel()
 			return nil, fmt.Errorf("failed to initialize SBD device: %w", err)
 		}
 
-		// Initialize node manager for hash-based mapping (always enabled)
+		// Initialize node manager for consistent slot assignment
 		if err := agent.initializeNodeManager(clusterName, fileLockingEnabled); err != nil {
-			cancel()
+			agent.cancel()
+			if agent.sbdDevice != nil {
+				agent.sbdDevice.Close()
+			}
 			return nil, fmt.Errorf("failed to initialize node manager: %w", err)
 		}
+	}
+
+	// Initialize metrics
+	if err := agent.initMetrics(); err != nil {
+		agent.cancel()
+		if agent.sbdDevice != nil {
+			agent.sbdDevice.Close()
+		}
+		return nil, fmt.Errorf("failed to initialize metrics: %w", err)
 	}
 
 	return agent, nil
@@ -916,51 +1047,96 @@ func (s *SBDAgent) Start() error {
 func (s *SBDAgent) Stop() error {
 	logger.Info("Stopping SBD Agent")
 
-	// Cancel context to stop all goroutines
+	// Signal all goroutines to stop
 	s.cancel()
 
-	// Stop fencing loop if running
-	if s.fencingStopCh != nil {
+	// Stop leader election for all remediations
+	if s.enableFencing {
+		logger.Info("Stopping all leader electors")
+		s.stopAllLeaderElectors()
+
+		// Close fencing stop channel
 		close(s.fencingStopCh)
 	}
 
-	// Stop node manager if running
+	// Stop node manager coordination
 	if s.nodeManagerStop != nil {
 		close(s.nodeManagerStop)
 	}
 
-	// Close node manager
-	if s.nodeManager != nil {
-		if err := s.nodeManager.Close(); err != nil {
-			logger.Error(err, "Error closing node manager")
-		}
-	}
-
-	// Shutdown metrics server
+	// Stop metrics server if running
 	if s.metricsServer != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := s.metricsServer.Shutdown(ctx); err != nil {
-			logger.Error(err, "Error shutting down metrics server")
+		logger.Info("Stopping metrics server")
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		if err := s.metricsServer.Shutdown(shutdownCtx); err != nil {
+			logger.Error(err, "Failed to shutdown metrics server gracefully")
+		} else {
+			logger.Info("Metrics server stopped gracefully")
 		}
 	}
 
-	// Close SBD device
+	// Close SBD device last (after all operations complete)
 	if s.sbdDevice != nil && !s.sbdDevice.IsClosed() {
+		logger.Info("Closing SBD device", "devicePath", s.sbdDevicePath)
 		if err := s.sbdDevice.Close(); err != nil {
-			logger.Error(err, "Error closing SBD device", "devicePath", s.sbdDevicePath)
+			logger.Error(err, "Failed to close SBD device", "devicePath", s.sbdDevicePath)
+			return fmt.Errorf("failed to close SBD device: %w", err)
 		}
 	}
 
-	// Close watchdog device
+	// Close watchdog device last (critical for graceful shutdown)
 	if s.watchdog != nil {
+		logger.Info("Closing watchdog device", "watchdogPath", s.watchdog.Path())
 		if err := s.watchdog.Close(); err != nil {
-			logger.Error(err, "Error closing watchdog", "watchdogPath", s.watchdog.Path())
+			logger.Error(err, "Failed to close watchdog device", "watchdogPath", s.watchdog.Path())
+			return fmt.Errorf("failed to close watchdog device: %w", err)
 		}
 	}
 
-	logger.Info("SBD Agent stopped")
+	logger.Info("SBD Agent stopped successfully")
 	return nil
+}
+
+// cleanupCompletedLeaderElectors removes leader electors for completed remediations
+func (s *SBDAgent) cleanupCompletedLeaderElectors() {
+	s.leaderElectorsMutex.Lock()
+	defer s.leaderElectorsMutex.Unlock()
+
+	for remediationKey, elector := range s.leaderElectors {
+		// Check if the remediation still exists
+		parts := strings.Split(remediationKey, "/")
+		if len(parts) != 2 {
+			continue
+		}
+		namespace, name := parts[0], parts[1]
+
+		var remediation v1alpha1.SBDRemediation
+		err := s.k8sClient.Get(context.Background(), types.NamespacedName{
+			Namespace: namespace,
+			Name:      name,
+		}, &remediation)
+
+		// If remediation doesn't exist or is completed, clean up the elector
+		if apierrors.IsNotFound(err) || (err == nil && remediation.IsFencingSucceeded()) {
+			logger.Info("Cleaning up leader elector for completed/deleted remediation",
+				"remediation", remediationKey)
+			elector.Stop()
+			delete(s.leaderElectors, remediationKey)
+		}
+	}
+}
+
+// stopAllLeaderElectors stops all active leader electors
+func (s *SBDAgent) stopAllLeaderElectors() {
+	s.leaderElectorsMutex.Lock()
+	defer s.leaderElectorsMutex.Unlock()
+
+	for remediationKey, elector := range s.leaderElectors {
+		logger.Info("Stopping leader elector", "remediation", remediationKey)
+		elector.Stop()
+	}
+	s.leaderElectors = make(map[string]*RemediationLeaderElector)
 }
 
 // watchdogLoop continuously pets the watchdog to prevent system reset
@@ -1710,29 +1886,31 @@ func initializeKubernetesClients(kubeconfigPath string) (client.Client, kubernet
 
 // fencingLoop watches for SBDRemediation CRs and processes fencing requests
 func (s *SBDAgent) fencingLoop() {
-	if !s.enableFencing || s.k8sClient == nil {
-		logger.Info("Fencing disabled or Kubernetes client not available - skipping fencing loop")
-		return
-	}
-
-	logger.Info("Starting SBDRemediation fencing loop", "namespace", s.watchNamespace)
-
-	// Create a ticker for periodic checks
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+
+	// Ticker for periodic cleanup of completed leader electors
+	cleanupTicker := time.NewTicker(30 * time.Second)
+	defer cleanupTicker.Stop()
+
+	logger.Info("Starting SBD fencing loop", "watchNamespace", s.watchNamespace)
 
 	for {
 		select {
 		case <-s.ctx.Done():
-			logger.Info("Fencing loop stopping")
+			logger.Info("SBD fencing loop stopping")
 			return
 		case <-s.fencingStopCh:
-			logger.Info("Fencing loop stopping via stop channel")
+			logger.Info("SBD fencing loop received stop signal")
 			return
 		case <-ticker.C:
 			if err := s.processSBDRemediationCRs(); err != nil {
-				logger.Error(err, "Error processing SBDRemediation CRs")
+				logger.Error(err, "Failed to process SBDRemediation CRs")
 			}
+		case <-cleanupTicker.C:
+			// Periodically clean up leader electors for completed/deleted remediations
+			logger.V(1).Info("Performing periodic cleanup of completed leader electors")
+			s.cleanupCompletedLeaderElectors()
 		}
 	}
 }
@@ -1822,14 +2000,73 @@ func (s *SBDAgent) processSingleRemediation(ctx context.Context, remediation *v1
 	return nil
 }
 
-// shouldHandleRemediation determines if this agent should handle the remediation
+// shouldHandleRemediation determines if this agent should handle the remediation using leader election
 func (s *SBDAgent) shouldHandleRemediation(ctx context.Context, remediation *v1alpha1.SBDRemediation) bool {
-	// Simple leader election: use lexicographically smallest node name
-	// In a production implementation, this could use proper leader election
+	remediationKey := fmt.Sprintf("%s/%s", remediation.Namespace, remediation.Name)
 
-	// For now, we'll assume this agent handles all remediations in its namespace
-	// TODO: Implement proper coordination between agents
-	return true
+	// Check if we already have a leader elector for this remediation
+	s.leaderElectorsMutex.RLock()
+	elector, exists := s.leaderElectors[remediationKey]
+	s.leaderElectorsMutex.RUnlock()
+
+	if exists {
+		// We have an existing leader elector, check if we're the leader
+		isLeader := elector.IsLeader()
+		if isLeader {
+			logger.V(1).Info("Agent is leader for remediation",
+				"remediation", remediationKey,
+				"agentNode", s.nodeName)
+		}
+		return isLeader
+	}
+
+	// No leader elector exists for this remediation, create one
+	logger.Info("Creating leader elector for new remediation",
+		"remediation", remediationKey,
+		"agentNode", s.nodeName)
+
+	newElector, err := NewRemediationLeaderElector(
+		remediationKey,
+		s.nodeName,
+		s.k8sClientset,
+		s.leaderElectionConfig,
+		logger.WithValues("remediation", remediationKey),
+	)
+	if err != nil {
+		logger.Error(err, "Failed to create leader elector for remediation",
+			"remediation", remediationKey,
+			"agentNode", s.nodeName)
+		return false
+	}
+
+	// Store the new elector
+	s.leaderElectorsMutex.Lock()
+	s.leaderElectors[remediationKey] = newElector
+	s.leaderElectorsMutex.Unlock()
+
+	// Start the leader election process
+	newElector.Start(ctx)
+
+	// Wait a short time for initial leader election to complete
+	// This prevents race conditions where multiple agents create electors simultaneously
+	select {
+	case <-time.After(500 * time.Millisecond):
+		// Timeout reached, check if we became leader
+		isLeader := newElector.IsLeader()
+		if isLeader {
+			logger.Info("Agent elected as leader for remediation",
+				"remediation", remediationKey,
+				"agentNode", s.nodeName)
+		} else {
+			logger.V(1).Info("Agent not elected as leader for remediation",
+				"remediation", remediationKey,
+				"agentNode", s.nodeName)
+		}
+		return isLeader
+	case <-ctx.Done():
+		// Context cancelled
+		return false
+	}
 }
 
 // executeFencing performs the actual fencing operation via SBD device

@@ -272,7 +272,7 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 					workerNodes = append(workerNodes, node.Name)
 				}
 			}
-			const numRemediations = workerNodes - 1 // Reduced to use available worker nodes
+			numRemediations := len(workerNodes) - 1 // Reduced to use available worker nodes
 
 			if numRemediations < 1 {
 				Skip(fmt.Sprintf("Need at least %d worker nodes for concurrent test, found %d", 2, len(workerNodes)))
