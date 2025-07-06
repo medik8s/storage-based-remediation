@@ -77,3 +77,10 @@ var _ = BeforeEach(func() {
 	GinkgoWriter.Printf("Cleaning up SBDConfigs before each test: %v %v\n", testClients, testNamespace)
 	utils.CleanupSBDConfigs(testClients.Client, *testNamespace, testClients.Context)
 })
+
+var _ = AfterEach(func() {
+	specReport := CurrentSpecReport()
+	if specReport.Failed() {
+		utils.DescribeEnvironment(testClients, "sbd-operator-system")
+	}
+})

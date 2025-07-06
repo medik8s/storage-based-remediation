@@ -70,3 +70,10 @@ var _ = AfterSuite(func() {
 	}
 
 })
+
+var _ = AfterEach(func() {
+	specReport := CurrentSpecReport()
+	if specReport.Failed() {
+		utils.DescribeEnvironment(testClients, namespace)
+	}
+})

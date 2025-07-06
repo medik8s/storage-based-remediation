@@ -1024,3 +1024,56 @@ func SuiteSetup(namespace string) (*TestNamespace, error) {
 
 	return testNamespace, nil
 }
+
+func DescribeEnvironment(testClients *TestClients, namespace string) {
+	var controllerPodName string
+
+	By("validating that the controller-manager pod is running as expected")
+	verifyControllerUp := func(g Gomega) {
+		// Get controller-manager pods
+		pods := &corev1.PodList{}
+		err := testClients.Client.List(testClients.Context, pods,
+			client.InNamespace(namespace),
+			client.MatchingLabels{"control-plane": "controller-manager"})
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve controller-manager pod information")
+
+		// Filter out pods that are being deleted
+		var activePods []corev1.Pod
+		for _, pod := range pods.Items {
+			if pod.DeletionTimestamp == nil {
+				activePods = append(activePods, pod)
+			}
+		}
+		g.Expect(activePods).To(HaveLen(1), "expected 1 controller pod running")
+
+		controllerPodName = activePods[0].Name
+		g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
+
+		// Validate the pod's status
+		g.Expect(activePods[0].Status.Phase).To(Equal(corev1.PodRunning), "Incorrect controller-manager pod status")
+	}
+	Eventually(verifyControllerUp).Should(Succeed())
+
+	debugCollector := testClients.NewDebugCollector()
+
+	// Collect controller logs
+	debugCollector.CollectControllerLogs(namespace, controllerPodName)
+
+	// Collect Kubernetes events
+	debugCollector.CollectKubernetesEvents(namespace)
+
+	By("Fetching curl-metrics logs")
+	req := testClients.Clientset.CoreV1().Pods(namespace).GetLogs("curl-metrics", &corev1.PodLogOptions{})
+	podLogs, err := req.Stream(testClients.Context)
+	if err == nil {
+		defer podLogs.Close()
+		buf := new(bytes.Buffer)
+		_, _ = io.Copy(buf, podLogs)
+		_, _ = fmt.Fprintf(GinkgoWriter, "Metrics logs:\n %s", buf.String())
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get curl-metrics logs: %s", err)
+	}
+
+	// Collect controller pod description
+	debugCollector.CollectPodDescription(namespace, controllerPodName)
+}
