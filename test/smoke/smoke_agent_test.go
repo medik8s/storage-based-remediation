@@ -336,7 +336,7 @@ var _ = Describe("SBD Agent Smoke Tests", Ordered, Label("Smoke", "Agent"), func
 			Expect(retrievedConfig.Spec.SharedStorageClass).To(Equal(rwxStorageClass.Name))
 
 			By("displaying final SBDConfig status for debugging")
-			yamlData, err := yaml.Marshal(retrievedConfig)
+			yamlData, err := yaml.Marshal(retrievedConfig.Spec)
 			if err == nil {
 				GinkgoWriter.Printf("Final SBDConfig YAML:\n%s\n", string(yamlData))
 			}
