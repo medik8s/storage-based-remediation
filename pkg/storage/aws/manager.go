@@ -827,36 +827,56 @@ func (m *Manager) ensureEFSSecurityGroup(ctx context.Context, vpcID string) (str
 func (m *Manager) createMountTargets(ctx context.Context, efsID string, subnetIDs []string, securityGroupID string) ([]string, error) {
 	var mountTargets []string
 
+	// First, get all existing mount targets for this EFS
+	existing, err := m.efsClient.DescribeMountTargets(ctx, &efs.DescribeMountTargetsInput{
+		FileSystemId: aws.String(efsID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe mount targets: %w", err)
+	}
+
+	// Create a map of existing mount targets by subnet
+	existingBySubnet := make(map[string]string)
+	for _, mt := range existing.MountTargets {
+		existingBySubnet[*mt.SubnetId] = *mt.MountTargetId
+		log.Printf("🔍 Found existing mount target %s in subnet %s", *mt.MountTargetId, *mt.SubnetId)
+	}
+
 	for _, subnetID := range subnetIDs {
-		// Check if mount target already exists
-		existing, err := m.efsClient.DescribeMountTargets(ctx, &efs.DescribeMountTargetsInput{
-			FileSystemId: aws.String(efsID),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to describe mount targets: %w", err)
-		}
-
-		// Check if mount target already exists in this subnet
-		var exists bool
-		for _, mt := range existing.MountTargets {
-			if *mt.SubnetId == subnetID {
-				mountTargets = append(mountTargets, *mt.MountTargetId)
-				exists = true
-				break
-			}
-		}
-
-		if exists {
+		// Check if mount target already exists in this specific subnet
+		if existingMountTargetID, exists := existingBySubnet[subnetID]; exists {
+			mountTargets = append(mountTargets, existingMountTargetID)
+			log.Printf("✅ Using existing mount target: %s in subnet %s", existingMountTargetID, subnetID)
 			continue
 		}
 
-		// Create mount target
+		// Create mount target for this subnet
 		result, err := m.efsClient.CreateMountTarget(ctx, &efs.CreateMountTargetInput{
 			FileSystemId:   aws.String(efsID),
 			SubnetId:       aws.String(subnetID),
 			SecurityGroups: []string{securityGroupID},
 		})
 		if err != nil {
+			// Handle the case where mount target already exists (race condition or AZ conflict)
+			if strings.Contains(err.Error(), "MountTargetConflict") || strings.Contains(err.Error(), "mount target already exists") {
+				log.Printf("⚠️ Mount target already exists in subnet %s (or its AZ), skipping creation", subnetID)
+				// Try to find the existing mount target in this AZ
+				for _, mt := range existing.MountTargets {
+					// Check if this mount target is in the same AZ as our subnet
+					subnetInfo, subnetErr := m.ec2Client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{
+						SubnetIds: []string{subnetID},
+					})
+					if subnetErr == nil && len(subnetInfo.Subnets) > 0 {
+						subnetAZ := *subnetInfo.Subnets[0].AvailabilityZone
+						if *mt.AvailabilityZoneName == subnetAZ {
+							mountTargets = append(mountTargets, *mt.MountTargetId)
+							log.Printf("✅ Using existing mount target %s in AZ %s", *mt.MountTargetId, subnetAZ)
+							break
+						}
+					}
+				}
+				continue
+			}
 			return nil, fmt.Errorf("failed to create mount target in subnet %s: %w", subnetID, err)
 		}
 
@@ -864,6 +884,11 @@ func (m *Manager) createMountTargets(ctx context.Context, efsID string, subnetID
 		log.Printf("🔗 Created mount target: %s in subnet %s", *result.MountTargetId, subnetID)
 	}
 
+	if len(mountTargets) == 0 {
+		return nil, fmt.Errorf("no mount targets were created or found")
+	}
+
+	log.Printf("✅ Mount targets configured: %d total", len(mountTargets))
 	return mountTargets, nil
 }
 
