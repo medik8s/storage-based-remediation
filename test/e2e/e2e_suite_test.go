@@ -59,6 +59,9 @@ var _ = BeforeSuite(func() {
 	k8sClient = testClients.Client
 	ctx = testClients.Context
 
+	// Discover cluster topology
+	discoverClusterTopology()
+
 	By("Checking AWS availability for disruption tests (one-time setup)")
 	if err := initAWS(); err != nil {
 		By(fmt.Sprintf("AWS not available for disruption tests: %v", err))
@@ -67,10 +70,21 @@ var _ = BeforeSuite(func() {
 		By("AWS initialized successfully for disruption tests")
 		awsInitialized = true
 	}
+
+	// Clean up any leftover artifacts from previous test runs
+	if err := cleanupPreviousTestAttempts(); err != nil {
+		By(fmt.Sprintf("Warning: cleanup of previous test attempts failed: %v", err))
+	}
+	By("Complete: Cleaning up previous test attempts")
 })
 
 var _ = AfterSuite(func() {
 	utils.UninstallCertManager()
+
+	By("cleaning up e2e test namespace")
+	if testNamespace != nil {
+		_ = testNamespace.Cleanup()
+	}
 })
 
 var _ = BeforeEach(func() {
@@ -82,5 +96,11 @@ var _ = AfterEach(func() {
 	specReport := CurrentSpecReport()
 	if specReport.Failed() {
 		utils.DescribeEnvironment(testClients, "sbd-operator-system")
+		utils.DescribeEnvironment(testClients, testNamespace.Name)
 	}
+	By("Cleaning up previous test attempts")
+	cleanupPreviousTestAttempts()
 })
+
+// var _ = AfterAll(func() {
+// })

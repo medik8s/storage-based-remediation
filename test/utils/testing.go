@@ -1028,6 +1028,22 @@ func SuiteSetup(namespace string) (*TestNamespace, error) {
 func DescribeEnvironment(testClients *TestClients, namespace string) {
 	var controllerPodName string
 
+	By("Fetching SBDConfig CRs")
+	sbdConfigs := &medik8sv1alpha1.SBDConfigList{}
+	err := testClients.Client.List(testClients.Context, sbdConfigs, client.InNamespace(namespace))
+	if err != nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get SBDConfig CRs: %s", err)
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "SBDConfig CRs found: %d\n", len(sbdConfigs.Items))
+		for i, config := range sbdConfigs.Items {
+			_, _ = fmt.Fprintf(GinkgoWriter, "SBDConfig %d:\n", i+1)
+			_, _ = fmt.Fprintf(GinkgoWriter, "  Name: %s\n", config.Name)
+			_, _ = fmt.Fprintf(GinkgoWriter, "  Namespace: %s\n", config.Namespace)
+			_, _ = fmt.Fprintf(GinkgoWriter, "  Status: %+v\n", config.Status)
+			_, _ = fmt.Fprintf(GinkgoWriter, "  Spec: %+v\n", config.Spec)
+		}
+	}
+
 	By("validating that the controller-manager pod is running as expected")
 	verifyControllerUp := func(g Gomega) {
 		// Get controller-manager pods

@@ -87,36 +87,14 @@ var (
 var testNamespace *utils.TestNamespace
 var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 	BeforeAll(func() {
-
-		// Discover cluster topology
-		discoverClusterTopology()
-
-		// Initialize AWS if available (for disruption testing)
-		if err := initAWS(); err != nil {
-			By(fmt.Sprintf("AWS initialization failed (AWS disruption tests will be skipped): %v", err))
-		} else {
-			By("AWS initialization successful - AWS disruption tests available")
-
-			// Clean up any leftover artifacts from previous test runs
-			if err := cleanupPreviousTestAttempts(); err != nil {
-				By(fmt.Sprintf("Warning: cleanup of previous test attempts failed: %v", err))
-			}
-		}
-
 		By(fmt.Sprintf("Running e2e tests on cluster with %d total nodes (%d workers, %d control plane)",
 			clusterInfo.TotalNodes, len(clusterInfo.WorkerNodes), len(clusterInfo.ControlNodes)))
 	})
 
 	AfterAll(func() {
-		By("cleaning up e2e test namespace")
-		if testNamespace != nil {
-			_ = testNamespace.Cleanup()
-		}
 	})
 
 	AfterEach(func() {
-		By("Cleaning up previous test attempts")
-		cleanupPreviousTestAttempts()
 	})
 
 	Context("SBD E2E Failure Simulation Tests", func() {
