@@ -87,13 +87,18 @@ test-all: test test-smoke test-e2e ## Run all tests: unit tests, smoke tests, an
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v -E '/(e2e|smoke)') -coverprofile cover.out
 
+.PHONY: sync-test-files
+sync-test-files: ## Sync shared configuration files to test directories.
+	@chmod +x scripts/sync-test-files.sh
+	@scripts/sync-test-files.sh
+
 .PHONY: test-e2e
-test-e2e: ## Run e2e tests using the test runner script (auto-detects environment).
+test-e2e: sync-test-files ## Run e2e tests using the test runner script (auto-detects environment).
 	@echo "Running e2e tests using test runner script..."
 	@scripts/run-tests.sh --type e2e -v --env cluster
 
 .PHONY: test-smoke
-test-smoke: ## Run smoke tests with building images.
+test-smoke: sync-test-files ## Run smoke tests with building images.
 	@echo "Running smoke tests with image building..."
 	@scripts/run-tests.sh --type smoke --env cluster -v
 # -ginkgo.label-filter="Remediation" 

@@ -1,6 +1,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Set namespace for all resources
+namespace: sbd-operator-system
+
 resources:
 - ../../config/openshift-default
 - ../../config/webhook  # Enable webhook configuration
@@ -15,7 +18,8 @@ patches:
   target:
     kind: Deployment
     name: controller-manager
-# [WEBHOOK] Enable webhook patch  
-- path: ../../config/default/manager_webhook_patch.yaml
+# [WEBHOOK] Enable webhook patch - local file to avoid kustomize security restrictions
+- path: webhook-patch.yaml
   target:
     kind: Deployment
+    name: controller-manager

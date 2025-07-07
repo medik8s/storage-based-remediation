@@ -556,7 +556,7 @@ generate_webhook_certificates() {
     chmod +x scripts/generate-webhook-certs.sh
     
     # Generate self-signed certificates for tests (avoid Let's Encrypt dependencies)
-    USE_LETSENCRYPT=false scripts/generate-webhook-certs.sh || {
+    USE_LETSENCRYPT=false NAMESPACE=sbd-operator-system scripts/generate-webhook-certs.sh || {
         log_error "Failed to generate webhook certificates"
         exit 1
     }
