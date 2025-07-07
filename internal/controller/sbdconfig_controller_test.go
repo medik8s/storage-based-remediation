@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -1176,6 +1177,39 @@ var _ = Describe("SBDConfig Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("performing second reconciliation (validates storage class and creates PVC)")
+			_, err = validationReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      sbdConfig.Name,
+					Namespace: sbdConfig.Namespace,
+				},
+			})
+
+			By("expecting reconciliation to fail because job was just created")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("SBD device initialization job"))
+			Expect(err.Error()).To(ContainSubstring("was just created"))
+
+			By("simulating job completion by updating job status")
+			jobName := fmt.Sprintf("%s-sbd-device-init", sbdConfig.Name)
+			job := &batchv1.Job{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      jobName,
+					Namespace: sbdConfig.Namespace,
+				}, job)
+			}, timeout, interval).Should(Succeed())
+
+			// Update job status to show completion
+			job.Status.Succeeded = 1
+			job.Status.Conditions = []batchv1.JobCondition{
+				{
+					Type:   batchv1.JobComplete,
+					Status: corev1.ConditionTrue,
+				},
+			}
+			Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+
+			By("performing third reconciliation (should succeed after job completion)")
 			_, err = validationReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      sbdConfig.Name,

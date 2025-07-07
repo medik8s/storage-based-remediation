@@ -751,9 +751,12 @@ echo "SBD device initialization completed successfully"
 			return fmt.Errorf("recreating failed SBD device init job, will retry")
 		}
 
-		// Job is still running
-		logger.V(1).Info("SBD device initialization job is still running")
-		return nil
+		// Job is still running - prevent DaemonSet creation until job completes
+		logger.Info("SBD device initialization job is still running, waiting for completion before creating DaemonSet",
+			"job.name", jobName,
+			"job.active", existingJob.Status.Active,
+			"job.conditions", len(existingJob.Status.Conditions))
+		return fmt.Errorf("SBD device initialization job '%s' is still running, DaemonSet creation will be delayed until job completes", jobName)
 	} else if !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to get SBD device init job: %w", err)
 	}
@@ -767,11 +770,12 @@ echo "SBD device initialization completed successfully"
 		return fmt.Errorf("failed to create SBD device initialization job: %w", err)
 	}
 
-	logger.Info("SBD device initialization job created successfully")
+	logger.Info("SBD device initialization job created successfully, waiting for completion before creating DaemonSet")
 	r.emitEventf(sbdConfig, EventTypeNormal, ReasonSBDDeviceInitialized,
 		"SBD device initialization job '%s' created successfully", jobName)
 
-	return nil
+	// Return error to trigger requeue and wait for job completion
+	return fmt.Errorf("SBD device initialization job '%s' was just created, DaemonSet creation will be delayed until job completes", jobName)
 }
 
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdconfigs,verbs=get;list;watch;create;update;patch;delete
