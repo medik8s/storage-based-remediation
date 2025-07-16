@@ -48,7 +48,7 @@ func main() {
 
 	// Handle IAM policy generation
 	if config.GenerateIAMPolicy {
-		printIAMPolicy()
+		generateIAMPolicy()
 		return
 	}
 
@@ -208,8 +208,8 @@ func printResults(result *storage.SetupResult) {
 	fmt.Printf("   Use StorageClass '%s' in your PVCs for shared storage.\n", result.StorageClassName)
 }
 
-// printIAMPolicy generates and prints the required IAM policy for the EFS CSI driver
-func printIAMPolicy() {
+// generateIAMPolicy generates and prints the required IAM policy for the EFS CSI driver
+func generateIAMPolicy() {
 	policy := `{
   "Version": "2012-10-17",
   "Statement": [
@@ -243,9 +243,22 @@ func printIAMPolicy() {
 	fmt.Println("📋 Required IAM Policy for OpenShift EFS CSI Driver Setup")
 	fmt.Println("========================================================")
 	fmt.Println()
+	fmt.Println("⚠️  CRITICAL: EFS tagging permissions are MANDATORY!")
+	fmt.Println("🚨 Without efs:DescribeTags + efs:CreateTags, this tool will:")
+	fmt.Println("   • NOT detect existing EFS filesystems")
+	fmt.Println("   • CREATE DUPLICATE EFS resources")
+	fmt.Println("   • WASTE MONEY on unnecessary AWS charges")
+	fmt.Println("   • Make resource cleanup difficult")
+	fmt.Println()
 	fmt.Println("This policy grants the minimum required permissions for the")
 	fmt.Println("setup-shared-storage tool to create and configure EFS resources")
-	fmt.Println("for OpenShift clusters.")
+	fmt.Println("for OpenShift clusters while avoiding resource duplication.")
+	fmt.Println()
+	fmt.Println("KEY PERMISSIONS EXPLAINED:")
+	fmt.Println("• efs:DescribeTags  - REQUIRED to find existing EFS by name to avoid duplicates")
+	fmt.Println("• efs:CreateTags    - REQUIRED to tag new EFS filesystems for future reuse")
+	fmt.Println("• ec2:CreateTags    - REQUIRED to tag security groups for management")
+	fmt.Println("• All other permissions are required for EFS creation and networking")
 	fmt.Println()
 	fmt.Println("USAGE:")
 	fmt.Println("1. Save this policy as 'efs-setup-policy.json'")

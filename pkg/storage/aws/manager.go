@@ -128,6 +128,16 @@ func (m *Manager) ValidateAWSPermissions(ctx context.Context) error {
 			testFn:      m.testDescribeFileSystems,
 		},
 		{
+			name:        "efs:DescribeTags",
+			description: "Read EFS filesystem tags (MANDATORY for reusing existing filesystems)",
+			testFn:      m.testDescribeTags,
+		},
+		{
+			name:        "efs:CreateTags",
+			description: "Create tags on EFS filesystems (required for proper resource management)",
+			testFn:      m.testCreateTags,
+		},
+		{
 			name:        "efs:CreateMountTarget",
 			description: "Create EFS mount targets in subnets",
 			testFn:      m.testCreateMountTarget,
@@ -325,6 +335,26 @@ func (m *Manager) testCreateFileSystem() error {
 func (m *Manager) testDescribeFileSystems() error {
 	_, err := m.efsClient.DescribeFileSystems(context.Background(), &efs.DescribeFileSystemsInput{
 		MaxItems: aws.Int32(5),
+	})
+	return err
+}
+
+func (m *Manager) testDescribeTags() error {
+	_, err := m.efsClient.DescribeTags(context.Background(), &efs.DescribeTagsInput{
+		MaxItems: aws.Int32(1),
+	})
+	return err
+}
+
+func (m *Manager) testCreateTags() error {
+	_, err := m.efsClient.CreateTags(context.Background(), &efs.CreateTagsInput{
+		FileSystemId: aws.String("fs-nonexistent123"), // Invalid filesystem ID
+		Tags: []efstypes.Tag{
+			{
+				Key:   aws.String("Name"),
+				Value: aws.String("test-tag-check"),
+			},
+		},
 	})
 	return err
 }
@@ -762,22 +792,39 @@ func (m *Manager) findEFSByName(ctx context.Context, name string) (string, error
 		return "", fmt.Errorf("failed to describe file systems: %w", err)
 	}
 
+	var permissionError error
 	for _, fs := range result.FileSystems {
 		// Check tags for name
 		tags, err := m.efsClient.DescribeTags(ctx, &efs.DescribeTagsInput{
 			FileSystemId: fs.FileSystemId,
 		})
 		if err != nil {
+			// Check if this is a permission error - this is critical and should not be ignored
+			if isPermissionDeniedError(err) {
+				return "", fmt.Errorf("❌ CRITICAL: Missing efs:DescribeTags permission - required for detecting existing EFS filesystems to avoid duplicates. Error: %w", err)
+			}
+			// For other errors (like network issues), store the error but continue trying other filesystems
+			if permissionError == nil {
+				permissionError = fmt.Errorf("warning: failed to get tags for EFS %s: %w", *fs.FileSystemId, err)
+				log.Printf("⚠️ Warning: Could not get tags for EFS %s: %v", *fs.FileSystemId, err)
+			}
 			continue
 		}
 
 		for _, tag := range tags.Tags {
 			if *tag.Key == "Name" && *tag.Value == name {
+				log.Printf("🔍 Found existing EFS filesystem with name '%s': %s", name, *fs.FileSystemId)
 				return *fs.FileSystemId, nil
 			}
 		}
 	}
 
+	// If we had permission errors but no filesystem was found, return the permission error
+	if permissionError != nil {
+		log.Printf("⚠️ EFS filesystem detection completed with warnings: %v", permissionError)
+	}
+
+	log.Printf("🔍 No existing EFS filesystem found with name: %s", name)
 	return "", nil
 }
 
