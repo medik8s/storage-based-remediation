@@ -118,12 +118,12 @@ func (m *Manager) ValidateAWSPermissions(ctx context.Context) error {
 			testFn:      m.testAuthorizeSecurityGroupIngress,
 		},
 		{
-			name:        "efs:CreateFileSystem",
+			name:        "elasticfilesystem:CreateFileSystem",
 			description: "Create EFS filesystem",
 			testFn:      m.testCreateFileSystem,
 		},
 		{
-			name:        "efs:DescribeFileSystems",
+			name:        "elasticfilesystem:DescribeFileSystems",
 			description: "List and check EFS filesystems",
 			testFn:      m.testDescribeFileSystems,
 		},
@@ -134,16 +134,21 @@ func (m *Manager) ValidateAWSPermissions(ctx context.Context) error {
 		},
 		{
 			name:        "elasticfilesystem:CreateTags",
-			description: "Create tags on EFS filesystems (required for proper resource management)",
+			description: "Create tags on EFS filesystems (legacy API)",
 			testFn:      m.testCreateTags,
 		},
 		{
-			name:        "efs:CreateMountTarget",
+			name:        "elasticfilesystem:TagResource",
+			description: "Tag EFS resources during creation (MANDATORY for CreateFileSystem with tags)",
+			testFn:      m.testTagResource,
+		},
+		{
+			name:        "elasticfilesystem:CreateMountTarget",
 			description: "Create EFS mount targets in subnets",
 			testFn:      m.testCreateMountTarget,
 		},
 		{
-			name:        "efs:DescribeMountTargets",
+			name:        "elasticfilesystem:DescribeMountTargets",
 			description: "List EFS mount targets",
 			testFn:      m.testDescribeMountTargets,
 		},
@@ -350,6 +355,19 @@ func (m *Manager) testDescribeTags() error {
 func (m *Manager) testCreateTags() error {
 	_, err := m.efsClient.CreateTags(context.Background(), &efs.CreateTagsInput{
 		FileSystemId: aws.String("fs-nonexistent123"), // Invalid filesystem ID
+		Tags: []efstypes.Tag{
+			{
+				Key:   aws.String("Name"),
+				Value: aws.String("test-tag-check"),
+			},
+		},
+	})
+	return err
+}
+
+func (m *Manager) testTagResource() error {
+	_, err := m.efsClient.TagResource(context.Background(), &efs.TagResourceInput{
+		ResourceId: aws.String("fs-nonexistent123"), // Invalid filesystem ID
 		Tags: []efstypes.Tag{
 			{
 				Key:   aws.String("Name"),

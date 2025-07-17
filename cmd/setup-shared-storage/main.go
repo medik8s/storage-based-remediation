@@ -264,7 +264,8 @@ func generateIAMPolicy() {
       "Action": [
         "elasticfilesystem:CreateFileSystem",
         "elasticfilesystem:CreateMountTarget",
-        "elasticfilesystem:CreateTags"
+        "elasticfilesystem:CreateTags",
+        "elasticfilesystem:TagResource"
       ],
       "Resource": [
         "arn:aws:elasticfilesystem:*:*:file-system/*",
@@ -284,11 +285,11 @@ func generateIAMPolicy() {
 	fmt.Println("   • Principle of least privilege applied")
 	fmt.Println()
 	fmt.Println("⚠️  CRITICAL: EFS tagging permissions are MANDATORY!")
-	fmt.Println("🚨 Without elasticfilesystem:DescribeTags + elasticfilesystem:CreateTags, this tool will:")
+	fmt.Println("🚨 Without elasticfilesystem:DescribeTags + elasticfilesystem:TagResource, this tool will:")
 	fmt.Println("   • NOT detect existing EFS filesystems")
 	fmt.Println("   • CREATE DUPLICATE EFS resources")
 	fmt.Println("   • WASTE MONEY on unnecessary AWS charges")
-	fmt.Println("   • Make resource cleanup difficult")
+	fmt.Println("   • FAIL to create EFS with required tags")
 	fmt.Println()
 	fmt.Println("This policy grants the minimum required permissions for the")
 	fmt.Println("setup-shared-storage tool to create and configure EFS resources")
@@ -303,7 +304,8 @@ func generateIAMPolicy() {
 	fmt.Println()
 	fmt.Println("KEY PERMISSIONS EXPLAINED:")
 	fmt.Println("• elasticfilesystem:DescribeTags  - REQUIRED to find existing EFS by name to avoid duplicates")
-	fmt.Println("• elasticfilesystem:CreateTags    - REQUIRED to tag new EFS filesystems for future reuse")
+	fmt.Println("• elasticfilesystem:TagResource   - REQUIRED to tag new EFS filesystems during creation")
+	fmt.Println("• elasticfilesystem:CreateTags    - Legacy API for tagging existing resources")
 	fmt.Println("• ec2:CreateTags                  - REQUIRED to tag security groups for management")
 	fmt.Println("• All other permissions are required for EFS creation and networking")
 	fmt.Println()
