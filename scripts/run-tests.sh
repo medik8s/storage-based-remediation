@@ -721,13 +721,19 @@ run_tests() {
     export QUAY_ORG
     export TAG
     
-    # Run the appropriate test suite
-    local test_cmd="go test ./test/$TEST_TYPE/ -v"
+    # Run the appropriate test suite using ginkgo for consistent test execution
+    local ginkgo_binary="./bin/ginkgo"
+    if [[ ! -f "$ginkgo_binary" ]]; then
+        log_info "Ginkgo binary not found, building it..."
+        make ginkgo
+    fi
+    
+    local test_cmd="$ginkgo_binary -v test/$TEST_TYPE"
     if [[ "$VERBOSE" == "true" ]]; then
-        test_cmd="$test_cmd -ginkgo.v"
+        test_cmd="$test_cmd --trace"
     fi
 
-    echo $test_cmd    
+    log_info "Executing: $test_cmd"
     if $test_cmd; then
         log_success "$TEST_TYPE tests passed"
         return 0
