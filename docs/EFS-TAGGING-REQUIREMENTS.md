@@ -146,7 +146,23 @@ requiredPermissions := []struct{...}{
 }
 ```
 
-### 2. **Improved Error Handling**
+### 2. **Fixed Permission Validation**
+Fixed `testDescribeTags()` to properly test the permission:
+
+```go
+// BEFORE (broken): Missing required FileSystemId parameter
+_, err := m.efsClient.DescribeTags(ctx, &efs.DescribeTagsInput{
+    MaxItems: aws.Int32(1),  // Would fail with parameter error, not permission error
+})
+
+// AFTER (correct): Include invalid FileSystemId to trigger validation error
+_, err := m.efsClient.DescribeTags(ctx, &efs.DescribeTagsInput{
+    FileSystemId: aws.String("fs-nonexistent123"), // Triggers validation error if permission exists
+    MaxItems:     aws.Int32(1),
+})
+```
+
+### 3. **Improved Error Handling**
 Enhanced `findEFSByName()` to fail fast on permission errors:
 
 ```go
@@ -159,7 +175,7 @@ if err != nil {
 }
 ```
 
-### 3. **Clear Documentation**
+### 4. **Clear Documentation**
 Updated IAM policy generator to explain why tagging permissions are critical:
 
 ```bash

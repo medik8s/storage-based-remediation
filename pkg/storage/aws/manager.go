@@ -341,7 +341,8 @@ func (m *Manager) testDescribeFileSystems() error {
 
 func (m *Manager) testDescribeTags() error {
 	_, err := m.efsClient.DescribeTags(context.Background(), &efs.DescribeTagsInput{
-		MaxItems: aws.Int32(1),
+		FileSystemId: aws.String("fs-nonexistent123"), // Invalid filesystem ID to trigger validation error
+		MaxItems:     aws.Int32(1),
 	})
 	return err
 }
