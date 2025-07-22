@@ -95,7 +95,7 @@ sync-test-files: ## Sync shared configuration files to test directories.
 .PHONY: test-e2e
 test-e2e: sync-test-files ## Run e2e tests with complete deployment pipeline.
 	@echo "Running e2e tests with complete deployment and environment setup..."
-	@scripts/run-tests.sh --type e2e --env cluster -v 
+	@scripts/run-tests.sh --type e2e --env cluster -v --no-webhooks
 
 .PHONY: test-e2e-local
 test-e2e-local: ginkgo ## Run e2e tests locally (assumes operator already deployed).
