@@ -1,8 +1,8 @@
 resources:
-# SBD Operator RBAC - refined with minimal necessary permissions
+# SBD Operator RBAC - use generated role with kubebuilder RBAC markers
 - sbd_operator_service_account.yaml
-- sbd_operator_role.yaml
-- sbd_operator_role_binding.yaml
+- role.yaml
+- role_binding.yaml
 
 # SBD Agent RBAC - minimal permissions for agent operations
 - sbd_agent_service_account.yaml
