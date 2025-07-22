@@ -541,8 +541,8 @@ type SBDAgent struct {
 
 // NewSBDAgent creates a new SBD agent with the specified configuration
 func NewSBDAgent(watchdogPath, sbdDevicePath, nodeName, clusterName string, nodeID uint16, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval time.Duration, sbdTimeoutSeconds uint, rebootMethod string, metricsPort int, staleNodeTimeout time.Duration, fileLockingEnabled bool, k8sClient client.Client, k8sClientset kubernetes.Interface, watchNamespace string, enableFencing bool) (*SBDAgent, error) {
-	// Initialize watchdog first (always required)
-	wd, err := watchdog.NewWithLogger(watchdogPath, logger)
+	// Initialize watchdog first (always required) with softdog fallback for systems without hardware watchdog
+	wd, err := watchdog.NewWithSoftdogFallback(watchdogPath, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize watchdog %s: %w", watchdogPath, err)
 	}
