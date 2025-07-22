@@ -133,7 +133,7 @@ spec:
   # - GlusterFS: "glusterfs"
   # 
   # Note: If not specified, SBD agents will operate independently without coordination
-  # sharedStorageClass: "efs-sc"
+  sharedStorageClass: "sbd-efs-sc"
 
 # ========================================================================
 # MULTIPLE SBDCONFIG SUPPORT (NEW in v1.1+)
