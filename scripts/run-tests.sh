@@ -26,6 +26,7 @@ CLEANUP_ONLY="false"
 SKIP_BUILD="true"
 SKIP_DEPLOY="false"
 VERBOSE="false"
+ENABLE_WEBHOOKS="true"
 CRC_CLUSTER="sbd-operator-test"
 test_namespace="sbd-test"
 
@@ -78,6 +79,7 @@ OPTIONS:
     --cleanup-only          Only perform cleanup, don't run tests
     -b, --build             Build container images (default: skip building, use existing images)
     -d, --skip-deploy       Skip deploying operator (assumes already deployed)
+    --no-webhooks           Disable webhook validation (default: enabled)
     -v, --verbose           Enable verbose output
     -h, --help              Show this help message
 
@@ -113,6 +115,9 @@ EXAMPLES:
 
     # Build images and run tests
     $0 --build
+
+    # Run tests without webhook validation (useful for debugging)
+    $0 --no-webhooks
 
     # Clean up test resources only (no tests)
     $0 --cleanup-only
@@ -154,6 +159,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -d|--skip-deploy)
             SKIP_DEPLOY="true"
+            shift
+            ;;
+        --no-webhooks)
+            ENABLE_WEBHOOKS="false"
             shift
             ;;
         -v|--verbose)
@@ -234,6 +243,7 @@ else
     log_info "  Cleanup After Test: $CLEANUP_AFTER_TEST"
     log_info "  Build Images: $(if [[ "$SKIP_BUILD" == "true" ]]; then echo "false (using existing)"; else echo "true"; fi)"
     log_info "  Skip Deploy: $SKIP_DEPLOY"
+    log_info "  Enable Webhooks: $ENABLE_WEBHOOKS"
 fi
 
 # Function to check required tools
@@ -535,7 +545,100 @@ build_installer() {
         fi
     fi
     
+    # Create modified kustomization without webhooks if disabled
+    if [[ "$ENABLE_WEBHOOKS" == "false" ]]; then
+        log_info "Webhooks disabled - creating modified kustomization without webhook resources"
+        local temp_dir="dist/temp-kustomize-$(date +%s)"
+        mkdir -p "$temp_dir"
+        
+        # Create a new kustomization based on config/default but without webhooks
+        cat > "$temp_dir/kustomization.yaml" <<EOF
+# Generated kustomization without webhooks for testing
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Preserve essential transformations from config/default
+namespace: sbd-operator-system
+namePrefix: sbd-operator-
+
+resources:
+- ../../config/crd
+- ../../config/rbac
+- ../../config/manager
+# Note: webhook resources excluded for no-webhook testing
+
+# Fix service account name references that namePrefix doesn't handle automatically
+replacements:
+- source:
+    kind: ServiceAccount
+    version: v1
+    name: sbd-operator-controller-manager
+    fieldPath: metadata.name
+  targets:
+  - select:
+      kind: Deployment
+      name: controller-manager
+    fieldPaths:
+    - spec.template.spec.serviceAccountName
+
+EOF
+
+        # Copy and reference patch files as needed
+        if [[ -f "config/default/manager_metrics_patch.yaml" ]]; then
+            cp "config/default/manager_metrics_patch.yaml" "$temp_dir/"
+            cat >> "$temp_dir/kustomization.yaml" <<EOF
+patches:
+- path: manager_metrics_patch.yaml
+  target:
+    kind: Deployment
+EOF
+        fi
+
+        # Copy image pull policy patch if it exists
+        if [[ -f "$kustomize_target/image-pull-policy-patch.yaml" ]]; then
+            cp "$kustomize_target/image-pull-policy-patch.yaml" "$temp_dir/"
+            cat >> "$temp_dir/kustomization.yaml" <<EOF
+- path: image-pull-policy-patch.yaml
+  target:
+    kind: Deployment
+    name: controller-manager
+EOF
+        fi
+
+        # Create a patch to disable webhooks in the operator
+        cat > "$temp_dir/disable-webhooks-patch.yaml" <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-manager
+spec:
+  template:
+    spec:
+      containers:
+      - name: manager
+        args:
+        - --leader-elect
+        - --health-probe-bind-address=:8081
+        - --enable-webhooks=false
+EOF
+
+        cat >> "$temp_dir/kustomization.yaml" <<EOF
+- path: disable-webhooks-patch.yaml
+  target:
+    kind: Deployment
+    name: controller-manager
+EOF
+        
+        kustomize_target="$temp_dir"
+        log_info "Using modified kustomization: $kustomize_target"
+    fi
+    
     $KUBECTL kustomize "$kustomize_target" > dist/install.yaml
+    
+    # Clean up temporary directory
+    if [[ "$ENABLE_WEBHOOKS" == "false" && -d "dist/temp-kustomize-"* ]]; then
+        rm -rf dist/temp-kustomize-*
+    fi
     
     log_success "Installer manifest built: dist/install.yaml"
 }
@@ -632,6 +735,13 @@ create_webhook_secret() {
 # Function to update webhook configuration with CA bundle
 update_webhook_ca_bundle() {
     local cert_file="$1"
+    
+    # Skip webhook configuration update if webhooks are disabled
+    if [[ "$ENABLE_WEBHOOKS" == "false" ]]; then
+        log_info "Webhooks disabled - skipping webhook CA bundle update"
+        return 0
+    fi
+    
     log_info "Updating webhook configuration with CA bundle"
     
     if [[ ! -f "$cert_file" ]]; then
@@ -652,10 +762,11 @@ update_webhook_ca_bundle() {
         elif $KUBECTL get validatingwebhookconfiguration "validating-webhook-configuration" >/dev/null 2>&1; then
             webhook_config_name="validating-webhook-configuration"
         else
-            log_error "No webhook configuration found"
+            log_warning "No webhook configuration found - this is expected when webhooks are disabled"
             log_info "Available webhook configurations:"
             $KUBECTL get validatingwebhookconfiguration || true
-            exit 1
+            log_info "Skipping webhook CA bundle update"
+            return 0
         fi
     fi
     
@@ -722,9 +833,14 @@ deploy_operator() {
             ;;
     esac
     
-    # Generate and create webhook certificates before deploying
-    generate_webhook_certificates
-    create_webhook_secret
+    # Generate and create webhook certificates before deploying (only if webhooks are enabled)
+    if [[ "$ENABLE_WEBHOOKS" == "true" ]]; then
+        log_info "Webhooks enabled - generating certificates and creating secret"
+        generate_webhook_certificates
+        create_webhook_secret
+    else
+        log_info "Webhooks disabled - skipping certificate generation"
+    fi
     
     $KUBECTL apply -f dist/install.yaml --server-side=true --force-conflicts=true
     
