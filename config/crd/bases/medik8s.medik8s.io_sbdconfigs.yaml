@@ -55,6 +55,18 @@ spec:
                 - Never
                 - IfNotPresent
                 type: string
+              logLevel:
+                default: info
+                description: |-
+                  LogLevel defines the logging level for the SBD agent pods.
+                  Valid values are debug, info, warn, and error.
+                  Debug provides the most verbose logging, while error only logs error messages.
+                enum:
+                - debug
+                - info
+                - warn
+                - error
+                type: string
               nodeSelector:
                 additionalProperties:
                   type: string

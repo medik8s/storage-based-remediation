@@ -1405,7 +1405,7 @@ func (r *SBDConfigReconciler) buildSBDAgentArgs(sbdConfig *medik8sv1alpha1.SBDCo
 		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, sbdConfig.Spec.GetSbdWatchdogPath()),
 		fmt.Sprintf("--%s=%s", agent.FlagWatchdogTimeout, watchdogTimeout.String()),
 		fmt.Sprintf("--%s=%s", agent.FlagPetInterval, petInterval.String()),
-		fmt.Sprintf("--%s=%s", agent.FlagLogLevel, "info"),
+		fmt.Sprintf("--%s=%s", agent.FlagLogLevel, sbdConfig.Spec.GetLogLevel()),
 		fmt.Sprintf("--%s=%s", agent.FlagStaleNodeTimeout, sbdConfig.Spec.GetStaleNodeTimeout().String()),
 	}
 

@@ -55,6 +55,24 @@ spec:
   petIntervalMultiple: 4
   
   # ========================================================================
+  # LOGGING CONFIGURATION
+  # ========================================================================
+  
+  # Log level for SBD agent pods
+  # - Default: "info"
+  # - Valid values: "debug", "info", "warn", "error"
+  # - debug: Most verbose logging, useful for troubleshooting
+  # - info: Standard logging with general information
+  # - warn: Only warning and error messages
+  # - error: Only error messages
+  # 
+  # Recommended values:
+  # - Development/Testing: "debug" or "info"
+  # - Production (normal): "info"
+  # - Production (quiet): "warn" or "error"
+  logLevel: "info"
+  
+  # ========================================================================
   # CONTAINER IMAGE CONFIGURATION
   # ========================================================================
   

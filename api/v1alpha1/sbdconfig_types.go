@@ -131,6 +131,14 @@ type SBDConfigSpec struct {
 	// +kubebuilder:default=4
 	// +optional
 	PetIntervalMultiple *int32 `json:"petIntervalMultiple,omitempty"`
+
+	// LogLevel defines the logging level for the SBD agent pods.
+	// Valid values are debug, info, warn, and error.
+	// Debug provides the most verbose logging, while error only logs error messages.
+	// +kubebuilder:validation:Enum=debug;info;warn;error
+	// +kubebuilder:default="info"
+	// +optional
+	LogLevel string `json:"logLevel,omitempty"`
 }
 
 // GetSbdWatchdogPath returns the watchdog path with default fallback
@@ -194,6 +202,14 @@ func (s *SBDConfigSpec) GetPetInterval() time.Duration {
 	}
 
 	return petInterval
+}
+
+// GetLogLevel returns the log level with default fallback
+func (s *SBDConfigSpec) GetLogLevel() string {
+	if s.LogLevel != "" {
+		return s.LogLevel
+	}
+	return "warn"
 }
 
 // GetSharedStoragePVCName returns the generated PVC name for shared storage
