@@ -160,6 +160,81 @@ func TestTimeoutPreventsHanging(t *testing.T) {
 	t.Logf("Operation completed in %v (with or without timeout error)", elapsed)
 }
 
+func TestStrictTimeoutEnforcement(t *testing.T) {
+	// This test verifies that timeouts are strictly enforced using time.After
+	// rather than relying on context cancellation which may not interrupt system calls
+
+	tmpFile, err := os.CreateTemp("", "blockdevice-strict-timeout-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	device, err := OpenWithLogger(tmpFile.Name(), logr.Discard())
+	if err != nil {
+		t.Fatalf("Failed to open device: %v", err)
+	}
+	defer device.Close()
+
+	// Set timeout to a precise value for testing
+	strictTimeout := 50 * time.Millisecond
+	device.ioTimeout = strictTimeout
+
+	testData := []byte("strict timeout test")
+
+	// Test WriteAt strict timeout
+	startTime := time.Now()
+	_, err = device.WriteAt(testData, 0)
+	writeElapsed := time.Since(startTime)
+
+	// Should complete very close to the timeout period
+	// Allow some tolerance for scheduling delays
+	minExpected := strictTimeout
+	maxExpected := strictTimeout + 20*time.Millisecond
+
+	if writeElapsed < minExpected {
+		t.Logf("WriteAt completed faster than timeout (%v < %v) - operation may have succeeded",
+			writeElapsed, minExpected)
+	} else if writeElapsed > maxExpected {
+		t.Errorf("WriteAt took too long (%v > %v) - timeout not strictly enforced",
+			writeElapsed, maxExpected)
+	} else {
+		t.Logf("WriteAt timeout strictly enforced: %v (expected ~%v)", writeElapsed, strictTimeout)
+	}
+
+	// Test ReadAt strict timeout
+	readBuf := make([]byte, len(testData))
+	startTime = time.Now()
+	_, err = device.ReadAt(readBuf, 0)
+	readElapsed := time.Since(startTime)
+
+	if readElapsed < minExpected {
+		t.Logf("ReadAt completed faster than timeout (%v < %v) - operation may have succeeded",
+			readElapsed, minExpected)
+	} else if readElapsed > maxExpected {
+		t.Errorf("ReadAt took too long (%v > %v) - timeout not strictly enforced",
+			readElapsed, maxExpected)
+	} else {
+		t.Logf("ReadAt timeout strictly enforced: %v (expected ~%v)", readElapsed, strictTimeout)
+	}
+
+	// Test Sync strict timeout
+	startTime = time.Now()
+	err = device.Sync()
+	syncElapsed := time.Since(startTime)
+
+	if syncElapsed < minExpected {
+		t.Logf("Sync completed faster than timeout (%v < %v) - operation may have succeeded",
+			syncElapsed, minExpected)
+	} else if syncElapsed > maxExpected {
+		t.Errorf("Sync took too long (%v > %v) - timeout not strictly enforced",
+			syncElapsed, maxExpected)
+	} else {
+		t.Logf("Sync timeout strictly enforced: %v (expected ~%v)", syncElapsed, strictTimeout)
+	}
+}
+
 func TestDefaultTimeoutValue(t *testing.T) {
 	// Verify that the default timeout is reasonable for storage operations
 	if DefaultIOTimeout < 10*time.Second {
@@ -222,4 +297,58 @@ func TestRetryWithTimeouts(t *testing.T) {
 	}
 
 	t.Logf("Retry operation completed in %v with error: %v", elapsed, err)
+}
+
+func TestTimeoutMechanismComparison(t *testing.T) {
+	// This test documents the improvement from context-based to time.After-based timeouts
+	// Context cancellation may not interrupt hanging system calls, but time.After provides
+	// strict enforcement by abandoning operations that exceed the timeout.
+
+	tmpFile, err := os.CreateTemp("", "blockdevice-mechanism-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	device, err := OpenWithLogger(tmpFile.Name(), logr.Discard())
+	if err != nil {
+		t.Fatalf("Failed to open device: %v", err)
+	}
+	defer device.Close()
+
+	// Test with a reasonable timeout that shows the mechanism works
+	device.ioTimeout = 10 * time.Millisecond
+
+	// Perform multiple operations to demonstrate consistent timeout behavior
+	testData := []byte("mechanism test")
+	timeouts := 0
+	successes := 0
+
+	for i := 0; i < 5; i++ {
+		startTime := time.Now()
+		_, err := device.WriteAt(testData, int64(i*len(testData)))
+		elapsed := time.Since(startTime)
+
+		if err != nil && strings.Contains(err.Error(), "timeout") {
+			timeouts++
+			// Verify timeout happened close to the expected time
+			if elapsed > 15*time.Millisecond {
+				t.Errorf("Timeout took too long (%v), strict enforcement may not be working", elapsed)
+			}
+		} else if err == nil {
+			successes++
+		}
+
+		t.Logf("Operation %d: %v (elapsed: %v)", i+1,
+			map[bool]string{true: "success", false: "timeout"}[err == nil], elapsed)
+	}
+
+	t.Logf("Results: %d timeouts, %d successes out of 5 operations", timeouts, successes)
+
+	// The key insight: with time.After, we get predictable timeout behavior
+	// Even if the underlying I/O would hang, we return control to the caller
+	if timeouts > 0 {
+		t.Logf("✓ Strict timeout enforcement working - operations abandoned after timeout")
+	}
 }

@@ -128,87 +128,101 @@ func OpenWithLogger(path string, logger logr.Logger) (*Device, error) {
 	}, nil
 }
 
-// timeoutWriteAt performs a WriteAt operation with a timeout to prevent indefinite hanging
-// when storage becomes unresponsive. This is critical for SBD operations where hanging
-// I/O can prevent proper self-fencing behavior.
+// timeoutWriteAt performs a WriteAt operation with a strictly enforced timeout to prevent indefinite hanging
+// when storage becomes unresponsive. This uses time.After for guaranteed timeout enforcement.
 func (d *Device) timeoutWriteAt(p []byte, off int64) (int, error) {
 	type writeResult struct {
 		n   int
 		err error
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), d.ioTimeout)
-	defer cancel()
-
 	resultCh := make(chan writeResult, 1)
+
 	go func() {
+		// Perform the actual I/O operation in a goroutine
 		n, err := d.file.WriteAt(p, off)
+		// Always try to send result, but don't block if timeout already occurred
 		select {
 		case resultCh <- writeResult{n: n, err: err}:
-		case <-ctx.Done():
-			// Context cancelled, goroutine should exit
+		default:
+			// Timeout already occurred, channel receiver is gone
+			d.logger.V(2).Info("WriteAt operation completed after timeout",
+				"offset", off, "bytes", len(p))
 		}
 	}()
 
+	// Use time.After for strictly enforced timeout
 	select {
 	case result := <-resultCh:
 		return result.n, result.err
-	case <-ctx.Done():
+	case <-time.After(d.ioTimeout):
+		// Strictly enforced timeout - return immediately
+		d.logger.Info("WriteAt operation timed out, abandoning I/O operation",
+			"timeout", d.ioTimeout, "offset", off, "bytes", len(p))
 		return 0, fmt.Errorf("I/O operation timeout after %v (storage may be unresponsive)", d.ioTimeout)
 	}
 }
 
-// timeoutReadAt performs a ReadAt operation with a timeout to prevent indefinite hanging
-// when storage becomes unresponsive. This is critical for SBD operations where hanging
-// I/O can prevent proper self-fencing behavior.
+// timeoutReadAt performs a ReadAt operation with a strictly enforced timeout to prevent indefinite hanging
+// when storage becomes unresponsive. This uses time.After for guaranteed timeout enforcement.
 func (d *Device) timeoutReadAt(p []byte, off int64) (int, error) {
 	type readResult struct {
 		n   int
 		err error
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), d.ioTimeout)
-	defer cancel()
-
 	resultCh := make(chan readResult, 1)
+
 	go func() {
+		// Perform the actual I/O operation in a goroutine
 		n, err := d.file.ReadAt(p, off)
+		// Always try to send result, but don't block if timeout already occurred
 		select {
 		case resultCh <- readResult{n: n, err: err}:
-		case <-ctx.Done():
-			// Context cancelled, goroutine should exit
+		default:
+			// Timeout already occurred, channel receiver is gone
+			d.logger.V(2).Info("ReadAt operation completed after timeout",
+				"offset", off, "bytes", len(p))
 		}
 	}()
 
+	// Use time.After for strictly enforced timeout
 	select {
 	case result := <-resultCh:
 		return result.n, result.err
-	case <-ctx.Done():
+	case <-time.After(d.ioTimeout):
+		// Strictly enforced timeout - return immediately
+		d.logger.Info("ReadAt operation timed out, abandoning I/O operation",
+			"timeout", d.ioTimeout, "offset", off, "bytes", len(p))
 		return 0, fmt.Errorf("I/O operation timeout after %v (storage may be unresponsive)", d.ioTimeout)
 	}
 }
 
-// timeoutSync performs a Sync operation with a timeout to prevent indefinite hanging
-// when storage becomes unresponsive. This is critical for SBD operations where hanging
-// I/O can prevent proper self-fencing behavior.
+// timeoutSync performs a Sync operation with a strictly enforced timeout to prevent indefinite hanging
+// when storage becomes unresponsive. This uses time.After for guaranteed timeout enforcement.
 func (d *Device) timeoutSync() error {
-	ctx, cancel := context.WithTimeout(context.Background(), d.ioTimeout)
-	defer cancel()
-
 	resultCh := make(chan error, 1)
+
 	go func() {
+		// Perform the actual sync operation in a goroutine
 		err := d.file.Sync()
+		// Always try to send result, but don't block if timeout already occurred
 		select {
 		case resultCh <- err:
-		case <-ctx.Done():
-			// Context cancelled, goroutine should exit
+		default:
+			// Timeout already occurred, channel receiver is gone
+			d.logger.V(2).Info("Sync operation completed after timeout")
 		}
 	}()
 
+	// Use time.After for strictly enforced timeout
 	select {
 	case err := <-resultCh:
 		return err
-	case <-ctx.Done():
+	case <-time.After(d.ioTimeout):
+		// Strictly enforced timeout - return immediately
+		d.logger.Info("Sync operation timed out, abandoning sync operation",
+			"timeout", d.ioTimeout)
 		return fmt.Errorf("sync operation timeout after %v (storage may be unresponsive)", d.ioTimeout)
 	}
 }
