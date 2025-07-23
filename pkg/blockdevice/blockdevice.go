@@ -40,6 +40,10 @@ const (
 	MaxRetryDelay = 5 * time.Second
 	// RetryBackoffFactor is the exponential backoff factor for retry delays
 	RetryBackoffFactor = 2.0
+
+	// DefaultIOTimeout is the default timeout for individual I/O operations
+	// This prevents indefinite hanging when storage becomes unresponsive
+	DefaultIOTimeout = 30 * time.Second
 )
 
 // Device represents a raw block device that can be read from and written to.
@@ -54,6 +58,8 @@ type Device struct {
 	logger logr.Logger
 	// retryConfig holds the retry configuration for this device
 	retryConfig retry.Config
+	// ioTimeout is the timeout for individual I/O operations to prevent hanging
+	ioTimeout time.Duration
 }
 
 // Open opens a raw block device at the specified path for read/write operations.
@@ -118,7 +124,93 @@ func OpenWithLogger(path string, logger logr.Logger) (*Device, error) {
 		path:        path,
 		logger:      logger.WithName("blockdevice").WithValues("path", path),
 		retryConfig: retryConfig,
+		ioTimeout:   DefaultIOTimeout,
 	}, nil
+}
+
+// timeoutWriteAt performs a WriteAt operation with a timeout to prevent indefinite hanging
+// when storage becomes unresponsive. This is critical for SBD operations where hanging
+// I/O can prevent proper self-fencing behavior.
+func (d *Device) timeoutWriteAt(p []byte, off int64) (int, error) {
+	type writeResult struct {
+		n   int
+		err error
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), d.ioTimeout)
+	defer cancel()
+
+	resultCh := make(chan writeResult, 1)
+	go func() {
+		n, err := d.file.WriteAt(p, off)
+		select {
+		case resultCh <- writeResult{n: n, err: err}:
+		case <-ctx.Done():
+			// Context cancelled, goroutine should exit
+		}
+	}()
+
+	select {
+	case result := <-resultCh:
+		return result.n, result.err
+	case <-ctx.Done():
+		return 0, fmt.Errorf("I/O operation timeout after %v (storage may be unresponsive)", d.ioTimeout)
+	}
+}
+
+// timeoutReadAt performs a ReadAt operation with a timeout to prevent indefinite hanging
+// when storage becomes unresponsive. This is critical for SBD operations where hanging
+// I/O can prevent proper self-fencing behavior.
+func (d *Device) timeoutReadAt(p []byte, off int64) (int, error) {
+	type readResult struct {
+		n   int
+		err error
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), d.ioTimeout)
+	defer cancel()
+
+	resultCh := make(chan readResult, 1)
+	go func() {
+		n, err := d.file.ReadAt(p, off)
+		select {
+		case resultCh <- readResult{n: n, err: err}:
+		case <-ctx.Done():
+			// Context cancelled, goroutine should exit
+		}
+	}()
+
+	select {
+	case result := <-resultCh:
+		return result.n, result.err
+	case <-ctx.Done():
+		return 0, fmt.Errorf("I/O operation timeout after %v (storage may be unresponsive)", d.ioTimeout)
+	}
+}
+
+// timeoutSync performs a Sync operation with a timeout to prevent indefinite hanging
+// when storage becomes unresponsive. This is critical for SBD operations where hanging
+// I/O can prevent proper self-fencing behavior.
+func (d *Device) timeoutSync() error {
+	ctx, cancel := context.WithTimeout(context.Background(), d.ioTimeout)
+	defer cancel()
+
+	resultCh := make(chan error, 1)
+	go func() {
+		err := d.file.Sync()
+		select {
+		case resultCh <- err:
+		case <-ctx.Done():
+			// Context cancelled, goroutine should exit
+		}
+	}()
+
+	select {
+	case err := <-resultCh:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("sync operation timeout after %v (storage may be unresponsive)", d.ioTimeout)
+	}
 }
 
 // ReadAt reads len(p) bytes from the device starting at byte offset off.
@@ -152,9 +244,9 @@ func (d *Device) ReadAt(p []byte, off int64) (n int, err error) {
 	// Retry read operations for transient errors
 	ctx := context.Background()
 	err = retry.Do(ctx, d.retryConfig, "read from block device", func() error {
-		n, err = d.file.ReadAt(p, off)
+		n, err = d.timeoutReadAt(p, off)
 		if err != nil && err != io.EOF {
-			// Wrap error with retry information
+			// Wrap error with retry information (including timeout errors)
 			return retry.NewRetryableError(err, retry.IsTransientError(err), "read from block device")
 		}
 		return err // Return io.EOF as-is (not retryable)
@@ -208,9 +300,9 @@ func (d *Device) WriteAt(p []byte, off int64) (n int, err error) {
 	// Retry write operations for transient errors
 	ctx := context.Background()
 	err = retry.Do(ctx, d.retryConfig, "write to block device", func() error {
-		n, err = d.file.WriteAt(p, off)
+		n, err = d.timeoutWriteAt(p, off)
 		if err != nil {
-			// Wrap error with retry information
+			// Wrap error with retry information (including timeout errors)
 			return retry.NewRetryableError(err, retry.IsTransientError(err), "write to block device")
 		}
 
@@ -259,9 +351,9 @@ func (d *Device) Sync() error {
 	// Retry sync operations for transient errors
 	ctx := context.Background()
 	err := retry.Do(ctx, d.retryConfig, "sync block device", func() error {
-		err := d.file.Sync()
+		err := d.timeoutSync()
 		if err != nil {
-			// Wrap error with retry information
+			// Wrap error with retry information (including timeout errors)
 			return retry.NewRetryableError(err, retry.IsTransientError(err), "sync block device")
 		}
 		return nil
