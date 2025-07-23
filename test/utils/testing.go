@@ -178,6 +178,7 @@ func (tn *TestNamespace) CreateSBDConfig(name string, options ...func(*medik8sv1
 		Spec: medik8sv1alpha1.SBDConfigSpec{
 			ImagePullPolicy: string(corev1.PullAlways),
 			SbdWatchdogPath: "/dev/watchdog",
+			LogLevel:        "debug",
 			WatchdogTimeout: &metav1.Duration{Duration: 60 * time.Second},
 			PetIntervalMultiple: func() *int32 {
 				val := int32(4)
