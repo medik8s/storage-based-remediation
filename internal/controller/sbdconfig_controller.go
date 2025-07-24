@@ -654,20 +654,58 @@ func (r *SBDConfigReconciler) ensureSBDDevice(ctx context.Context, sbdConfig *me
 set -e
 SBD_DEVICE_PATH="/sbd-shared/%s"
 SBD_DEVICE_SIZE_KB=1024
+NODE_MAP_FILE="$SBD_DEVICE_PATH.nodemap"
+CLUSTER_NAME="${CLUSTER_NAME:-default-cluster}"
 
-echo "Initializing SBD device at $SBD_DEVICE_PATH"
+echo "Initializing SBD device and node mapping at $SBD_DEVICE_PATH"
 
-if [ -f "$SBD_DEVICE_PATH" ]; then
-    echo "SBD device already exists at $SBD_DEVICE_PATH"
-    # Verify the device is readable and has some content
-    if [ -s "$SBD_DEVICE_PATH" ]; then
-        echo "SBD device file is non-empty, initialization complete"
+# Function to create initial node mapping file
+create_initial_node_mapping() {
+    local node_map_file="$1"
+    local cluster_name="$2"
+    
+    echo "Creating initial node mapping file: $node_map_file"
+    
+    # Create minimal valid node mapping table JSON
+    local json_data="{
+  \"magic\": [83, 66, 68, 78, 77, 65, 80, 49],
+  \"version\": 1,
+  \"cluster_name\": \"$cluster_name\",
+  \"entries\": {},
+  \"slot_usage\": {},
+  \"last_update\": \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%S.%%3NZ)\"
+}"
+    
+    # Calculate simple checksum (simplified for shell)
+    local checksum=$(echo -n "$json_data" | cksum | cut -d' ' -f1)
+    
+    # Write checksum (4 bytes little-endian) followed by JSON
+    printf "\\$(printf '%%02x' $((checksum & 0xFF)))" > "$node_map_file"
+    printf "\\$(printf '%%02x' $(((checksum >> 8) & 0xFF)))" >> "$node_map_file"
+    printf "\\$(printf '%%02x' $(((checksum >> 16) & 0xFF)))" >> "$node_map_file"
+    printf "\\$(printf '%%02x' $(((checksum >> 24) & 0xFF)))" >> "$node_map_file"
+    echo -n "$json_data" >> "$node_map_file"
+    
+    chmod 644 "$node_map_file"
+    echo "Created initial node mapping file: $node_map_file ($(wc -c < "$node_map_file") bytes)"
+}
+
+# Check if both SBD device and node mapping file exist
+if [ -f "$SBD_DEVICE_PATH" ] && [ -f "$NODE_MAP_FILE" ]; then
+    echo "SBD device and node mapping file already exist"
+    # Verify both files have content
+    if [ -s "$SBD_DEVICE_PATH" ] && [ -s "$NODE_MAP_FILE" ]; then
+        echo "Both files are non-empty, initialization complete"
         exit 0
     else
-        echo "SBD device file exists but is empty, re-initializing..."
+        echo "One or both files are empty, re-initializing..."
     fi
+elif [ -f "$SBD_DEVICE_PATH" ]; then
+    echo "SBD device exists but node mapping file is missing, creating node mapping..."
+    create_initial_node_mapping "$NODE_MAP_FILE" "$CLUSTER_NAME"
+    exit 0
 else
-    echo "SBD device does not exist, creating new device..."
+    echo "SBD device does not exist, creating both SBD device and node mapping..."
 fi
 
 # Create the SBD device file with specific size (1MB = 1024KB)
@@ -677,17 +715,28 @@ dd if=/dev/zero of="$SBD_DEVICE_PATH" bs=1024 count=$SBD_DEVICE_SIZE_KB
 # Set appropriate permissions for the SBD device
 chmod 664 "$SBD_DEVICE_PATH"
 
-# Verify the device was created successfully
-if [ -f "$SBD_DEVICE_PATH" ] && [ -s "$SBD_DEVICE_PATH" ]; then
+# Create the initial node mapping file
+create_initial_node_mapping "$NODE_MAP_FILE" "$CLUSTER_NAME"
+
+# Verify both files were created successfully
+if [ -f "$SBD_DEVICE_PATH" ] && [ -s "$SBD_DEVICE_PATH" ] && [ -f "$NODE_MAP_FILE" ] && [ -s "$NODE_MAP_FILE" ]; then
     echo "SBD device successfully initialized at $SBD_DEVICE_PATH"
     echo "Device size: $(ls -lh "$SBD_DEVICE_PATH" | awk '{print $5}')"
+    echo "Node mapping file created at $NODE_MAP_FILE"
+    echo "Node mapping size: $(ls -lh "$NODE_MAP_FILE" | awk '{print $5}')"
 else
-    echo "ERROR: Failed to create SBD device at $SBD_DEVICE_PATH"
+    echo "ERROR: Failed to create SBD device or node mapping file"
     exit 1
 fi
 
-echo "SBD device initialization completed successfully"
+echo "SBD device and node mapping initialization completed successfully"
 `, agent.SharedStorageSBDDeviceFile),
+							},
+							Env: []corev1.EnvVar{
+								{
+									Name:  "CLUSTER_NAME",
+									Value: agent.DefaultClusterName,
+								},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
