@@ -238,15 +238,17 @@ type PeerMonitor struct {
 	peersMutex        sync.RWMutex
 	sbdTimeoutSeconds uint
 	ownNodeID         uint16
+	nodeManager       *sbdprotocol.NodeManager
 	logger            logr.Logger
 }
 
 // NewPeerMonitor creates a new peer monitor instance
-func NewPeerMonitor(sbdTimeoutSeconds uint, ownNodeID uint16, logger logr.Logger) *PeerMonitor {
+func NewPeerMonitor(sbdTimeoutSeconds uint, ownNodeID uint16, nodeManager *sbdprotocol.NodeManager, logger logr.Logger) *PeerMonitor {
 	return &PeerMonitor{
 		peers:             make(map[uint16]*PeerStatus),
 		sbdTimeoutSeconds: sbdTimeoutSeconds,
 		ownNodeID:         ownNodeID,
+		nodeManager:       nodeManager,
 		logger:            logger.WithName("peer-monitor"),
 	}
 }
@@ -266,8 +268,18 @@ func (pm *PeerMonitor) UpdatePeer(nodeID uint16, timestamp, sequence uint64) {
 			IsHealthy: true,
 		}
 		pm.peers[nodeID] = peer
+
+		// Try to get node name for logging
+		nodeName := "unknown"
+		if pm.nodeManager != nil {
+			if name, found := pm.nodeManager.GetNodeForSlot(nodeID); found {
+				nodeName = name
+			}
+		}
+
 		pm.logger.Info("Discovered new peer node",
 			"nodeID", nodeID,
+			"nodeName", nodeName,
 			"timestamp", timestamp,
 			"sequence", sequence)
 	}
@@ -650,7 +662,7 @@ func NewSBDAgentWithWatchdog(wd WatchdogInterface, sbdDevicePath, nodeName, clus
 	}
 
 	// Initialize the PeerMonitor
-	agent.peerMonitor = NewPeerMonitor(sbdTimeoutSeconds, nodeID, logger)
+	agent.peerMonitor = NewPeerMonitor(sbdTimeoutSeconds, nodeID, agent.nodeManager, logger)
 
 	// Initialize SBD device
 	if err := agent.initializeSBDDevice(); err != nil {
