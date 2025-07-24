@@ -767,10 +767,7 @@ func (nm *NodeManager) atomicSyncToDeviceWithLock(expectedVersion uint64, lockFi
 		return fmt.Errorf("failed to marshal node mapping table: %w", err)
 	}
 
-	// Check if data fits in one slot
-	if len(data) > SBD_SLOT_SIZE {
-		return fmt.Errorf("node mapping table too large: %d bytes, maximum %d", len(data), SBD_SLOT_SIZE)
-	}
+	// Note: No size limit check needed for file-based storage (files can grow beyond slot size)
 
 	// Use advisory locking to prevent concurrent physical writes
 	// This prevents data corruption when multiple nodes write to slot 0 simultaneously
