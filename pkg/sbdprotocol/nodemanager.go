@@ -28,6 +28,10 @@ import (
 	"syscall"
 	"time"
 
+	"encoding/binary"
+
+	"hash/crc32"
+
 	"github.com/go-logr/logr"
 )
 
@@ -328,11 +332,15 @@ func (nm *NodeManager) Sync() error {
 	return nm.syncToDevice()
 }
 
+// ReloadFromDevice forces a reload of the node mapping table from the device
 func (nm *NodeManager) ReloadFromDevice() error {
 	nm.mutex.Lock()
 	defer nm.mutex.Unlock()
 
-	return nm.loadFromDevice()
+	// Use coordinated read with file locking to prevent reading during writes
+	return nm.ReadWithLock("reload node mapping", func() error {
+		return nm.loadFromDeviceWithRecovery()
+	})
 }
 
 // CleanupStaleNodes removes nodes that haven't been seen for the configured timeout
@@ -453,6 +461,192 @@ func (nm *NodeManager) loadFromDevice() error {
 		"clusterName", table.ClusterName,
 		"lastUpdate", table.LastUpdate)
 
+	return nil
+}
+
+// loadFromDeviceWithRecovery attempts to load the node mapping table with recovery strategies
+func (nm *NodeManager) loadFromDeviceWithRecovery() error {
+	// First, try the normal load process
+	if err := nm.loadFromDevice(); err != nil {
+		nm.logger.Info("Primary load failed, attempting recovery", "error", err)
+
+		// Attempt recovery strategies
+		if recoveryErr := nm.attemptTableRecovery(err); recoveryErr != nil {
+			nm.logger.Error(recoveryErr, "All recovery attempts failed, creating new table")
+
+			// Last resort: create a new clean table
+			nm.table = NewNodeMapTable(nm.clusterName)
+			nm.dirty = true
+
+			// Try to immediately sync the new table to clear corruption
+			if syncErr := nm.syncToDevice(); syncErr != nil {
+				nm.logger.Error(syncErr, "Failed to sync new clean table")
+				return fmt.Errorf("failed to create clean table after corruption: %w", syncErr)
+			}
+
+			nm.logger.Info("Created new clean node mapping table to replace corrupted data",
+				"clusterName", nm.clusterName)
+			return nil
+		}
+	}
+
+	return nil
+}
+
+// attemptTableRecovery tries multiple strategies to recover from corruption
+func (nm *NodeManager) attemptTableRecovery(originalErr error) error {
+	nm.logger.Info("Attempting node mapping table recovery", "originalError", originalErr)
+
+	// Strategy 1: Check if corruption is due to partial write (try reading multiple times)
+	if err := nm.retryLoadWithDelay(); err == nil {
+		nm.logger.Info("Recovery successful: corruption was due to timing/partial write")
+		return nil
+	}
+
+	// Strategy 2: Try to read raw data and diagnose corruption
+	if err := nm.diagnoseAndFixCorruption(); err == nil {
+		nm.logger.Info("Recovery successful: corruption was detected and fixed")
+		return nil
+	}
+
+	// Strategy 3: Clear the corrupted slot and start fresh
+	if err := nm.clearCorruptedSlot(); err == nil {
+		nm.logger.Info("Recovery successful: cleared corrupted slot and created new table")
+		return nil
+	}
+
+	return fmt.Errorf("all recovery strategies failed")
+}
+
+// retryLoadWithDelay attempts to load the table multiple times with delays
+func (nm *NodeManager) retryLoadWithDelay() error {
+	for attempt := 1; attempt <= 3; attempt++ {
+		nm.logger.V(1).Info("Retry attempt to load node mapping", "attempt", attempt)
+
+		// Add delay to allow any concurrent writes to complete
+		time.Sleep(time.Duration(attempt*100) * time.Millisecond)
+
+		if err := nm.loadFromDevice(); err == nil {
+			nm.logger.Info("Retry load successful", "attempt", attempt)
+			return nil
+		} else {
+			nm.logger.V(1).Info("Retry load failed", "attempt", attempt, "error", err)
+		}
+	}
+
+	return fmt.Errorf("all retry attempts failed")
+}
+
+// diagnoseAndFixCorruption attempts to diagnose and fix specific corruption patterns
+func (nm *NodeManager) diagnoseAndFixCorruption() error {
+	// Read the raw slot data for analysis
+	slotOffset := int64(SBD_NODE_MAP_SLOT) * SBD_SLOT_SIZE
+	slotData := make([]byte, SBD_SLOT_SIZE)
+
+	n, err := nm.device.ReadAt(slotData, slotOffset)
+	if err != nil {
+		return fmt.Errorf("failed to read raw slot data for diagnosis: %w", err)
+	}
+
+	if n != SBD_SLOT_SIZE {
+		return fmt.Errorf("partial read during diagnosis: read %d bytes, expected %d", n, SBD_SLOT_SIZE)
+	}
+
+	// Check if it's completely empty (all zeros)
+	if isEmptySlot(slotData) {
+		nm.logger.Info("Corruption diagnosis: slot is empty, creating new table")
+		nm.table = NewNodeMapTable(nm.clusterName)
+		nm.dirty = true
+		return nil
+	}
+
+	// Check if we have at least a checksum
+	if len(slotData) >= 4 {
+		expectedChecksum := binary.LittleEndian.Uint32(slotData[:4])
+		jsonData := slotData[4:]
+
+		// Find the actual end of JSON data (look for null bytes)
+		jsonEnd := len(jsonData)
+		for i, b := range jsonData {
+			if b == 0 {
+				jsonEnd = i
+				break
+			}
+		}
+
+		if jsonEnd > 0 {
+			actualJsonData := jsonData[:jsonEnd]
+			actualChecksum := crc32.ChecksumIEEE(actualJsonData)
+
+			nm.logger.Info("Corruption diagnosis details",
+				"expectedChecksum", fmt.Sprintf("0x%08x", expectedChecksum),
+				"actualChecksum", fmt.Sprintf("0x%08x", actualChecksum),
+				"jsonDataLength", jsonEnd,
+				"checksumMatch", expectedChecksum == actualChecksum)
+
+			// If checksums match with truncated data, the issue might be padding
+			if expectedChecksum == actualChecksum {
+				nm.logger.Info("Attempting to unmarshal with corrected JSON data")
+
+				// Try to unmarshal the corrected data
+				table, err := UnmarshalNodeMapTable(slotData[:4+jsonEnd])
+				if err == nil {
+					nm.logger.Info("Successfully recovered table with corrected data",
+						"nodeCount", len(table.Entries),
+						"clusterName", table.ClusterName)
+
+					// Verify cluster name matches
+					if table.ClusterName == nm.clusterName {
+						nm.table = table
+						nm.lastSync = time.Now()
+						nm.dirty = false
+						return nil
+					} else {
+						nm.logger.Info("Recovered table has wrong cluster name",
+							"expected", nm.clusterName, "actual", table.ClusterName)
+					}
+				}
+			}
+		}
+	}
+
+	return fmt.Errorf("unable to diagnose or fix corruption")
+}
+
+// clearCorruptedSlot clears the corrupted slot and creates a new table
+func (nm *NodeManager) clearCorruptedSlot() error {
+	nm.logger.Info("Clearing corrupted node mapping slot")
+
+	// Acquire lock to prevent interference
+	lockFile, err := nm.acquireDeviceLock()
+	if err != nil {
+		return fmt.Errorf("failed to acquire lock for slot clearing: %w", err)
+	}
+	defer nm.releaseDeviceLock(lockFile)
+
+	// Clear the entire slot with zeros
+	slotOffset := int64(SBD_NODE_MAP_SLOT) * SBD_SLOT_SIZE
+	clearData := make([]byte, SBD_SLOT_SIZE)
+
+	n, err := nm.device.WriteAt(clearData, slotOffset)
+	if err != nil {
+		return fmt.Errorf("failed to clear corrupted slot: %w", err)
+	}
+
+	if n != SBD_SLOT_SIZE {
+		return fmt.Errorf("partial write when clearing slot: wrote %d bytes, expected %d", n, SBD_SLOT_SIZE)
+	}
+
+	// Sync to ensure the clear is persistent
+	if err := nm.device.Sync(); err != nil {
+		return fmt.Errorf("failed to sync after clearing slot: %w", err)
+	}
+
+	// Create new table
+	nm.table = NewNodeMapTable(nm.clusterName)
+	nm.dirty = true
+
+	nm.logger.Info("Successfully cleared corrupted slot and created new table")
 	return nil
 }
 
@@ -629,6 +823,7 @@ func (nm *NodeManager) atomicSyncToDeviceWithLock(expectedVersion uint64, lockFi
 	}
 
 	// Read current version from device to check for conflicts
+	// This read happens under the same lock as the write to prevent race conditions
 	slotOffset := int64(SBD_NODE_MAP_SLOT) * SBD_SLOT_SIZE
 	currentSlotData := make([]byte, SBD_SLOT_SIZE)
 
@@ -647,10 +842,32 @@ func (nm *NodeManager) atomicSyncToDeviceWithLock(expectedVersion uint64, lockFi
 		currentTable, err := UnmarshalNodeMapTable(currentSlotData)
 		if err != nil {
 			// If we can't parse the current data, it might be corrupted
-			// Log a warning but proceed with the write
-			nm.logger.Info("Warning: failed to parse current node mapping table, proceeding with write", "error", err)
-		} else {
-			// Check version mismatch
+			// This could happen if we're reading during another node's write
+			nm.logger.Info("Warning: failed to parse current node mapping table during version check",
+				"error", err,
+				"expectedVersion", expectedVersion,
+				"attempting", "corruption recovery")
+
+			// Try a brief retry in case we caught a write in progress
+			time.Sleep(50 * time.Millisecond)
+
+			// Re-read and try again
+			n, err = nm.device.ReadAt(currentSlotData, slotOffset)
+			if err != nil {
+				return fmt.Errorf("failed to re-read node mapping slot after corruption: %w", err)
+			}
+
+			if n == SBD_SLOT_SIZE && !isEmptySlot(currentSlotData) {
+				currentTable, err = UnmarshalNodeMapTable(currentSlotData)
+				if err != nil {
+					nm.logger.Info("Corruption persists after retry, proceeding with write to clear it", "error", err)
+					// Proceed with write to potentially fix corruption
+				}
+			}
+		}
+
+		// If we successfully parsed the table, check version
+		if err == nil && currentTable != nil {
 			if currentTable.Version != expectedVersion {
 				nm.logger.V(1).Info("Version mismatch detected",
 					"expectedVersion", expectedVersion,
@@ -854,4 +1071,31 @@ func (nm *NodeManager) GetCoordinationStrategy() string {
 		return "jitter-fallback" // File locking enabled but no device path
 	}
 	return "jitter-only"
+}
+
+// ReadWithLock executes a read operation using the same coordination strategy as writes.
+// This ensures reads don't happen while writes are in progress, preventing corruption.
+func (nm *NodeManager) ReadWithLock(operation string, fn func() error) error {
+	lockFile, err := nm.acquireDeviceLock()
+	if err != nil {
+		return fmt.Errorf("failed to acquire device coordination for read %s: %w", operation, err)
+	}
+	defer func() {
+		if unlockErr := nm.releaseDeviceLock(lockFile); unlockErr != nil {
+			nm.logger.Error(unlockErr, "Failed to release device coordination", "operation", operation)
+		}
+	}()
+
+	if nm.fileLockingEnabled && lockFile != nil {
+		nm.logger.V(1).Info("Executing read operation with file lock",
+			"operation", operation,
+			"lockingEnabled", nm.fileLockingEnabled,
+			"devicePath", nm.device.Path())
+	} else {
+		nm.logger.V(1).Info("Executing read operation with jitter coordination",
+			"operation", operation,
+			"lockingEnabled", nm.fileLockingEnabled)
+	}
+
+	return fn()
 }

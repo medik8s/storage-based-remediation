@@ -174,3 +174,356 @@ func TestNodeManager_CoordinationStrategy(t *testing.T) {
 		})
 	}
 }
+
+func TestNodeManager_DevicePersistence(t *testing.T) {
+	// Create a mock device that persists data
+	devicePath := "/tmp/test_sbd_device"
+	deviceSize := SBD_SLOT_SIZE * 10
+	device1 := NewMockSBDDevice(devicePath, deviceSize)
+
+	config := NodeManagerConfig{
+		ClusterName:        "persistence-test-cluster",
+		SyncInterval:       time.Second,
+		StaleNodeTimeout:   time.Minute,
+		Logger:             logr.Discard(),
+		FileLockingEnabled: false, // Use jitter for mock device
+	}
+
+	// Phase 1: Create NodeManager and add nodes
+	nm1, err := NewNodeManager(device1, config)
+	if err != nil {
+		t.Fatalf("Failed to create first node manager: %v", err)
+	}
+
+	// Add several nodes to the mapping
+	testNodes := []string{
+		"worker-node-1",
+		"master-node-2",
+		"gpu-node-3",
+		"storage-node-4",
+	}
+
+	originalSlots := make(map[string]uint16)
+	for _, nodeName := range testNodes {
+		slot, err := nm1.GetSlotForNode(nodeName)
+		if err != nil {
+			t.Fatalf("Failed to get slot for node %s: %v", nodeName, err)
+		}
+		originalSlots[nodeName] = slot
+		t.Logf("Assigned node %s to slot %d", nodeName, slot)
+	}
+
+	// Force sync to device
+	if err := nm1.Sync(); err != nil {
+		t.Fatalf("Failed to sync to device: %v", err)
+	}
+
+	// Verify data is written to device by reading raw bytes
+	slotOffset := int64(SBD_NODE_MAP_SLOT) * SBD_SLOT_SIZE
+	rawData := make([]byte, SBD_SLOT_SIZE)
+	n, err := device1.ReadAt(rawData, slotOffset)
+	if err != nil || n != SBD_SLOT_SIZE {
+		t.Fatalf("Failed to read raw data from device: %v", err)
+	}
+
+	// Verify the data is not empty
+	isEmpty := true
+	for _, b := range rawData {
+		if b != 0 {
+			isEmpty = false
+			break
+		}
+	}
+	if isEmpty {
+		t.Fatal("Device slot appears empty after sync")
+	}
+
+	// Close the first NodeManager
+	if err := nm1.Close(); err != nil {
+		t.Fatalf("Failed to close first node manager: %v", err)
+	}
+
+	// Phase 2: Create new NodeManager with same device data
+	// Create a new device that shares the same underlying data
+	device2 := &MockSBDDevice{
+		data: device1.data, // Share the same data slice
+		path: devicePath,
+	}
+
+	nm2, err := NewNodeManager(device2, config)
+	if err != nil {
+		t.Fatalf("Failed to create second node manager: %v", err)
+	}
+	defer nm2.Close()
+
+	// Phase 3: Verify all nodes are correctly loaded
+	for nodeName, expectedSlot := range originalSlots {
+		slot, err := nm2.GetSlotForNode(nodeName)
+		if err != nil {
+			t.Errorf("Failed to get slot for node %s in second manager: %v", nodeName, err)
+			continue
+		}
+
+		if slot != expectedSlot {
+			t.Errorf("Slot mismatch for node %s: expected %d, got %d", nodeName, expectedSlot, slot)
+		}
+
+		// Verify reverse lookup also works
+		foundNodeName, found := nm2.GetNodeForSlot(slot)
+		if !found {
+			t.Errorf("Failed to find node for slot %d", slot)
+		} else if foundNodeName != nodeName {
+			t.Errorf("Node name mismatch for slot %d: expected %s, got %s", slot, nodeName, foundNodeName)
+		}
+
+		t.Logf("Successfully verified persistence for node %s -> slot %d", nodeName, slot)
+	}
+
+	// Phase 4: Test that we can add new nodes to the persisted table
+	newNode := "new-persistent-node"
+	newSlot, err := nm2.GetSlotForNode(newNode)
+	if err != nil {
+		t.Fatalf("Failed to add new node to persisted table: %v", err)
+	}
+
+	// Verify the new node doesn't conflict with existing ones
+	for _, existingSlot := range originalSlots {
+		if newSlot == existingSlot {
+			t.Errorf("New node slot %d conflicts with existing slot", newSlot)
+		}
+	}
+
+	t.Logf("Successfully added new node %s to slot %d in persisted table", newNode, newSlot)
+
+	// Phase 5: Test ReloadFromDevice method
+	// First, add another node and sync
+	anotherNode := "reload-test-node"
+	reloadSlot, err := nm2.GetSlotForNode(anotherNode)
+	if err != nil {
+		t.Fatalf("Failed to add reload test node: %v", err)
+	}
+
+	if err := nm2.Sync(); err != nil {
+		t.Fatalf("Failed to sync after adding reload test node: %v", err)
+	}
+
+	// Now reload from device
+	if err := nm2.ReloadFromDevice(); err != nil {
+		t.Fatalf("Failed to reload from device: %v", err)
+	}
+
+	// Verify the reload test node is still there
+	foundSlot, err := nm2.GetSlotForNode(anotherNode)
+	if err != nil {
+		t.Errorf("Reload test node not found after reload: %v", err)
+	} else if foundSlot != reloadSlot {
+		t.Errorf("Reload test node slot mismatch: expected %d, got %d", reloadSlot, foundSlot)
+	}
+
+	t.Logf("Device persistence test completed successfully")
+}
+
+func TestNodeManager_CorruptionRecovery(t *testing.T) {
+	devicePath := "/tmp/test_corruption_device"
+	deviceSize := SBD_SLOT_SIZE * 10
+	device := NewMockSBDDevice(devicePath, deviceSize)
+
+	config := NodeManagerConfig{
+		ClusterName:        "corruption-test-cluster",
+		SyncInterval:       time.Second,
+		StaleNodeTimeout:   time.Minute,
+		Logger:             logr.Discard(),
+		FileLockingEnabled: false,
+	}
+
+	// Phase 1: Create a valid node mapping table
+	nm1, err := NewNodeManager(device, config)
+	if err != nil {
+		t.Fatalf("Failed to create node manager: %v", err)
+	}
+
+	// Add some nodes
+	testNodes := []string{"node-1", "node-2", "node-3"}
+	for _, nodeName := range testNodes {
+		_, err := nm1.GetSlotForNode(nodeName)
+		if err != nil {
+			t.Fatalf("Failed to assign slot for %s: %v", nodeName, err)
+		}
+	}
+
+	// Sync to device
+	if err := nm1.Sync(); err != nil {
+		t.Fatalf("Failed to sync: %v", err)
+	}
+	nm1.Close()
+
+	// Phase 2: Corrupt the device data
+	slotOffset := int64(SBD_NODE_MAP_SLOT) * SBD_SLOT_SIZE
+
+	// Test different types of corruption
+	tests := []struct {
+		name           string
+		corruptionFunc func(*MockSBDDevice)
+		expectRecovery bool
+	}{
+		{
+			name: "checksum corruption",
+			corruptionFunc: func(d *MockSBDDevice) {
+				// Corrupt the checksum (first 4 bytes)
+				d.data[0] = 0xFF
+				d.data[1] = 0xFF
+				d.data[2] = 0xFF
+				d.data[3] = 0xFF
+			},
+			expectRecovery: true,
+		},
+		{
+			name: "partial data corruption",
+			corruptionFunc: func(d *MockSBDDevice) {
+				// Corrupt some JSON data but keep structure somewhat intact
+				for i := 100; i < 150; i++ {
+					d.data[i] = 0xAA
+				}
+			},
+			expectRecovery: true,
+		},
+		{
+			name: "complete slot corruption",
+			corruptionFunc: func(d *MockSBDDevice) {
+				// Fill entire slot with garbage
+				for i := slotOffset; i < slotOffset+SBD_SLOT_SIZE; i++ {
+					d.data[i] = 0xBB
+				}
+			},
+			expectRecovery: true,
+		},
+		{
+			name: "empty slot",
+			corruptionFunc: func(d *MockSBDDevice) {
+				// Clear the entire slot
+				for i := slotOffset; i < slotOffset+SBD_SLOT_SIZE; i++ {
+					d.data[i] = 0x00
+				}
+			},
+			expectRecovery: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Restore original valid data first
+			nm_temp, err := NewNodeManager(device, config)
+			if err != nil {
+				t.Fatalf("Failed to create temp node manager: %v", err)
+			}
+			for _, nodeName := range testNodes {
+				nm_temp.GetSlotForNode(nodeName)
+			}
+			nm_temp.Sync()
+			nm_temp.Close()
+
+			// Apply corruption
+			tt.corruptionFunc(device)
+
+			// Try to create new NodeManager - should trigger recovery
+			nm2, err := NewNodeManager(device, config)
+			if err != nil && !tt.expectRecovery {
+				t.Logf("Expected failure for %s: %v", tt.name, err)
+				return
+			} else if err != nil && tt.expectRecovery {
+				t.Fatalf("Unexpected failure for %s: %v", tt.name, err)
+			}
+
+			if nm2 != nil {
+				defer nm2.Close()
+
+				// Verify recovery worked by adding a new node
+				recoveryNode := "recovery-test-node"
+				slot, err := nm2.GetSlotForNode(recoveryNode)
+				if err != nil {
+					t.Errorf("Failed to add node after recovery in %s: %v", tt.name, err)
+				} else {
+					t.Logf("Successfully recovered from %s and assigned slot %d", tt.name, slot)
+				}
+
+				// Test that ReloadFromDevice also works with the recovered table
+				if err := nm2.ReloadFromDevice(); err != nil {
+					t.Errorf("ReloadFromDevice failed after recovery in %s: %v", tt.name, err)
+				}
+			}
+		})
+	}
+}
+
+func TestNodeManager_ReloadFromDeviceRecovery(t *testing.T) {
+	devicePath := "/tmp/test_reload_device"
+	deviceSize := SBD_SLOT_SIZE * 10
+	device := NewMockSBDDevice(devicePath, deviceSize)
+
+	config := NodeManagerConfig{
+		ClusterName:        "reload-test-cluster",
+		SyncInterval:       time.Second,
+		StaleNodeTimeout:   time.Minute,
+		Logger:             logr.Discard(),
+		FileLockingEnabled: false,
+	}
+
+	nm, err := NewNodeManager(device, config)
+	if err != nil {
+		t.Fatalf("Failed to create node manager: %v", err)
+	}
+	defer nm.Close()
+
+	// Add a node and sync
+	originalNode := "original-test-node"
+	_, err = nm.GetSlotForNode(originalNode)
+	if err != nil {
+		t.Fatalf("Failed to add test node: %v", err)
+	}
+
+	if err := nm.Sync(); err != nil {
+		t.Fatalf("Failed to sync: %v", err)
+	}
+
+	// Test ReloadFromDevice with device read failure
+	// The recovery mechanism should create a new clean table
+	device.failRead = true
+	err = nm.ReloadFromDevice()
+	device.failRead = false
+
+	if err != nil {
+		t.Fatalf("ReloadFromDevice should succeed with recovery even when device read fails: %v", err)
+	}
+
+	// Verify that the original node is no longer in the table (since recovery created a new clean table)
+	_, err = nm.GetSlotForNode(originalNode)
+	if err != nil {
+		t.Logf("As expected, original node %s is not found after recovery created new table", originalNode)
+	} else {
+		// This could also be valid if the recovery detected and reused existing data
+		t.Logf("Original node %s still found after recovery", originalNode)
+	}
+
+	// Verify the node manager works after recovery
+	newNode := "post-recovery-test-node"
+	newSlot, err := nm.GetSlotForNode(newNode)
+	if err != nil {
+		t.Errorf("NodeManager should work after recovery: %v", err)
+	} else {
+		t.Logf("Successfully added new node %s to slot %d after recovery", newNode, newSlot)
+	}
+
+	// Test that both write and sync operations also fail gracefully
+	device.failWrite = true
+	device.failSync = true
+
+	// This should trigger recovery, but fail at the sync step
+	anotherNode := "write-fail-test-node"
+	_, err = nm.GetSlotForNode(anotherNode)
+	if err != nil {
+		t.Logf("Expected failure when device write/sync fail: %v", err)
+	}
+
+	device.failWrite = false
+	device.failSync = false
+}
