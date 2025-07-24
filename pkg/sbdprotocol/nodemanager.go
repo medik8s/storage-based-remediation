@@ -24,6 +24,7 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -69,24 +70,20 @@ type SBDDevice interface {
 	PathProvider
 }
 
-// NodeManager manages node-to-slot mappings with persistence to SBD device
+// NodeManager manages node-to-slot mappings with persistence to a separate file
 type NodeManager struct {
-	device      SBDDevice
-	table       *NodeMapTable
-	hasher      *NodeHasher
-	clusterName string
-	logger      logr.Logger
-	mutex       sync.RWMutex
-
-	// Configuration
+	device             SBDDevice
+	nodeMapFilePath    string // Path to the separate node mapping file
+	clusterName        string
+	table              *NodeMapTable
+	hasher             *NodeHasher
+	mutex              sync.RWMutex
+	dirty              bool
+	lastSync           time.Time
+	logger             logr.Logger
 	syncInterval       time.Duration
 	staleNodeTimeout   time.Duration
 	fileLockingEnabled bool
-
-	// State
-	lastSync    time.Time
-	lastCleanup time.Time
-	dirty       bool
 }
 
 // NodeManagerConfig holds configuration for the node manager
@@ -128,8 +125,16 @@ func NewNodeManager(device SBDDevice, config NodeManagerConfig) (*NodeManager, e
 		config.StaleNodeTimeout = 10 * time.Minute
 	}
 
+	// Determine the node mapping file path based on the SBD device path
+	devicePath := device.Path()
+	if devicePath == "" {
+		return nil, fmt.Errorf("SBD device path is not available")
+	}
+	nodeMapFilePath := fmt.Sprintf("%s%s", devicePath, SBD_NODE_MAP_FILE_SUFFIX)
+
 	manager := &NodeManager{
 		device:             device,
+		nodeMapFilePath:    nodeMapFilePath,
 		clusterName:        config.ClusterName,
 		logger:             config.Logger,
 		syncInterval:       config.SyncInterval,
@@ -138,7 +143,7 @@ func NewNodeManager(device SBDDevice, config NodeManagerConfig) (*NodeManager, e
 		fileLockingEnabled: config.FileLockingEnabled,
 	}
 
-	// Try to load existing mapping table from device
+	// Try to load existing mapping table from file
 	if err := manager.loadFromDevice(); err != nil {
 		manager.logger.Info("Failed to load existing node mapping, creating new table", "error", err)
 		manager.table = NewNodeMapTable(config.ClusterName)
@@ -317,9 +322,9 @@ func (nm *NodeManager) GetStats() map[string]interface{} {
 
 	stats := nm.table.GetStats()
 	stats["last_sync"] = nm.lastSync
-	stats["last_cleanup"] = nm.lastCleanup
 	stats["sync_interval"] = nm.syncInterval
 	stats["stale_timeout"] = nm.staleNodeTimeout
+	stats["node_map_file"] = nm.nodeMapFilePath
 
 	return stats
 }
@@ -364,7 +369,6 @@ func (nm *NodeManager) CleanupStaleNodes() ([]string, error) {
 			return removedNodes, nil
 		}
 		nm.dirty = true
-		nm.lastCleanup = time.Now()
 		nm.mutex.Unlock()
 
 		// Step 3: Attempt atomic write
@@ -420,31 +424,21 @@ func (nm *NodeManager) StartPeriodicSync() chan struct{} {
 	return stopChan
 }
 
-// loadFromDevice loads the node mapping table from the SBD device
+// loadFromDevice loads the node mapping table from the separate node mapping file
 func (nm *NodeManager) loadFromDevice() error {
-	// Read the node mapping slot (slot 0)
-	slotOffset := int64(SBD_NODE_MAP_SLOT) * SBD_SLOT_SIZE
-	slotData := make([]byte, SBD_SLOT_SIZE)
-
-	n, err := nm.device.ReadAt(slotData, slotOffset)
+	// Read from the separate node mapping file
+	data, err := os.ReadFile(nm.nodeMapFilePath)
 	if err != nil {
-		return fmt.Errorf("failed to read node mapping slot: %w", err)
+		if os.IsNotExist(err) {
+			return fmt.Errorf("node mapping file does not exist: %s", nm.nodeMapFilePath)
+		}
+		return fmt.Errorf("failed to read node mapping file %s: %w", nm.nodeMapFilePath, err)
 	}
 
-	if n != SBD_SLOT_SIZE {
-		return fmt.Errorf("partial read from node mapping slot: read %d bytes, expected %d", n, SBD_SLOT_SIZE)
-	}
-
-	// Check if the slot contains valid data
-	if isEmptySlot(slotData) {
-		return fmt.Errorf("node mapping slot is empty")
-	}
-
-	// The slot might contain multiple chunks, so we need to read the full mapping
-	// For now, we'll assume it fits in one slot, but this could be extended
-	table, err := UnmarshalNodeMapTable(slotData)
+	// Unmarshal the data
+	table, err := UnmarshalNodeMapTable(data)
 	if err != nil {
-		return fmt.Errorf("failed to unmarshal node mapping table: %w", err)
+		return fmt.Errorf("failed to unmarshal node mapping table from file %s: %w", nm.nodeMapFilePath, err)
 	}
 
 	// Verify cluster name matches
@@ -456,10 +450,11 @@ func (nm *NodeManager) loadFromDevice() error {
 	nm.lastSync = time.Now()
 	nm.dirty = false
 
-	nm.logger.Info("Loaded node mapping from device",
+	nm.logger.Info("Loaded node mapping from file",
 		"nodeCount", len(table.Entries),
 		"clusterName", table.ClusterName,
-		"lastUpdate", table.LastUpdate)
+		"lastUpdate", table.LastUpdate,
+		"filePath", nm.nodeMapFilePath)
 
 	return nil
 }
@@ -539,59 +534,49 @@ func (nm *NodeManager) retryLoadWithDelay() error {
 
 // diagnoseAndFixCorruption attempts to diagnose and fix specific corruption patterns
 func (nm *NodeManager) diagnoseAndFixCorruption() error {
-	// Read the raw slot data for analysis
-	slotOffset := int64(SBD_NODE_MAP_SLOT) * SBD_SLOT_SIZE
-	slotData := make([]byte, SBD_SLOT_SIZE)
-
-	n, err := nm.device.ReadAt(slotData, slotOffset)
+	// Read the raw file data for analysis
+	fileData, err := os.ReadFile(nm.nodeMapFilePath)
 	if err != nil {
-		return fmt.Errorf("failed to read raw slot data for diagnosis: %w", err)
+		if os.IsNotExist(err) {
+			nm.logger.Info("Corruption diagnosis: file does not exist, creating new table")
+			nm.table = NewNodeMapTable(nm.clusterName)
+			nm.dirty = true
+			return nil
+		}
+		return fmt.Errorf("failed to read node mapping file for diagnosis: %w", err)
 	}
 
-	if n != SBD_SLOT_SIZE {
-		return fmt.Errorf("partial read during diagnosis: read %d bytes, expected %d", n, SBD_SLOT_SIZE)
-	}
-
-	// Check if it's completely empty (all zeros)
-	if isEmptySlot(slotData) {
-		nm.logger.Info("Corruption diagnosis: slot is empty, creating new table")
+	// Check if it's completely empty
+	if len(fileData) == 0 {
+		nm.logger.Info("Corruption diagnosis: file is empty, creating new table")
 		nm.table = NewNodeMapTable(nm.clusterName)
 		nm.dirty = true
 		return nil
 	}
 
 	// Check if we have at least a checksum
-	if len(slotData) >= 4 {
-		expectedChecksum := binary.LittleEndian.Uint32(slotData[:4])
-		jsonData := slotData[4:]
+	if len(fileData) >= 4 {
+		expectedChecksum := binary.LittleEndian.Uint32(fileData[:4])
+		jsonData := fileData[4:]
 
-		// Find the actual end of JSON data (look for null bytes)
-		jsonEnd := len(jsonData)
-		for i, b := range jsonData {
-			if b == 0 {
-				jsonEnd = i
-				break
-			}
-		}
-
-		if jsonEnd > 0 {
-			actualJsonData := jsonData[:jsonEnd]
-			actualChecksum := crc32.ChecksumIEEE(actualJsonData)
+		// Files don't have null padding like slots, so use full JSON data
+		if len(jsonData) > 0 {
+			actualChecksum := crc32.ChecksumIEEE(jsonData)
 
 			nm.logger.Info("Corruption diagnosis details",
 				"expectedChecksum", fmt.Sprintf("0x%08x", expectedChecksum),
 				"actualChecksum", fmt.Sprintf("0x%08x", actualChecksum),
-				"jsonDataLength", jsonEnd,
+				"jsonDataLength", len(jsonData),
 				"checksumMatch", expectedChecksum == actualChecksum)
 
-			// If checksums match with truncated data, the issue might be padding
+			// If checksums match, try to unmarshal
 			if expectedChecksum == actualChecksum {
-				nm.logger.Info("Attempting to unmarshal with corrected JSON data")
+				nm.logger.Info("Attempting to unmarshal with file data")
 
-				// Try to unmarshal the corrected data
-				table, err := UnmarshalNodeMapTable(slotData[:4+jsonEnd])
+				// Try to unmarshal the data
+				table, err := UnmarshalNodeMapTable(fileData)
 				if err == nil {
-					nm.logger.Info("Successfully recovered table with corrected data",
+					nm.logger.Info("Successfully recovered table from file",
 						"nodeCount", len(table.Entries),
 						"clusterName", table.ClusterName)
 
@@ -624,22 +609,9 @@ func (nm *NodeManager) clearCorruptedSlot() error {
 	}
 	defer nm.releaseDeviceLock(lockFile)
 
-	// Clear the entire slot with zeros
-	slotOffset := int64(SBD_NODE_MAP_SLOT) * SBD_SLOT_SIZE
-	clearData := make([]byte, SBD_SLOT_SIZE)
-
-	n, err := nm.device.WriteAt(clearData, slotOffset)
-	if err != nil {
-		return fmt.Errorf("failed to clear corrupted slot: %w", err)
-	}
-
-	if n != SBD_SLOT_SIZE {
-		return fmt.Errorf("partial write when clearing slot: wrote %d bytes, expected %d", n, SBD_SLOT_SIZE)
-	}
-
-	// Sync to ensure the clear is persistent
-	if err := nm.device.Sync(); err != nil {
-		return fmt.Errorf("failed to sync after clearing slot: %w", err)
+	// Remove the corrupted file
+	if err := os.Remove(nm.nodeMapFilePath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove corrupted node mapping file %s: %w", nm.nodeMapFilePath, err)
 	}
 
 	// Create new table
@@ -662,29 +634,23 @@ func (nm *NodeManager) syncToDevice() error {
 		return fmt.Errorf("failed to marshal node mapping table: %w", err)
 	}
 
-	// Check if data fits in one slot
-	if len(data) > SBD_SLOT_SIZE {
-		return fmt.Errorf("node mapping table too large: %d bytes, maximum %d", len(data), SBD_SLOT_SIZE)
+	// Write to the separate node mapping file
+	// Create the directory if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(nm.nodeMapFilePath), 0755); err != nil {
+		return fmt.Errorf("failed to create directory for node mapping file: %w", err)
 	}
 
-	// Prepare slot data (pad with zeros if necessary)
-	slotData := make([]byte, SBD_SLOT_SIZE)
-	copy(slotData, data)
-
-	// Write to the node mapping slot (slot 0)
-	slotOffset := int64(SBD_NODE_MAP_SLOT) * SBD_SLOT_SIZE
-	n, err := nm.device.WriteAt(slotData, slotOffset)
-	if err != nil {
-		return fmt.Errorf("failed to write node mapping slot: %w", err)
+	// Write data to temporary file first, then rename (atomic operation)
+	tempFilePath := nm.nodeMapFilePath + ".tmp"
+	if err := os.WriteFile(tempFilePath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write node mapping to temporary file %s: %w", tempFilePath, err)
 	}
 
-	if n != SBD_SLOT_SIZE {
-		return fmt.Errorf("partial write to node mapping slot: wrote %d bytes, expected %d", n, SBD_SLOT_SIZE)
-	}
-
-	// Ensure data is synced to disk
-	if err := nm.device.Sync(); err != nil {
-		return fmt.Errorf("failed to sync node mapping to device: %w", err)
+	// Atomic rename to final location
+	if err := os.Rename(tempFilePath, nm.nodeMapFilePath); err != nil {
+		// Clean up temporary file on failure
+		os.Remove(tempFilePath)
+		return fmt.Errorf("failed to rename temporary file to %s: %w", nm.nodeMapFilePath, err)
 	}
 
 	nm.lastSync = time.Now()
@@ -822,22 +788,15 @@ func (nm *NodeManager) atomicSyncToDeviceWithLock(expectedVersion uint64, lockFi
 		}()
 	}
 
-	// Read current version from device to check for conflicts
+	// Read current version from file to check for conflicts
 	// This read happens under the same lock as the write to prevent race conditions
-	slotOffset := int64(SBD_NODE_MAP_SLOT) * SBD_SLOT_SIZE
-	currentSlotData := make([]byte, SBD_SLOT_SIZE)
-
-	n, err := nm.device.ReadAt(currentSlotData, slotOffset)
-	if err != nil {
-		return fmt.Errorf("failed to read current node mapping slot for version check: %w", err)
+	currentFileData, err := os.ReadFile(nm.nodeMapFilePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read current node mapping file for version check: %w", err)
 	}
 
-	if n != SBD_SLOT_SIZE {
-		return fmt.Errorf("partial read from node mapping slot during version check: read %d bytes, expected %d", n, SBD_SLOT_SIZE)
-	}
-
-	// Check if slot is empty (first time write)
-	if !isEmptySlot(currentSlotData) {
+	// Check if file exists and has content (not first time write)
+	if err == nil && len(currentFileData) > 0 {
 		// Parse current version from device
 		currentTable, err := UnmarshalNodeMapTable(currentSlotData)
 		if err != nil {

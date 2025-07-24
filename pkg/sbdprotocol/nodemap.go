@@ -30,9 +30,10 @@ import (
 
 // SBD Node Mapping Constants
 const (
-	// SBD_NODE_MAP_SLOT is the reserved slot for storing the node mapping table
-	// This is slot 0, which is not used for regular node communication
-	SBD_NODE_MAP_SLOT = 0
+	// SBD_NODE_MAP_FILE_SUFFIX is the suffix for the node mapping file
+	// The node mapping is stored in a separate file alongside the SBD device
+	// e.g., /dev/sbd0 -> /dev/sbd0.nodemap
+	SBD_NODE_MAP_FILE_SUFFIX = ".nodemap"
 
 	// SBD_NODE_MAP_MAGIC is the magic string for node mapping data
 	SBD_NODE_MAP_MAGIC = "SBDNMAP1"
@@ -41,7 +42,7 @@ const (
 	SBD_NODE_MAP_VERSION = 1
 
 	// SBD_USABLE_SLOTS_START is the first slot available for node communication
-	// Slot 0 is reserved for the node mapping table
+	// All slots are now available since node mapping is stored in a separate file
 	SBD_USABLE_SLOTS_START = 1
 
 	// SBD_USABLE_SLOTS_END is the last slot available for node communication
