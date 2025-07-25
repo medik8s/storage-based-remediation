@@ -201,10 +201,11 @@ Scripts provide clear error messages for:
 - ✅ Read permissions for pods and logs in SBD namespace
 
 ### For emergency reboot script (`emergency-reboot-node.sh`):
-- ✅ OpenShift CLI (`oc`) with debug capabilities
-- ✅ Cluster admin or elevated permissions for `oc debug node`
-- ✅ Access to target node via debug pod
-- ⚠️ **Warning:** This script requires high privileges and can cause cluster disruption!
+- ✅ OpenShift CLI (`oc`) or Kubernetes CLI (`kubectl`)
+- ✅ AWS CLI (`aws`) installed and configured
+- ✅ AWS credentials with EC2 permissions (ec2:RebootInstances)
+- ✅ Access to AWS-hosted OpenShift/Kubernetes cluster
+- ⚠️ **Warning:** This script causes immediate ungraceful reboots and can cause cluster disruption!
 
 ## Troubleshooting the Scripts
 

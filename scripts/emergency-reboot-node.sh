@@ -87,12 +87,12 @@ EXAMPLES:
   $SCRIPT_NAME --timeout 60 worker-node-1
 
 SAFETY NOTES:
-  - This script creates a privileged pod on the target node for direct access
-  - Uses Magic SysRq to bypass all userspace processes for immediate reboot
-  - Pod runs with hostPID, hostNetwork, and privileged security context
+  - This script uses AWS EC2 API to reboot instances directly
+  - Performs immediate ungraceful reboot at the hypervisor level
   - No graceful shutdown of applications occurs
   - Automatically monitors node status to verify reboot completed
-  - Requires cluster admin permissions to create privileged pods
+  - Requires AWS CLI and appropriate EC2 permissions (ec2:RebootInstances)
+  - Only works with AWS-hosted OpenShift/Kubernetes clusters
   - Use only when normal node remediation has failed
   - Consider cluster impact before rebooting control plane nodes
 
@@ -202,135 +202,63 @@ confirm_reboot() {
     log_warn "Confirmation received. Proceeding with emergency reboot..."
 }
 
-# Create privileged pod to reboot the target node
-create_reboot_pod() {
+# Get AWS instance ID for cloud API reboot
+get_aws_instance_id() {
     local node_name="$1"
-    local pod_name="emergency-reboot-$(date +%s)"
-    local namespace="default"
     
-    log_info "Creating privileged reboot pod '$pod_name' on node '$node_name'..."
+    # Try to get instance ID from node's provider ID
+    local instance_id
+    instance_id=$(oc get node "$node_name" -o jsonpath='{.spec.providerID}' 2>/dev/null | sed 's|^aws:///[^/]*/||')
     
-    # Create pod manifest
-    local pod_manifest="/tmp/${pod_name}.yaml"
-    cat > "$pod_manifest" <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: $pod_name
-  namespace: $namespace
-  labels:
-    app: emergency-reboot
-    target-node: $node_name
-spec:
-  nodeName: $node_name
-  hostPID: true
-  hostNetwork: true
-  hostIPC: true
-  restartPolicy: Never
-  tolerations:
-  - operator: Exists
-  containers:
-  - name: reboot
-    image: registry.redhat.io/ubi8/ubi-minimal:latest
-    command:
-    - nsenter
-    - --target=1
-    - --mount
-    - --uts
-    - --ipc
-    - --net
-    - --pid
-    - --
-    - sh
-    - -c
-    - |
-      echo "Emergency reboot initiated by SBD operator at \$(date)" | logger -t sbd-emergency-reboot
-      echo "Enabling Magic SysRq on host..."
-      echo 1 > /proc/sys/kernel/sysrq
-      sleep 1
-      echo "Triggering immediate reboot via Magic SysRq..."
-      echo b > /proc/sysrq-trigger
-    securityContext:
-      privileged: true
-      runAsUser: 0
-      capabilities:
-        add:
-        - SYS_ADMIN
-        - SYS_BOOT
-        - SYS_CHROOT
-    volumeMounts:
-    - name: host-proc
-      mountPath: /host/proc
-    - name: host-sys
-      mountPath: /host/sys
-    - name: host-dev
-      mountPath: /host/dev
-  volumes:
-  - name: host-proc
-    hostPath:
-      path: /proc
-  - name: host-sys
-    hostPath:
-      path: /sys
-  - name: host-dev
-    hostPath:
-      path: /dev
-EOF
-
-    # Apply the pod
-    if oc apply -f "$pod_manifest" &> /dev/null; then
-        log_info "Privileged reboot pod created successfully"
-        
-        # Wait briefly for pod to start and execute
-        log_info "Waiting for reboot pod to execute..."
-        sleep 5
-        
-        # Check pod status
-        local pod_status
-        pod_status=$(oc get pod "$pod_name" -n "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
-        log_info "Pod status: $pod_status"
-        
-        # Cleanup the pod manifest
-        rm -f "$pod_manifest"
-        
-        # Try to delete the pod (may fail if node is already rebooting)
-        oc delete pod "$pod_name" -n "$namespace" --timeout=10s &> /dev/null || true
-        
+    if [[ -n "$instance_id" ]]; then
+        echo "$instance_id"
         return 0
-    else
-        log_error "Failed to create privileged reboot pod"
-        cat "$pod_manifest" >&2
-        rm -f "$pod_manifest"
-        return 1
     fi
+    
+    return 1
 }
 
-# Execute emergency reboot using privileged pod
+# Execute emergency reboot using AWS EC2 API
 execute_reboot() {
     local node_name="$1"
     
     if [[ "$DRY_RUN" == "true" ]]; then
         log_info "DRY RUN: Would execute emergency reboot on node '$node_name'"
-        log_info "DRY RUN: Would create privileged pod on target node with:"
-        echo "  1. hostPID: true (access host processes)"
-        echo "  2. hostNetwork: true (access host network)"
-        echo "  3. privileged: true (full host access)"
-        echo "  4. Command: nsenter --target=1 --mount --uts --ipc --net --pid -- sh -c 'echo 1 > /proc/sys/kernel/sysrq; echo b > /proc/sysrq-trigger'"
+        log_info "DRY RUN: Would use AWS EC2 API to reboot instance"
+        echo "  Command: aws ec2 reboot-instances --instance-ids <instance-id>"
         log_info "DRY RUN: Would monitor node reboot status after command execution"
         return 0
     fi
 
     log_warn "Executing EMERGENCY REBOOT on node '$node_name'..."
     
-    # Create privileged reboot pod
-    if create_reboot_pod "$node_name"; then
-        log_success "Emergency reboot initiated via privileged pod"
+    # Get AWS instance ID from node
+    local instance_id
+    instance_id=$(get_aws_instance_id "$node_name")
+    
+    if [[ -z "$instance_id" ]]; then
+        log_error "Could not determine AWS instance ID for node '$node_name'"
+        return 1
+    fi
+    
+    log_info "Found AWS instance ID: $instance_id"
+    
+    # Check if AWS CLI is available
+    if ! command -v aws &> /dev/null; then
+        log_error "AWS CLI not available, cannot reboot node"
+        return 1
+    fi
+    
+    # Execute AWS reboot command
+    log_info "Executing AWS EC2 reboot command..."
+    if AWS_PAGER="" aws ec2 reboot-instances --instance-ids "$instance_id"; then
+        log_success "Emergency reboot initiated via AWS EC2 API"
         
         # Monitor node reboot
         monitor_node_reboot "$node_name"
         return 0
     else
-        log_error "Failed to create reboot pod"
+        log_error "AWS EC2 reboot failed for instance $instance_id"
         return 1
     fi
 }
