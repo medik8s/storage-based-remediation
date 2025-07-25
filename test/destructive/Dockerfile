@@ -10,23 +10,26 @@ WORKDIR /app
 # Copy Go modules files
 #COPY go.mod go.sum ./
 
-# Copy source code
-COPY  --chown=default panic-reboot-test.go watchdog-reboot-test.go ./
+# Copy source code from new directory structure
+COPY  --chown=default panic-test/panic-reboot-test.go ./panic-test/
+COPY  --chown=default watchdog-test/watchdog-reboot-test.go ./watchdog-test/
 
 RUN ls -al
+RUN ls -al panic-test/
+RUN ls -al watchdog-test/
 RUN mkdir -p bin
 
 # Download dependencies
 #RUN go mod download
 
-# Build the test binaries
+# Build the test binaries from their respective directories
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
   -ldflags="-w -s -extldflags '-static'" \
-  -o bin/panic-reboot-test ./panic-reboot-test.go
+  -o bin/panic-reboot-test ./panic-test/panic-reboot-test.go
 
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
   -ldflags="-w -s -extldflags '-static'" \
-  -o bin/watchdog-reboot-test ./watchdog-reboot-test.go
+  -o bin/watchdog-reboot-test ./watchdog-test/watchdog-reboot-test.go
 
 # Use UBI9 minimal for runtime
 FROM  registry.access.redhat.com/ubi9/ubi-minimal:latest

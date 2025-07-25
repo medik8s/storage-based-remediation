@@ -8,36 +8,36 @@ import (
 )
 
 var (
-	watchdogPath = flag.String("watchdog", "/dev/watchdog", "Path to watchdog device")
-	petCount     = flag.Int("pets", 5, "Number of times to pet the watchdog before stopping")
-	petInterval  = flag.Duration("interval", 2*time.Second, "Interval between watchdog pets")
-	delaySeconds = flag.Int("delay", 10, "Delay in seconds before starting watchdog test")
-	nodeName     = flag.String("node", "", "Node name where this test is running (for logging)")
+	watchdogPath     = flag.String("watchdog", "/dev/watchdog", "Path to watchdog device")
+	petCount         = flag.Int("pets", 5, "Number of times to pet the watchdog before stopping")
+	petInterval      = flag.Duration("interval", 2*time.Second, "Interval between watchdog pets")
+	watchdogDelay    = flag.Int("delay", 10, "Delay in seconds before starting watchdog test")
+	watchdogNodeName = flag.String("node", "", "Node name where this test is running (for logging)")
 )
 
 func main() {
 	flag.Parse()
 
 	// Get node name from environment if not provided
-	if *nodeName == "" {
-		*nodeName = os.Getenv("NODE_NAME")
-		if *nodeName == "" {
-			*nodeName = "unknown"
+	if *watchdogNodeName == "" {
+		*watchdogNodeName = os.Getenv("NODE_NAME")
+		if *watchdogNodeName == "" {
+			*watchdogNodeName = "unknown"
 		}
 	}
 
 	log.Printf("=== WATCHDOG REBOOT TEST STARTING ===")
-	log.Printf("Node: %s", *nodeName)
+	log.Printf("Node: %s", *watchdogNodeName)
 	log.Printf("Watchdog: %s", *watchdogPath)
 	log.Printf("Pet Count: %d", *petCount)
 	log.Printf("Pet Interval: %v", *petInterval)
-	log.Printf("Delay: %d seconds", *delaySeconds)
+	log.Printf("Delay: %d seconds", *watchdogDelay)
 	log.Printf("Time: %s", time.Now().Format(time.RFC3339))
 	log.Printf("This test will STOP PETTING WATCHDOG and should cause the node to REBOOT!")
 	log.Printf("========================================")
 
 	// Show countdown
-	for i := *delaySeconds; i > 0; i-- {
+	for i := *watchdogDelay; i > 0; i-- {
 		log.Printf("Starting watchdog test in %d seconds...", i)
 		time.Sleep(1 * time.Second)
 	}
@@ -88,7 +88,7 @@ func main() {
 	// Don't pet anymore - let the watchdog timeout trigger reboot
 	// The watchdog will typically timeout in 60 seconds if not petted
 	log.Printf("Waiting for watchdog timeout to trigger node reboot...")
-	log.Printf("Node %s should reboot within the watchdog timeout period", *nodeName)
+	log.Printf("Node %s should reboot within the watchdog timeout period", *watchdogNodeName)
 
 	// Wait indefinitely - the node should reboot before this completes
 	for i := 1; ; i++ {
