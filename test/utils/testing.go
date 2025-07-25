@@ -399,6 +399,51 @@ func (dc *DebugCollector) CollectControllerLogs(namespace, podName string) {
 	}
 }
 
+// CollectAgentLogs collects logs from all SBD agent pods
+func (dc *DebugCollector) CollectAgentLogs(namespace string) {
+	By("Fetching SBD agent pod logs")
+
+	// Get all SBD agent pods
+	pods := &corev1.PodList{}
+	err := dc.Clients.Client.List(dc.Clients.Context, pods,
+		client.InNamespace(namespace),
+		client.MatchingLabels{"app": "sbd-agent"})
+
+	if err != nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to list SBD agent pods: %s\n", err)
+		return
+	}
+
+	// Filter out pods that are being deleted
+	var activePods []corev1.Pod
+	for _, pod := range pods.Items {
+		if pod.DeletionTimestamp == nil {
+			activePods = append(activePods, pod)
+		}
+	}
+
+	if len(activePods) == 0 {
+		_, _ = fmt.Fprintf(GinkgoWriter, "No active SBD agent pods found\n")
+		return
+	}
+
+	// Collect logs from each agent pod
+	for _, pod := range activePods {
+		_, _ = fmt.Fprintf(GinkgoWriter, "\n=== SBD Agent Pod: %s (Node: %s) ===\n", pod.Name, pod.Spec.NodeName)
+
+		req := dc.Clients.Clientset.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{})
+		podLogs, err := req.Stream(dc.Clients.Context)
+		if err == nil {
+			defer podLogs.Close()
+			buf := new(bytes.Buffer)
+			_, _ = io.Copy(buf, podLogs)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Agent logs:\n %s\n", buf.String())
+		} else {
+			_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get agent logs from pod %s: %s\n", pod.Name, err)
+		}
+	}
+}
+
 // CollectKubernetesEvents collects Kubernetes events from a namespace
 func (dc *DebugCollector) CollectKubernetesEvents(namespace string) {
 	By("Fetching Kubernetes events")
@@ -1029,6 +1074,7 @@ func SuiteSetup(namespace string) (*TestNamespace, error) {
 
 func DescribeEnvironment(testClients *TestClients, namespace string) {
 	var controllerPodName string
+	By(fmt.Sprintf("Describing the %s environment", namespace))
 
 	By("Fetching SBDConfig CRs")
 	sbdConfigs := &medik8sv1alpha1.SBDConfigList{}
@@ -1072,10 +1118,39 @@ func DescribeEnvironment(testClients *TestClients, namespace string) {
 	}
 	Eventually(verifyControllerUp).Should(Succeed())
 
+	By("validating that SBD agent pods are running as expected")
+	verifyAgentsUp := func(g Gomega) {
+		// Get SBD agent pods
+		pods := &corev1.PodList{}
+		err := testClients.Client.List(testClients.Context, pods,
+			client.InNamespace(namespace),
+			client.MatchingLabels{"app": "sbd-agent"})
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve SBD agent pod information")
+
+		// Filter out pods that are being deleted
+		var activePods []corev1.Pod
+		for _, pod := range pods.Items {
+			if pod.DeletionTimestamp == nil {
+				activePods = append(activePods, pod)
+			}
+		}
+		g.Expect(len(activePods)).To(BeNumerically(">=", 1), "expected at least 1 SBD agent pod running")
+
+		// Validate each agent pod's status
+		for _, pod := range activePods {
+			g.Expect(pod.Name).To(ContainSubstring("sbd-agent"))
+			g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning), "Incorrect SBD agent pod status")
+		}
+	}
+	Eventually(verifyAgentsUp).Should(Succeed())
+
 	debugCollector := testClients.NewDebugCollector()
 
 	// Collect controller logs
 	debugCollector.CollectControllerLogs(namespace, controllerPodName)
+
+	// Collect agent logs
+	debugCollector.CollectAgentLogs(namespace)
 
 	// Collect Kubernetes events
 	debugCollector.CollectKubernetesEvents(namespace)
