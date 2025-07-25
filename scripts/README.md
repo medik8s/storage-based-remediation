@@ -48,11 +48,55 @@ $ ./get-agent-logs.sh worker-1.example.com --tail 50
 [2025-01-24 10:31:22] Found SBD agent pod: sbd-agent-test-config-abc123 (status: Running)
 [2025-01-24 10:31:22] Retrieving logs from SBD agent pod 'sbd-agent-test-config-abc123'...
 ==============================================
-2025-01-24T10:31:20.123456Z INFO    Starting SBD Agent
-2025-01-24T10:31:20.234567Z INFO    Successfully opened SBD device
-2025-01-24T10:31:20.345678Z INFO    Watchdog pet successful
-...
 ```
+
+### ⚠️ `emergency-reboot-node.sh` - Emergency Node Reboot
+Immediately and ungracefully reboots a specified OpenShift node using `oc debug`.
+
+**⚠️ DANGER: This script performs IMMEDIATE, UNGRACEFUL node reboots! Use with extreme caution!**
+
+**Use this when you want to:**
+- Emergency fence/reboot an unresponsive node
+- Simulate SBD fencing behavior for testing
+- Force reboot a node when normal remediation has failed
+- Test cluster resilience to sudden node failures
+
+**Key Features:**
+- Uses `oc debug node/<name>` to access the host
+- Executes `systemctl reboot --force --force` for immediate reboot
+- Includes comprehensive safety checks and confirmations
+- Supports dry-run mode for testing
+- Warns about control plane node reboots
+- Requires explicit "YES" confirmation (unless forced)
+
+**Example usage:**
+```bash
+# Interactive reboot with confirmation
+$ ./emergency-reboot-node.sh worker-node-1
+[INFO] Starting emergency-reboot-node.sh v1.0.0
+[INFO] Target node: worker-node-1
+[WARN] ⚠️  DANGER ZONE  ⚠️
+Are you absolutely sure you want to reboot 'worker-node-1'? (type 'YES' to confirm): YES
+[WARN] Executing EMERGENCY REBOOT on node 'worker-node-1'...
+[SUCCESS] Emergency reboot initiated on node 'worker-node-1'
+
+# Force reboot without confirmation (dangerous!)
+$ ./emergency-reboot-node.sh --force worker-node-1
+
+# Dry run to see what would happen
+$ ./emergency-reboot-node.sh --dry-run worker-node-1
+[INFO] DRY RUN: Would execute emergency reboot on node 'worker-node-1'
+[INFO] DRY RUN: Command that would be executed:
+  oc debug node/worker-node-1 -- chroot /host systemctl reboot --force --force
+```
+
+**Safety Features:**
+- ✅ **Node validation:** Checks if node exists before proceeding
+- ✅ **Control plane warnings:** Special warnings for master nodes
+- ✅ **Confirmation prompt:** Requires typing "YES" to confirm
+- ✅ **Dry-run mode:** Test what would happen without executing
+- ✅ **Force mode:** Skip confirmation for automated scenarios
+- ✅ **Comprehensive logging:** Detailed status and error messages
 
 ## Quick Start
 
@@ -71,6 +115,15 @@ $ ./get-agent-logs.sh worker-1.example.com --tail 50
 ./scripts/get-agent-logs.sh <node-name> --follow
 ```
 
+### 4. Emergency node reboot (use with extreme caution!)
+```bash
+# Dry run first to see what would happen
+./scripts/emergency-reboot-node.sh --dry-run <node-name>
+
+# Interactive reboot with confirmation
+./scripts/emergency-reboot-node.sh <node-name>
+```
+
 ## Common Usage Patterns
 
 ### Basic Troubleshooting Workflow
@@ -78,6 +131,12 @@ $ ./get-agent-logs.sh worker-1.example.com --tail 50
 2. **Identify problem nodes:** Look for non-Running status
 3. **Get detailed logs:** `./get-agent-logs.sh <problematic-node>`
 4. **Follow real-time:** `./get-agent-logs.sh <node> --follow --tail 100`
+
+### Emergency Node Remediation Workflow
+1. **Test first:** `./emergency-reboot-node.sh --dry-run <unresponsive-node>`
+2. **Verify node status:** `oc get node <node> -o wide`
+3. **Emergency reboot:** `./emergency-reboot-node.sh <unresponsive-node>`
+4. **Monitor recovery:** `oc get node <node> -w`
 
 ### Debugging Agent Startup Issues
 ```bash
@@ -136,10 +195,16 @@ Scripts provide clear error messages for:
 
 ## Dependencies
 
-Both scripts require:
+### For monitoring/debugging scripts (`list-agent-pods.sh`, `get-agent-logs.sh`):
 - ✅ OpenShift CLI (`oc`) or Kubernetes CLI (`kubectl`)
 - ✅ Access to OpenShift/Kubernetes cluster
 - ✅ Read permissions for pods and logs in SBD namespace
+
+### For emergency reboot script (`emergency-reboot-node.sh`):
+- ✅ OpenShift CLI (`oc`) with debug capabilities
+- ✅ Cluster admin or elevated permissions for `oc debug node`
+- ✅ Access to target node via debug pod
+- ⚠️ **Warning:** This script requires high privileges and can cause cluster disruption!
 
 ## Troubleshooting the Scripts
 
@@ -157,6 +222,13 @@ Both scripts require:
 - Check kubeconfig: `oc cluster-info`
 - Verify login: `oc whoami`
 - Test connectivity: `oc get nodes`
+
+### "Emergency reboot failed"
+- Check permissions: `oc auth can-i debug node`
+- Verify node accessibility: `oc debug node/<node-name> -- echo "test"`
+- Check node status: `oc get node <node-name> -o wide`
+- Review script logs for specific error messages
+- Ensure sufficient privileges for `systemctl reboot` operations
 
 ## Advanced Usage
 
