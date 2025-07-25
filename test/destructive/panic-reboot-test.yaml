@@ -1,0 +1,115 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: panic-reboot-test
+  namespace: default
+  labels:
+    app: sbd-destructive-test
+    test-type: panic-reboot
+  annotations:
+    description: "DESTRUCTIVE TEST: This pod will cause the target node to REBOOT via panic"
+spec:
+  # WARNING: This pod will cause the node to REBOOT!
+  restartPolicy: Never
+  
+  # Target specific node for testing (CHANGE THIS!)
+  nodeSelector:
+    kubernetes.io/hostname: "TARGET_NODE_NAME_HERE"
+  
+  # Required for triggering node reboot
+  hostPID: true
+  hostNetwork: true
+  
+  containers:
+  - name: panic-test
+    # Use custom image with built-in Go test binaries
+    # Change this to your registry: your-registry.com/sbd-destructive-tests:latest
+    image: sbd-destructive-tests:latest
+    imagePullPolicy: IfNotPresent
+    
+    # Run as root to ensure panic can trigger reboot
+    securityContext:
+      privileged: true
+      runAsUser: 0
+      capabilities:
+        add:
+        - SYS_BOOT    # Required for reboot capabilities
+        - SYS_ADMIN   # Required for system administration
+    
+    # Set NODE_NAME environment variable
+    env:
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    
+    # Command to run the panic test
+    command: ["/usr/local/bin/panic-reboot-test"]
+    args:
+    - "--delay=30"  # 30 second delay before panic
+    
+    # Resource limits
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+    
+    # Volume mounts for host access
+    volumeMounts:
+    - name: host-root
+      mountPath: /host
+      readOnly: true
+      
+  volumes:
+  - name: host-root
+    hostPath:
+      path: /
+      type: Directory
+      
+  # Tolerations to run on any node
+  tolerations:
+  - operator: Exists
+    effect: NoSchedule
+  - operator: Exists
+    effect: NoExecute
+    
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: panic-test-instructions
+  namespace: default
+data:
+  README.md: |
+    # PANIC REBOOT TEST
+    
+    ⚠️  **EXTREMELY DANGEROUS - WILL REBOOT THE TARGET NODE** ⚠️
+    
+    ## What this test does:
+    1. Runs a Go binary that calls panic() after a 30-second delay
+    2. The panic should trigger an immediate reboot of the target node
+    3. This validates that panic-based self-fencing works
+    
+    ## Before running:
+    1. Edit panic-reboot-test.yaml and set TARGET_NODE_NAME_HERE
+    2. Ensure the target node can be safely rebooted
+    3. Save all work on other nodes
+    4. Have monitoring in place to verify the reboot occurs
+    
+    ## To run:
+    kubectl apply -f panic-reboot-test.yaml
+    
+    ## To monitor:
+    kubectl logs -f panic-reboot-test
+    
+    ## Expected behavior:
+    - Pod starts and shows 30-second countdown
+    - At the end, it triggers panic()
+    - Node should reboot immediately
+    - Pod will be terminated as the node goes down
+    
+    ## To cleanup after test:
+    kubectl delete pod panic-reboot-test 

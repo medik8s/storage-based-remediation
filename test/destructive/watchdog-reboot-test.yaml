@@ -1,0 +1,139 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: watchdog-reboot-test
+  namespace: default
+  labels:
+    app: sbd-destructive-test
+    test-type: watchdog-reboot
+  annotations:
+    description: "DESTRUCTIVE TEST: This pod will cause the target node to REBOOT via watchdog timeout"
+spec:
+  # WARNING: This pod will cause the node to REBOOT!
+  restartPolicy: Never
+  
+  # Target specific node for testing (CHANGE THIS!)
+  nodeSelector:
+    kubernetes.io/hostname: "TARGET_NODE_NAME_HERE"
+  
+  # Required for accessing watchdog device and triggering reboot
+  hostPID: true
+  hostNetwork: true
+  
+  containers:
+  - name: watchdog-test
+    # Use custom image with built-in Go test binaries
+    # Change this to your registry: your-registry.com/sbd-destructive-tests:latest
+    image: sbd-destructive-tests:latest
+    imagePullPolicy: IfNotPresent
+    
+    # Run as root to access watchdog device
+    securityContext:
+      privileged: true
+      runAsUser: 0
+      capabilities:
+        add:
+        - SYS_BOOT    # Required for reboot capabilities
+        - SYS_ADMIN   # Required for system administration
+    
+    # Set NODE_NAME environment variable
+    env:
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    
+    # Command to run the watchdog test
+    command: ["/usr/local/bin/watchdog-reboot-test"]
+    args:
+    - "--delay=30"           # 30 second delay before starting test
+    - "--pets=10"            # Pet watchdog 10 times
+    - "--interval=3s"        # 3 seconds between pets
+    - "--watchdog=/dev/watchdog"
+    
+    # Resource limits
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+    
+    # Volume mounts for accessing host devices
+    volumeMounts:
+    - name: host-dev
+      mountPath: /dev
+    - name: host-root
+      mountPath: /host
+      readOnly: true
+      
+  volumes:
+  - name: host-dev
+    hostPath:
+      path: /dev
+      type: Directory
+  - name: host-root
+    hostPath:
+      path: /
+      type: Directory
+      
+  # Tolerations to run on any node
+  tolerations:
+  - operator: Exists
+    effect: NoSchedule
+  - operator: Exists
+    effect: NoExecute
+    
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: watchdog-test-instructions
+  namespace: default
+data:
+  README.md: |
+    # WATCHDOG REBOOT TEST
+    
+    ⚠️  **EXTREMELY DANGEROUS - WILL REBOOT THE TARGET NODE** ⚠️
+    
+    ## What this test does:
+    1. Opens the kernel watchdog device (/dev/watchdog)
+    2. Pets the watchdog 10 times with 3-second intervals
+    3. Stops petting the watchdog and waits
+    4. The watchdog timeout should trigger an immediate reboot
+    
+    ## How watchdog works:
+    - Opening /dev/watchdog activates the kernel watchdog
+    - Writing to the device "pets" it and resets the timeout
+    - If the watchdog isn't petted within the timeout period, the kernel reboots
+    - Typical timeout is 60 seconds
+    
+    ## Before running:
+    1. Edit watchdog-reboot-test.yaml and set TARGET_NODE_NAME_HERE
+    2. Ensure the target node can be safely rebooted
+    3. Verify /dev/watchdog exists on the target node
+    4. Save all work on other nodes
+    5. Have monitoring in place to verify the reboot occurs
+    
+    ## To run:
+    kubectl apply -f watchdog-reboot-test.yaml
+    
+    ## To monitor:
+    kubectl logs -f watchdog-reboot-test
+    
+    ## Expected behavior:
+    - Pod starts and shows 30-second countdown
+    - Opens /dev/watchdog (this activates the watchdog)
+    - Pets the watchdog 10 times over 30 seconds
+    - Stops petting and waits
+    - Node should reboot within 60 seconds (typical watchdog timeout)
+    - Pod will be terminated as the node goes down
+    
+    ## Troubleshooting:
+    - If /dev/watchdog doesn't exist, the hardware watchdog may not be available
+    - If the test doesn't cause a reboot, the watchdog may not be working
+    - Check dmesg for watchdog-related messages
+    
+    ## To cleanup after test:
+    kubectl delete pod watchdog-reboot-test 
