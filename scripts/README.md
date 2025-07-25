@@ -71,7 +71,7 @@ Displays the SBD agent node mapping showing which nodes are assigned to which sl
 
 **Example output:**
 ```bash
-$ ./show-node-map.sh --kubernetes --heartbeats
+$ ./show-node-map.sh --heartbeats
 ═══════════════════════════════════════════════════════════════
                      SBD Agent Node Mapping
 ═══════════════════════════════════════════════════════════════
@@ -158,16 +158,16 @@ $ ./emergency-reboot-node.sh --dry-run worker-node-1
 ### 4. Display SBD agent node mapping
 ```bash
 # Show basic node-to-slot mapping
-./scripts/show-node-map.sh --kubernetes
+./scripts/show-node-map.sh
 
 # Show mapping with current heartbeat status
-./scripts/show-node-map.sh --kubernetes --heartbeats
+./scripts/show-node-map.sh --heartbeats
 
 # Use specific namespace
-./scripts/show-node-map.sh --kubernetes --namespace sbd-system
+./scripts/show-node-map.sh --namespace sbd-system
 
 # JSON output for automation
-./scripts/show-node-map.sh --kubernetes --json
+./scripts/show-node-map.sh --json
 ```
 
 ### 5. Emergency node reboot (use with extreme caution!)

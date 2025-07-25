@@ -23,7 +23,6 @@ SBD_DEVICE_PATH="/sbd-shared/sbd-device"
 SHOW_HEARTBEATS=false
 JSON_OUTPUT=false
 VERBOSE=false
-USE_KUBERNETES=false
 KUBERNETES_NAMESPACE=""
 KUBECTL_CMD=""
 
@@ -68,7 +67,6 @@ Usage: $SCRIPT_NAME [OPTIONS]
 Display SBD agent node map showing node-to-slot assignments and heartbeat status.
 
 OPTIONS:
-  -k, --kubernetes        Use Kubernetes to read from SBD agent pods (recommended)
   -n, --namespace NAME    Kubernetes namespace for SBD agents (auto-detected if not specified)
   -H, --heartbeats        Show current heartbeat status from SBD device
   -j, --json              Output in JSON format
@@ -77,20 +75,20 @@ OPTIONS:
   --version               Show script version
 
 EXAMPLES:
-  # Show basic node mapping using Kubernetes
-  $SCRIPT_NAME --kubernetes
+  # Show basic node mapping
+  $SCRIPT_NAME
 
   # Show node mapping with heartbeat status
-  $SCRIPT_NAME --kubernetes --heartbeats
+  $SCRIPT_NAME --heartbeats
 
   # Use specific namespace
-  $SCRIPT_NAME --kubernetes --namespace sbd-system
+  $SCRIPT_NAME --namespace sbd-system
 
   # JSON output for automation
-  $SCRIPT_NAME --kubernetes --json
+  $SCRIPT_NAME --json
 
   # Verbose output with debug information
-  $SCRIPT_NAME --kubernetes --verbose --heartbeats
+  $SCRIPT_NAME --verbose --heartbeats
 
 DESCRIPTION:
   This script reads the SBD node mapping file (.nodemap) from running SBD agent pods
@@ -101,7 +99,7 @@ DESCRIPTION:
   - Cluster information
   - Optional: Current heartbeat status from SBD device slots
 
-  The script uses Kubernetes to read from SBD agent pods via kubectl/oc.
+  The script reads from SBD agent pods via kubectl/oc.
   SBD device is always located at /sbd-shared/sbd-device in the pods.
 
 REQUIREMENTS:
@@ -134,19 +132,13 @@ check_prerequisites() {
         exit 1
     fi
 
-    # Check Kubernetes prerequisites if using Kubernetes mode
-    if [[ "$USE_KUBERNETES" == "true" ]]; then
-        detect_kubectl_command
-        check_cluster_connectivity
-        
-        # Check if hexdump is available (for heartbeat analysis)
-        if [[ "$SHOW_HEARTBEATS" == "true" ]] && ! command_exists hexdump; then
-            log_warn "hexdump not available - heartbeat analysis may be limited"
-        fi
-    else
-        log_error "This script only supports Kubernetes mode (--kubernetes)"
-        log_info "Use --kubernetes flag to read from SBD agent pods"
-        exit 1
+    # Check Kubernetes prerequisites
+    detect_kubectl_command
+    check_cluster_connectivity
+    
+    # Check if hexdump is available (for heartbeat analysis)
+    if [[ "$SHOW_HEARTBEATS" == "true" ]] && ! command_exists hexdump; then
+        log_warn "hexdump not available - heartbeat analysis may be limited"
     fi
 
     log_debug "Prerequisites check passed"
@@ -525,10 +517,6 @@ main() {
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
-            -k|--kubernetes)
-                USE_KUBERNETES=true
-                shift
-                ;;
             -n|--namespace)
                 KUBERNETES_NAMESPACE="$2"
                 shift 2
@@ -569,8 +557,8 @@ main() {
     # Check prerequisites
     check_prerequisites
 
-    # Kubernetes mode - read from SBD agent pods
-    log_debug "Using Kubernetes mode to read node mapping"
+    # Read from SBD agent pods
+    log_debug "Reading node mapping from SBD agent pods"
     
     # Auto-detect namespace if not specified
     if [[ -z "$KUBERNETES_NAMESPACE" ]]; then
