@@ -21,10 +21,18 @@ help:
 	@echo "  update-manifests - Update manifests with registry and target node"
 	@echo "  run-panic-test - Run the panic reboot test (REBOOTS NODE!)"
 	@echo "  run-watchdog-test - Run the watchdog reboot test (REBOOTS NODE!)"
+	@echo "  deploy-panic   - Deploy panic test DaemonSet (REBOOTS NODE!)"
+	@echo "  deploy-watchdog - Deploy shell watchdog test DaemonSet (REBOOTS NODE!)"
+	@echo "  deploy-watchdog-go - Deploy Go binary watchdog test (RECOMMENDED - fastest)"
+	@echo "  check-uptimes  - Deploy uptime checker and collect results"
 	@echo "  monitor-panic  - Monitor panic test logs"
 	@echo "  monitor-watchdog - Monitor watchdog test logs"
+	@echo "  monitor-watchdog-go - Monitor Go binary watchdog test logs"
 	@echo "  monitor-node   - Monitor target node status"
-	@echo "  cleanup        - Clean up test pods and configs"
+	@echo "  cleanup-panic  - Clean up panic test"
+	@echo "  cleanup-watchdog - Clean up shell watchdog test"
+	@echo "  cleanup-watchdog-go - Clean up Go binary watchdog test"
+	@echo "  cleanup-all    - Clean up all tests"
 	@echo "  verify-node    - Verify target node has required capabilities"
 	@echo ""
 	@echo "Environment variables:"
@@ -32,6 +40,7 @@ help:
 	@echo "  TARGET_NODE    - Node to test (REQUIRED: $(TARGET_NODE))"
 	@echo ""
 	@echo "⚠️  THESE TESTS WILL REBOOT THE TARGET NODE! ⚠️"
+	@echo "🔥  RECOMMENDED: Use deploy-watchdog-go (fastest, most reliable)"
 
 # Build the test image
 .PHONY: build
@@ -138,8 +147,42 @@ deploy-watchdog: $(REGISTRY_CHECK)
 		exit 1; \
 	fi
 
+# Deploy Go binary watchdog test (RECOMMENDED - fastest and most reliable)
+.PHONY: deploy-watchdog-go
+deploy-watchdog-go: $(REGISTRY_CHECK)
+	@echo "🚨 WARNING: This will deploy a DESTRUCTIVE DaemonSet that will REBOOT nodes!"
+	@echo "🔥 Using Go binary approach (FASTEST - ~10 second reboot vs ~3 minutes for shell)"
+	@echo "🎯 Using proven DaemonSet + nsenter + Go binary pattern"
+	@echo "📡 Target node: Check nodeSelector in watchdog-go-test.yaml"
+	@echo ""
+	@read -p "Are you sure you want to continue? (type 'YES' to confirm): " confirm; \
+	if [ "$$confirm" = "YES" ]; then \
+		echo "🚀 Deploying Go binary watchdog test (DaemonSet)..."; \
+		kubectl apply -f watchdog-go-test.yaml; \
+		echo "✅ Deployed! Monitor with: kubectl logs -f daemonset/watchdog-go-test -c watchdog-go-init"; \
+	else \
+		echo "❌ Deployment cancelled."; \
+		exit 1; \
+	fi
+
+# Deploy uptime checker utility
+.PHONY: check-uptimes
+check-uptimes:
+	@echo "📊 Deploying uptime checker to all worker nodes..."
+	kubectl apply -f check-uptimes.yaml
+	@echo "⏳ Waiting for pods to start..."
+	@sleep 10
+	@echo "📋 Collecting uptime reports:"
+	@for pod in $$(kubectl get pods -l app=uptime-check -o jsonpath='{.items[*].metadata.name}'); do \
+		echo "🖥️  Node uptime from $$pod:"; \
+		kubectl logs $$pod -c uptime-check 2>/dev/null || echo "Pod not ready yet"; \
+		echo ""; \
+	done
+	@echo "🧹 Cleaning up uptime checker..."
+	kubectl delete daemonset check-uptimes --ignore-not-found
+
 # Monitor deployed tests
-.PHONY: monitor-panic monitor-watchdog
+.PHONY: monitor-panic monitor-watchdog monitor-watchdog-go
 monitor-panic:
 	@echo "📊 Monitoring panic reboot test logs..."
 	kubectl logs -f daemonset/panic-reboot-test -c panic-reboot-init
@@ -148,8 +191,12 @@ monitor-watchdog:
 	@echo "📊 Monitoring watchdog reboot test logs..."
 	kubectl logs -f daemonset/watchdog-reboot-test -c watchdog-reboot-init
 
-# Cleanup targets for DaemonSets  
-.PHONY: cleanup-panic cleanup-watchdog cleanup-all
+monitor-watchdog-go:
+	@echo "📊 Monitoring Go binary watchdog test logs..."
+	kubectl logs -f daemonset/watchdog-go-test -c watchdog-go-init
+
+# Cleanup targets for DaemonSets
+.PHONY: cleanup-panic cleanup-watchdog cleanup-watchdog-go cleanup-all
 cleanup-panic:
 	@echo "🧹 Cleaning up panic reboot test..."
 	kubectl delete daemonset panic-reboot-test --ignore-not-found
@@ -162,7 +209,13 @@ cleanup-watchdog:
 	kubectl delete configmap watchdog-test-instructions --ignore-not-found
 	@echo "✅ Watchdog test cleaned up"
 
-cleanup-all: cleanup-panic cleanup-watchdog
+cleanup-watchdog-go:
+	@echo "🧹 Cleaning up Go binary watchdog test..."
+	kubectl delete daemonset watchdog-go-test --ignore-not-found
+	kubectl delete configmap watchdog-go-test-instructions --ignore-not-found
+	@echo "✅ Go binary watchdog test cleaned up"
+
+cleanup-all: cleanup-panic cleanup-watchdog cleanup-watchdog-go
 	@echo "✅ All destructive tests cleaned up"
 
 # Monitor test logs
