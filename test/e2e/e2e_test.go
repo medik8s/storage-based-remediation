@@ -1546,10 +1546,10 @@ spec:
   nodeName: %s
   containers:
   - name: disruptor
-    image: busybox:latest
+    image: registry.redhat.io/ubi9/ubi:latest
     imagePullPolicy: IfNotPresent
     command:
-    - /bin/sh
+    - /bin/bash
     - -c
     - |
       echo "SBD e2e storage disruptor starting..."
@@ -1612,13 +1612,16 @@ spec:
       echo "Storage disruptor timeout reached - exiting gracefully..."
     securityContext:
       privileged: true
+      capabilities:
+        add:
+        - SYS_ADMIN
     resources:
       requests:
-        memory: "32Mi"
-        cpu: "50m"
-      limits:
-        memory: "64Mi"
+        memory: "128Mi"
         cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
   restartPolicy: Never
   tolerations:
   - operator: Exists
@@ -1712,12 +1715,15 @@ spec:
       echo "Validation completed successfully"
     securityContext:
       privileged: true
+      capabilities:
+        add:
+        - SYS_ADMIN
     resources:
       requests:
-        memory: "64Mi"
+        memory: "128Mi"
         cpu: "100m"
       limits:
-        memory: "128Mi"
+        memory: "256Mi"
         cpu: "200m"
   restartPolicy: Never
   tolerations:
@@ -1827,10 +1833,10 @@ spec:
   nodeName: %s
   containers:
   - name: cleanup
-    image: busybox:latest
+    image: registry.redhat.io/ubi9/ubi:latest
     imagePullPolicy: IfNotPresent
     command:
-    - /bin/sh
+    - /bin/bash
     - -c
     - |
       echo "SBD e2e storage cleanup starting..."
@@ -1855,13 +1861,16 @@ spec:
       echo "Cleanup finished successfully."
     securityContext:
       privileged: true
+      capabilities:
+        add:
+        - SYS_ADMIN
     resources:
       requests:
-        memory: "32Mi"
-        cpu: "50m"
-      limits:
-        memory: "64Mi"
+        memory: "128Mi"
         cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
   restartPolicy: Never
   tolerations:
   - operator: Exists
