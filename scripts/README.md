@@ -51,7 +51,7 @@ $ ./get-agent-logs.sh worker-1.example.com --tail 50
 ```
 
 ### 🗺️ `show-node-map.sh` - SBD Agent Node Mapping
-Displays the SBD agent node mapping showing which nodes are assigned to which slots.
+Displays the SBD agent node mapping showing which nodes are assigned to which slots by reading from running SBD agent pods.
 
 **Use this when you want to:**
 - View current node-to-slot assignments in the SBD device
@@ -61,11 +61,13 @@ Displays the SBD agent node mapping showing which nodes are assigned to which sl
 - Understand the SBD agent coordination structure
 
 **Key Features:**
+- Reads directly from SBD agent pods via Kubernetes API
 - Shows hash-based slot assignments for each node
 - Displays last seen timestamps for cluster health
 - Optional real-time heartbeat status from SBD device
 - Supports JSON output for automation
 - Color-coded status indicators (OK/STALE/OFFLINE)
+- Auto-detects SBD namespace and running pods
 
 **Example output:**
 ```bash
@@ -78,7 +80,7 @@ Cluster Name: my-openshift-cluster
 Version: 15
 Last Update: 2m ago
 Access Mode: Kubernetes (namespace: sbd-system)
-SBD Device: /dev/sbd0
+SBD Device: /sbd-shared/sbd-device
 Total Nodes: 3
 
 SLOT NODE NAME                     HASH       LAST SEEN      HEARTBEAT    STATUS
@@ -155,17 +157,14 @@ $ ./emergency-reboot-node.sh --dry-run worker-node-1
 
 ### 4. Display SBD agent node mapping
 ```bash
-# Show basic node-to-slot mapping using Kubernetes (recommended)
+# Show basic node-to-slot mapping
 ./scripts/show-node-map.sh --kubernetes
 
-# Show mapping with current heartbeat status via Kubernetes
+# Show mapping with current heartbeat status
 ./scripts/show-node-map.sh --kubernetes --heartbeats
 
 # Use specific namespace
 ./scripts/show-node-map.sh --kubernetes --namespace sbd-system
-
-# Direct filesystem access (requires local device access)
-./scripts/show-node-map.sh --device /dev/sbd0
 
 # JSON output for automation
 ./scripts/show-node-map.sh --kubernetes --json
@@ -265,9 +264,10 @@ Scripts provide clear error messages for:
 - ✅ Read permissions for pods and logs in SBD namespace
 
 ### For node mapping script (`show-node-map.sh`):
+- ✅ OpenShift CLI (`oc`) or Kubernetes CLI (`kubectl`)
+- ✅ KUBECONFIG configured for target cluster
+- ✅ Read permissions for pods in SBD namespace
 - ✅ `jq` command for JSON parsing
-- ✅ Read access to SBD device (e.g., `/dev/sbd0`)
-- ✅ Read access to node mapping file (e.g., `/dev/sbd0.nodemap`)
 - ✅ Optional: `hexdump` for SBD device heartbeat analysis
 - ✅ Optional: `date` command for timestamp formatting
 
@@ -296,15 +296,10 @@ Scripts provide clear error messages for:
 - Test connectivity: `oc get nodes`
 
 ### "Node mapping file not found"
-- Verify SBD device path: `ls -la /dev/sbd*`
-- Check if SBD agent has created mapping: `ls -la /dev/sbd*.nodemap`
 - Ensure SBD agent is running: `./list-agent-pods.sh`
-- Try with correct device path: `./show-node-map.sh --device /dev/sdb`
-
-### "Permission denied reading SBD device"
-- Run with appropriate permissions: `sudo ./show-node-map.sh`
-- Check device permissions: `ls -la /dev/sbd*`
-- Verify device ownership and group access
+- Check if SBD agent pods have the shared storage mounted
+- Verify SBD agent has created the mapping: `oc exec <pod> -- ls -la /sbd-shared/`
+- Check pod volume mounts: `oc describe pod <sbd-agent-pod>`
 
 ### "Emergency reboot failed"
 - Check permissions: `oc auth can-i debug node`

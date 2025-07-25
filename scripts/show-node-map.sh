@@ -19,8 +19,7 @@ set -euo pipefail
 # Script configuration
 SCRIPT_NAME="show-node-map.sh"
 SCRIPT_VERSION="1.0.0"
-DEFAULT_SBD_DEVICE="/dev/sbd0"
-SBD_DEVICE=""
+SBD_DEVICE_PATH="/sbd-shared/sbd-device"
 SHOW_HEARTBEATS=false
 JSON_OUTPUT=false
 VERBOSE=false
@@ -69,7 +68,6 @@ Usage: $SCRIPT_NAME [OPTIONS]
 Display SBD agent node map showing node-to-slot assignments and heartbeat status.
 
 OPTIONS:
-  -d, --device PATH       SBD device path (default: $DEFAULT_SBD_DEVICE)
   -k, --kubernetes        Use Kubernetes to read from SBD agent pods (recommended)
   -n, --namespace NAME    Kubernetes namespace for SBD agents (auto-detected if not specified)
   -H, --heartbeats        Show current heartbeat status from SBD device
@@ -79,17 +77,14 @@ OPTIONS:
   --version               Show script version
 
 EXAMPLES:
-  # Show basic node mapping using Kubernetes (recommended)
+  # Show basic node mapping using Kubernetes
   $SCRIPT_NAME --kubernetes
 
-  # Show node mapping with heartbeat status via Kubernetes
+  # Show node mapping with heartbeat status
   $SCRIPT_NAME --kubernetes --heartbeats
 
   # Use specific namespace
   $SCRIPT_NAME --kubernetes --namespace sbd-system
-
-  # Direct device access (requires local filesystem access)
-  $SCRIPT_NAME --device /dev/sbd0
 
   # JSON output for automation
   $SCRIPT_NAME --kubernetes --json
@@ -98,25 +93,21 @@ EXAMPLES:
   $SCRIPT_NAME --kubernetes --verbose --heartbeats
 
 DESCRIPTION:
-  This script reads the SBD node mapping file (.nodemap) and displays:
+  This script reads the SBD node mapping file (.nodemap) from running SBD agent pods
+  and displays:
   - Node names and their assigned slot IDs
   - Hash values used for slot assignment
   - Last seen timestamps
   - Cluster information
   - Optional: Current heartbeat status from SBD device slots
 
-  Two access modes are supported:
-  1. Kubernetes mode (--kubernetes): Reads from SBD agent pods via kubectl/oc
-  2. Direct mode: Reads from local filesystem (requires direct device access)
+  The script uses Kubernetes to read from SBD agent pods via kubectl/oc.
+  SBD device is always located at /sbd-shared/sbd-device in the pods.
 
 REQUIREMENTS:
-  For Kubernetes mode (recommended):
   - kubectl or oc command available
   - KUBECONFIG configured for target cluster
   - Read permissions for pods in SBD namespace
-  
-  For direct mode:
-  - Read access to SBD device and node mapping file
   - jq command for JSON parsing (automatically checked)
   - Optional: hexdump for binary SBD device analysis
 
@@ -147,11 +138,15 @@ check_prerequisites() {
     if [[ "$USE_KUBERNETES" == "true" ]]; then
         detect_kubectl_command
         check_cluster_connectivity
-    else
+        
         # Check if hexdump is available (for heartbeat analysis)
         if [[ "$SHOW_HEARTBEATS" == "true" ]] && ! command_exists hexdump; then
             log_warn "hexdump not available - heartbeat analysis may be limited"
         fi
+    else
+        log_error "This script only supports Kubernetes mode (--kubernetes)"
+        log_info "Use --kubernetes flag to read from SBD agent pods"
+        exit 1
     fi
 
     log_debug "Prerequisites check passed"
@@ -188,49 +183,7 @@ check_cluster_connectivity() {
     log_debug "Cluster connectivity verified"
 }
 
-# Check if SBD device exists and is accessible
-check_sbd_device() {
-    local device="$1"
-    
-    log_debug "Checking SBD device: $device"
 
-    if [[ ! -e "$device" ]]; then
-        log_error "SBD device does not exist: $device"
-        exit 1
-    fi
-
-    if [[ ! -r "$device" ]]; then
-        log_error "Cannot read SBD device: $device (permission denied)"
-        log_info "Try running with sudo or ensure proper permissions"
-        exit 1
-    fi
-
-    log_debug "SBD device is accessible: $device"
-}
-
-# Check if node mapping file exists
-check_node_mapping_file() {
-    local device="$1"
-    local nodemap_file="${device}.nodemap"
-    
-    log_debug "Checking node mapping file: $nodemap_file"
-
-    if [[ ! -e "$nodemap_file" ]]; then
-        log_error "Node mapping file does not exist: $nodemap_file"
-        log_info "This could mean:"
-        log_info "  - SBD agent has not yet created the mapping"
-        log_info "  - Node mapping is stored elsewhere"
-        log_info "  - SBD device path is incorrect"
-        exit 1
-    fi
-
-    if [[ ! -r "$nodemap_file" ]]; then
-        log_error "Cannot read node mapping file: $nodemap_file (permission denied)"
-        exit 1
-    fi
-
-    echo "$nodemap_file"
-}
 
 # Auto-detect SBD namespace if not specified
 detect_sbd_namespace() {
@@ -301,8 +254,7 @@ find_sbd_agent_pod() {
 # Read node mapping from Kubernetes pod
 read_node_mapping_from_k8s() {
     local pod_name="$1"
-    local device_path="$2"
-    local nodemap_file="${device_path}.nodemap"
+    local nodemap_file="${SBD_DEVICE_PATH}.nodemap"
     
     log_debug "Reading node mapping from pod $pod_name at path: $nodemap_file"
     
@@ -311,7 +263,6 @@ read_node_mapping_from_k8s() {
         log_error "Node mapping file not found in pod: $nodemap_file"
         log_info "This could mean:"
         log_info "  - SBD agent has not yet created the mapping"
-        log_info "  - SBD device path is incorrect: $device_path"
         log_info "  - Volume mount configuration issue"
         exit 1
     fi
@@ -336,8 +287,7 @@ read_node_mapping_from_k8s() {
 # Get heartbeat status from Kubernetes pod
 get_heartbeat_status_from_k8s() {
     local pod_name="$1"
-    local device_path="$2"
-    local slot_id="$3"
+    local slot_id="$2"
     
     # Each slot is 512 bytes (SBD_SLOT_SIZE)
     local slot_size=512
@@ -345,12 +295,12 @@ get_heartbeat_status_from_k8s() {
     
     # Read the first 64 bytes of the slot (contains the header)
     local header_data
-    if header_data=$($KUBECTL_CMD exec -n "$KUBERNETES_NAMESPACE" "$pod_name" -- dd if="$device_path" bs=64 count=1 skip=$((offset / 64)) 2>/dev/null | hexdump -C 2>/dev/null); then
+    if header_data=$($KUBECTL_CMD exec -n "$KUBERNETES_NAMESPACE" "$pod_name" -- dd if="$SBD_DEVICE_PATH" bs=64 count=1 skip=$((offset / 64)) 2>/dev/null | hexdump -C 2>/dev/null); then
         # Look for non-zero data which indicates activity
         if echo "$header_data" | grep -q -v "00 00 00 00 00 00 00 00"; then
             # Try to extract timestamp (assuming it's in the first 8 bytes)
             local timestamp_hex
-            timestamp_hex=$($KUBECTL_CMD exec -n "$KUBERNETES_NAMESPACE" "$pod_name" -- dd if="$device_path" bs=8 count=1 skip=$((offset / 8)) 2>/dev/null | hexdump -e '1/8 "%016x"' 2>/dev/null || echo "unknown")
+            timestamp_hex=$($KUBECTL_CMD exec -n "$KUBERNETES_NAMESPACE" "$pod_name" -- dd if="$SBD_DEVICE_PATH" bs=8 count=1 skip=$((offset / 8)) 2>/dev/null | hexdump -e '1/8 "%016x"' 2>/dev/null || echo "unknown")
             echo "active:$timestamp_hex"
         else
             echo "empty"
@@ -363,8 +313,7 @@ get_heartbeat_status_from_k8s() {
 # Get all heartbeat statuses from Kubernetes pod
 get_all_heartbeats_from_k8s() {
     local pod_name="$1"
-    local device_path="$2"
-    local json_data="$3"
+    local json_data="$2"
     
     log_debug "Reading heartbeat status from SBD device via pod $pod_name..."
 
@@ -378,7 +327,7 @@ get_all_heartbeats_from_k8s() {
     while IFS= read -r slot_id; do
         if [[ -n "$slot_id" && "$slot_id" != "null" ]]; then
             local status
-            status=$(get_heartbeat_status_from_k8s "$pod_name" "$device_path" "$slot_id")
+            status=$(get_heartbeat_status_from_k8s "$pod_name" "$slot_id")
             heartbeats=$(echo "$heartbeats" | jq --arg slot "$slot_id" --arg status "$status" '. + {($slot): $status}')
         fi
     done < <(echo "$slot_usage" | jq -r 'keys[]' 2>/dev/null || true)
@@ -386,80 +335,7 @@ get_all_heartbeats_from_k8s() {
     echo "$heartbeats"
 }
 
-# Parse node mapping file
-parse_node_mapping() {
-    local nodemap_file="$1"
-    
-    log_debug "Parsing node mapping file: $nodemap_file"
 
-    # The node mapping file format is: 4-byte checksum + JSON data
-    # Skip the first 4 bytes (checksum) and parse the JSON
-    local json_data
-    if ! json_data=$(tail -c +5 "$nodemap_file" 2>/dev/null); then
-        log_error "Failed to read node mapping file: $nodemap_file"
-        exit 1
-    fi
-
-    # Validate JSON
-    if ! echo "$json_data" | jq . >/dev/null 2>&1; then
-        log_error "Invalid JSON data in node mapping file"
-        log_debug "Raw data preview: $(echo "$json_data" | head -c 100)..."
-        exit 1
-    fi
-
-    echo "$json_data"
-}
-
-# Get heartbeat status for a specific slot
-get_heartbeat_status() {
-    local device="$1"
-    local slot_id="$2"
-    
-    # Each slot is 512 bytes (SBD_SLOT_SIZE)
-    local slot_size=512
-    local offset=$((slot_id * slot_size))
-    
-    # Read the first 64 bytes of the slot (contains the header)
-    local header_data
-    if header_data=$(dd if="$device" bs=64 count=1 skip=$((offset / 64)) 2>/dev/null | hexdump -C 2>/dev/null); then
-        # Look for non-zero data which indicates activity
-        if echo "$header_data" | grep -q -v "00 00 00 00 00 00 00 00"; then
-            # Try to extract timestamp (assuming it's in the first 8 bytes)
-            local timestamp_hex
-            timestamp_hex=$(dd if="$device" bs=8 count=1 skip=$((offset / 8)) 2>/dev/null | hexdump -e '1/8 "%016x"' 2>/dev/null || echo "unknown")
-            echo "active:$timestamp_hex"
-        else
-            echo "empty"
-        fi
-    else
-        echo "error"
-    fi
-}
-
-# Get all heartbeat statuses
-get_all_heartbeats() {
-    local device="$1"
-    local json_data="$2"
-    
-    log_debug "Reading heartbeat status from SBD device..."
-
-    # Extract slot usage from JSON
-    local slot_usage
-    slot_usage=$(echo "$json_data" | jq -r '.slot_usage // {}')
-    
-    local heartbeats="{}"
-    
-    # Check each slot that has a node assigned
-    while IFS= read -r slot_id; do
-        if [[ -n "$slot_id" && "$slot_id" != "null" ]]; then
-            local status
-            status=$(get_heartbeat_status "$device" "$slot_id")
-            heartbeats=$(echo "$heartbeats" | jq --arg slot "$slot_id" --arg status "$status" '. + {($slot): $status}')
-        fi
-    done < <(echo "$slot_usage" | jq -r 'keys[]' 2>/dev/null || true)
-
-    echo "$heartbeats"
-}
 
 # Format timestamp for display
 format_timestamp() {
@@ -520,13 +396,8 @@ display_node_mapping() {
     echo -e "${BLUE}Last Update:${NC} $formatted_update"
     
     # Show access mode
-    if [[ "$USE_KUBERNETES" == "true" ]]; then
-        echo -e "${BLUE}Access Mode:${NC} Kubernetes (namespace: $KUBERNETES_NAMESPACE)"
-        echo -e "${BLUE}SBD Device:${NC} $SBD_DEVICE"
-    else
-        echo -e "${BLUE}Access Mode:${NC} Direct filesystem"
-        echo -e "${BLUE}SBD Device:${NC} $SBD_DEVICE"
-    fi
+    echo -e "${BLUE}Access Mode:${NC} Kubernetes (namespace: $KUBERNETES_NAMESPACE)"
+    echo -e "${BLUE}SBD Device:${NC} $SBD_DEVICE_PATH"
     
     # Count nodes
     local node_count
@@ -654,10 +525,6 @@ main() {
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
-            -d|--device)
-                SBD_DEVICE="$2"
-                shift 2
-                ;;
             -k|--kubernetes)
                 USE_KUBERNETES=true
                 shift
@@ -699,57 +566,30 @@ main() {
         esac
     done
 
-    # Set default SBD device if not specified
-    if [[ -z "$SBD_DEVICE" ]]; then
-        SBD_DEVICE="$DEFAULT_SBD_DEVICE"
-    fi
-
     # Check prerequisites
     check_prerequisites
 
+    # Kubernetes mode - read from SBD agent pods
+    log_debug "Using Kubernetes mode to read node mapping"
+    
+    # Auto-detect namespace if not specified
+    if [[ -z "$KUBERNETES_NAMESPACE" ]]; then
+        detect_sbd_namespace
+    fi
+    
+    # Find a running SBD agent pod
+    local pod_name
+    pod_name=$(find_sbd_agent_pod)
+    
+    # Read node mapping from the pod
+    log_debug "Reading node mapping from pod $pod_name at $SBD_DEVICE_PATH"
     local json_data
+    json_data=$(read_node_mapping_from_k8s "$pod_name")
+    
+    # Get heartbeat status if requested
     local heartbeats="{}"
-
-    if [[ "$USE_KUBERNETES" == "true" ]]; then
-        # Kubernetes mode - read from SBD agent pods
-        log_debug "Using Kubernetes mode to read node mapping"
-        
-        # Auto-detect namespace if not specified
-        if [[ -z "$KUBERNETES_NAMESPACE" ]]; then
-            detect_sbd_namespace
-        fi
-        
-        # Find a running SBD agent pod
-        local pod_name
-        pod_name=$(find_sbd_agent_pod)
-        
-        # Read node mapping from the pod
-        log_debug "Reading node mapping from pod $pod_name using device $SBD_DEVICE"
-        json_data=$(read_node_mapping_from_k8s "$pod_name" "$SBD_DEVICE")
-        
-        # Get heartbeat status if requested
-        if [[ "$SHOW_HEARTBEATS" == "true" ]]; then
-            heartbeats=$(get_all_heartbeats_from_k8s "$pod_name" "$SBD_DEVICE" "$json_data")
-        fi
-    else
-        # Direct mode - read from local filesystem
-        log_debug "Using direct mode to read node mapping"
-        
-        # Check SBD device
-        check_sbd_device "$SBD_DEVICE"
-
-        # Check and get node mapping file
-        local nodemap_file
-        nodemap_file=$(check_node_mapping_file "$SBD_DEVICE")
-
-        # Parse node mapping
-        log_debug "Reading node mapping from: $nodemap_file"
-        json_data=$(parse_node_mapping "$nodemap_file")
-
-        # Get heartbeat status if requested
-        if [[ "$SHOW_HEARTBEATS" == "true" ]]; then
-            heartbeats=$(get_all_heartbeats "$SBD_DEVICE" "$json_data")
-        fi
+    if [[ "$SHOW_HEARTBEATS" == "true" ]]; then
+        heartbeats=$(get_all_heartbeats_from_k8s "$pod_name" "$json_data")
     fi
 
     # Display output
