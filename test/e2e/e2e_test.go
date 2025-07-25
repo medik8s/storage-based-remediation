@@ -465,7 +465,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 	}()
 
 	// Wait for network-level storage disruption to take effect
-	By("Waiting for network-level storage disruption to take effect")
+	By("Waiting for storage disruption to take effect")
 	time.Sleep(30 * time.Second)
 
 	// Monitor for node becoming NotReady due to loss of shared storage access
@@ -1028,6 +1028,15 @@ func cleanupTestArtifacts() {
 		}
 	}
 
+	// Clean up storage validation pods (they have timestamped names)
+	storageValidationPods := &corev1.PodList{}
+	err = k8sClient.List(ctx, storageValidationPods, client.InNamespace("default"), client.MatchingLabels{"app": "sbd-e2e-storage-validator"})
+	if err == nil {
+		for _, pod := range storageValidationPods.Items {
+			_ = k8sClient.Delete(ctx, &pod)
+		}
+	}
+
 	for _, podName := range disruptionPods {
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
@@ -1552,30 +1561,55 @@ spec:
       
       # Method 1: Block EFS traffic (port 2049 - NFS)
       echo "Blocking EFS/NFS traffic on port 2049..."
-      nsenter --target 1 --mount --uts --ipc --net --pid -- iptables -I OUTPUT -p tcp --dport 2049 -j DROP
-      nsenter --target 1 --mount --uts --ipc --net --pid -- iptables -I INPUT -p tcp --sport 2049 -j DROP
+      if ! nsenter --target 1 --mount --uts --ipc --net --pid -- iptables -I OUTPUT -p tcp --dport 2049 -j DROP; then
+        echo "ERROR: Failed to apply OUTPUT rule for port 2049"
+        exit 1
+      fi
+      if ! nsenter --target 1 --mount --uts --ipc --net --pid -- iptables -I INPUT -p tcp --sport 2049 -j DROP; then
+        echo "ERROR: Failed to apply INPUT rule for port 2049"
+        exit 1
+      fi
       
       # Method 2: Block common storage service ports
       echo "Blocking additional storage service ports..."
       # CephFS (port 6789)
-      nsenter --target 1 --mount --uts --ipc --net --pid -- iptables -I OUTPUT -p tcp --dport 6789 -j DROP
+      if ! nsenter --target 1 --mount --uts --ipc --net --pid -- iptables -I OUTPUT -p tcp --dport 6789 -j DROP; then
+        echo "ERROR: Failed to apply OUTPUT rule for port 6789"
+        exit 1
+      fi
       # GlusterFS (port 24007)
-      nsenter --target 1 --mount --uts --ipc --net --pid -- iptables -I OUTPUT -p tcp --dport 24007 -j DROP
+      if ! nsenter --target 1 --mount --uts --ipc --net --pid -- iptables -I OUTPUT -p tcp --dport 24007 -j DROP; then
+        echo "ERROR: Failed to apply OUTPUT rule for port 24007"
+        exit 1
+      fi
       
       # Method 3: Block traffic to storage service IP ranges (AWS EFS)
       echo "Blocking traffic to EFS service IP ranges..."
       # AWS EFS typically uses 169.254.x.x range for mount targets
-      nsenter --target 1 --mount --uts --ipc --net --pid -- iptables -I OUTPUT -d 169.254.0.0/16 -j DROP
+      if ! nsenter --target 1 --mount --uts --ipc --net --pid -- iptables -I OUTPUT -d 169.254.0.0/16 -j DROP; then
+        echo "ERROR: Failed to apply OUTPUT rule for 169.254.0.0/16"
+        exit 1
+      fi
       
-      echo "Storage disruption rules applied. Shared storage should now be inaccessible."
+      # Verify rules were applied successfully
+      echo "Verifying iptables rules were applied..."
+      rule_count=$(nsenter --target 1 --mount --uts --ipc --net --pid -- iptables -L OUTPUT -n | grep -E "(2049|6789|24007|169\.254)" | wc -l)
+      if [ "$rule_count" -lt 4 ]; then
+        echo "ERROR: Expected at least 4 storage blocking rules, found $rule_count"
+        exit 1
+      fi
+      
+      echo "Storage disruption rules applied successfully. Found $rule_count blocking rules."
       echo "This will cause SBD agents to lose access to coordination storage."
+      
+      # Set up signal handlers for graceful cleanup
+      trap 'echo "Received signal, cleaning up..."; exit 0' TERM INT
       
       # Keep the pod running to maintain the disruption
       echo "Maintaining storage disruption..."
-      sleep 300  # 5 minutes
+      sleep 600  # 10 minutes
       
-      echo "Storage disruptor timeout reached - cleaning up rules..."
-      # Cleanup will happen when pod exits
+      echo "Storage disruptor timeout reached - exiting gracefully..."
     securityContext:
       privileged: true
     resources:
@@ -1618,7 +1652,134 @@ spec:
 	By("Waiting for storage disruption rules to take effect...")
 	time.Sleep(15 * time.Second)
 
-	By(fmt.Sprintf("Network-level storage disruption successful - node %s should lose shared storage access", nodeName))
+	// VALIDATION: Verify that iptables rules are actually applied
+	By("Validating that storage disruption rules are successfully applied...")
+	validationPodName := fmt.Sprintf("sbd-e2e-storage-validator-%d", time.Now().Unix())
+	validationPodYAML := fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata:
+  name: %s
+  namespace: default
+  labels:
+    app: sbd-e2e-storage-validator
+spec:
+  hostNetwork: true
+  hostPID: true
+  nodeName: %s
+  containers:
+  - name: validator
+    image: registry.redhat.io/ubi9/ubi:latest
+    imagePullPolicy: IfNotPresent
+    command:
+    - /bin/bash
+    - -c
+    - |
+      echo "Storage disruption validation starting..."
+      
+      # Check if iptables rules are present
+      echo "Checking iptables rules..."
+      rule_count=$(nsenter --target 1 --mount --uts --ipc --net --pid -- iptables -L OUTPUT -n | grep -E "(2049|6789|24007|169\.254)" | wc -l)
+      echo "Found $rule_count storage blocking rules"
+      
+      if [ "$rule_count" -lt 4 ]; then
+        echo "VALIDATION FAILED: Expected at least 4 storage blocking rules, found $rule_count"
+        echo "Current OUTPUT rules:"
+        nsenter --target 1 --mount --uts --ipc --net --pid -- iptables -L OUTPUT -n -v | head -10
+        exit 1
+      fi
+      
+      # Test storage access blocking
+      echo "Testing storage access blocking..."
+      
+      # Install netcat if not available
+      if ! command -v nc >/dev/null 2>&1; then
+        echo "Installing netcat for connectivity testing..."
+        dnf install -y nmap-ncat >/dev/null 2>&1 || echo "Warning: Could not install netcat"
+      fi
+      
+      # Try to connect to common NFS ports (should fail)
+      if command -v nc >/dev/null 2>&1; then
+        echo "Testing connection to port 2049 (should timeout)..."
+        timeout 5 nc -z 169.254.0.1 2049 && {
+          echo "VALIDATION FAILED: Connection to port 2049 succeeded (should be blocked)"
+          exit 1
+        } || echo "Port 2049 correctly blocked"
+      else
+        echo "Warning: netcat not available, skipping connectivity test"
+      fi
+      
+      echo "VALIDATION PASSED: Storage disruption rules are active and blocking access"
+      echo "Validation completed successfully"
+    securityContext:
+      privileged: true
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+  restartPolicy: Never
+  tolerations:
+  - operator: Exists
+`, validationPodName, nodeName)
+
+	// Create validation pod
+	By(fmt.Sprintf("Creating storage disruption validation pod: %s", validationPodName))
+	var validationPod corev1.Pod
+	err = yaml.Unmarshal([]byte(validationPodYAML), &validationPod)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal validation pod YAML: %w", err)
+	}
+
+	err = k8sClient.Create(ctx, &validationPod)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create validation pod: %w", err)
+	}
+
+	// Wait for validation to complete
+	By("Waiting for storage disruption validation to complete...")
+	validationSucceeded := false
+	Eventually(func() bool {
+		pod := &corev1.Pod{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: validationPodName, Namespace: "default"}, pod)
+		if err != nil {
+			return false
+		}
+
+		if pod.Status.Phase == corev1.PodSucceeded {
+			validationSucceeded = true
+			return true
+		}
+
+		if pod.Status.Phase == corev1.PodFailed {
+			// Get logs for debugging
+			By("Validation failed - retrieving logs for analysis...")
+			return true
+		}
+
+		return false
+	}, time.Minute*2, time.Second*10).Should(BeTrue())
+
+	// Clean up validation pod
+	By(fmt.Sprintf("Cleaning up validation pod: %s", validationPodName))
+	err = k8sClient.Delete(ctx, &validationPod)
+	if err != nil {
+		By(fmt.Sprintf("Warning: Could not delete validation pod %s: %v", validationPodName, err))
+	}
+
+	// Check validation results
+	if !validationSucceeded {
+		// Clean up disruptor pod since validation failed
+		By("Validation failed - cleaning up disruptor pod")
+		err = k8sClient.Delete(ctx, &disruptorPod)
+		if err != nil {
+			By(fmt.Sprintf("Warning: Could not delete disruptor pod %s: %v", disruptorPodName, err))
+		}
+		return nil, fmt.Errorf("storage disruption validation failed - iptables rules were not successfully applied or are not effective")
+	}
+
+	By(fmt.Sprintf("Storage disruption validation successful - node %s should lose shared storage access", nodeName))
 	return []string{disruptorPodName}, nil
 }
 
