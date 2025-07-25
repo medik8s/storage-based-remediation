@@ -69,7 +69,7 @@ Displays the SBD agent node mapping showing which nodes are assigned to which sl
 
 **Example output:**
 ```bash
-$ ./show-node-map.sh --heartbeats
+$ ./show-node-map.sh --kubernetes --heartbeats
 ═══════════════════════════════════════════════════════════════
                      SBD Agent Node Mapping
 ═══════════════════════════════════════════════════════════════
@@ -77,6 +77,8 @@ $ ./show-node-map.sh --heartbeats
 Cluster Name: my-openshift-cluster
 Version: 15
 Last Update: 2m ago
+Access Mode: Kubernetes (namespace: sbd-system)
+SBD Device: /dev/sbd0
 Total Nodes: 3
 
 SLOT NODE NAME                     HASH       LAST SEEN      HEARTBEAT    STATUS
@@ -153,17 +155,20 @@ $ ./emergency-reboot-node.sh --dry-run worker-node-1
 
 ### 4. Display SBD agent node mapping
 ```bash
-# Show basic node-to-slot mapping
-./scripts/show-node-map.sh
+# Show basic node-to-slot mapping using Kubernetes (recommended)
+./scripts/show-node-map.sh --kubernetes
 
-# Show mapping with current heartbeat status
-./scripts/show-node-map.sh --heartbeats
+# Show mapping with current heartbeat status via Kubernetes
+./scripts/show-node-map.sh --kubernetes --heartbeats
 
-# Use custom SBD device
-./scripts/show-node-map.sh --device /dev/sbd1
+# Use specific namespace
+./scripts/show-node-map.sh --kubernetes --namespace sbd-system
+
+# Direct filesystem access (requires local device access)
+./scripts/show-node-map.sh --device /dev/sbd0
 
 # JSON output for automation
-./scripts/show-node-map.sh --json
+./scripts/show-node-map.sh --kubernetes --json
 ```
 
 ### 5. Emergency node reboot (use with extreme caution!)
@@ -179,9 +184,17 @@ $ ./emergency-reboot-node.sh --dry-run worker-node-1
 
 ### Basic Troubleshooting Workflow
 1. **Check overall status:** `./list-agent-pods.sh`
-2. **Identify problem nodes:** Look for non-Running status
-3. **Get detailed logs:** `./get-agent-logs.sh <problematic-node>`
-4. **Follow real-time:** `./get-agent-logs.sh <node> --follow --tail 100`
+2. **View node coordination:** `./show-node-map.sh --kubernetes`
+3. **Identify problem nodes:** Look for non-Running status or STALE/OFFLINE nodes
+4. **Get detailed logs:** `./get-agent-logs.sh <problematic-node>`
+5. **Follow real-time:** `./get-agent-logs.sh <node> --follow --tail 100`
+
+### SBD Coordination Debugging Workflow
+1. **Check node mapping:** `./show-node-map.sh --kubernetes --verbose`
+2. **Monitor heartbeats:** `./show-node-map.sh --kubernetes --heartbeats`
+3. **Check for slot conflicts:** Look for hash collisions or duplicate assignments
+4. **Verify agent logs:** `./get-agent-logs.sh <node> --tail 200`
+5. **JSON analysis:** `./show-node-map.sh --kubernetes --json | jq '.entries'`
 
 ### Emergency Node Remediation Workflow
 1. **Test first:** `./emergency-reboot-node.sh --dry-run <unresponsive-node>`
