@@ -887,18 +887,15 @@ func (nm *NodeManager) acquireDeviceLock() (*os.File, error) {
 
 	nm.logger.V(1).Info("Attempting to acquire file lock on node mapping file", "filePath", nm.nodeMapFilePath)
 
-	// Create a lock file alongside the node mapping file for coordination
-	lockFilePath := nm.nodeMapFilePath + ".lock"
-
 	// Ensure the directory exists
-	if err := os.MkdirAll(filepath.Dir(lockFilePath), 0755); err != nil {
-		return nil, fmt.Errorf("failed to create directory for lock file: %w", err)
+	if err := os.MkdirAll(filepath.Dir(nm.nodeMapFilePath), 0755); err != nil {
+		return nil, fmt.Errorf("failed to create directory for node mapping file: %w", err)
 	}
 
-	// Open/create the lock file for exclusive locking
-	lockFile, err := os.OpenFile(lockFilePath, os.O_CREATE|os.O_RDWR, 0644)
+	// Open/create the node mapping file directly for locking
+	lockFile, err := os.OpenFile(nm.nodeMapFilePath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open lock file %s: %w", lockFilePath, err)
+		return nil, fmt.Errorf("failed to open node mapping file for locking %s: %w", nm.nodeMapFilePath, err)
 	}
 
 	// Try to acquire an exclusive lock with timeout
@@ -917,7 +914,7 @@ func (nm *NodeManager) acquireDeviceLock() (*os.File, error) {
 			lockFile.Close()
 			return nil, fmt.Errorf("failed to acquire file lock: %w", err)
 		}
-		nm.logger.V(1).Info("Successfully acquired file lock on node mapping file", "lockFile", lockFilePath)
+		nm.logger.V(1).Info("Successfully acquired file lock on node mapping file", "filePath", nm.nodeMapFilePath)
 		return lockFile, nil
 
 	case <-lockCtx.Done():

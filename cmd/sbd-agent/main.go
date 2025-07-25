@@ -1000,6 +1000,12 @@ func (s *SBDAgent) readPeerHeartbeat(peerNodeID uint16) error {
 		return fmt.Errorf("partial read from peer %d slot: read %d bytes, expected %d", peerNodeID, n, sbdprotocol.SBD_SLOT_SIZE)
 	}
 
+	if len(slotData) == 0 {
+		logger.V(1).Info("Empty slot data from peer",
+			"peerNodeID", peerNodeID)
+		return nil
+	}
+
 	// Try to unmarshal the message header
 	header, err := sbdprotocol.Unmarshal(slotData[:sbdprotocol.SBD_HEADER_SIZE])
 	if err != nil {
