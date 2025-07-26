@@ -107,6 +107,7 @@ PROJECT-SPECIFIC GUIDELINES:
 - Consider split-brain scenarios in remediation logic
 - Use concise summaries for commit messages
 - Run All aws commands with AWS_PAGER=""
+- ONLY use ACSII characters for all commit messages and shell commands
 
 DEPENDENCIES:
 - Use controller-runtime for Kubernetes operations

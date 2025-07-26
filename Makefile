@@ -101,8 +101,8 @@ test-e2e: build-openshift-installer sync-test-files ## Run e2e tests with comple
 	@echo "Running e2e tests with complete deployment and environment setup..."
 	@scripts/run-tests.sh --type e2e --env cluster -v --no-webhooks
 
-.PHONY: test-e2e-local
-test-e2e-local: ginkgo ## Run e2e tests locally (assumes operator already deployed).
+.PHONY: test-e2e-again
+test-e2e-again: ginkgo ## Run e2e tests again (assumes operator already deployed).
 	@echo "Running e2e tests locally (operator must be already deployed)..."
 	$(GINKGO) -v test/e2e
 

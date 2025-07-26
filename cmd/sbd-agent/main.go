@@ -1037,15 +1037,7 @@ func (s *SBDAgent) readPeerHeartbeat(peerNodeID uint16) error {
 		return fmt.Errorf("partial read from peer %d slot: read %d bytes, expected %d", peerNodeID, n, sbdprotocol.SBD_SLOT_SIZE)
 	}
 
-	// Check if the slot is empty (all bytes are zero)
-	isEmpty := true
-	for _, b := range slotData {
-		if b != 0 {
-			isEmpty = false
-			break
-		}
-	}
-	if isEmpty {
+	if sbdprotocol.IsEmptySlot(slotData[:sbdprotocol.SBD_HEADER_SIZE]) {
 		logger.V(2).Info("Peer slot is empty", "peerNodeID", peerNodeID)
 		return nil
 	}
@@ -1592,6 +1584,12 @@ func (s *SBDAgent) readOwnSlotForFenceMessage() error {
 		return fmt.Errorf("partial read from own slot %d: read %d bytes, expected %d", s.nodeID, n, sbdprotocol.SBD_SLOT_SIZE)
 	}
 
+	// Check if the slot is empty
+	if sbdprotocol.IsEmptySlot(slotData[:sbdprotocol.SBD_HEADER_SIZE]) {
+		logger.V(1).Info("Own slot is empty", "nodeID", s.nodeID)
+		return nil
+	}
+
 	// Try to unmarshal the message header
 	header, err := sbdprotocol.Unmarshal(slotData[:sbdprotocol.SBD_HEADER_SIZE])
 	if err != nil {
@@ -1672,15 +1670,13 @@ func runPreflightChecks(watchdogPath, sbdDevicePath, nodeName string, nodeID uin
 	}
 
 	// Check if at least one critical component (watchdog OR SBD) is working
-	if (watchdogPath != "" && watchdogErr == nil) || sbdErr == nil {
-		if watchdogPath != "" && watchdogErr == nil && sbdErr == nil {
-			logger.Info("All pre-flight checks passed successfully - both watchdog and SBD device available")
-		} else if watchdogPath != "" && watchdogErr == nil {
-			logger.Info("Pre-flight checks passed - watchdog device available (SBD device failed)")
-		} else {
-			logger.Info("Pre-flight checks passed - SBD device available (watchdog device failed)")
-		}
+	if watchdogErr == nil && sbdErr == nil {
+		logger.Info("All pre-flight checks passed successfully")
 		return nil
+	} else if watchdogErr == nil {
+		return fmt.Errorf("pre-flight checks failed: SBD device is not available")
+	} else if sbdErr == nil {
+		return fmt.Errorf("pre-flight checks failed: watchdog device is not available")
 	} else {
 		return fmt.Errorf("pre-flight checks failed: both watchdog device and SBD device are inaccessible. Watchdog error: %v, SBD error: %v", watchdogErr, sbdErr)
 	}
@@ -1693,7 +1689,7 @@ func checkWatchdogDevice(watchdogPath string) error {
 
 	// For preflight checks, we want to be strict about the specified device
 	// Don't use softdog fallback here - if the specified device doesn't work, it should fail
-	wd, err := watchdog.NewWithLogger(watchdogPath, logger.WithName("preflight-watchdog"))
+	wd, err := watchdog.NewWithSoftdogFallback(watchdogPath, logger.WithName("preflight-watchdog"))
 	if err != nil {
 		return fmt.Errorf("watchdog device pre-flight check failed: %w", err)
 	}
