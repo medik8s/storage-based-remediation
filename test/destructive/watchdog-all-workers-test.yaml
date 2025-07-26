@@ -1,0 +1,167 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: watchdog-all-workers-test
+  namespace: default
+  labels:
+    app: sbd-destructive-test
+    test-type: watchdog-all-workers
+  annotations:
+    description: "DESTRUCTIVE TEST: This DaemonSet will cause ALL WORKER NODES to REBOOT simultaneously"
+spec:
+  selector:
+    matchLabels:
+      app: sbd-destructive-test
+      test-type: watchdog-all-workers
+  template:
+    metadata:
+      labels:
+        app: sbd-destructive-test
+        test-type: watchdog-all-workers
+    spec:
+      restartPolicy: Always
+      
+      # Target ALL worker nodes (remove specific nodeSelector)
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      
+      hostPID: true
+      hostNetwork: true
+      
+      initContainers:
+      - name: watchdog-all-workers-init
+        image: quay.io/medik8s/sbd-destructive-tests:latest
+        imagePullPolicy: Always
+        
+        command:
+        - sh
+        - -c
+        - |
+          echo "=== WATCHDOG ALL WORKERS REBOOT TEST ==="
+          echo "Node: $NODE_NAME"
+          echo "Time: $(date)"
+          echo "WARNING: This will reboot ALL WORKER NODES simultaneously!"
+          echo "Using Go binary for fastest reboot (~10 seconds)"
+          echo "================================================"
+          
+          # Step 1: Copy Go binary to host filesystem
+          echo "1. Copying Go binary to host filesystem..."
+          cp /usr/local/bin/watchdog-reboot-test /tmp/host/watchdog-reboot-test
+          chmod +x /tmp/host/watchdog-reboot-test
+          
+          echo "2. Verifying binary copied successfully..."
+          ls -la /tmp/host/watchdog-reboot-test
+          
+          # Step 2: Use nsenter to execute the Go binary from host namespace
+          echo "3. Executing Go binary via nsenter..."
+          echo "    This node will reboot in approximately 25 seconds!"
+          nsenter --mount=/proc/1/ns/mnt --pid=/proc/1/ns/pid -- \
+            /tmp/watchdog-reboot-test \
+            --delay=5 \
+            --pets=3 \
+            --interval=2s \
+            --watchdog=/dev/watchdog \
+            --node="$NODE_NAME"
+        
+        securityContext:
+          privileged: true
+          runAsUser: 0
+          capabilities:
+            add:
+            - SYS_BOOT
+            - SYS_ADMIN
+            - SYS_MODULE
+        
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        
+        volumeMounts:
+        - name: host-tmp
+          mountPath: /tmp/host
+        - name: host-dev
+          mountPath: /dev
+          
+      containers:
+      - name: sleeper
+        image: registry.redhat.io/ubi9/ubi-minimal:latest
+        command: ["/bin/sleep", "infinity"]
+        securityContext:
+          runAsUser: 1001
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+                  
+      volumes:
+      - name: host-tmp
+        hostPath:
+          path: /tmp
+          type: Directory
+      - name: host-dev
+        hostPath:
+          path: /dev
+          type: Directory
+          
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      - operator: Exists
+        effect: NoExecute
+        
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: watchdog-all-workers-instructions
+  namespace: default
+data:
+  README.md: |
+    # WATCHDOG ALL WORKERS REBOOT TEST
+    
+    ⚠️  **EXTREMELY DANGEROUS - WILL REBOOT ALL WORKER NODES SIMULTANEOUSLY** ⚠️
+    
+    ## What this test does:
+    1. Deploys pods to ALL worker nodes simultaneously
+    2. Uses the compiled Go watchdog-reboot-test binary on each node
+    3. Copies the binary to host filesystem (/tmp)
+    4. Uses nsenter to execute the binary from host namespace
+    5. Opens /dev/watchdog and stops petting it on ALL nodes
+    6. Should trigger simultaneous reboots of ALL worker nodes
+    
+    ## Timeline:
+    - 5-second delay countdown
+    - 3 watchdog pets with 2-second intervals (6 seconds)
+    - Stop petting - nodes reboot within ~10 seconds
+    - Total time: ~25 seconds from deployment to reboots
+    
+    ## WARNING:
+    - This will make your cluster UNAVAILABLE for several minutes
+    - All workloads on worker nodes will be terminated
+    - Only control plane nodes will remain operational
+    - Use only in test/development environments
+    
+    ## To monitor:
+    kubectl logs -f daemonset/watchdog-all-workers-test -c watchdog-all-workers-init --max-log-requests=20
+    
+    ## Expected behavior:
+    - Binary copies successfully to all worker nodes
+    - nsenter executes the Go binary with host privileges
+    - Watchdog devices open and get petted 3 times each
+    - ALL worker nodes should reboot within 25 seconds
+    
+    ## To cleanup (after reboots):
+    kubectl delete daemonset watchdog-all-workers-test 

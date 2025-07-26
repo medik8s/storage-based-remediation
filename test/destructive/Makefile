@@ -24,14 +24,18 @@ help:
 	@echo "  deploy-panic   - Deploy panic test DaemonSet (REBOOTS NODE!)"
 	@echo "  deploy-watchdog - Deploy shell watchdog test DaemonSet (REBOOTS NODE!)"
 	@echo "  deploy-watchdog-go - Deploy Go binary watchdog test (RECOMMENDED - fastest)"
+	@echo "  deploy-watchdog-all-workers - Deploy ALL WORKERS reboot test (EXTREME DANGER!)"
+	@echo "  deploy-watchdog-all-workers-force - Deploy ALL WORKERS reboot NON-INTERACTIVELY"
 	@echo "  check-uptimes  - Deploy uptime checker and collect results"
 	@echo "  monitor-panic  - Monitor panic test logs"
 	@echo "  monitor-watchdog - Monitor watchdog test logs"
 	@echo "  monitor-watchdog-go - Monitor Go binary watchdog test logs"
+	@echo "  monitor-all-workers - Monitor ALL WORKERS reboot test logs"
 	@echo "  monitor-node   - Monitor target node status"
 	@echo "  cleanup-panic  - Clean up panic test"
 	@echo "  cleanup-watchdog - Clean up shell watchdog test"
 	@echo "  cleanup-watchdog-go - Clean up Go binary watchdog test"
+	@echo "  cleanup-all-workers - Clean up ALL WORKERS reboot test"
 	@echo "  cleanup-all    - Clean up all tests"
 	@echo "  verify-node    - Verify target node has required capabilities"
 	@echo ""
@@ -41,6 +45,7 @@ help:
 	@echo ""
 	@echo "⚠️  THESE TESTS WILL REBOOT THE TARGET NODE! ⚠️"
 	@echo "🔥  RECOMMENDED: Use deploy-watchdog-go (fastest, most reliable)"
+	@echo "💥  EXTREME: deploy-watchdog-all-workers-force (reboots ALL workers)"
 
 # Build the test image
 .PHONY: build
@@ -165,6 +170,43 @@ deploy-watchdog-go: $(REGISTRY_CHECK)
 		exit 1; \
 	fi
 
+# Deploy ALL WORKERS reboot test (EXTREMELY DANGEROUS - reboots ALL worker nodes)
+.PHONY: deploy-watchdog-all-workers
+deploy-watchdog-all-workers: $(REGISTRY_CHECK)
+	@echo "🚨🚨🚨 EXTREME DANGER: This will REBOOT ALL WORKER NODES SIMULTANEOUSLY! 🚨🚨🚨"
+	@echo "💥 This will make your cluster UNAVAILABLE for several minutes"
+	@echo "🔥 Using Go binary approach (FASTEST - ~25 seconds total)"
+	@echo "🎯 Targets: ALL worker nodes in parallel"
+	@echo "⚠️  Only use in test/development environments"
+	@echo ""
+	@read -p "This will DESTROY cluster availability. Type 'REBOOT-ALL-WORKERS' to confirm: " confirm; \
+	if [ "$$confirm" = "REBOOT-ALL-WORKERS" ]; then \
+		echo "🚀 Deploying ALL WORKERS reboot test (DaemonSet)..."; \
+		kubectl apply -f watchdog-all-workers-test.yaml; \
+		echo "✅ Deployed! Monitor with: kubectl logs -f daemonset/watchdog-all-workers-test -c watchdog-all-workers-init --max-log-requests=20"; \
+		echo "⏰ All worker nodes should reboot within 25 seconds"; \
+	else \
+		echo "❌ Deployment cancelled - incorrect confirmation phrase."; \
+		exit 1; \
+	fi
+
+# Deploy ALL WORKERS reboot test NON-INTERACTIVELY (for automation)
+.PHONY: deploy-watchdog-all-workers-force
+deploy-watchdog-all-workers-force: $(REGISTRY_CHECK)
+	@echo "🚨🚨🚨 EXECUTING NON-INTERACTIVE ALL WORKER REBOOT! 🚨🚨🚨"
+	@echo "💥 This will make your cluster UNAVAILABLE for several minutes"
+	@echo "🔥 Using Go binary approach (FASTEST - ~25 seconds total)"
+	@echo "🎯 Targets: ALL worker nodes in parallel"
+	@echo "⏰ Starting in 5 seconds..."
+	@sleep 1 && echo "4..."
+	@sleep 1 && echo "3..."
+	@sleep 1 && echo "2..."
+	@sleep 1 && echo "1..."
+	@sleep 1 && echo "🚀 DEPLOYING NOW!"
+	kubectl apply -f watchdog-all-workers-test.yaml
+	@echo "✅ Deployed! All worker nodes should reboot within 25 seconds"
+	@echo "📊 Monitoring logs from all nodes..."
+
 # Deploy uptime checker utility
 .PHONY: check-uptimes
 check-uptimes:
@@ -195,8 +237,14 @@ monitor-watchdog-go:
 	@echo "📊 Monitoring Go binary watchdog test logs..."
 	kubectl logs -f daemonset/watchdog-go-test -c watchdog-go-init
 
+# Monitor ALL WORKERS reboot test
+.PHONY: monitor-all-workers
+monitor-all-workers:
+	@echo "📊 Monitoring ALL WORKERS reboot test logs..."
+	kubectl logs -f daemonset/watchdog-all-workers-test -c watchdog-all-workers-init
+
 # Cleanup targets for DaemonSets
-.PHONY: cleanup-panic cleanup-watchdog cleanup-watchdog-go cleanup-all
+.PHONY: cleanup-panic cleanup-watchdog cleanup-watchdog-go cleanup-all cleanup-all-workers
 cleanup-panic:
 	@echo "🧹 Cleaning up panic reboot test..."
 	kubectl delete daemonset panic-reboot-test --ignore-not-found
@@ -215,7 +263,13 @@ cleanup-watchdog-go:
 	kubectl delete configmap watchdog-go-test-instructions --ignore-not-found
 	@echo "✅ Go binary watchdog test cleaned up"
 
-cleanup-all: cleanup-panic cleanup-watchdog cleanup-watchdog-go
+cleanup-all-workers:
+	@echo "🧹 Cleaning up ALL WORKERS reboot test..."
+	kubectl delete daemonset watchdog-all-workers-test --ignore-not-found
+	kubectl delete configmap watchdog-all-workers-test-instructions --ignore-not-found
+	@echo "✅ ALL WORKERS reboot test cleaned up"
+
+cleanup-all: cleanup-panic cleanup-watchdog cleanup-watchdog-go cleanup-all-workers
 	@echo "✅ All destructive tests cleaned up"
 
 # Monitor test logs

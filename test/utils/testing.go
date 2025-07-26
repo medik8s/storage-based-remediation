@@ -176,6 +176,7 @@ func (tn *TestNamespace) CreateSBDConfig(name string, options ...func(*medik8sv1
 			Namespace: tn.Name,
 		},
 		Spec: medik8sv1alpha1.SBDConfigSpec{
+			IOTimeout:       &metav1.Duration{Duration: 5 * time.Second},
 			ImagePullPolicy: string(corev1.PullAlways),
 			SbdWatchdogPath: "/dev/watchdog",
 			LogLevel:        "debug",
@@ -891,7 +892,7 @@ func (sav *SBDAgentValidator) ValidateAgentDeployment(opts ValidateAgentDeployme
 		if logStr == "" {
 			return "NO_LOGS_YET"
 		}
-		GinkgoWriter.Printf("Pod %s logs sample:\n%s\n", podName, logStr)
+		//GinkgoWriter.Printf("Pod %s logs sample:\n%s\n", podName, logStr)
 		return logStr
 	}, opts.LogCheckTimeout, time.Second*10).Should(SatisfyAny(
 		// Accept various states - the test is mainly about configuration correctness
@@ -899,7 +900,6 @@ func (sav *SBDAgentValidator) ValidateAgentDeployment(opts ValidateAgentDeployme
 		ContainSubstring("falling back to write-based keep-alive"),
 		ContainSubstring("Starting watchdog loop"),
 		ContainSubstring("SBD Agent started"),
-		ContainSubstring("failed to open watchdog"), // Expected in test environments
 		ContainSubstring("ERROR_GETTING_LOGS"),
 		ContainSubstring("NO_LOGS_YET"),
 	))
@@ -911,21 +911,42 @@ func (sav *SBDAgentValidator) ValidateAgentDeployment(opts ValidateAgentDeployme
 	}
 
 	// These errors would indicate problems with our implementation
-	if strings.Contains(fullLogStr, "Failed to pet watchdog after retries") {
-		return fmt.Errorf("found critical watchdog error: Failed to pet watchdog after retries")
+	errorStrings := []string{
+		"level\":\"error",
+		"Error",
+		"ERROR",
+		"failed to pet watchdog",
+		"watchdog device is not open",
+		"Failed to unmarshal message from own slot",
+		"Pre-flight checks failed",
 	}
-	if strings.Contains(fullLogStr, "watchdog device is not open") {
-		return fmt.Errorf("found critical watchdog error: watchdog device is not open")
+	for _, errString := range errorStrings {
+		if strings.Contains(fullLogStr, errString) {
+			lines := strings.Split(fullLogStr, "\n")
+			for _, line := range lines {
+				if strings.Contains(line, errString) {
+					GinkgoWriter.Printf("Matching log line: %s\n", line)
+				}
+			}
+			return fmt.Errorf("found critical error: %s", errString)
+		}
 	}
 
-	// The agent should show successful operation during normal startup
-	hasSuccessIndicator := strings.Contains(fullLogStr, "Watchdog pet successful") ||
-		strings.Contains(fullLogStr, "SBD Agent started successfully")
-
-	if !hasSuccessIndicator {
-		GinkgoWriter.Printf("Warning: No clear success indicators found in logs, but no critical errors detected")
+	By("verifying SBD agent started successfully")
+	successStrings := []string{
+		"SBD Agent started successfully",
+		"Starting watchdog loop",
+		"Starting peer monitor loop",
+		"Starting SBD device loop",
+		"Successfully acquired file lock on node mapping file",
+		"Successfully updated SBD device with node ID",
+		"All pre-flight checks passed successfully",
 	}
-
+	for _, successString := range successStrings {
+		if !strings.Contains(fullLogStr, successString) {
+			return fmt.Errorf("did not find critical log message: %s", successString)
+		}
+	}
 	return nil
 }
 

@@ -139,7 +139,7 @@ var _ = Describe("SBD Agent Smoke Tests", Ordered, Label("Smoke", "Agent"), func
 				"--watchdog-timeout=1m0s",
 			}
 			err = validator.ValidateAgentDeployment(opts)
-			Expect(err).NotTo(HaveOccurred())
+			Expect(err).NotTo(HaveOccurred(), "SBD agent deployment failed")
 		})
 	})
 
@@ -397,7 +397,7 @@ var _ = Describe("SBD Agent Smoke Tests", Ordered, Label("Smoke", "Agent"), func
 			}
 
 			err = validator.ValidateAgentDeployment(opts)
-			Expect(err).NotTo(HaveOccurred())
+			Expect(err).NotTo(HaveOccurred(), "SBD agent deployment failed")
 
 			GinkgoWriter.Printf("SharedStorageClass functionality test completed successfully with StorageClass: %s\n", rwxStorageClass.Name)
 		})
