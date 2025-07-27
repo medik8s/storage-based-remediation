@@ -395,9 +395,17 @@ func (dc *DebugCollector) CollectControllerLogs(namespace, podName string) {
 		defer podLogs.Close()
 		buf := new(bytes.Buffer)
 		_, _ = io.Copy(buf, podLogs)
-		GinkgoWriter.Printf("Controller logs:\n %s", buf.String())
+		logFileName := fmt.Sprintf("%s.log", podName)
+		if f, fileErr := os.Create(logFileName); fileErr == nil {
+			defer f.Close()
+			_, _ = f.Write(buf.Bytes())
+			GinkgoWriter.Printf("Controller logs for pod %s saved to %s\n", podName, logFileName)
+		} else {
+			GinkgoWriter.Printf("Failed to write controller logs to file %s: %s\n", logFileName, fileErr)
+			GinkgoWriter.Printf("Controller logs:\n %s\n", buf.String())
+		}
 	} else {
-		GinkgoWriter.Printf("Failed to get Controller logs: %s", err)
+		GinkgoWriter.Printf("Failed to get Controller logs: %s\n", err)
 	}
 }
 
@@ -439,7 +447,16 @@ func (dc *DebugCollector) CollectAgentLogs(namespace string) {
 			defer podLogs.Close()
 			buf := new(bytes.Buffer)
 			_, _ = io.Copy(buf, podLogs)
-			GinkgoWriter.Printf("Agent logs:\n %s\n", buf.String())
+			// Save the logs to a file named after the pod name
+			logFileName := fmt.Sprintf("%s.log", pod.Name)
+			if f, fileErr := os.Create(logFileName); fileErr == nil {
+				defer f.Close()
+				_, _ = f.Write(buf.Bytes())
+				GinkgoWriter.Printf("Agent logs for pod %s saved to %s\n", pod.Name, logFileName)
+			} else {
+				GinkgoWriter.Printf("Failed to write agent logs to file %s: %s\n", logFileName, fileErr)
+				GinkgoWriter.Printf("Agent logs:\n %s\n", buf.String())
+			}
 		} else {
 			GinkgoWriter.Printf("Failed to get agent logs from pod %s: %s\n", pod.Name, err)
 		}
@@ -474,7 +491,7 @@ func (dc *DebugCollector) CollectPodDescription(namespace, podName string) {
 	err := dc.Clients.Client.Get(dc.Clients.Context, client.ObjectKey{Name: podName, Namespace: namespace}, pod)
 	if err == nil {
 		podYAML, _ := yaml.Marshal(pod.Spec)
-		GinkgoWriter.Printf("Pod description:\n%s", string(podYAML))
+		GinkgoWriter.Printf("Pod description:\n%s\n", string(podYAML))
 	} else {
 		GinkgoWriter.Printf("Failed to get pod description: %s\n", err)
 	}
@@ -1145,13 +1162,13 @@ func DescribeEnvironment(testClients *TestClients, namespace string) {
 
 	// Log the determination
 	if isControllerNamespace && isAgentNamespace {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Namespace %q contains both controller and agent pods (hybrid or test namespace)\n", namespace)
+		GinkgoWriter.Printf("Namespace %q contains both controller and agent pods (hybrid or test namespace)\n", namespace)
 	} else if isControllerNamespace {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Namespace %q is identified as the controller namespace\n", namespace)
+		GinkgoWriter.Printf("Namespace %q is identified as the controller namespace\n", namespace)
 	} else if isAgentNamespace {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Namespace %q is identified as an agent namespace\n", namespace)
+		GinkgoWriter.Printf("Namespace %q is identified as an agent namespace\n", namespace)
 	} else {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Namespace %q does not appear to contain controller or agent pods\n", namespace)
+		GinkgoWriter.Printf("Namespace %q does not appear to contain controller or agent pods\n", namespace)
 	}
 
 	debugCollector := testClients.NewDebugCollector()
