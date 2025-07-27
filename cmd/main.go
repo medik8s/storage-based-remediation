@@ -39,7 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
-	"github.com/medik8s/sbd-operator/internal/controller"
+	"github.com/medik8s/sbd-operator/pkg/controller"
 	"github.com/medik8s/sbd-operator/pkg/version"
 	// +kubebuilder:scaffold:imports
 )
