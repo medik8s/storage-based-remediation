@@ -80,7 +80,7 @@ var (
 	sbdUpdateInterval = flag.Duration(agent.FlagSBDUpdateInterval, 5*time.Second, "Interval for updating SBD device with node status")
 	peerCheckInterval = flag.Duration(agent.FlagPeerCheckInterval, 5*time.Second, "Interval for checking peer heartbeats")
 	logLevel          = flag.String(agent.FlagLogLevel, agent.DefaultLogLevel, "Log level (debug, info, warn, error)")
-	rebootMethod      = flag.String(agent.FlagRebootMethod, agent.DefaultRebootMethod, "Method to use for self-fencing (panic, systemctl-reboot)")
+	rebootMethod      = flag.String(agent.FlagRebootMethod, agent.DefaultRebootMethod, "Method to use for self-fencing (panic, systemctl-reboot, none)")
 	metricsPort       = flag.Int(agent.FlagMetricsPort, agent.DefaultMetricsPort, "Port for Prometheus metrics endpoint")
 	staleNodeTimeout  = flag.Duration(agent.FlagStaleNodeTimeout, 1*time.Hour, "Timeout for considering nodes stale and removing them from slot mapping")
 
@@ -600,8 +600,8 @@ func NewSBDAgentWithWatchdog(wd WatchdogInterface, sbdDevicePath, nodeName, clus
 	if petInterval <= 0 {
 		return nil, fmt.Errorf("pet interval must be positive, got %v", petInterval)
 	}
-	if rebootMethod != "panic" && rebootMethod != "systemctl-reboot" {
-		return nil, fmt.Errorf("invalid reboot method '%s', must be 'panic' or 'systemctl-reboot'", rebootMethod)
+	if rebootMethod != "panic" && rebootMethod != "systemctl-reboot" && rebootMethod != "none" {
+		return nil, fmt.Errorf("invalid reboot method '%s', must be 'panic', 'systemctl-reboot', or 'none'", rebootMethod)
 	}
 	if metricsPort <= 0 || metricsPort > 65535 {
 		return nil, fmt.Errorf("metrics port must be between 1 and 65535, got %d", metricsPort)
@@ -1526,6 +1526,14 @@ func (s *SBDAgent) executeSelfFencing(reason string) {
 	time.Sleep(100 * time.Millisecond)
 
 	switch s.rebootMethod {
+	case "none":
+		logger.Error(nil, "Self-fencing disabled - would have rebooted node but reboot method is 'none'",
+			"reason", reason,
+			"nodeID", s.nodeID,
+			"nodeName", s.nodeName)
+		// Do nothing - self-fencing is disabled for testing purposes
+		return
+
 	case "systemctl-reboot":
 		logger.Error(nil, "Attempting aggressive systemctl reboot for self-fencing",
 			"reason", reason,
@@ -2314,10 +2322,10 @@ func main() {
 	}
 
 	// Validate reboot method
-	if rebootMethodValue != "panic" && rebootMethodValue != "systemctl-reboot" {
+	if rebootMethodValue != "panic" && rebootMethodValue != "systemctl-reboot" && rebootMethodValue != "none" {
 		logger.Error(nil, "Invalid reboot method",
 			"rebootMethod", rebootMethodValue,
-			"validMethods", []string{"panic", "systemctl-reboot"})
+			"validMethods", []string{"panic", "systemctl-reboot", "none"})
 		os.Exit(1)
 	}
 

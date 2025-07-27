@@ -672,6 +672,13 @@ func TestSBDConfigSpec_ValidateRebootMethod(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid none method",
+			spec: SBDConfigSpec{
+				RebootMethod: "none",
+			},
+			wantErr: false,
+		},
+		{
 			name: "empty method uses default (valid)",
 			spec: SBDConfigSpec{
 				RebootMethod: "",

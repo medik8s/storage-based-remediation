@@ -180,6 +180,7 @@ func (tn *TestNamespace) CreateSBDConfig(name string, options ...func(*medik8sv1
 			ImagePullPolicy: string(corev1.PullAlways),
 			SbdWatchdogPath: "/dev/watchdog",
 			LogLevel:        "debug",
+			RebootMethod:    "none", // Always use "none" for testing to prevent actual reboots
 			WatchdogTimeout: &metav1.Duration{Duration: 60 * time.Second},
 			PetIntervalMultiple: func() *int32 {
 				val := int32(4)

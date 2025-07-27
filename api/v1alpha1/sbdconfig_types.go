@@ -513,10 +513,10 @@ func (s *SBDConfigSpec) ValidateRebootMethod() error {
 	method := s.GetRebootMethod()
 
 	switch method {
-	case "panic", "systemctl-reboot":
+	case "panic", "systemctl-reboot", "none":
 		return nil
 	default:
-		return fmt.Errorf("invalid reboot method %q. Valid values are: panic, systemctl-reboot", method)
+		return fmt.Errorf("invalid reboot method %q. Valid values are: panic, systemctl-reboot, none", method)
 	}
 }
 
