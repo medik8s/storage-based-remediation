@@ -66,7 +66,7 @@ import (
 
 // RBAC permissions for SBD Agent
 // The agent needs to list and process SBDRemediation CRs for fencing operations
-// +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdremediations,verbs=get;list;watch
+// +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdremediations,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdremediations/status,verbs=update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
