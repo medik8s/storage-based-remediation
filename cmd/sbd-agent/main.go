@@ -50,9 +50,12 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/medik8s/sbd-operator/api/v1alpha1"
+	"github.com/medik8s/sbd-operator/internal/controller"
 	"github.com/medik8s/sbd-operator/pkg/agent"
 	"github.com/medik8s/sbd-operator/pkg/blockdevice"
 	"github.com/medik8s/sbd-operator/pkg/retry"
@@ -557,9 +560,11 @@ type SBDAgent struct {
 	k8sClientset   kubernetes.Interface
 	watchNamespace string
 	enableFencing  bool
-	fencingStopCh  chan struct{}
 
-	// Leader election for coordinating SBDRemediation processing across agents
+	// Controller manager for SBDRemediation reconciliation
+	controllerManager manager.Manager
+
+	// Leader election for coordinating SBDRemediation processing across agents (deprecated - using controller-runtime now)
 	leaderElectors       map[string]*RemediationLeaderElector // key: remediation namespace/name
 	leaderElectorsMutex  sync.RWMutex
 	leaderElectionConfig LeaderElectionConfig
@@ -665,7 +670,7 @@ func NewSBDAgentWithWatchdog(wd WatchdogInterface, sbdDevicePath, nodeName, clus
 		k8sClientset:         k8sClientset,
 		watchNamespace:       watchNamespace,
 		enableFencing:        enableFencing,
-		fencingStopCh:        make(chan struct{}),
+		controllerManager:    nil, // Will be initialized during Start() if enableFencing is true
 		leaderElectors:       make(map[string]*RemediationLeaderElector),
 		leaderElectionConfig: leaderElectionConfig,
 	}
@@ -1109,8 +1114,14 @@ func (s *SBDAgent) Start() error {
 
 	// Start fencing loop if enabled
 	if s.enableFencing {
-		s.fencingStopCh = make(chan struct{})
-		go s.fencingLoop()
+		if err := s.initializeControllerManager(); err != nil {
+			return fmt.Errorf("failed to initialize controller manager: %w", err)
+		}
+		go func() {
+			if err := s.controllerManager.Start(s.ctx); err != nil {
+				logger.Error(err, "Controller manager failed")
+			}
+		}()
 	}
 
 	logger.Info("SBD Agent started successfully")
@@ -1128,9 +1139,6 @@ func (s *SBDAgent) Stop() error {
 	if s.enableFencing {
 		logger.Info("Stopping all leader electors")
 		s.stopAllLeaderElectors()
-
-		// Close fencing stop channel
-		close(s.fencingStopCh)
 	}
 
 	// Stop node manager coordination
@@ -1931,321 +1939,71 @@ func initializeKubernetesClients(kubeconfigPath string) (client.Client, kubernet
 	return k8sClient, clientset, nil
 }
 
-// fencingLoop watches for SBDRemediation CRs and processes fencing requests
-func (s *SBDAgent) fencingLoop() {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	// Ticker for periodic cleanup of completed leader electors
-	cleanupTicker := time.NewTicker(30 * time.Second)
-	defer cleanupTicker.Stop()
-
-	logger.Info("Starting SBD fencing loop", "watchNamespace", s.watchNamespace)
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			logger.Info("SBD fencing loop stopping")
-			return
-		case <-s.fencingStopCh:
-			logger.Info("SBD fencing loop received stop signal")
-			return
-		case <-ticker.C:
-			if err := s.processSBDRemediationCRs(); err != nil {
-				logger.Error(err, "Failed to process SBDRemediation CRs")
-			}
-		case <-cleanupTicker.C:
-			// Periodically clean up leader electors for completed/deleted remediations
-			logger.V(1).Info("Performing periodic cleanup of completed leader electors")
-			s.cleanupCompletedLeaderElectors()
-		}
-	}
-}
-
-// processSBDRemediationCRs lists and processes SBDRemediation CRs that need fencing
-func (s *SBDAgent) processSBDRemediationCRs() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// List SBDRemediation CRs
-	var remediations v1alpha1.SBDRemediationList
-	listOpts := []client.ListOption{}
-
-	// If a specific namespace is configured, limit to that namespace
-	if s.watchNamespace != "" {
-		listOpts = append(listOpts, client.InNamespace(s.watchNamespace))
+// initializeControllerManager initializes the controller manager for SBDRemediation reconciliation
+func (s *SBDAgent) initializeControllerManager() error {
+	// Get Kubernetes config
+	config, err := ctrl.GetConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get Kubernetes config: %w", err)
 	}
 
-	if err := s.k8sClient.List(ctx, &remediations, listOpts...); err != nil {
-		return fmt.Errorf("failed to list SBDRemediation CRs: %w", err)
+	// Create controller-runtime manager options
+	options := ctrl.Options{
+		Scheme: s.getScheme(),
+	}
+	// Note: Namespace filtering is handled by the reconciler's RBAC and client configuration
+
+	// Create controller-runtime manager
+	mgr, err := ctrl.NewManager(config, options)
+	if err != nil {
+		return fmt.Errorf("failed to create controller-runtime manager: %w", err)
 	}
 
-	logger.V(1).Info("Found SBDRemediation CRs to process", "count", len(remediations.Items))
+	s.controllerManager = mgr
 
-	// Process each remediation
-	for _, remediation := range remediations.Items {
-		if err := s.processSingleRemediation(ctx, &remediation); err != nil {
-			logger.Error(err, "Failed to process SBDRemediation",
-				"name", remediation.Name,
-				"namespace", remediation.Namespace,
-				"targetNode", remediation.Spec.NodeName)
-		}
+	// Add SBDRemediation controller to the manager
+	if err := s.addSBDRemediationController(); err != nil {
+		return fmt.Errorf("failed to add SBDRemediation controller: %w", err)
 	}
 
 	return nil
 }
 
-// processSingleRemediation processes a single SBDRemediation CR
-func (s *SBDAgent) processSingleRemediation(ctx context.Context, remediation *v1alpha1.SBDRemediation) error {
-	// Skip if already completed
-	if remediation.IsFencingSucceeded() {
-		logger.V(1).Info("SBDRemediation already completed, skipping",
-			"name", remediation.Name,
-			"namespace", remediation.Namespace)
-		return nil
+// getScheme returns the runtime scheme with SBDRemediation types registered
+func (s *SBDAgent) getScheme() *runtime.Scheme {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		logger.Error(err, "Failed to add v1alpha1 types to scheme")
 	}
-
-	// Skip if fencing is already in progress by another agent
-	if remediation.IsFencingInProgress() {
-		logger.V(1).Info("SBDRemediation fencing in progress by another agent, skipping",
-			"name", remediation.Name,
-			"namespace", remediation.Namespace)
-		return nil
-	}
-
-	// Check if this agent should handle this remediation (simple leader election)
-	// For now, we'll use the agent that has the lexicographically smallest node name
-	// TODO: Implement proper leader election among agents
-	if !s.shouldHandleRemediation(ctx, remediation) {
-		logger.V(1).Info("Another agent should handle this remediation",
-			"name", remediation.Name,
-			"namespace", remediation.Namespace,
-			"targetNode", remediation.Spec.NodeName,
-			"ourNode", s.nodeName)
-		return nil
-	}
-
-	logger.Info("Processing SBDRemediation for fencing",
-		"name", remediation.Name,
-		"namespace", remediation.Namespace,
-		"targetNode", remediation.Spec.NodeName,
-		"reason", remediation.Spec.Reason)
-
-	// Mark fencing as in progress
-	s.updateRemediationCondition(ctx, remediation, v1alpha1.SBDRemediationConditionFencingInProgress,
-		metav1.ConditionTrue, "FencingInProgress", "Fencing operation started")
-
-	// Execute fencing operation
-	if err := s.executeFencing(ctx, remediation); err != nil {
-		s.updateRemediationCondition(ctx, remediation, v1alpha1.SBDRemediationConditionFencingSucceeded,
-			metav1.ConditionFalse, "FencingFailed", fmt.Sprintf("Failed to execute fencing: %v", err))
-		s.updateRemediationCondition(ctx, remediation, v1alpha1.SBDRemediationConditionReady,
-			metav1.ConditionTrue, "FencingFailed", fmt.Sprintf("Fencing failed: %v", err))
-		return fmt.Errorf("failed to execute fencing for %s: %w", remediation.Spec.NodeName, err)
-	}
-
-	return nil
+	return scheme
 }
 
-// shouldHandleRemediation determines if this agent should handle the remediation using leader election
-func (s *SBDAgent) shouldHandleRemediation(ctx context.Context, remediation *v1alpha1.SBDRemediation) bool {
-	remediationKey := fmt.Sprintf("%s/%s", remediation.Namespace, remediation.Name)
-
-	// Check if we already have a leader elector for this remediation
-	s.leaderElectorsMutex.RLock()
-	elector, exists := s.leaderElectors[remediationKey]
-	s.leaderElectorsMutex.RUnlock()
-
-	if exists {
-		// We have an existing leader elector, check if we're the leader
-		isLeader := elector.IsLeader()
-		if isLeader {
-			logger.V(1).Info("Agent is leader for remediation",
-				"remediation", remediationKey,
-				"agentNode", s.nodeName)
-		}
-		return isLeader
+// addSBDRemediationController adds the SBDRemediation controller to the controller manager
+func (s *SBDAgent) addSBDRemediationController() error {
+	// Create SBDRemediation reconciler
+	reconciler := &controller.SBDRemediationReconciler{
+		Client:   s.controllerManager.GetClient(),
+		Scheme:   s.controllerManager.GetScheme(),
+		Recorder: s.controllerManager.GetEventRecorderFor("sbd-agent-remediation"),
 	}
 
-	// No leader elector exists for this remediation, create one
-	logger.Info("Creating leader elector for new remediation",
-		"remediation", remediationKey,
-		"agentNode", s.nodeName)
-
-	newElector, err := NewRemediationLeaderElector(
-		remediationKey,
-		s.nodeName,
-		s.k8sClientset,
-		s.leaderElectionConfig,
-		logger.WithValues("remediation", remediationKey),
-	)
-	if err != nil {
-		logger.Error(err, "Failed to create leader elector for remediation",
-			"remediation", remediationKey,
-			"agentNode", s.nodeName)
-		return false
+	// Set up the reconciler with agent resources
+	// Type assert the SBD device to the expected concrete type
+	if sbdDevice, ok := s.sbdDevice.(*blockdevice.Device); ok {
+		reconciler.SetSBDDevice(sbdDevice)
+	} else {
+		return fmt.Errorf("SBD device is not of expected type *blockdevice.Device")
 	}
 
-	// Store the new elector
-	s.leaderElectorsMutex.Lock()
-	s.leaderElectors[remediationKey] = newElector
-	s.leaderElectorsMutex.Unlock()
+	reconciler.SetNodeManager(s.nodeManager)
+	reconciler.SetOwnNodeInfo(s.nodeID, s.nodeName)
 
-	// Start the leader election process
-	newElector.Start(ctx)
-
-	// Wait a short time for initial leader election to complete
-	// This prevents race conditions where multiple agents create electors simultaneously
-	select {
-	case <-time.After(500 * time.Millisecond):
-		// Timeout reached, check if we became leader
-		isLeader := newElector.IsLeader()
-		if isLeader {
-			logger.Info("Agent elected as leader for remediation",
-				"remediation", remediationKey,
-				"agentNode", s.nodeName)
-		} else {
-			logger.V(1).Info("Agent not elected as leader for remediation",
-				"remediation", remediationKey,
-				"agentNode", s.nodeName)
-		}
-		return isLeader
-	case <-ctx.Done():
-		// Context cancelled
-		return false
-	}
-}
-
-// executeFencing performs the actual fencing operation via SBD device
-func (s *SBDAgent) executeFencing(ctx context.Context, remediation *v1alpha1.SBDRemediation) error {
-	targetNodeName := remediation.Spec.NodeName
-
-	// Get target node ID using node manager
-	targetNodeID, err := s.getNodeIDForName(targetNodeName)
-	if err != nil {
-		return fmt.Errorf("failed to get node ID for target node %s: %w", targetNodeName, err)
+	// Set up the controller with the manager
+	if err := reconciler.SetupWithManager(s.controllerManager); err != nil {
+		return fmt.Errorf("failed to setup SBDRemediation controller with manager: %w", err)
 	}
 
-	logger.Info("Writing fence message to SBD device",
-		"targetNode", targetNodeName,
-		"targetNodeID", targetNodeID,
-		"reason", remediation.Spec.Reason)
-
-	// Write fence message to target node's slot
-	if err := s.writeFenceMessage(targetNodeID, remediation.Spec.Reason); err != nil {
-		// Update remediation conditions to failed
-		s.updateRemediationCondition(ctx, remediation, v1alpha1.SBDRemediationConditionFencingSucceeded,
-			metav1.ConditionFalse, "FencingFailed", fmt.Sprintf("Failed to write fence message: %v", err))
-		s.updateRemediationCondition(ctx, remediation, v1alpha1.SBDRemediationConditionReady,
-			metav1.ConditionTrue, "FencingFailed", fmt.Sprintf("Fencing failed: %v", err))
-		return fmt.Errorf("failed to write fence message to target node %d: %w", targetNodeID, err)
-	}
-
-	// Update remediation conditions to completed
-	s.updateRemediationCondition(ctx, remediation, v1alpha1.SBDRemediationConditionFencingSucceeded,
-		metav1.ConditionTrue, "FencingSucceeded", fmt.Sprintf("Fence message written to node %s (ID: %d)", targetNodeName, targetNodeID))
-	s.updateRemediationCondition(ctx, remediation, v1alpha1.SBDRemediationConditionReady,
-		metav1.ConditionTrue, "FencingSucceeded", fmt.Sprintf("Fencing completed successfully"))
-
-	logger.Info("Fencing operation completed successfully",
-		"targetNode", targetNodeName,
-		"targetNodeID", targetNodeID)
-
-	return nil
-}
-
-// getNodeIDForName gets the node ID for a given node name using the node manager
-func (s *SBDAgent) getNodeIDForName(nodeName string) (uint16, error) {
-	if s.nodeManager == nil {
-		return 0, fmt.Errorf("node manager not initialized")
-	}
-
-	return s.nodeManager.GetSlotForNode(nodeName)
-}
-
-// writeFenceMessage writes a fence message to the target node's slot in the SBD device
-func (s *SBDAgent) writeFenceMessage(targetNodeID uint16, reason v1alpha1.SBDRemediationReason) error {
-	if s.sbdDevice == nil || s.sbdDevice.IsClosed() {
-		return fmt.Errorf("SBD device is not available")
-	}
-
-	// Create fence message
-	fenceReason := sbdprotocol.FENCE_REASON_MANUAL // Map from CR reason to SBD reason
-	switch reason {
-	case v1alpha1.SBDRemediationReasonHeartbeatTimeout:
-		fenceReason = sbdprotocol.FENCE_REASON_HEARTBEAT_TIMEOUT
-	case v1alpha1.SBDRemediationReasonNodeUnresponsive:
-		fenceReason = sbdprotocol.FENCE_REASON_MANUAL
-	case v1alpha1.SBDRemediationReasonManualFencing:
-		fenceReason = sbdprotocol.FENCE_REASON_MANUAL
-	}
-
-	fenceMsg := sbdprotocol.SBDFenceMessage{
-		Header:       sbdprotocol.NewFence(s.nodeID, targetNodeID, s.getNextHeartbeatSequence(), fenceReason),
-		TargetNodeID: targetNodeID,
-		Reason:       fenceReason,
-	}
-	msgData, err := sbdprotocol.MarshalFence(fenceMsg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal fence message: %w", err)
-	}
-
-	// Calculate slot offset for the target node
-	slotOffset := int64(targetNodeID) * sbdprotocol.SBD_SLOT_SIZE
-
-	// Write fence message to target node's slot
-	n, err := s.sbdDevice.WriteAt(msgData, slotOffset)
-	if err != nil {
-		sbdIOErrorsCounter.Inc()
-		return fmt.Errorf("failed to write fence message to slot %d (offset %d): %w", targetNodeID, slotOffset, err)
-	}
-
-	if n != len(msgData) {
-		return fmt.Errorf("partial write to slot %d: wrote %d bytes, expected %d", targetNodeID, n, len(msgData))
-	}
-
-	// Sync to ensure data is written to storage
-	if err := s.sbdDevice.Sync(); err != nil {
-		return fmt.Errorf("failed to sync fence message to storage: %w", err)
-	}
-
-	logger.Info("Fence message written successfully",
-		"targetNodeID", targetNodeID,
-		"sourceNodeID", s.nodeID,
-		"reason", fenceReason,
-		"slotOffset", slotOffset,
-		"messageSize", len(msgData))
-
-	return nil
-}
-
-// updateRemediationCondition updates a condition on an SBDRemediation CR
-func (s *SBDAgent) updateRemediationCondition(ctx context.Context, remediation *v1alpha1.SBDRemediation, conditionType v1alpha1.SBDRemediationConditionType, status metav1.ConditionStatus, reason, message string) error {
-	// Create a copy for status update
-	updated := remediation.DeepCopy()
-	updated.SetCondition(conditionType, status, reason, message)
-	updated.Status.OperatorInstance = s.nodeName
-	updated.Status.LastUpdateTime = &metav1.Time{Time: metav1.Now().Time}
-
-	if err := s.k8sClient.Status().Update(ctx, updated); err != nil {
-		logger.Error(err, "Failed to update SBDRemediation condition",
-			"name", remediation.Name,
-			"namespace", remediation.Namespace,
-			"conditionType", conditionType,
-			"status", status,
-			"reason", reason,
-			"message", message)
-		return err
-	}
-
-	logger.Info("Updated SBDRemediation condition",
-		"name", remediation.Name,
-		"namespace", remediation.Namespace,
-		"conditionType", conditionType,
-		"status", status,
-		"reason", reason,
-		"message", message)
-
+	logger.Info("SBDRemediation controller added to manager successfully")
 	return nil
 }
 

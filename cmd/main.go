@@ -247,18 +247,13 @@ func main() {
 	}
 
 	// Create controllers with EventRecorder
-	// Note: SBD fencing is now handled by agents, so leader election is less critical
-	sbdRemediationReconciler := &controller.SBDRemediationReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("sbd-remediation-controller"),
-	}
+	// Note: SBD fencing is now handled by agents directly via integrated SBDRemediationReconciler
 
 	// Set up leadership tracking
 	if enableLeaderElection {
-		setupLog.Info("Leader election ENABLED - SBD controller coordination will be performed by the elected leader")
+		setupLog.Info("Leader election ENABLED - SBD config controller will be performed by the elected leader")
 	} else {
-		setupLog.Info("Leader election DISABLED - this instance will handle SBD controller coordination")
+		setupLog.Info("Leader election DISABLED - this instance will handle SBD config controller")
 	}
 
 	if err := (&controller.SBDConfigReconciler{
@@ -269,10 +264,8 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "SBDConfig")
 		os.Exit(1)
 	}
-	if err := sbdRemediationReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "SBDRemediation")
-		os.Exit(1)
-	}
+
+	// Note: SBDRemediationReconciler is now run as part of the SBD agent, not the main operator
 
 	// Set up admission webhooks (only if enabled)
 	if enableWebhooks {

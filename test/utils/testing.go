@@ -395,9 +395,9 @@ func (dc *DebugCollector) CollectControllerLogs(namespace, podName string) {
 		defer podLogs.Close()
 		buf := new(bytes.Buffer)
 		_, _ = io.Copy(buf, podLogs)
-		_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", buf.String())
+		GinkgoWriter.Printf("Controller logs:\n %s", buf.String())
 	} else {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Controller logs: %s", err)
+		GinkgoWriter.Printf("Failed to get Controller logs: %s", err)
 	}
 }
 
@@ -412,7 +412,7 @@ func (dc *DebugCollector) CollectAgentLogs(namespace string) {
 		client.MatchingLabels{"app": "sbd-agent"})
 
 	if err != nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to list SBD agent pods: %s\n", err)
+		GinkgoWriter.Printf("Failed to list SBD agent pods: %s\n", err)
 		return
 	}
 
@@ -425,13 +425,13 @@ func (dc *DebugCollector) CollectAgentLogs(namespace string) {
 	}
 
 	if len(activePods) == 0 {
-		_, _ = fmt.Fprintf(GinkgoWriter, "No active SBD agent pods found\n")
+		GinkgoWriter.Printf("No active SBD agent pods found\n")
 		return
 	}
 
 	// Collect logs from each agent pod
 	for _, pod := range activePods {
-		_, _ = fmt.Fprintf(GinkgoWriter, "\n=== SBD Agent Pod: %s (Node: %s) ===\n", pod.Name, pod.Spec.NodeName)
+		GinkgoWriter.Printf("\n=== SBD Agent Pod: %s (Node: %s) ===\n", pod.Name, pod.Spec.NodeName)
 
 		req := dc.Clients.Clientset.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{})
 		podLogs, err := req.Stream(dc.Clients.Context)
@@ -439,9 +439,9 @@ func (dc *DebugCollector) CollectAgentLogs(namespace string) {
 			defer podLogs.Close()
 			buf := new(bytes.Buffer)
 			_, _ = io.Copy(buf, podLogs)
-			_, _ = fmt.Fprintf(GinkgoWriter, "Agent logs:\n %s\n", buf.String())
+			GinkgoWriter.Printf("Agent logs:\n %s\n", buf.String())
 		} else {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get agent logs from pod %s: %s\n", pod.Name, err)
+			GinkgoWriter.Printf("Failed to get agent logs from pod %s: %s\n", pod.Name, err)
 		}
 	}
 }
@@ -461,9 +461,9 @@ func (dc *DebugCollector) CollectKubernetesEvents(namespace string) {
 				event.InvolvedObject.Name,
 				event.Message)
 		}
-		_, _ = fmt.Fprintf(GinkgoWriter, "Kubernetes events:\n%s", eventsOutput)
+		GinkgoWriter.Printf("Kubernetes events:\n%s", eventsOutput)
 	} else {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Kubernetes events: %s", err)
+		GinkgoWriter.Printf("Failed to get Kubernetes events: %s", err)
 	}
 }
 
@@ -473,7 +473,7 @@ func (dc *DebugCollector) CollectPodDescription(namespace, podName string) {
 	pod := &corev1.Pod{}
 	err := dc.Clients.Client.Get(dc.Clients.Context, client.ObjectKey{Name: podName, Namespace: namespace}, pod)
 	if err == nil {
-		podYAML, _ := yaml.Marshal(pod)
+		podYAML, _ := yaml.Marshal(pod.Spec)
 		GinkgoWriter.Printf("Pod description:\n%s", string(podYAML))
 	} else {
 		GinkgoWriter.Printf("Failed to get pod description: %s\n", err)
@@ -1197,15 +1197,31 @@ func DescribeEnvironment(testClients *TestClients, namespace string) {
 		sbdConfigs := &medik8sv1alpha1.SBDConfigList{}
 		err := testClients.Client.List(testClients.Context, sbdConfigs, client.InNamespace(namespace))
 		if err != nil {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get SBDConfig CRs: %s", err)
+			GinkgoWriter.Printf("Failed to get SBDConfig CRs: %s", err)
 		} else {
-			_, _ = fmt.Fprintf(GinkgoWriter, "SBDConfig CRs found: %d\n", len(sbdConfigs.Items))
+			GinkgoWriter.Printf("SBDConfig CRs found: %d\n", len(sbdConfigs.Items))
 			for i, config := range sbdConfigs.Items {
-				_, _ = fmt.Fprintf(GinkgoWriter, "SBDConfig %d:\n", i+1)
-				_, _ = fmt.Fprintf(GinkgoWriter, "  Name: %s\n", config.Name)
-				_, _ = fmt.Fprintf(GinkgoWriter, "  Namespace: %s\n", config.Namespace)
-				_, _ = fmt.Fprintf(GinkgoWriter, "  Status: %+v\n", config.Status)
-				_, _ = fmt.Fprintf(GinkgoWriter, "  Spec: %+v\n", config.Spec)
+				GinkgoWriter.Printf("SBDConfig %d:\n", i+1)
+				GinkgoWriter.Printf("  Name: %s\n", config.Name)
+				GinkgoWriter.Printf("  Namespace: %s\n", config.Namespace)
+				GinkgoWriter.Printf("  Status: %+v\n", config.Status)
+				GinkgoWriter.Printf("  Spec: %+v\n", config.Spec)
+			}
+		}
+
+		By("Fetching SBDRemediation CRs")
+		sbdRemediations := &medik8sv1alpha1.SBDRemediationList{}
+		err = testClients.Client.List(testClients.Context, sbdRemediations, client.InNamespace(namespace))
+		if err != nil {
+			GinkgoWriter.Printf("Failed to get SBDRemediation CRs: %s", err)
+		} else {
+			GinkgoWriter.Printf("SBDRemediation CRs found: %d\n", len(sbdRemediations.Items))
+			for i, remediation := range sbdRemediations.Items {
+				GinkgoWriter.Printf("SBDRemediation %d:\n", i+1)
+				GinkgoWriter.Printf("  Name: %s\n", remediation.Name)
+				GinkgoWriter.Printf("  Namespace: %s\n", remediation.Namespace)
+				GinkgoWriter.Printf("  Status: %+v\n", remediation.Status)
+				GinkgoWriter.Printf("  Spec: %+v\n", remediation.Spec)
 			}
 		}
 
@@ -1236,9 +1252,10 @@ func DescribeEnvironment(testClients *TestClients, namespace string) {
 			agentPodName := activePods[0].Name
 			g.Expect(agentPodName).To(ContainSubstring("sbd-agent"))
 
-			// Collect agent pod description
-			debugCollector.CollectPodDescription(namespace, agentPodName)
-
+			// Collect agent pod logs
+			for _, pod := range activePods {
+				debugCollector.CollectPodDescription(namespace, pod.Name)
+			}
 		}
 		Eventually(verifyAgentsUp).Should(Succeed())
 
