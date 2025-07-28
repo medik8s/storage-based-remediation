@@ -883,6 +883,65 @@ func testSBDInspection(cluster ClusterInfo) {
 		fmt.Sprintf("%s/fence-device-debug.txt", testNamespace.ArtifactsDir))
 	Expect(err).NotTo(HaveOccurred(), "Failed to save fence device info")
 
+	// Compare the SBD device summary from all agent pods in the namespace
+	By("Comparing SBD device summaries across all agent pods")
+
+	// List all SBD agent pods in the test namespace
+	allPods := &corev1.PodList{}
+	err = k8sClient.List(ctx, allPods,
+		client.InNamespace(testNamespace.Name),
+		client.MatchingLabels{"app": "sbd-agent"})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(len(allPods.Items)).To(BeNumerically(">", 0), "Should find at least one SBD agent pod")
+
+	type podDeviceSummary struct {
+		PodName string
+		Slots   []utils.SBDNodeSummary
+	}
+
+	var summaries []podDeviceSummary
+
+	for _, pod := range allPods.Items {
+		slots, err := testNamespace.Clients.GetSBDDeviceInfoFromPod(pod.Name, testNamespace.Name)
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Failed to get SBD device info from pod %s", pod.Name))
+		summaries = append(summaries, podDeviceSummary{
+			PodName: pod.Name,
+			Slots:   slots,
+		})
+	}
+
+	// Compare the device summaries
+	reference := summaries[0].Slots
+	referencePod := summaries[0].PodName
+	for i := 1; i < len(summaries); i++ {
+		other := summaries[i].Slots
+		otherPod := summaries[i].PodName
+
+		// Compare length first
+		if len(reference) != len(other) {
+			GinkgoWriter.Printf("SBD device slot count mismatch between pods %s (%d slots) and %s (%d slots)\n",
+				referencePod, len(reference), otherPod, len(other))
+			Fail(fmt.Sprintf("SBD device slot count mismatch between pods %s and %s", referencePod, otherPod))
+		}
+
+		// Compare slot contents
+		for j := range reference {
+			refSlot := reference[j]
+			otherSlot := other[j]
+			if refSlot.NodeID != otherSlot.NodeID ||
+				!refSlot.Timestamp.Equal(otherSlot.Timestamp) ||
+				refSlot.Sequence != otherSlot.Sequence ||
+				refSlot.Type != otherSlot.Type ||
+				refSlot.HasData != otherSlot.HasData {
+				GinkgoWriter.Printf("SBD device slot %d mismatch between pods %s and %s:\n  %s: %+v\n  %s: %+v\n",
+					j, referencePod, otherPod, referencePod, refSlot, otherPod, otherSlot)
+				Fail(fmt.Sprintf("SBD device slot %d mismatch between pods %s and %s", j, referencePod, otherPod))
+			}
+		}
+	}
+
+	GinkgoWriter.Printf("SBD device summaries are consistent across all agent pods\n")
+
 	GinkgoWriter.Printf("SBD inspection test completed\n")
 }
 
