@@ -96,6 +96,23 @@ sync-test-files: ## Sync shared configuration files to test directories.
 	@chmod +x scripts/sync-test-files.sh
 	@scripts/sync-test-files.sh
 
+##@ Tools
+
+.PHONY: setup-odf-storage
+setup-odf-storage: ## Build the OpenShift Data Foundation setup tool.
+	@echo "🔨 Building setup-odf-storage tool..."
+	@$(MAKE) -C tools/setup-odf-storage build
+	@echo "✅ Built bin/setup-odf-storage"
+
+.PHONY: setup-shared-storage  
+setup-shared-storage: ## Build the shared storage setup tool.
+	@echo "🔨 Building setup-shared-storage tool..."
+	@$(MAKE) -C tools/setup-shared-storage build
+	@echo "✅ Built bin/setup-shared-storage"
+
+.PHONY: tools
+tools: setup-odf-storage setup-shared-storage ## Build all standalone tools.
+
 .PHONY: test-e2e-clean
 test-e2e-clean: test-prep test-e2e ## Run e2e tests with complete deployment pipeline.
 

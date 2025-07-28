@@ -1,0 +1,135 @@
+# Example SBDConfig using OpenShift Data Foundation CephFS storage
+# This example demonstrates how to configure SBD with CephFS storage
+# provisioned by OpenShift Data Foundation for high-availability clustering
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDConfig
+metadata:
+  name: sbd-with-odf-cephfs
+  namespace: sbd-system
+  labels:
+    app.kubernetes.io/name: sbd-operator
+    app.kubernetes.io/instance: sbd-with-odf
+    storage.medik8s.io/type: cephfs
+  annotations:
+    description: "SBD configuration using OpenShift Data Foundation CephFS for shared storage coordination"
+spec:
+  # SBD agent image configuration
+  image: "quay.io/medik8s/sbd-agent:latest"
+  imagePullPolicy: "IfNotPresent"
+  
+  # Watchdog configuration
+  sbdWatchdogPath: "/dev/watchdog"
+  watchdogTimeout: "60s"
+  petIntervalMultiple: 4
+  
+  # Node management settings
+  staleNodeTimeout: "1h"
+  
+  # ✅ OPENSHIFT DATA FOUNDATION CEPHFS STORAGE CONFIGURATION ✅
+  # This StorageClass should be created by the setup-odf-storage tool
+  # It provides ReadWriteMany (RWX) access mode with POSIX file locking
+  sharedStorageClass: "sbd-cephfs"
+  
+  # Node selector to target specific nodes (optional)
+  # Default targets worker nodes only
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+    # kubernetes.io/arch: "amd64"  # Uncomment to target specific architecture
+  
+  # Tolerations for scheduling (optional)
+  # tolerations:
+  #   - key: "node-role.kubernetes.io/master"
+  #     operator: "Exists"
+  #     effect: "NoSchedule"
+
+---
+# Example: Alternative configuration with aggressive cache coherency
+# Use this when strict SBD coordination is required
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDConfig
+metadata:
+  name: sbd-with-odf-strict
+  namespace: sbd-system
+  labels:
+    app.kubernetes.io/name: sbd-operator
+    app.kubernetes.io/instance: sbd-with-odf-strict
+    storage.medik8s.io/type: cephfs
+    storage.medik8s.io/mode: strict-coherency
+  annotations:
+    description: "SBD configuration with strict cache coherency for mission-critical environments"
+spec:
+  # SBD agent image configuration
+  image: "quay.io/medik8s/sbd-agent:latest"
+  imagePullPolicy: "IfNotPresent"
+  
+  # Watchdog configuration with shorter timeout for faster response
+  sbdWatchdogPath: "/dev/watchdog"
+  watchdogTimeout: "30s"
+  petIntervalMultiple: 3
+  
+  # Faster stale node detection
+  staleNodeTimeout: "30m"
+  
+  # StorageClass created with --aggressive-coherency flag
+  # This should be created by: ./setup-odf-storage --aggressive-coherency --storage-class-name=sbd-cephfs-strict
+  sharedStorageClass: "sbd-cephfs-strict"
+  
+  # Target all worker nodes
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+
+---
+# Example: Multi-tenant SBD configuration
+# Demonstrates multiple SBD configurations in the same namespace
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDConfig
+metadata:
+  name: sbd-tenant-a
+  namespace: sbd-system
+  labels:
+    app.kubernetes.io/name: sbd-operator
+    app.kubernetes.io/instance: sbd-tenant-a
+    tenant: "tenant-a"
+    storage.medik8s.io/type: cephfs
+spec:
+  image: "quay.io/medik8s/sbd-agent:latest"
+  sbdWatchdogPath: "/dev/watchdog"
+  watchdogTimeout: "60s"
+  sharedStorageClass: "sbd-cephfs"
+  
+  # Target specific nodes for tenant A
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+    tenant: "tenant-a"
+
+---
+# Example: Development/Testing configuration
+# Smaller timeouts and simpler configuration for testing
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDConfig
+metadata:
+  name: sbd-dev-test
+  namespace: sbd-system
+  labels:
+    app.kubernetes.io/name: sbd-operator
+    app.kubernetes.io/instance: sbd-dev-test
+    environment: development
+    storage.medik8s.io/type: cephfs
+  annotations:
+    description: "Development SBD configuration for testing and validation"
+spec:
+  image: "quay.io/medik8s/sbd-agent:latest"
+  imagePullPolicy: "Always"  # Always pull for development
+  
+  # Shorter timeouts for faster testing cycles
+  sbdWatchdogPath: "/dev/watchdog"
+  watchdogTimeout: "30s"
+  petIntervalMultiple: 2
+  staleNodeTimeout: "10m"
+  
+  sharedStorageClass: "sbd-cephfs"
+  
+  # Target development nodes only
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+    environment: "development" 
