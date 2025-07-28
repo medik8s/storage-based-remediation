@@ -373,11 +373,7 @@ func (r *SBDRemediationReconciler) writeFenceMessage(targetNodeID uint16, reason
 		fenceReason = sbdprotocol.FENCE_REASON_MANUAL
 	}
 
-	fenceMsg := sbdprotocol.SBDFenceMessage{
-		Header:       sbdprotocol.NewFence(r.ownNodeID, targetNodeID, r.getNextSequence(), fenceReason),
-		TargetNodeID: targetNodeID,
-		Reason:       fenceReason,
-	}
+	fenceMsg := sbdprotocol.NewFence(r.ownNodeID, targetNodeID, r.getNextSequence(), fenceReason)
 	msgData, err := sbdprotocol.MarshalFence(fenceMsg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal fence message: %w", err)

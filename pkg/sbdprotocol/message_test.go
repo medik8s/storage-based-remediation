@@ -105,34 +105,34 @@ func TestNewFence(t *testing.T) {
 	// Check magic string
 	expectedMagic := [8]byte{}
 	copy(expectedMagic[:], SBD_MAGIC)
-	if msg.Magic != expectedMagic {
-		t.Errorf("Expected magic %v, got %v", expectedMagic, msg.Magic)
+	if msg.Header.Magic != expectedMagic {
+		t.Errorf("Expected magic %v, got %v", expectedMagic, msg.Header.Magic)
 	}
 
 	// Check other fields
-	if msg.Version != 1 {
-		t.Errorf("Expected version 1, got %d", msg.Version)
+	if msg.Header.Version != 1 {
+		t.Errorf("Expected version 1, got %d", msg.Header.Version)
 	}
 
-	if msg.Type != SBD_MSG_TYPE_FENCE {
-		t.Errorf("Expected type %d, got %d", SBD_MSG_TYPE_FENCE, msg.Type)
+	if msg.Header.Type != SBD_MSG_TYPE_FENCE {
+		t.Errorf("Expected type %d, got %d", SBD_MSG_TYPE_FENCE, msg.Header.Type)
 	}
 
-	if msg.NodeID != nodeID {
-		t.Errorf("Expected nodeID %d, got %d", nodeID, msg.NodeID)
+	if msg.Header.NodeID != nodeID {
+		t.Errorf("Expected nodeID %d, got %d", nodeID, msg.Header.NodeID)
 	}
 
-	if msg.Sequence != sequence {
-		t.Errorf("Expected sequence %d, got %d", sequence, msg.Sequence)
+	if msg.Header.Sequence != sequence {
+		t.Errorf("Expected sequence %d, got %d", sequence, msg.Header.Sequence)
 	}
 
 	// Check timestamp is within reasonable range
-	if msg.Timestamp < uint64(before) || msg.Timestamp > uint64(after) {
-		t.Errorf("Timestamp %d not within expected range [%d, %d]", msg.Timestamp, before, after)
+	if msg.Header.Timestamp < uint64(before) || msg.Header.Timestamp > uint64(after) {
+		t.Errorf("Timestamp %d not within expected range [%d, %d]", msg.Header.Timestamp, before, after)
 	}
 
-	if msg.Checksum != 0 {
-		t.Errorf("Expected checksum 0 (before marshaling), got %d", msg.Checksum)
+	if msg.Header.Checksum != 0 {
+		t.Errorf("Expected checksum 0 (before marshaling), got %d", msg.Header.Checksum)
 	}
 }
 
@@ -180,7 +180,7 @@ func TestMarshalUnmarshal(t *testing.T) {
 		},
 		{
 			name:     "fence message",
-			original: NewFence(2, 3, 200, FENCE_REASON_MANUAL),
+			original: NewFence(2, 3, 200, FENCE_REASON_MANUAL).Header,
 		},
 		{
 			name: "message with max values",
@@ -324,12 +324,7 @@ func TestMarshalHeartbeat(t *testing.T) {
 }
 
 func TestMarshalFence(t *testing.T) {
-	fence := SBDFenceMessage{
-		Header:       NewFence(1, 2, 100, FENCE_REASON_MANUAL),
-		TargetNodeID: 2,
-		Reason:       FENCE_REASON_MANUAL,
-	}
-
+	fence := NewFence(1, 2, 100, FENCE_REASON_MANUAL)
 	data, err := MarshalFence(fence)
 	if err != nil {
 		t.Fatalf("MarshalFence failed: %v", err)
@@ -362,7 +357,7 @@ func TestMarshalFence(t *testing.T) {
 func TestUnmarshalHeartbeatErrors(t *testing.T) {
 	// Create a fence message and try to unmarshal as heartbeat
 	fence := NewFence(1, 2, 100, FENCE_REASON_MANUAL)
-	data, err := Marshal(fence)
+	data, err := Marshal(fence.Header)
 	if err != nil {
 		t.Fatalf("Marshal failed: %v", err)
 	}
@@ -393,11 +388,7 @@ func TestUnmarshalFenceErrors(t *testing.T) {
 			name: "wrong message type",
 			setup: func() []byte {
 				// Create a fence message with correct length, then change the type to heartbeat
-				fence := SBDFenceMessage{
-					Header:       NewFence(1, 2, 100, FENCE_REASON_MANUAL),
-					TargetNodeID: 2,
-					Reason:       FENCE_REASON_MANUAL,
-				}
+				fence := NewFence(1, 2, 100, FENCE_REASON_MANUAL)
 				// Change the type to heartbeat to trigger type validation error
 				fence.Header.Type = SBD_MSG_TYPE_HEARTBEAT
 				data, _ := MarshalFence(fence)
@@ -667,11 +658,7 @@ func TestSBDMarshalUnmarshalRoundtrip(t *testing.T) {
 
 	// Test fence message roundtrip
 	t.Run("FenceMessage", func(t *testing.T) {
-		originalMsg := SBDFenceMessage{
-			Header:       NewFence(1, 42, 456, FENCE_REASON_HEARTBEAT_TIMEOUT),
-			TargetNodeID: 42,
-			Reason:       FENCE_REASON_HEARTBEAT_TIMEOUT,
-		}
+		originalMsg := NewFence(1, 42, 456, FENCE_REASON_HEARTBEAT_TIMEOUT)
 
 		// Marshal
 		data, err := MarshalFence(originalMsg)

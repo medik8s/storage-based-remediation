@@ -182,12 +182,7 @@ func (m *MockBlockDevice) WritePeerHeartbeat(nodeID uint16, timestamp uint64, se
 // WriteFenceMessage writes a fence message to a specific slot for testing
 func (m *MockBlockDevice) WriteFenceMessage(nodeID, targetNodeID uint16, sequence uint64, reason uint8) error {
 	// Create fence message header
-	header := sbdprotocol.NewFence(nodeID, targetNodeID, sequence, reason)
-	fenceMsg := sbdprotocol.SBDFenceMessage{
-		Header:       header,
-		TargetNodeID: targetNodeID,
-		Reason:       reason,
-	}
+	fenceMsg := sbdprotocol.NewFence(nodeID, targetNodeID, sequence, reason)
 
 	// Marshal the fence message
 	msgBytes, err := sbdprotocol.MarshalFence(fenceMsg)

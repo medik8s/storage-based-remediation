@@ -102,6 +102,7 @@ type SBDFenceMessage struct {
 	Header       SBDMessageHeader
 	TargetNodeID uint16 // ID of the node to be fenced
 	Reason       uint8  // Reason for fencing
+	NodeID       uint16 // ID of the node that is fencing the target node
 }
 
 // NewHeartbeat creates a new SBD heartbeat message header.
@@ -128,7 +129,7 @@ func NewHeartbeat(nodeID uint16, sequence uint64) SBDMessageHeader {
 	}
 }
 
-// NewFence creates a new SBD fence message header.
+// NewFence creates a new SBD fence message.
 // It initializes all required fields for a fence request with the specified target and reason.
 //
 // Parameters:
@@ -138,19 +139,24 @@ func NewHeartbeat(nodeID uint16, sequence uint64) SBDMessageHeader {
 //   - reason: Reason code for the fencing request
 //
 // Returns:
-//   - SBDMessageHeader: Initialized fence message header
-func NewFence(nodeID, targetNodeID uint16, sequence uint64, reason uint8) SBDMessageHeader {
+//   - SBDFenceMessage: Initialized fence message
+func NewFence(nodeID, targetNodeID uint16, sequence uint64, reason uint8) SBDFenceMessage {
 	var magic [8]byte
 	copy(magic[:], SBD_MAGIC)
 
-	return SBDMessageHeader{
-		Magic:     magic,
-		Version:   1,
-		Type:      SBD_MSG_TYPE_FENCE,
-		NodeID:    nodeID,
-		Timestamp: uint64(time.Now().UnixNano()),
-		Sequence:  sequence,
-		Checksum:  0, // Will be calculated during marshaling
+	return SBDFenceMessage{
+		Header: SBDMessageHeader{
+			Magic:     magic,
+			Version:   1,
+			Type:      SBD_MSG_TYPE_FENCE,
+			NodeID:    targetNodeID,
+			Timestamp: uint64(time.Now().UnixNano()),
+			Sequence:  sequence,
+			Checksum:  0, // Will be calculated during marshaling
+		},
+		TargetNodeID: targetNodeID,
+		Reason:       reason,
+		NodeID:       nodeID,
 	}
 }
 
