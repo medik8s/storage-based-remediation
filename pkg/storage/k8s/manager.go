@@ -24,7 +24,8 @@ import (
 
 // Config holds Kubernetes-specific configuration
 type Config struct {
-	StorageClassName string
+	StorageClassName    string
+	AggressiveCoherency bool
 }
 
 // Manager handles Kubernetes operations
@@ -114,7 +115,41 @@ func (m *Manager) CreateStandardNFSStorageClass(ctx context.Context, nfsServer, 
 		return nil
 	}
 
-	// Create StorageClass with SBD-optimized mount options
+	// Choose mount options based on aggressive coherency setting
+	var mountOptions []string
+	var mountOptionsDesc string
+
+	if m.config.AggressiveCoherency {
+		// Aggressive cache coherency mount options for strict SBD coordination
+		mountOptions = []string{
+			"nfsvers=4.1",      // Use NFSv4.1 for better performance
+			"hard",             // Hard mount for reliability
+			"timeo=600",        // 60 second timeout
+			"retrans=2",        // 2 retransmissions
+			"noresvport",       // AWS EFS recommended
+			"actimeo=0",        // Disable ALL attribute caching
+			"lookupcache=none", // Disable directory lookup caching
+			"rsize=65536",      // Smaller read size for coherency
+			"wsize=65536",      // Smaller write size for coherency
+			"sync",             // Force synchronous operations
+			"local_lock=none",  // Send all locks to server for coordination
+		}
+		mountOptionsDesc = "aggressive cache coherency (actimeo=0, sync, lookupcache=none)"
+	} else {
+		// Standard EFS-optimized mount options
+		mountOptions = []string{
+			"nfsvers=4.1",   // Use NFSv4.1 for better performance and features
+			"rsize=1048576", // 1MB read size for performance
+			"wsize=1048576", // 1MB write size for performance
+			"hard",          // Hard mount - retry indefinitely on server failure
+			"timeo=600",     // 60 second timeout
+			"retrans=2",     // 2 retransmissions before timeout
+			"noresvport",    // AWS recommended for EFS cache coherency and reconnection
+		}
+		mountOptionsDesc = "EFS-optimized (nfsvers=4.1, hard, noresvport for reliability)"
+	}
+
+	// Create StorageClass with appropriate mount options
 	storageClass := &storagev1.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: storageClassName,
@@ -128,15 +163,7 @@ func (m *Manager) CreateStandardNFSStorageClass(ctx context.Context, nfsServer, 
 			"server": nfsServer,
 			"share":  nfsShare,
 		},
-		MountOptions: []string{
-			"nfsvers=4.1",   // Use NFSv4.1 for better performance and features
-			"rsize=1048576", // 1MB read size for performance
-			"wsize=1048576", // 1MB write size for performance
-			"hard",          // Hard mount - retry indefinitely on server failure
-			"timeo=600",     // 60 second timeout
-			"retrans=2",     // 2 retransmissions before timeout
-			"noresvport",    // AWS recommended for EFS cache coherency and reconnection
-		},
+		MountOptions:         mountOptions,
 		AllowVolumeExpansion: &[]bool{true}[0],
 		ReclaimPolicy:        &[]corev1.PersistentVolumeReclaimPolicy{corev1.PersistentVolumeReclaimRetain}[0],
 		VolumeBindingMode:    &[]storagev1.VolumeBindingMode{storagev1.VolumeBindingImmediate}[0],
@@ -150,7 +177,7 @@ func (m *Manager) CreateStandardNFSStorageClass(ctx context.Context, nfsServer, 
 	log.Printf("✅ Standard NFS StorageClass '%s' created with SBD cache coherency options:", storageClassName)
 	log.Printf("   📡 NFS Server: %s", nfsServer)
 	log.Printf("   📁 NFS Share: %s", nfsShare)
-	log.Printf("   🔄 Mount Options: EFS-optimized (nfsvers=4.1, hard, noresvport for reliability)")
+	log.Printf("   🔄 Mount Options: %s", mountOptionsDesc)
 
 	return nil
 }

@@ -18,6 +18,9 @@ type Config struct {
 	NFSShare         string
 	StorageClassName string
 
+	// Cache Coherency Configuration
+	AggressiveCoherency bool
+
 	// Behavior flags
 	DryRun     bool
 	Cleanup    bool
@@ -70,6 +73,9 @@ func parseFlags() *Config {
 	flag.StringVar(&config.NFSShare, "nfs-share", "", "NFS share path (required)")
 	flag.StringVar(&config.StorageClassName, "storage-class-name", "sbd-nfs-coherent", "StorageClass name")
 
+	// Cache Coherency Configuration
+	flag.BoolVar(&config.AggressiveCoherency, "aggressive-coherency", false, "Enable aggressive cache coherency (cache=none, sync, local_lock=none)")
+
 	// Behavior flags
 	flag.BoolVar(&config.DryRun, "dry-run", false, "Show what would be done without executing")
 	flag.BoolVar(&config.Cleanup, "cleanup", false, "Clean up created StorageClass")
@@ -98,11 +104,12 @@ func parseFlags() *Config {
 
 func (c *Config) toStorageConfig() *storage.Config {
 	return &storage.Config{
-		NFSServer:        c.NFSServer,
-		NFSShare:         c.NFSShare,
-		StorageClassName: c.StorageClassName,
-		DryRun:           c.DryRun,
-		UpdateMode:       c.UpdateMode,
+		NFSServer:           c.NFSServer,
+		NFSShare:            c.NFSShare,
+		StorageClassName:    c.StorageClassName,
+		DryRun:              c.DryRun,
+		UpdateMode:          c.UpdateMode,
+		AggressiveCoherency: c.AggressiveCoherency,
 	}
 }
 
@@ -125,16 +132,26 @@ CACHE COHERENCY FOR SBD:
 • noresvport: AWS-recommended for better reconnection and cache consistency
 • timeo/retrans: Optimized timeout and retry settings for EFS
 
+AGGRESSIVE CACHE COHERENCY:
+For strict SBD coordination use --aggressive-coherency flag which adds:
+• actimeo=0: Disable ALL attribute caching for real-time updates
+• sync: Force synchronous operations to prevent cache lag
+• lookupcache=none: Disable directory lookup caching
+• local_lock=none: Send all locks to server for distributed coordination
+• Smaller buffer sizes (65KB) for reduced cache windows
+
+Use this mode when SBD cache coherency tests fail with standard options.
+
 EXAMPLES:
 
-    # Use EFS filesystem via Standard NFS CSI for explicit cache control
+    # Standard setup (good performance, may have cache delays)
     %s --nfs-server=fs-12345.efs.us-east-1.amazonaws.com --nfs-share=/
 
-    # Use any existing NFS server
-    %s --nfs-server=192.168.1.100 --nfs-share=/shared/sbd
+    # Aggressive coherency (strict SBD coordination, slower performance)
+    %s --nfs-server=fs-12345.efs.us-east-1.amazonaws.com --nfs-share=/ --aggressive-coherency
 
-    # Custom StorageClass name
-    %s --nfs-server=my-nfs.example.com --nfs-share=/sbd --storage-class-name=my-sbd-storage
+    # Use any existing NFS server with aggressive coherency
+    %s --nfs-server=192.168.1.100 --nfs-share=/shared/sbd --aggressive-coherency
 
     # Clean up created StorageClass
     %s --cleanup --storage-class-name sbd-nfs-coherent

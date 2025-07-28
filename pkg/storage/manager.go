@@ -15,6 +15,9 @@ type Config struct {
 	NFSShare         string
 	StorageClassName string
 
+	// Cache Coherency Configuration
+	AggressiveCoherency bool
+
 	// Behavior flags
 	DryRun     bool
 	UpdateMode bool
@@ -46,7 +49,8 @@ func NewManager(ctx context.Context, config *Config) (*Manager, error) {
 
 	// Initialize Kubernetes manager
 	k8sManager, err := k8s.NewManager(ctx, &k8s.Config{
-		StorageClassName: config.StorageClassName,
+		StorageClassName:    config.StorageClassName,
+		AggressiveCoherency: config.AggressiveCoherency,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes manager: %w", err)

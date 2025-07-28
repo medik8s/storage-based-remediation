@@ -223,12 +223,31 @@ build-agent: manifests generate fmt vet ## Build SBD agent binary.
 		-X 'github.com/medik8s/sbd-operator/pkg/version.BuildDate=$(BUILD_DATE)'" \
 		-o bin/sbd-agent cmd/sbd-agent/main.go
 
+##@ Tools
+
+.PHONY: build-tools
+build-tools: build-storage-tool build-watchdog-demo build-validate-sbd-consistency ## Build all tools.
+
 .PHONY: build-storage-tool
 build-storage-tool: manifests generate fmt vet ## Build setup-shared-storage tool binary.
 	go build -ldflags="-X 'github.com/medik8s/sbd-operator/pkg/version.GitCommit=$(GIT_COMMIT)' \
 		-X 'github.com/medik8s/sbd-operator/pkg/version.GitDescribe=$(GIT_DESCRIBE)' \
 		-X 'github.com/medik8s/sbd-operator/pkg/version.BuildDate=$(BUILD_DATE)'" \
-		-o bin/setup-shared-storage cmd/setup-shared-storage/main.go
+		-o bin/setup-shared-storage tools/setup-shared-storage/main.go
+
+.PHONY: build-watchdog-demo
+build-watchdog-demo: manifests generate fmt vet ## Build watchdog-demo tool binary.
+	go build -ldflags="-X 'github.com/medik8s/sbd-operator/pkg/version.GitCommit=$(GIT_COMMIT)' \
+		-X 'github.com/medik8s/sbd-operator/pkg/version.GitDescribe=$(GIT_DESCRIBE)' \
+		-X 'github.com/medik8s/sbd-operator/pkg/version.BuildDate=$(BUILD_DATE)'" \
+		-o bin/watchdog-demo tools/watchdog-demo/main.go
+
+.PHONY: build-validate-sbd-consistency
+build-validate-sbd-consistency: manifests generate fmt vet ## Build validate-sbd-consistency tool binary.
+	go build -ldflags="-X 'github.com/medik8s/sbd-operator/pkg/version.GitCommit=$(GIT_COMMIT)' \
+		-X 'github.com/medik8s/sbd-operator/pkg/version.GitDescribe=$(GIT_DESCRIBE)' \
+		-X 'github.com/medik8s/sbd-operator/pkg/version.BuildDate=$(BUILD_DATE)'" \
+		-o bin/validate-sbd-consistency tools/validate-sbd-consistency/main.go
 
 .PHONY: run
 run: manifests generate fmt vet webhook-certs ## Run a controller from your host.
