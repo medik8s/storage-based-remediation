@@ -296,7 +296,7 @@ func (m *Manager) createSubscription(ctx context.Context) error {
 				"namespace": m.config.Namespace,
 			},
 			"spec": map[string]interface{}{
-				"channel":             "stable-4.15",
+				"channel":             "stable-4.19",
 				"installPlanApproval": "Automatic",
 				"name":                "odf-operator",
 				"source":              "redhat-operators",
@@ -307,17 +307,34 @@ func (m *Manager) createSubscription(ctx context.Context) error {
 
 	_, err := m.dynamicClient.Resource(subscriptionGVR).Namespace(m.config.Namespace).Create(ctx, subscription, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("failed to create Subscription: %w", err)
+		// If odf-operator fails, try legacy ocs-operator
+		if strings.Contains(err.Error(), "odf-operator") {
+			log.Println("⚠️ odf-operator not found, trying legacy ocs-operator...")
+
+			// Update subscription to use ocs-operator
+			subscription.Object["metadata"].(map[string]interface{})["name"] = "ocs-operator"
+			subscription.Object["spec"].(map[string]interface{})["name"] = "ocs-operator"
+			subscription.Object["spec"].(map[string]interface{})["channel"] = "stable-4.15"
+
+			_, err = m.dynamicClient.Resource(subscriptionGVR).Namespace(m.config.Namespace).Create(ctx, subscription, metav1.CreateOptions{})
+			if err != nil && !errors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create Subscription for both odf-operator and ocs-operator: %w", err)
+			}
+			log.Println("✅ Legacy ocs-operator Subscription created")
+		} else {
+			return fmt.Errorf("failed to create Subscription: %w", err)
+		}
+	} else {
+		log.Println("✅ odf-operator Subscription created")
 	}
 
-	log.Println("✅ Subscription created")
 	return nil
 }
 
 // waitForODFOperator waits for the ODF operator to be ready
 func (m *Manager) waitForODFOperator(ctx context.Context) error {
-	timeout := time.After(10 * time.Minute)
-	ticker := time.NewTicker(30 * time.Second)
+	timeout := time.After(15 * time.Minute)    // Increased timeout for operator installation
+	ticker := time.NewTicker(15 * time.Second) // More frequent checks
 	defer ticker.Stop()
 
 	csvGVR := schema.GroupVersionResource{
@@ -326,30 +343,83 @@ func (m *Manager) waitForODFOperator(ctx context.Context) error {
 		Resource: "clusterserviceversions",
 	}
 
+	subscriptionGVR := schema.GroupVersionResource{
+		Group:    "operators.coreos.com",
+		Version:  "v1alpha1",
+		Resource: "subscriptions",
+	}
+
+	log.Println("🔍 Waiting for ODF operator to be ready...")
+
 	for {
 		select {
 		case <-timeout:
-			return fmt.Errorf("timeout waiting for ODF operator to be ready")
+			// Provide detailed troubleshooting information on timeout
+			log.Printf("❌ Timeout waiting for ODF operator to be ready after 15 minutes")
+			log.Printf("🔍 Troubleshooting ODF operator installation...")
+
+			// Check subscription status
+			if err := m.debugSubscriptionStatus(ctx, subscriptionGVR); err != nil {
+				log.Printf("⚠️ Failed to check subscription status: %v", err)
+			}
+
+			// Check CSV status
+			if err := m.debugCSVStatus(ctx, csvGVR); err != nil {
+				log.Printf("⚠️ Failed to check CSV status: %v", err)
+			}
+
+			return fmt.Errorf("timeout waiting for ODF operator to be ready - check subscription and CSV status above")
 		case <-ticker.C:
+			// Check subscription first
+			subscription, err := m.checkSubscriptionStatus(ctx, subscriptionGVR)
+			if err != nil {
+				log.Printf("⏳ Checking subscription status...")
+				continue
+			}
+
+			if subscription != nil {
+				log.Printf("📋 Subscription status: %s", subscription)
+			}
+
+			// Check CSV status
 			csvs, err := m.dynamicClient.Resource(csvGVR).Namespace(m.config.Namespace).List(ctx, metav1.ListOptions{})
 			if err != nil {
 				log.Printf("⏳ Waiting for ODF operator CSV...")
 				continue
 			}
 
+			var foundODFCSV bool
+			var csvStatus string
+
 			for _, csv := range csvs.Items {
 				if name, found, _ := unstructured.NestedString(csv.Object, "metadata", "name"); found {
-					if strings.Contains(name, "odf-operator") {
+					// Look for both odf-operator and ocs-operator (legacy name)
+					if strings.Contains(name, "odf-operator") || strings.Contains(name, "ocs-operator") {
+						foundODFCSV = true
 						phase, found, _ := unstructured.NestedString(csv.Object, "status", "phase")
-						if found && phase == "Succeeded" {
-							log.Println("✅ ODF operator is ready")
-							return nil
+						if found {
+							csvStatus = phase
+							log.Printf("📋 ODF CSV '%s' status: %s", name, phase)
+
+							if phase == "Succeeded" {
+								log.Println("✅ ODF operator is ready")
+								return nil
+							} else if phase == "Failed" {
+								// Get failure reason
+								reason, _, _ := unstructured.NestedString(csv.Object, "status", "reason")
+								message, _, _ := unstructured.NestedString(csv.Object, "status", "message")
+								return fmt.Errorf("ODF operator CSV failed - Reason: %s, Message: %s", reason, message)
+							}
 						}
 					}
 				}
 			}
 
-			log.Printf("⏳ ODF operator not ready yet...")
+			if !foundODFCSV {
+				log.Printf("⏳ ODF operator CSV not found yet...")
+			} else if csvStatus != "" {
+				log.Printf("⏳ ODF operator status: %s, waiting for 'Succeeded'...", csvStatus)
+			}
 		}
 	}
 }
@@ -835,4 +905,143 @@ func printConfig(config *Config) {
 	log.Printf("  Encryption: %t", config.EnableEncryption)
 	log.Printf("  Aggressive Coherency: %t", config.AggressiveCoherency)
 	log.Printf("  Update Mode: %t", config.UpdateMode)
+}
+
+// checkSubscriptionStatus checks the status of the ODF subscription
+func (m *Manager) checkSubscriptionStatus(ctx context.Context, subscriptionGVR schema.GroupVersionResource) (*string, error) {
+	subscriptions, err := m.dynamicClient.Resource(subscriptionGVR).Namespace(m.config.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, sub := range subscriptions.Items {
+		if name, found, _ := unstructured.NestedString(sub.Object, "spec", "name"); found {
+			if name == "odf-operator" || name == "ocs-operator" {
+				// Get subscription status
+				if conditions, found, _ := unstructured.NestedSlice(sub.Object, "status", "conditions"); found {
+					for _, conditionInterface := range conditions {
+						if condition, ok := conditionInterface.(map[string]interface{}); ok {
+							if condType, found, _ := unstructured.NestedString(condition, "type"); found {
+								if condType == "CatalogSourcesUnhealthy" {
+									status, _, _ := unstructured.NestedString(condition, "status")
+									message, _, _ := unstructured.NestedString(condition, "message")
+									statusMsg := fmt.Sprintf("CatalogSourcesUnhealthy: %s - %s", status, message)
+									return &statusMsg, nil
+								}
+							}
+						}
+					}
+				}
+
+				// Get install plan reference
+				if installPlanRef, found, _ := unstructured.NestedString(sub.Object, "status", "installplan", "name"); found {
+					statusMsg := fmt.Sprintf("InstallPlan: %s", installPlanRef)
+					return &statusMsg, nil
+				}
+
+				statusMsg := "Subscription found but status unclear"
+				return &statusMsg, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("ODF subscription not found")
+}
+
+// debugSubscriptionStatus provides detailed subscription debugging information
+func (m *Manager) debugSubscriptionStatus(ctx context.Context, subscriptionGVR schema.GroupVersionResource) error {
+	log.Printf("🔍 Debugging subscription status in namespace %s...", m.config.Namespace)
+
+	subscriptions, err := m.dynamicClient.Resource(subscriptionGVR).Namespace(m.config.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list subscriptions: %w", err)
+	}
+
+	if len(subscriptions.Items) == 0 {
+		log.Printf("❌ No subscriptions found in namespace %s", m.config.Namespace)
+		log.Printf("💡 Suggestion: Check if the namespace exists and OperatorHub is accessible")
+		return nil
+	}
+
+	log.Printf("📋 Found %d subscription(s):", len(subscriptions.Items))
+
+	for _, sub := range subscriptions.Items {
+		name, _, _ := unstructured.NestedString(sub.Object, "metadata", "name")
+		specName, _, _ := unstructured.NestedString(sub.Object, "spec", "name")
+		source, _, _ := unstructured.NestedString(sub.Object, "spec", "source")
+		sourceNamespace, _, _ := unstructured.NestedString(sub.Object, "spec", "sourceNamespace")
+
+		log.Printf("  📦 Subscription: %s (spec.name: %s)", name, specName)
+		log.Printf("     📡 Source: %s in namespace %s", source, sourceNamespace)
+
+		// Check conditions
+		if conditions, found, _ := unstructured.NestedSlice(sub.Object, "status", "conditions"); found {
+			for _, conditionInterface := range conditions {
+				if condition, ok := conditionInterface.(map[string]interface{}); ok {
+					condType, _, _ := unstructured.NestedString(condition, "type")
+					status, _, _ := unstructured.NestedString(condition, "status")
+					message, _, _ := unstructured.NestedString(condition, "message")
+					log.Printf("     🔄 Condition %s: %s - %s", condType, status, message)
+				}
+			}
+		}
+
+		// Check install plan
+		if installPlanRef, found, _ := unstructured.NestedString(sub.Object, "status", "installplan", "name"); found {
+			log.Printf("     📋 InstallPlan: %s", installPlanRef)
+		}
+	}
+
+	return nil
+}
+
+// debugCSVStatus provides detailed CSV debugging information
+func (m *Manager) debugCSVStatus(ctx context.Context, csvGVR schema.GroupVersionResource) error {
+	log.Printf("🔍 Debugging CSV status in namespace %s...", m.config.Namespace)
+
+	csvs, err := m.dynamicClient.Resource(csvGVR).Namespace(m.config.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list CSVs: %w", err)
+	}
+
+	if len(csvs.Items) == 0 {
+		log.Printf("❌ No CSVs found in namespace %s", m.config.Namespace)
+		log.Printf("💡 Suggestion: Check if subscription is creating the CSV")
+		return nil
+	}
+
+	log.Printf("📋 Found %d CSV(s):", len(csvs.Items))
+
+	for _, csv := range csvs.Items {
+		name, _, _ := unstructured.NestedString(csv.Object, "metadata", "name")
+		phase, _, _ := unstructured.NestedString(csv.Object, "status", "phase")
+		reason, _, _ := unstructured.NestedString(csv.Object, "status", "reason")
+		message, _, _ := unstructured.NestedString(csv.Object, "status", "message")
+
+		log.Printf("  📦 CSV: %s", name)
+		log.Printf("     🔄 Phase: %s", phase)
+		if reason != "" {
+			log.Printf("     ⚠️ Reason: %s", reason)
+		}
+		if message != "" {
+			log.Printf("     💬 Message: %s", message)
+		}
+
+		// Check requirements
+		if requirements, found, _ := unstructured.NestedSlice(csv.Object, "status", "requirementStatus"); found {
+			log.Printf("     📋 Requirements:")
+			for i, reqInterface := range requirements {
+				if req, ok := reqInterface.(map[string]interface{}); ok {
+					group, _, _ := unstructured.NestedString(req, "group")
+					version, _, _ := unstructured.NestedString(req, "version")
+					kind, _, _ := unstructured.NestedString(req, "kind")
+					name, _, _ := unstructured.NestedString(req, "name")
+					status, _, _ := unstructured.NestedString(req, "status")
+					log.Printf("       %d. %s/%s %s '%s': %s", i+1, group, version, kind, name, status)
+				}
+			}
+		}
+	}
+
+	return nil
 }
