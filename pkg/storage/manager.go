@@ -71,9 +71,13 @@ func (m *Manager) SetupSharedStorage(ctx context.Context) (*SetupResult, error) 
 	// Step 1: Check if Standard NFS CSI driver is installed
 	log.Println("🔧 Checking Standard NFS CSI driver installation...")
 	if err := m.k8sManager.CheckStandardNFSCSIDriver(ctx); err != nil {
-		return nil, fmt.Errorf("Standard NFS CSI driver not found. Install it with: kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/deploy/install-driver.yaml")
+		log.Println("⚠️ Standard NFS CSI driver not found, installing automatically...")
+		if installErr := m.k8sManager.InstallStandardNFSCSIDriver(ctx); installErr != nil {
+			return nil, fmt.Errorf("failed to install Standard NFS CSI driver: %w", installErr)
+		}
+	} else {
+		log.Println("✅ Standard NFS CSI driver found")
 	}
-	log.Println("✅ Standard NFS CSI driver found")
 
 	// Step 2: Create StorageClass for Standard NFS CSI
 	log.Println("💾 Creating Standard NFS StorageClass with SBD cache coherency options...")
@@ -128,6 +132,7 @@ func (m *Manager) dryRunSetup(ctx context.Context) (*SetupResult, error) {
 	result := &SetupResult{}
 
 	log.Println("[DRY-RUN] 🔧 Would check Standard NFS CSI driver installation")
+	log.Println("[DRY-RUN] 📦 Would automatically install Standard NFS CSI driver if not present")
 	log.Println("[DRY-RUN] 💾 Would create Standard NFS StorageClass with SBD cache coherency options:")
 	log.Printf("[DRY-RUN]   📡 NFS Server: %s", m.config.NFSServer)
 	log.Printf("[DRY-RUN]   📁 NFS Share: %s", m.config.NFSShare)

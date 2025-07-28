@@ -3,7 +3,12 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -62,6 +67,36 @@ func (m *Manager) CheckStandardNFSCSIDriver(ctx context.Context) error {
 		return fmt.Errorf("failed to check Standard NFS CSI controller: %w", err)
 	}
 
+	return nil
+}
+
+// InstallStandardNFSCSIDriver installs the Standard NFS CSI driver
+func (m *Manager) InstallStandardNFSCSIDriver(ctx context.Context) error {
+	log.Println("🔧 Installing Standard NFS CSI driver...")
+
+	// List of manifest URLs to apply in order
+	manifestURLs := []string{
+		"https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/deploy/csi-nfs-driverinfo.yaml",
+		"https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/deploy/rbac-csi-nfs.yaml",
+		"https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/deploy/csi-nfs-controller.yaml",
+		"https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/deploy/csi-nfs-node.yaml",
+	}
+
+	// Apply each manifest
+	for _, url := range manifestURLs {
+		log.Printf("🔗 Applying manifest: %s", url)
+		if err := m.applyManifestFromURL(ctx, url); err != nil {
+			return fmt.Errorf("failed to apply manifest %s: %w", url, err)
+		}
+	}
+
+	// Wait for driver to be ready
+	log.Println("⏳ Waiting for Standard NFS CSI driver to be ready...")
+	if err := m.waitForStandardNFSCSIDriver(ctx); err != nil {
+		return fmt.Errorf("Standard NFS CSI driver failed to become ready: %w", err)
+	}
+
+	log.Println("✅ Standard NFS CSI driver installed successfully")
 	return nil
 }
 
@@ -225,7 +260,11 @@ func buildKubernetesClient() (*kubernetes.Clientset, error) {
 	if err != nil {
 		// Fall back to kubeconfig
 		var kubeconfig string
-		if home := homedir.HomeDir(); home != "" {
+
+		// Check KUBECONFIG environment variable first
+		if kubeconfigEnv := os.Getenv("KUBECONFIG"); kubeconfigEnv != "" {
+			kubeconfig = kubeconfigEnv
+		} else if home := homedir.HomeDir(); home != "" {
 			kubeconfig = fmt.Sprintf("%s/.kube/config", home)
 		}
 
@@ -241,4 +280,79 @@ func buildKubernetesClient() (*kubernetes.Clientset, error) {
 	}
 
 	return clientset, nil
+}
+
+// applyManifestFromURL downloads and applies a Kubernetes manifest from URL
+func (m *Manager) applyManifestFromURL(ctx context.Context, url string) error {
+	// Download manifest
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("failed to download manifest: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to download manifest: HTTP %d", resp.StatusCode)
+	}
+
+	// Read manifest content
+	manifestData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read manifest: %w", err)
+	}
+
+	// Apply manifest using kubectl
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(string(manifestData))
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to apply manifest: %w, output: %s", err, string(output))
+	}
+
+	log.Printf("📋 Applied manifest from %s", url)
+	return nil
+}
+
+// waitForStandardNFSCSIDriver waits for the Standard NFS CSI driver to be ready
+func (m *Manager) waitForStandardNFSCSIDriver(ctx context.Context) error {
+	timeout := time.After(5 * time.Minute)
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			return fmt.Errorf("timeout waiting for Standard NFS CSI driver to be ready")
+		case <-ticker.C:
+			// Check DaemonSet
+			ds, err := m.clientset.AppsV1().DaemonSets("kube-system").Get(ctx, "csi-nfs-node", metav1.GetOptions{})
+			if err != nil {
+				log.Printf("⏳ Waiting for csi-nfs-node DaemonSet...")
+				continue
+			}
+
+			// Check Deployment
+			dep, err := m.clientset.AppsV1().Deployments("kube-system").Get(ctx, "csi-nfs-controller", metav1.GetOptions{})
+			if err != nil {
+				log.Printf("⏳ Waiting for csi-nfs-controller Deployment...")
+				continue
+			}
+
+			// Check if both are ready
+			dsReady := ds.Status.NumberReady > 0 && ds.Status.NumberReady == ds.Status.DesiredNumberScheduled
+			depReady := dep.Status.ReadyReplicas > 0 && dep.Status.ReadyReplicas == dep.Status.Replicas
+
+			if dsReady && depReady {
+				log.Printf("✅ Standard NFS CSI driver is ready (DaemonSet: %d/%d, Deployment: %d/%d)",
+					ds.Status.NumberReady, ds.Status.DesiredNumberScheduled,
+					dep.Status.ReadyReplicas, dep.Status.Replicas)
+				return nil
+			}
+
+			log.Printf("⏳ Standard NFS CSI driver not ready yet (DaemonSet: %d/%d, Deployment: %d/%d)",
+				ds.Status.NumberReady, ds.Status.DesiredNumberScheduled,
+				dep.Status.ReadyReplicas, dep.Status.Replicas)
+		}
+	}
 }
