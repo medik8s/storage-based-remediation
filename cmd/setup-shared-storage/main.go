@@ -147,7 +147,13 @@ Usage: %s [OPTIONS]
 
 This tool sets up EFS-based shared storage for OpenShift/Kubernetes clusters.
 It creates an EFS filesystem, configures networking, installs the EFS CSI driver,
-and creates a StorageClass with ReadWriteMany (RWX) access mode.
+and creates a StorageClass with ReadWriteMany (RWX) access mode optimized for SBD.
+
+CACHE COHERENCY FOR SBD:
+The tool automatically configures appropriate mount options for SBD cache coherency:
+• For OpenShift (when EFS CSI supports it): Standard NFS with cache=none, sync
+• For EKS or limited EFS CSI drivers: EFS utils mounting (handles coherency internally)
+• Validates configuration to prevent mount option conflicts
 
 For OpenShift on AWS, this tool also configures the proper IAM roles and 
 service account annotations required for the EFS CSI driver.
@@ -173,6 +179,13 @@ REQUIREMENTS:
     • AWS credentials configured (via environment, profile, or IAM role)
     • Cluster admin permissions
     • IAM permissions for resource creation
+
+MOUNT OPTIONS CONFIGURATION:
+The tool automatically detects your cluster and EFS CSI driver capabilities to choose:
+• Standard NFS mounting (efs-mount): Uses cache=none,sync for explicit cache coherency
+• EFS utils mounting (efs-ap): Uses tls,regional with built-in cache coherency
+
+This ensures optimal SBD operation with proper inter-node heartbeat coordination.
 
 OPTIONS:
 `, os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0])

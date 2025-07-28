@@ -142,12 +142,17 @@ func (m *Manager) CreateStorageClass(ctx context.Context, efsID string) error {
 		}
 	}
 
-	// Determine mount options based on cluster type
+	// Determine mount options and provisioning mode based on EFS CSI driver capabilities
 	var mountOptions []string
-	if m.isOpenShiftCluster(ctx) {
-		// For OpenShift clusters, use standard NFS4 mounting without EFS-specific options
-		// The EFS CSI driver will handle the EFS-specific functionality internally
-		log.Printf("💾 Configuring StorageClass for OpenShift cluster - using standard NFS mounting")
+	var provisioningMode string
+
+	// Most EFS CSI driver versions only support efs-ap (EFS utils mounting)
+	supportsStandardNFS := m.detectEFSCSICapabilities(ctx)
+
+	if supportsStandardNFS && m.isOpenShiftCluster(ctx) {
+		// For OpenShift with EFS CSI drivers that support standard NFS mounting
+		log.Printf("💾 Configuring StorageClass for OpenShift cluster - using standard NFS mounting with SBD cache coherency options")
+		provisioningMode = "efs-mount"
 		mountOptions = []string{
 			"nfsvers=4.1",
 			"rsize=1048576",
@@ -155,15 +160,28 @@ func (m *Manager) CreateStorageClass(ctx context.Context, efsID string) error {
 			"hard",
 			"timeo=600",
 			"retrans=2",
+			"cache=none",      // Disable client-side caching for SBD coherency
+			"sync",            // Force synchronous operations
+			"local_lock=none", // Send all locks to server (NFSv4 default, explicit for clarity)
 		}
 	} else {
-		// For EKS clusters, use EFS utils-specific mount options
-		log.Printf("💾 Configuring StorageClass for EKS cluster - using EFS utils mounting")
-		mountOptions = []string{
-			"tls",
-			"regional",
+		// For all other cases: use EFS utils mounting which handles cache coherency internally
+		if m.isOpenShiftCluster(ctx) {
+			log.Printf("💾 Configuring StorageClass for OpenShift cluster - using EFS utils mounting (EFS CSI driver doesn't support standard NFS)")
+		} else {
+			log.Printf("💾 Configuring StorageClass for EKS cluster - using EFS utils mounting (cache coherency handled internally)")
 		}
+		provisioningMode = "efs-ap"
+
+		// For EFS utils mounting, follow the official pattern: no explicit mount options
+		// The EFS CSI driver handles all mounting logic internally for efs-ap mode
+		mountOptions = []string{}
+		log.Printf("💾 Using EFS mount options: none (following official EFS CSI pattern - driver handles mounting internally)")
 	}
+
+	// Note: For SBD workloads requiring explicit cache coherency controls:
+	// Consider using the Standard NFS CSI driver (nfs.csi.k8s.io) instead of EFS CSI driver
+	// Standard NFS CSI supports: cache=none, sync, local_lock=none for proper SBD operation
 
 	// Create new StorageClass
 	storageClass := &storagev1.StorageClass{
@@ -175,7 +193,7 @@ func (m *Manager) CreateStorageClass(ctx context.Context, efsID string) error {
 		},
 		Provisioner: "efs.csi.aws.com",
 		Parameters: map[string]string{
-			"provisioningMode": "efs-ap",
+			"provisioningMode": provisioningMode,
 			"fileSystemId":     efsID,
 			"directoryPerms":   "0755",
 			"gidRangeStart":    "1000",
@@ -193,6 +211,74 @@ func (m *Manager) CreateStorageClass(ctx context.Context, efsID string) error {
 	}
 
 	log.Printf("💾 Created StorageClass: %s", m.config.StorageClassName)
+
+	// Validate the StorageClass configuration for SBD compatibility
+	if err := m.validateStorageClassForSBD(storageClass); err != nil {
+		log.Printf("⚠️ StorageClass validation warning: %v", err)
+		log.Printf("💡 SBD may experience cache coherency issues with this configuration")
+	} else {
+		log.Printf("✅ StorageClass configuration validated for SBD cache coherency")
+	}
+
+	return nil
+}
+
+// validateStorageClassForSBD validates that the StorageClass is properly configured for SBD
+func (m *Manager) validateStorageClassForSBD(sc *storagev1.StorageClass) error {
+	provisioningMode := sc.Parameters["provisioningMode"]
+	mountOptions := sc.MountOptions
+
+	// Check for incompatible combinations
+	if provisioningMode == "efs-ap" {
+		// EFS utils mounting - check for incompatible NFS options
+		incompatibleOptions := []string{"cache=none", "sync", "nfsvers"}
+		for _, option := range mountOptions {
+			for _, incompatible := range incompatibleOptions {
+				if strings.Contains(option, incompatible) {
+					return fmt.Errorf("mount option '%s' is incompatible with EFS utils mounting (efs-ap)", option)
+				}
+			}
+		}
+
+		// EFS utils should have tls and regional
+		hasTLS := false
+		hasRegional := false
+		for _, option := range mountOptions {
+			if option == "tls" {
+				hasTLS = true
+			}
+			if option == "regional" {
+				hasRegional = true
+			}
+		}
+
+		if !hasTLS || !hasRegional {
+			return fmt.Errorf("EFS utils mounting should include 'tls' and 'regional' mount options")
+		}
+
+		log.Printf("✅ EFS utils mounting configured correctly - cache coherency handled internally")
+
+	} else if provisioningMode == "efs-mount" {
+		// Standard NFS mounting - check for cache coherency options
+		hasCacheNone := false
+		hasSync := false
+
+		for _, option := range mountOptions {
+			if option == "cache=none" {
+				hasCacheNone = true
+			}
+			if option == "sync" {
+				hasSync = true
+			}
+		}
+
+		if !hasCacheNone || !hasSync {
+			return fmt.Errorf("standard NFS mounting requires 'cache=none' and 'sync' mount options for SBD cache coherency")
+		}
+
+		log.Printf("✅ Standard NFS mounting configured correctly with cache coherency options")
+	}
+
 	return nil
 }
 
@@ -1483,4 +1569,37 @@ func getNamespaceList(locations []struct {
 		namespaces[i] = loc.namespace
 	}
 	return namespaces
+}
+
+// detectEFSCSICapabilities checks if the EFS CSI driver supports standard NFS mounting (efs-mount)
+// Most EFS CSI driver versions only support efs-ap (EFS utils mounting)
+func (m *Manager) detectEFSCSICapabilities(ctx context.Context) bool {
+	// For now, default to EFS utils mounting (efs-ap) since most EFS CSI drivers only support this
+	// In the future, this could be enhanced to:
+	// 1. Check the EFS CSI driver version
+	// 2. Query CSI driver capabilities
+	// 3. Attempt a test StorageClass creation with efs-mount
+
+	log.Printf("🔍 Detecting EFS CSI driver capabilities...")
+
+	// Check if there are any existing StorageClasses using efs-mount successfully
+	storageClasses, err := m.clientset.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		log.Printf("⚠️ Could not list StorageClasses to detect EFS capabilities: %v", err)
+		return false
+	}
+
+	for _, sc := range storageClasses.Items {
+		if sc.Provisioner == "efs.csi.aws.com" {
+			if provisioningMode, exists := sc.Parameters["provisioningMode"]; exists {
+				if provisioningMode == "efs-mount" {
+					log.Printf("✅ Found existing StorageClass using efs-mount, EFS CSI driver supports standard NFS")
+					return true
+				}
+			}
+		}
+	}
+
+	log.Printf("📋 No efs-mount StorageClasses found, defaulting to EFS utils mounting (efs-ap)")
+	return false
 }

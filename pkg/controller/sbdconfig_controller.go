@@ -345,6 +345,16 @@ func (r *SBDConfigReconciler) validateStorageClass(ctx context.Context, sbdConfi
 	provisioner := storageClass.Provisioner
 	if r.isRWXCompatibleProvisioner(provisioner) {
 		logger.Info("StorageClass validation passed", "provisioner", provisioner)
+
+		// For NFS-based storage, validate mount options for SBD cache coherency
+		if r.isNFSBasedProvisioner(provisioner) {
+			if err := r.validateNFSMountOptions(storageClass, logger); err != nil {
+				logger.Info("StorageClass mount options validation failed", "error", err)
+				return fmt.Errorf("StorageClass '%s' mount options are not configured for SBD cache coherency: %w", storageClassName, err)
+			}
+			logger.Info("StorageClass mount options validation passed")
+		}
+
 		return nil
 	}
 
@@ -423,6 +433,75 @@ func (r *SBDConfigReconciler) isRWXIncompatibleProvisioner(provisioner string) b
 	}
 
 	return rwxIncompatibleProvisioners[provisioner]
+}
+
+// isNFSBasedProvisioner checks if a provisioner uses NFS and requires mount option validation
+func (r *SBDConfigReconciler) isNFSBasedProvisioner(provisioner string) bool {
+	// NFS-based provisioners that use standard NFS mount options
+	nfsProvisioners := map[string]bool{
+		// AWS EFS uses NFS4
+		"efs.csi.aws.com": true,
+
+		// Standard NFS provisioners
+		"nfs.csi.k8s.io": true,
+		"cluster.local/nfs-subdir-external-provisioner": true,
+		"k8s-sigs.io/nfs-subdir-external-provisioner":   true,
+		"nfs-provisioner": true,
+		"csi-nfsplugin":   true,
+	}
+
+	return nfsProvisioners[provisioner]
+}
+
+// validateNFSMountOptions validates that NFS mount options include cache coherency settings for SBD
+func (r *SBDConfigReconciler) validateNFSMountOptions(storageClass *storagev1.StorageClass, logger logr.Logger) error {
+	mountOptions := storageClass.MountOptions
+	logger = logger.WithValues("mountOptions", mountOptions)
+
+	// Required mount options for SBD cache coherency
+	requiredOptions := []string{"cache=none", "sync"}
+	recommendedOptions := []string{"local_lock=none"}
+
+	// Check for required options
+	missingRequired := []string{}
+	for _, required := range requiredOptions {
+		found := false
+		for _, option := range mountOptions {
+			if option == required {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missingRequired = append(missingRequired, required)
+		}
+	}
+
+	if len(missingRequired) > 0 {
+		return fmt.Errorf("missing required NFS mount options for SBD cache coherency: %v. These options are required to prevent NFS client-side caching issues that can cause SBD heartbeat coordination failures", missingRequired)
+	}
+
+	// Check for recommended options (warning only)
+	missingRecommended := []string{}
+	for _, recommended := range recommendedOptions {
+		found := false
+		for _, option := range mountOptions {
+			if option == recommended {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missingRecommended = append(missingRecommended, recommended)
+		}
+	}
+
+	if len(missingRecommended) > 0 {
+		logger.Info("StorageClass is missing recommended NFS mount options for optimal SBD operation", "missingOptions", missingRecommended)
+	}
+
+	logger.Info("NFS mount options validation passed", "checkedOptions", requiredOptions)
+	return nil
 }
 
 // testRWXSupport tests if a storage class actually supports ReadWriteMany by creating a temporary PVC

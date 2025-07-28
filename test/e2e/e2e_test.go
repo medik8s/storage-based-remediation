@@ -101,15 +101,15 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 
 	Context("SBD E2E Failure Simulation Tests", func() {
 
-		It("should inspect SBD node mapping and device state", func() {
-			testSBDInspection(clusterInfo)
-		})
-
 		It("should handle basic SBD configuration and agent deployment", func() {
 			if len(clusterInfo.WorkerNodes) < 3 {
 				Skip("Test requires at least 3 worker nodes")
 			}
 			testBasicSBDConfiguration(clusterInfo)
+		})
+
+		It("should inspect SBD node mapping and device state", func() {
+			testSBDInspection(clusterInfo)
 		})
 
 		It("should handle fake remediation CRs", func() {

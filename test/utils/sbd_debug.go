@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/medik8s/sbd-operator/pkg/agent"
@@ -346,6 +347,135 @@ func (tc *TestClients) FenceDeviceSummary(podName, namespace, outputFile string)
 	return nil
 }
 
+// ValidateStorageConfiguration validates that storage is properly configured for SBD
+func (tc *TestClients) ValidateStorageConfiguration(podName, namespace string) error {
+	fmt.Printf("=== Validating Storage Configuration for SBD ===\n")
+
+	// Check mount information
+	fmt.Println("--- NFS Mount Information ---")
+	mountInfo, err := tc.getMountInfo(podName, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to get mount info: %w", err)
+	}
+
+	// Parse and validate mount options
+	if err := validateNFSMountOptions(mountInfo); err != nil {
+		return fmt.Errorf("mount options validation failed: %w", err)
+	}
+
+	// Test file locking behavior
+	fmt.Println("--- File Locking Test ---")
+	if err := tc.testFileLocking(podName, namespace); err != nil {
+		return fmt.Errorf("file locking test failed: %w", err)
+	}
+
+	// Test cache coherency
+	fmt.Println("--- Cache Coherency Test ---")
+	if err := tc.testCacheCoherency(podName, namespace); err != nil {
+		return fmt.Errorf("cache coherency test failed: %w", err)
+	}
+
+	fmt.Printf("✅ Storage configuration validation passed\n\n")
+	return nil
+}
+
+// getMountInfo retrieves mount information for the SBD storage path
+func (tc *TestClients) getMountInfo(podName, namespace string) (string, error) {
+	cmd := []string{"sh", "-c", "mount | grep /dev/sbd"}
+	stdout, stderr, err := tc.execInPod(podName, namespace, cmd)
+	if err != nil {
+		return "", fmt.Errorf("failed to get mount info: %v, stderr: %s", err, stderr)
+	}
+	return stdout, nil
+}
+
+// validateNFSMountOptions validates that mount options include required cache coherency settings
+func validateNFSMountOptions(mountInfo string) error {
+	fmt.Printf("Mount info: %s\n", mountInfo)
+
+	requiredOptions := []string{"cache=none", "sync"}
+	recommendedOptions := []string{"local_lock=none"}
+
+	missing := []string{}
+	for _, option := range requiredOptions {
+		if !strings.Contains(mountInfo, option) {
+			missing = append(missing, option)
+		}
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("❌ Missing required NFS mount options: %v. These are required for SBD cache coherency", missing)
+	}
+
+	fmt.Printf("✅ Required mount options present: %v\n", requiredOptions)
+
+	// Check recommended options
+	missingRec := []string{}
+	for _, option := range recommendedOptions {
+		if !strings.Contains(mountInfo, option) {
+			missingRec = append(missingRec, option)
+		}
+	}
+
+	if len(missingRec) > 0 {
+		fmt.Printf("⚠️  Missing recommended options: %v\n", missingRec)
+	} else {
+		fmt.Printf("✅ Recommended mount options present: %v\n", recommendedOptions)
+	}
+
+	return nil
+}
+
+// testFileLocking tests that file locking is working correctly across the shared storage
+func (tc *TestClients) testFileLocking(podName, namespace string) error {
+	testFile := "/dev/sbd/test-lock-file"
+
+	// Create a test file with flock
+	cmd := []string{"sh", "-c", fmt.Sprintf("echo 'test' > %s && flock -x %s sleep 1", testFile, testFile)}
+	_, stderr, err := tc.execInPod(podName, namespace, cmd)
+	if err != nil {
+		return fmt.Errorf("file locking test failed: %v, stderr: %s", err, stderr)
+	}
+
+	// Clean up test file
+	cleanupCmd := []string{"rm", "-f", testFile}
+	_, _, _ = tc.execInPod(podName, namespace, cleanupCmd)
+
+	fmt.Printf("✅ File locking test passed\n")
+	return nil
+}
+
+// testCacheCoherency tests that cache coherency is working by checking file modification visibility
+func (tc *TestClients) testCacheCoherency(podName, namespace string) error {
+	testFile := "/dev/sbd/test-cache-coherency"
+	testContent := fmt.Sprintf("cache-test-%d", time.Now().Unix())
+
+	// Write test content
+	writeCmd := []string{"sh", "-c", fmt.Sprintf("echo '%s' > %s && sync", testContent, testFile)}
+	_, stderr, err := tc.execInPod(podName, namespace, writeCmd)
+	if err != nil {
+		return fmt.Errorf("cache coherency write test failed: %v, stderr: %s", err, stderr)
+	}
+
+	// Read back immediately (should work with cache=none and sync)
+	readCmd := []string{"cat", testFile}
+	stdout, stderr, err := tc.execInPod(podName, namespace, readCmd)
+	if err != nil {
+		return fmt.Errorf("cache coherency read test failed: %v, stderr: %s", err, stderr)
+	}
+
+	if strings.TrimSpace(stdout) != testContent {
+		return fmt.Errorf("cache coherency test failed: expected '%s', got '%s'", testContent, strings.TrimSpace(stdout))
+	}
+
+	// Clean up test file
+	cleanupCmd := []string{"rm", "-f", testFile}
+	_, _, _ = tc.execInPod(podName, namespace, cleanupCmd)
+
+	fmt.Printf("✅ Cache coherency test passed\n")
+	return nil
+}
+
 // execInPod executes a command in a pod and returns stdout, stderr, and error
 // Uses kubectl exec with system:admin privileges instead of REST API
 func (tc *TestClients) execInPod(podName, namespace string, command []string) (string, string, error) {
@@ -400,7 +530,7 @@ func parseSBDDevice(data []byte) ([]SBDNodeSummary, error) {
 
 		// Check if slot has SBD message magic
 		if len(slotData) >= 8 && string(slotData[:8]) == magic {
-			slot, err := parseSBDSlot(uint16(i+1), slotData)
+			slot, err := parseSBDSlot(uint16(i), slotData)
 			if err == nil && slot.HasData {
 				slots = append(slots, slot)
 			} else {
