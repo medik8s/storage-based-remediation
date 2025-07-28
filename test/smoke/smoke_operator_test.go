@@ -66,16 +66,16 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke", "Operator")
 	AfterEach(func() {
 		specReport := CurrentSpecReport()
 		if specReport.Failed() {
-			debugCollector := testClients.NewDebugCollector()
+			debugCollector := testClients.NewDebugCollector(testNamespace.ArtifactsDir)
 
 			// Collect controller logs
-			debugCollector.CollectControllerLogs(namespace, controllerPodName)
+			debugCollector.CollectControllerLogs(testNamespace.Name, controllerPodName)
 
 			// Collect Kubernetes events
-			debugCollector.CollectKubernetesEvents(namespace)
+			debugCollector.CollectKubernetesEvents(testNamespace.Name)
 
 			By("Fetching curl-metrics logs")
-			req := testClients.Clientset.CoreV1().Pods(namespace).GetLogs("curl-metrics", &corev1.PodLogOptions{})
+			req := testClients.Clientset.CoreV1().Pods(testNamespace.Name).GetLogs("curl-metrics", &corev1.PodLogOptions{})
 			podLogs, err := req.Stream(testClients.Context)
 			if err == nil {
 				defer podLogs.Close()
@@ -87,7 +87,7 @@ var _ = Describe("SBD Operator Smoke Tests", Ordered, Label("Smoke", "Operator")
 			}
 
 			// Collect controller pod description
-			debugCollector.CollectPodDescription(namespace, controllerPodName)
+			debugCollector.CollectPodDescription(testNamespace.Name, controllerPodName)
 		}
 
 	})

@@ -17,9 +17,7 @@ limitations under the License.
 package smoke
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,7 +40,6 @@ import (
 )
 
 var _ = Describe("SBD Agent Smoke Tests", Ordered, Label("Smoke", "Agent"), func() {
-	var controllerPodName string
 
 	// Verify the environment is set up correctly (setup handled by Makefile)
 	BeforeAll(func() {
@@ -59,28 +56,13 @@ var _ = Describe("SBD Agent Smoke Tests", Ordered, Label("Smoke", "Agent"), func
 	AfterEach(func() {
 		specReport := CurrentSpecReport()
 		if specReport.Failed() {
-			debugCollector := testClients.NewDebugCollector()
-
-			// Collect controller logs
-			debugCollector.CollectControllerLogs(namespace, controllerPodName)
-
-			// Collect Kubernetes events
-			debugCollector.CollectKubernetesEvents(namespace)
-
-			By("Fetching curl-metrics logs")
-			req := testClients.Clientset.CoreV1().Pods(namespace).GetLogs("curl-metrics", &corev1.PodLogOptions{})
-			podLogs, err := req.Stream(testClients.Context)
-			if err == nil {
-				defer podLogs.Close()
-				buf := new(bytes.Buffer)
-				_, _ = io.Copy(buf, podLogs)
-				_, _ = fmt.Fprintf(GinkgoWriter, "Metrics logs:\n %s", buf.String())
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get curl-metrics logs: %s", err)
+			systemNamespace := &utils.TestNamespace{
+				Name:         "sbd-operator-system",
+				ArtifactsDir: "testrun/sbd-operator-system",
+				Clients:      testClients,
 			}
-
-			// Collect controller pod description
-			debugCollector.CollectPodDescription(namespace, controllerPodName)
+			utils.DescribeEnvironment(testClients, systemNamespace)
+			utils.DescribeEnvironment(testClients, testNamespace)
 		}
 
 	})

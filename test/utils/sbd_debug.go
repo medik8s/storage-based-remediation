@@ -32,14 +32,12 @@ limitations under the License.
 package utils
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"os"
-	"strings"
+	"os/exec"
 	"time"
-
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes/scheme"
 
 	"github.com/medik8s/sbd-operator/pkg/agent"
 	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
@@ -56,9 +54,9 @@ type SBDSlotSummary struct {
 }
 
 // GetNodeMapFromPod extracts the current node mapping from an SBD agent pod
-func (tc *TestClients) GetNodeMapFromPod(podName, namespace string) ([]sbdprotocol.NodeMapEntry, error) {
+func (tc *TestClients) GetNodeMapFromPod(podName, namespace string) (*sbdprotocol.NodeMapTable, error) {
 	// Execute command to read node mapping file
-	sbdNodeMappingPath := fmt.Sprintf("%s/%s.%s", agent.SharedStorageSBDDeviceDirectory, agent.SharedStorageSBDDeviceFile, agent.SharedStorageNodeMappingSuffix)
+	sbdNodeMappingPath := fmt.Sprintf("%s/%s%s", agent.SharedStorageSBDDeviceDirectory, agent.SharedStorageSBDDeviceFile, agent.SharedStorageNodeMappingSuffix)
 
 	cmd := []string{"cat", sbdNodeMappingPath}
 	stdout, stderr, err := tc.execInPod(podName, namespace, cmd)
@@ -66,12 +64,7 @@ func (tc *TestClients) GetNodeMapFromPod(podName, namespace string) ([]sbdprotoc
 		return nil, fmt.Errorf("failed to read node mapping from pod %s: %v, stderr: %s", podName, err, stderr)
 	}
 
-	entries, err := parseNodeMapping([]byte(stdout))
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse node mapping: %w", err)
-	}
-
-	return entries, nil
+	return parseNodeMapping([]byte(stdout))
 }
 
 // GetSBDDeviceInfoFromPod extracts SBD device information from an SBD agent pod
@@ -95,12 +88,38 @@ func (tc *TestClients) GetSBDDeviceInfoFromPod(podName, namespace string) ([]SBD
 	return slots, nil
 }
 
-// PrintNodeMap prints the node mapping summary to stdout
-func PrintNodeMap(entries []sbdprotocol.NodeMapEntry) {
-	fmt.Printf("=== Node Mapping Summary ===\n")
-	fmt.Printf("Total entries: %d\n\n", len(entries))
+// GetFenceDeviceInfoFromPod extracts fence device information from an SBD agent pod
+func (tc *TestClients) GetFenceDeviceInfoFromPod(podName, namespace string) ([]SBDSlotSummary, error) {
+	// Execute command to read fence device content
+	// Read first 255 slots (255 * 512 bytes = 130560 bytes)
 
-	if len(entries) == 0 {
+	fenceDevicePath := fmt.Sprintf("%s/%s%s", agent.SharedStorageSBDDeviceDirectory, agent.SharedStorageSBDDeviceFile, agent.SharedStorageFenceDeviceSuffix)
+
+	cmd := []string{"dd", "if=" + fenceDevicePath, "bs=512", "count=255", "status=none"}
+	stdout, stderr, err := tc.execInPod(podName, namespace, cmd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read fence device from pod %s: %v, stderr: %s", podName, err, stderr)
+	}
+
+	slots, err := parseSBDDevice([]byte(stdout))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse fence device: %w", err)
+	}
+
+	return slots, nil
+}
+
+// PrintNodeMap prints the node mapping summary to stdout
+func PrintNodeMap(nodeMapTable *sbdprotocol.NodeMapTable) {
+	fmt.Printf("=== Node Mapping Summary ===\n")
+	fmt.Printf("Cluster name: %s\n", nodeMapTable.ClusterName)
+	fmt.Printf("Version: %d\n", nodeMapTable.Version)
+	fmt.Printf("Last update: %s\n", nodeMapTable.LastUpdate)
+	fmt.Printf("Checksum: %d\n", nodeMapTable.Checksum)
+	fmt.Printf("Entries: %d\n", len(nodeMapTable.Entries))
+	fmt.Printf("Slot usage: %v\n", nodeMapTable.SlotUsage)
+
+	if len(nodeMapTable.Entries) == 0 {
 		fmt.Printf("No active node mappings found.\n")
 		return
 	}
@@ -108,7 +127,7 @@ func PrintNodeMap(entries []sbdprotocol.NodeMapEntry) {
 	fmt.Printf("%-6s %-30s %-20s\n", "Slot", "Node Name", "Last Seen")
 	fmt.Printf("%-6s %-30s %-20s\n", "----", "---------", "---------")
 
-	for _, entry := range entries {
+	for _, entry := range nodeMapTable.Entries {
 		lastSeenStr := "Never"
 		if !entry.LastSeen.IsZero() {
 			lastSeenStr = entry.LastSeen.Format("2006-01-02 15:04:05")
@@ -143,8 +162,33 @@ func PrintSBDDevice(slots []SBDSlotSummary) {
 	fmt.Printf("\n")
 }
 
+// PrintFenceDevice prints the fence device summary to stdout
+func PrintFenceDevice(slots []SBDSlotSummary) {
+	fmt.Printf("=== Fence Device Summary ===\n")
+	fmt.Printf("Total slots with data: %d\n\n", len(slots))
+
+	if len(slots) == 0 {
+		fmt.Printf("No active fence slots found.\n")
+		return
+	}
+
+	fmt.Printf("%-6s %-8s %-30s %-12s %-20s %-10s\n", "Slot", "NodeID", "Node Name", "Type", "Timestamp", "Sequence")
+	fmt.Printf("%-6s %-8s %-30s %-12s %-20s %-10s\n", "----", "------", "---------", "----", "---------", "--------")
+
+	for _, slot := range slots {
+		timestampStr := "N/A"
+		if !slot.Timestamp.IsZero() {
+			timestampStr = slot.Timestamp.Format("15:04:05")
+		}
+		nodeNameStr := "Unknown" // We don't have node name in the fence message
+		fmt.Printf("%-6d %-8d %-30s %-12s %-20s %-10d\n",
+			slot.SlotID, slot.NodeID, nodeNameStr, slot.Type, timestampStr, slot.Sequence)
+	}
+	fmt.Printf("\n")
+}
+
 // SaveNodeMapToFile saves the node mapping summary to a file
-func SaveNodeMapToFile(entries []sbdprotocol.NodeMapEntry, filename string) error {
+func SaveNodeMapToFile(nodeMapTable *sbdprotocol.NodeMapTable, filename string) error {
 	file, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %w", filename, err)
@@ -153,9 +197,14 @@ func SaveNodeMapToFile(entries []sbdprotocol.NodeMapEntry, filename string) erro
 
 	fmt.Fprintf(file, "=== Node Mapping Summary ===\n")
 	fmt.Fprintf(file, "Generated at: %s\n", time.Now().Format("2006-01-02 15:04:05"))
-	fmt.Fprintf(file, "Total entries: %d\n\n", len(entries))
+	fmt.Fprintf(file, "Cluster name: %s\n", nodeMapTable.ClusterName)
+	fmt.Fprintf(file, "Version: %d\n", nodeMapTable.Version)
+	fmt.Fprintf(file, "Last update: %s\n", nodeMapTable.LastUpdate)
+	fmt.Fprintf(file, "Checksum: %d\n", nodeMapTable.Checksum)
+	fmt.Fprintf(file, "Entries: %d\n", len(nodeMapTable.Entries))
+	fmt.Fprintf(file, "Slot usage: %v\n", nodeMapTable.SlotUsage)
 
-	if len(entries) == 0 {
+	if len(nodeMapTable.Entries) == 0 {
 		fmt.Fprintf(file, "No active node mappings found.\n")
 		return nil
 	}
@@ -163,7 +212,7 @@ func SaveNodeMapToFile(entries []sbdprotocol.NodeMapEntry, filename string) erro
 	fmt.Fprintf(file, "%-6s %-30s %-20s\n", "Slot", "Node Name", "Last Seen")
 	fmt.Fprintf(file, "%-6s %-30s %-20s\n", "----", "---------", "---------")
 
-	for _, entry := range entries {
+	for _, entry := range nodeMapTable.Entries {
 		lastSeenStr := "Never"
 		if !entry.LastSeen.IsZero() {
 			lastSeenStr = entry.LastSeen.Format("2006-01-02 15:04:05")
@@ -209,20 +258,54 @@ func SaveSBDDeviceToFile(slots []SBDSlotSummary, filename string) error {
 	return nil
 }
 
+// SaveFenceDeviceToFile saves the fence device summary to a file
+func SaveFenceDeviceToFile(slots []SBDSlotSummary, filename string) error {
+	file, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("failed to create file %s: %w", filename, err)
+	}
+	defer file.Close()
+
+	fmt.Fprintf(file, "=== Fence Device Summary ===\n")
+	fmt.Fprintf(file, "Generated at: %s\n", time.Now().Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(file, "Total slots with data: %d\n\n", len(slots))
+
+	if len(slots) == 0 {
+		fmt.Fprintf(file, "No active fence slots found.\n")
+		return nil
+	}
+
+	fmt.Fprintf(file, "%-6s %-8s %-30s %-12s %-20s %-10s\n", "Slot", "NodeID", "Node Name", "Type", "Timestamp", "Sequence")
+	fmt.Fprintf(file, "%-6s %-8s %-30s %-12s %-20s %-10s\n", "----", "------", "---------", "----", "---------", "--------")
+
+	for _, slot := range slots {
+		timestampStr := "N/A"
+		if !slot.Timestamp.IsZero() {
+			timestampStr = slot.Timestamp.Format("15:04:05")
+		}
+		nodeNameStr := "Unknown" // We don't have node name in the fence message
+		fmt.Fprintf(file, "%-6d %-8d %-30s %-12s %-20s %-10d\n",
+			slot.SlotID, slot.NodeID, nodeNameStr, slot.Type, timestampStr, slot.Sequence)
+	}
+	fmt.Fprintf(file, "\n")
+
+	return nil
+}
+
 // NodeMapSummary gets node mapping from a pod and either prints or saves it
 func (tc *TestClients) NodeMapSummary(podName, namespace, outputFile string) error {
-	entries, err := tc.GetNodeMapFromPod(podName, namespace)
+	nodeMapTable, err := tc.GetNodeMapFromPod(podName, namespace)
 	if err != nil {
 		return err
 	}
 
 	if outputFile != "" {
-		if err := SaveNodeMapToFile(entries, outputFile); err != nil {
+		if err := SaveNodeMapToFile(nodeMapTable, outputFile); err != nil {
 			return fmt.Errorf("failed to save node map to file: %w", err)
 		}
 		fmt.Printf("Node mapping summary saved to: %s\n", outputFile)
 	} else {
-		PrintNodeMap(entries)
+		PrintNodeMap(nodeMapTable)
 	}
 
 	return nil
@@ -247,67 +330,59 @@ func (tc *TestClients) SBDDeviceSummary(podName, namespace, outputFile string) e
 	return nil
 }
 
-// execInPod executes a command in a pod and returns stdout, stderr, and error
-// Note: This is a simplified implementation that uses the REST API directly.
-// In production, you would typically use the remotecommand package for proper SPDY streaming.
-func (tc *TestClients) execInPod(podName, namespace string, command []string) (string, string, error) {
-	// Create exec request using Kubernetes API
-	req := tc.Clientset.CoreV1().RESTClient().Post().
-		Resource("pods").
-		Name(podName).
-		Namespace(namespace).
-		SubResource("exec")
-
-	// Set up exec parameters
-	req.VersionedParams(&corev1.PodExecOptions{
-		Command: command,
-		Stdout:  true,
-		Stderr:  true,
-	}, scheme.ParameterCodec)
-
-	// For now, fall back to a simple approach that reads the response directly
-	// This is a simplified implementation - in production you'd want proper streaming
-
-	// Execute the request and get raw response
-	res := req.Do(tc.Context)
-	rawData, err := res.Raw()
+// FenceDeviceSummary gets fence device info from a pod and either prints or saves it
+func (tc *TestClients) FenceDeviceSummary(podName, namespace, outputFile string) error {
+	slots, err := tc.GetFenceDeviceInfoFromPod(podName, namespace)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to execute command in pod %s: %w", podName, err)
+		return err
 	}
 
-	// Parse the response (this is simplified - normally you'd need to handle the SPDY protocol)
-	stdout := string(rawData)
-	stderr := ""
+	if outputFile != "" {
+		if err := SaveFenceDeviceToFile(slots, outputFile); err != nil {
+			return fmt.Errorf("failed to save fence device info to file: %w", err)
+		}
+		fmt.Printf("Fence device summary saved to: %s\n", outputFile)
+	} else {
+		PrintFenceDevice(slots)
+	}
 
-	return stdout, stderr, nil
+	return nil
+}
+
+// execInPod executes a command in a pod and returns stdout, stderr, and error
+// Uses kubectl exec with system:admin privileges instead of REST API
+func (tc *TestClients) execInPod(podName, namespace string, command []string) (string, string, error) {
+	// Build kubectl exec command
+	args := []string{"exec", "-n", namespace, podName, "--"}
+	args = append(args, command...)
+
+	cmd := exec.Command("kubectl", args...)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		return "", stderr.String(), fmt.Errorf("kubectl exec failed: %w", err)
+	}
+
+	return stdout.String(), stderr.String(), nil
 }
 
 // parseNodeMapping parses binary node mapping data
-func parseNodeMapping(data []byte) ([]sbdprotocol.NodeMapEntry, error) {
+func parseNodeMapping(data []byte) (*sbdprotocol.NodeMapTable, error) {
 	// This is a simplified parser - in reality, we'd need to understand
 	// the exact binary format used by the NodeManager
 	// For now, we'll try to extract readable node names and simulate the mapping
 
-	var entries []sbdprotocol.NodeMapEntry
-
-	// Look for readable strings that might be node names
-	content := string(data)
-	lines := strings.Split(content, "\n")
-
-	slotID := uint16(1)
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" && len(line) > 3 && isPrintableString(line) {
-			entries = append(entries, sbdprotocol.NodeMapEntry{
-				SlotID:   slotID,
-				NodeName: line,
-				LastSeen: time.Now(), // Simulated
-			})
-			slotID++
-		}
+	// Unmarshal the data into a NodeMapTable
+	nodeMapTable, err := sbdprotocol.UnmarshalNodeMapTable(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal node mapping: %w", err)
 	}
 
-	return entries, nil
+	return nodeMapTable, nil
 }
 
 // parseSBDDevice parses binary SBD device data

@@ -85,6 +85,12 @@ var _ = AfterSuite(func() {
 var _ = AfterEach(func() {
 	specReport := CurrentSpecReport()
 	if specReport.Failed() {
-		utils.DescribeEnvironment(testClients, namespace)
+		systemNamespace := &utils.TestNamespace{
+			Name:         "sbd-operator-system",
+			ArtifactsDir: "testrun/sbd-operator-system",
+			Clients:      testClients,
+		}
+		utils.DescribeEnvironment(testClients, systemNamespace)
+		utils.DescribeEnvironment(testClients, testNamespace)
 	}
 })

@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
+	"github.com/medik8s/sbd-operator/test/utils"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -39,7 +40,6 @@ const metricsServiceName = "sbd-operator-controller-manager-metrics-service"
 const metricsRoleBindingName = "sbd-operator-metrics-binding"
 
 var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), func() {
-	var controllerPodName string
 
 	// Verify the environment is set up correctly (setup handled by Makefile)
 	//	BeforeAll(func() {
@@ -54,13 +54,13 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 	AfterEach(func() {
 		specReport := CurrentSpecReport()
 		if specReport.Failed() {
-			debugCollector := testClients.NewDebugCollector()
-
-			// Collect controller logs
-			debugCollector.CollectControllerLogs(namespace, controllerPodName)
-
-			// Collect Kubernetes events
-			debugCollector.CollectKubernetesEvents(namespace)
+			systemNamespace := &utils.TestNamespace{
+				Name:         "sbd-operator-system",
+				ArtifactsDir: "testrun/sbd-operator-system",
+				Clients:      testClients,
+			}
+			utils.DescribeEnvironment(testClients, systemNamespace)
+			utils.DescribeEnvironment(testClients, testNamespace)
 		}
 
 	})

@@ -106,8 +106,13 @@ var _ = BeforeEach(func() {
 var _ = AfterEach(func() {
 	specReport := CurrentSpecReport()
 	if specReport.Failed() {
-		utils.DescribeEnvironment(testClients, "sbd-operator-system")
-		utils.DescribeEnvironment(testClients, testNamespace.Name)
+		systemNamespace := &utils.TestNamespace{
+			Name:         "sbd-operator-system",
+			ArtifactsDir: "testrun/sbd-operator-system",
+			Clients:      testClients,
+		}
+		utils.DescribeEnvironment(testClients, systemNamespace)
+		utils.DescribeEnvironment(testClients, testNamespace)
 	}
 	By("Cleaning up previous test attempts")
 	cleanupPreviousTestAttempts()

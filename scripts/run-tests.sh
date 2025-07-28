@@ -413,7 +413,8 @@ cleanup_environment() {
     $KUBECTL delete ns sbd-operator-system --ignore-not-found=true || true
     $KUBECTL delete ns $test_namespace --ignore-not-found=true || true
     $KUBECTL delete ns sbd-system --ignore-not-found=true || true
-    
+    $KUBECTL delete serviceaccount sbd-agent -n "$test_namespace" --ignore-not-found=true || true
+
     # Clean up environment-specific resources
     if [[ "$TEST_ENVIRONMENT" == "crc" ]]; then
         $KUBECTL delete scc sbd-operator-sbd-agent-privileged --ignore-not-found=true || true
@@ -912,15 +913,6 @@ run_tests() {
             ;;
     esac
     
-    # Clean up any leftover test resources from previous runs
-    log_info "Cleaning up any leftover test resources from previous runs"
-    $KUBECTL delete sbdconfig --all -n "$test_namespace" --ignore-not-found=true || true
-    $KUBECTL delete serviceaccount sbd-agent -n "$test_namespace" --ignore-not-found=true || true
-    $KUBECTL delete daemonset --all -n "$test_namespace" --ignore-not-found=true || true
-    
-    # Create test namespace before running tests
-    create_test_namespace
-    
     # Set environment variables for tests
     export QUAY_REGISTRY
     export QUAY_ORG
@@ -1000,26 +992,6 @@ main() {
     
     # Deploy and test
     deploy_operator
-    
-    # Run tests and handle results
-    local test_exit_code=0
-    if ! run_tests; then
-        test_exit_code=1
-        log_warning "Tests failed - skipping cleanup to preserve environment for debugging"
-        CLEANUP_AFTER_TEST="false"
-    fi
-    
-    # Cleanup only if tests passed and cleanup is requested
-    cleanup_environment "after tests"
-    
-    # Final status
-    if [[ $test_exit_code -eq 0 ]]; then
-        log_success "All $TEST_TYPE tests completed successfully!"
-    else
-        log_error "$TEST_TYPE tests failed!"
-    fi
-    
-    exit $test_exit_code
 }
 
 # Handle script interruption - only cleanup if tests haven't failed

@@ -101,19 +101,8 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 
 	Context("SBD E2E Failure Simulation Tests", func() {
 
-		It("should handle fake remediation CRs", func() {
-			testFakeRemediation(clusterInfo)
-		})
-
 		It("should inspect SBD node mapping and device state", func() {
-			if len(clusterInfo.WorkerNodes) < 1 {
-				Skip("Test requires at least 1 worker node")
-			}
 			testSBDInspection(clusterInfo)
-		})
-
-		It("should handle node remediation", func() {
-			testNodeRemediation(clusterInfo)
 		})
 
 		It("should handle basic SBD configuration and agent deployment", func() {
@@ -121,6 +110,17 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 				Skip("Test requires at least 3 worker nodes")
 			}
 			testBasicSBDConfiguration(clusterInfo)
+		})
+
+		It("should handle fake remediation CRs", func() {
+			testFakeRemediation(clusterInfo)
+		})
+
+		It("should handle node remediation", func() {
+			if len(clusterInfo.WorkerNodes) < 2 {
+				Skip("Test requires at least 2 worker nodes")
+			}
+			testNodeRemediation(clusterInfo)
 		})
 
 		It("should trigger fencing when SBD agent loses storage access", func() {
@@ -740,7 +740,6 @@ func testFakeRemediation(cluster ClusterInfo) {
 
 		expectedLogs := []string{
 			"Starting SBDRemediation reconciliation",
-			"Added finalizer to SBDRemediation",
 			"Starting fencing operation",
 			"Fencing operation completed successfully",
 		}
@@ -858,30 +857,33 @@ func testSBDInspection(cluster ClusterInfo) {
 	// Inspect node mapping
 	By("Inspecting node mapping from SBD agent")
 	err = testNamespace.Clients.NodeMapSummary(podName, testNamespace.Name, "")
-	if err != nil {
-		By(fmt.Sprintf("Node mapping inspection failed (expected for test environment): %v", err))
-	}
+	Expect(err).NotTo(HaveOccurred(), "Failed to retrieve node mapping")
 
 	// Try to inspect SBD device if available
 	By("Attempting to inspect SBD device")
 	err = testNamespace.Clients.SBDDeviceSummary(podName, testNamespace.Name, "")
-	if err != nil {
-		By(fmt.Sprintf("SBD device inspection failed (expected for test environment): %v", err))
-	}
+	Expect(err).NotTo(HaveOccurred(), "Failed to retrieve SBD device info")
+
+	// Try to inspect fence device if available
+	By("Attempting to inspect fence device")
+	err = testNamespace.Clients.FenceDeviceSummary(podName, testNamespace.Name, "")
+	Expect(err).NotTo(HaveOccurred(), "Failed to retrieve fence device info")
 
 	// Save inspection results to files for debugging
 	By("Saving inspection results to files")
-	err = testNamespace.Clients.NodeMapSummary(podName, testNamespace.Name, "node-mapping-debug.txt")
-	if err != nil {
-		By(fmt.Sprintf("Failed to save node mapping (expected): %v", err))
-	}
+	err = testNamespace.Clients.NodeMapSummary(podName, testNamespace.Name,
+		fmt.Sprintf("%s/node-mapping-debug.txt", testNamespace.ArtifactsDir))
+	Expect(err).NotTo(HaveOccurred(), "Failed to save node mapping")
 
-	err = testNamespace.Clients.SBDDeviceSummary(podName, testNamespace.Name, "sbd-device-debug.txt")
-	if err != nil {
-		By(fmt.Sprintf("Failed to save SBD device info (expected): %v", err))
-	}
+	err = testNamespace.Clients.SBDDeviceSummary(podName, testNamespace.Name,
+		fmt.Sprintf("%s/sbd-device-debug.txt", testNamespace.ArtifactsDir))
+	Expect(err).NotTo(HaveOccurred(), "Failed to save SBD device info")
 
-	GinkgoWriter.Printf("SBD inspection test completed (errors expected in test environment)\n")
+	err = testNamespace.Clients.FenceDeviceSummary(podName, testNamespace.Name,
+		fmt.Sprintf("%s/fence-device-debug.txt", testNamespace.ArtifactsDir))
+	Expect(err).NotTo(HaveOccurred(), "Failed to save fence device info")
+
+	GinkgoWriter.Printf("SBD inspection test completed\n")
 }
 
 func testSBDAgentCrash(cluster ClusterInfo) {

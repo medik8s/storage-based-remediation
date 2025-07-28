@@ -64,8 +64,9 @@ type TestClients struct {
 
 // TestNamespace represents a test namespace with cleanup functionality
 type TestNamespace struct {
-	Name    string
-	Clients *TestClients
+	Name         string
+	ArtifactsDir string
+	Clients      *TestClients
 }
 
 // PodStatusChecker provides utilities for checking pod status
@@ -130,6 +131,11 @@ func SetupKubernetesClients() (*TestClients, error) {
 // CreateTestNamespace creates a test namespace and returns a cleanup function
 func (tc *TestClients) CreateTestNamespace(namePrefix string) (*TestNamespace, error) {
 	name := fmt.Sprintf("%s-%d", namePrefix, time.Now().UnixNano())
+	artifactsDir := fmt.Sprintf("testrun/%s", name)
+
+	// Create the artifacts directory for this test namespace
+	err := os.MkdirAll(fmt.Sprintf("../../%s", artifactsDir), 0755)
+	Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("failed to create artifacts directory %s", artifactsDir))
 
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
@@ -137,14 +143,15 @@ func (tc *TestClients) CreateTestNamespace(namePrefix string) (*TestNamespace, e
 		},
 	}
 
-	err := tc.Client.Create(tc.Context, ns)
+	err = tc.Client.Create(tc.Context, ns)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create namespace %s: %w", name, err)
 	}
 
 	return &TestNamespace{
-		Name:    name,
-		Clients: tc,
+		Name:         name,
+		ArtifactsDir: artifactsDir,
+		Clients:      tc,
 	}, nil
 }
 
@@ -381,12 +388,13 @@ func (psc *PodStatusChecker) GetFirstPod() (*corev1.Pod, error) {
 
 // DebugCollector provides utilities for collecting debug information
 type DebugCollector struct {
-	Clients *TestClients
+	Clients      *TestClients
+	ArtifactsDir string
 }
 
 // NewDebugCollector creates a new DebugCollector
-func (tc *TestClients) NewDebugCollector() *DebugCollector {
-	return &DebugCollector{Clients: tc}
+func (tc *TestClients) NewDebugCollector(artifactsDir string) *DebugCollector {
+	return &DebugCollector{Clients: tc, ArtifactsDir: artifactsDir}
 }
 
 // CollectControllerLogs collects logs from the controller manager pod
@@ -398,7 +406,7 @@ func (dc *DebugCollector) CollectControllerLogs(namespace, podName string) {
 		defer podLogs.Close()
 		buf := new(bytes.Buffer)
 		_, _ = io.Copy(buf, podLogs)
-		logFileName := fmt.Sprintf("%s.log", podName)
+		logFileName := fmt.Sprintf("%s/%s.log", dc.ArtifactsDir, podName)
 		if f, fileErr := os.Create(logFileName); fileErr == nil {
 			defer f.Close()
 			_, _ = f.Write(buf.Bytes())
@@ -451,7 +459,7 @@ func (dc *DebugCollector) CollectAgentLogs(namespace string) {
 			buf := new(bytes.Buffer)
 			_, _ = io.Copy(buf, podLogs)
 			// Save the logs to a file named after the pod name
-			logFileName := fmt.Sprintf("%s.log", pod.Name)
+			logFileName := fmt.Sprintf("%s/%s.log", dc.ArtifactsDir, pod.Name)
 			if f, fileErr := os.Create(logFileName); fileErr == nil {
 				defer f.Close()
 				_, _ = f.Write(buf.Bytes())
@@ -495,7 +503,7 @@ func (dc *DebugCollector) CollectPodDescription(namespace, podName string) {
 	if err == nil {
 		podYAML, _ := yaml.Marshal(pod)
 		// Save the pod spec YAML to a file named after the pod
-		podFileName := fmt.Sprintf("%s-podspec.yaml", podName)
+		podFileName := fmt.Sprintf("%s/%s-podspec.yaml", dc.ArtifactsDir, podName)
 		if f, fileErr := os.Create(podFileName); fileErr == nil {
 			defer f.Close()
 			_, _ = f.Write(podYAML)
@@ -967,10 +975,10 @@ func (sav *SBDAgentValidator) ValidateAgentDeployment(opts ValidateAgentDeployme
 		"SBD Agent started successfully",
 		"Starting watchdog loop",
 		"Starting peer monitor loop",
-		"Starting SBD device loop",
+		"Starting SBD heartbeat loop",
 		"Successfully acquired file lock on node mapping file",
-		"Successfully updated SBD device with node ID",
 		"All pre-flight checks passed successfully",
+		"SBDRemediation controller added to manager successfully",
 	}
 	for _, successString := range successStrings {
 		if !strings.Contains(fullLogStr, successString) {
@@ -1141,22 +1149,22 @@ func SuiteSetup(namespace string) (*TestNamespace, error) {
 	return testNamespace, nil
 }
 
-func DescribeEnvironment(testClients *TestClients, namespace string) {
+func DescribeEnvironment(testClients *TestClients, testNamespace *TestNamespace) {
 	var controllerPodName string
-	By(fmt.Sprintf("Describing the %s environment", namespace))
+	By(fmt.Sprintf("Describing the %s environment", testNamespace.Name))
 
 	// Determine if this is a controller or agent namespace
 	isControllerNamespace := false
 	isAgentNamespace := false
 
 	// Heuristic: "sbd-operator-system" is the default controller namespace
-	if namespace == "sbd-operator-system" {
+	if testNamespace.Name == "sbd-operator-system" {
 		isControllerNamespace = true
 	} else {
 		// Check for presence of controller-manager pods
 		pods := &corev1.PodList{}
 		err := testClients.Client.List(testClients.Context, pods,
-			client.InNamespace(namespace),
+			client.InNamespace(testNamespace.Name),
 			client.MatchingLabels{"control-plane": "controller-manager"})
 		if err == nil && len(pods.Items) > 0 {
 			isControllerNamespace = true
@@ -1166,7 +1174,7 @@ func DescribeEnvironment(testClients *TestClients, namespace string) {
 	// Heuristic: agent pods are labeled "app=sbd-agent"
 	agentPods := &corev1.PodList{}
 	err := testClients.Client.List(testClients.Context, agentPods,
-		client.InNamespace(namespace),
+		client.InNamespace(testNamespace.Name),
 		client.MatchingLabels{"app": "sbd-agent"})
 	if err == nil && len(agentPods.Items) > 0 {
 		isAgentNamespace = true
@@ -1174,18 +1182,18 @@ func DescribeEnvironment(testClients *TestClients, namespace string) {
 
 	// Log the determination
 	if isControllerNamespace && isAgentNamespace {
-		GinkgoWriter.Printf("Namespace %q contains both controller and agent pods (hybrid or test namespace)\n", namespace)
+		GinkgoWriter.Printf("Namespace %q contains both controller and agent pods (hybrid or test namespace)\n", testNamespace.Name)
 	} else if isControllerNamespace {
-		GinkgoWriter.Printf("Namespace %q is identified as the controller namespace\n", namespace)
+		GinkgoWriter.Printf("Namespace %q is identified as the controller namespace\n", testNamespace.Name)
 	} else if isAgentNamespace {
-		GinkgoWriter.Printf("Namespace %q is identified as an agent namespace\n", namespace)
+		GinkgoWriter.Printf("Namespace %q is identified as an agent namespace\n", testNamespace.Name)
 	} else {
-		GinkgoWriter.Printf("Namespace %q does not appear to contain controller or agent pods\n", namespace)
+		GinkgoWriter.Printf("Namespace %q does not appear to contain controller or agent pods\n", testNamespace.Name)
 	}
 
-	debugCollector := testClients.NewDebugCollector()
+	debugCollector := testClients.NewDebugCollector(testNamespace.ArtifactsDir)
 	// Collect Kubernetes events
-	debugCollector.CollectKubernetesEvents(namespace)
+	debugCollector.CollectKubernetesEvents(testNamespace.Name)
 
 	if isControllerNamespace {
 		By("validating that the controller-manager pod is running as expected")
@@ -1193,7 +1201,7 @@ func DescribeEnvironment(testClients *TestClients, namespace string) {
 			// Get controller-manager pods
 			pods := &corev1.PodList{}
 			err := testClients.Client.List(testClients.Context, pods,
-				client.InNamespace(namespace),
+				client.InNamespace(testNamespace.Name),
 				client.MatchingLabels{"control-plane": "controller-manager"})
 			g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve controller-manager pod information")
 
@@ -1210,7 +1218,7 @@ func DescribeEnvironment(testClients *TestClients, namespace string) {
 			g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
 
 			// Collect controller pod description
-			debugCollector.CollectPodDescription(namespace, controllerPodName)
+			debugCollector.CollectPodDescription(testNamespace.Name, controllerPodName)
 
 			// Validate the pod's status
 			g.Expect(activePods[0].Status.Phase).To(Equal(corev1.PodRunning), "Incorrect controller-manager pod status")
@@ -1218,13 +1226,13 @@ func DescribeEnvironment(testClients *TestClients, namespace string) {
 		Eventually(verifyControllerUp).Should(Succeed())
 
 		// Collect controller logs
-		debugCollector.CollectControllerLogs(namespace, controllerPodName)
+		debugCollector.CollectControllerLogs(testNamespace.Name, controllerPodName)
 	}
 
 	if isAgentNamespace {
 		By("Fetching SBDConfig CRs")
 		sbdConfigs := &medik8sv1alpha1.SBDConfigList{}
-		err := testClients.Client.List(testClients.Context, sbdConfigs, client.InNamespace(namespace))
+		err := testClients.Client.List(testClients.Context, sbdConfigs, client.InNamespace(testNamespace.Name))
 		if err != nil {
 			GinkgoWriter.Printf("Failed to get SBDConfig CRs: %s", err)
 		} else {
@@ -1240,7 +1248,7 @@ func DescribeEnvironment(testClients *TestClients, namespace string) {
 
 		By("Fetching SBDRemediation CRs")
 		sbdRemediations := &medik8sv1alpha1.SBDRemediationList{}
-		err = testClients.Client.List(testClients.Context, sbdRemediations, client.InNamespace(namespace))
+		err = testClients.Client.List(testClients.Context, sbdRemediations, client.InNamespace(testNamespace.Name))
 		if err != nil {
 			GinkgoWriter.Printf("Failed to get SBDRemediation CRs: %s", err)
 		} else {
@@ -1259,7 +1267,7 @@ func DescribeEnvironment(testClients *TestClients, namespace string) {
 			// Get SBD agent pods
 			pods := &corev1.PodList{}
 			err := testClients.Client.List(testClients.Context, pods,
-				client.InNamespace(namespace),
+				client.InNamespace(testNamespace.Name),
 				client.MatchingLabels{"app": "sbd-agent"})
 			g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve SBD agent pod information")
 
@@ -1280,32 +1288,38 @@ func DescribeEnvironment(testClients *TestClients, namespace string) {
 
 			agentPodName := activePods[0].Name
 
-			By("Extracting the device file contents from the agent pod")
-			err = testClients.SBDDeviceSummary(agentPodName, namespace, "sbd-device.txt")
+			By("Extracting the fence device file contents from the agent pod")
+			err = testClients.FenceDeviceSummary(agentPodName, testNamespace.Name, fmt.Sprintf("%s/fence-device.txt", testNamespace.ArtifactsDir))
+			if err != nil {
+				GinkgoWriter.Printf("Failed to get fence device summary: %s\n", err)
+			}
+
+			By("Extracting the heartbeat device file contents from the agent pod")
+			err = testClients.SBDDeviceSummary(agentPodName, testNamespace.Name, fmt.Sprintf("%s/heartbeat-device.txt", testNamespace.ArtifactsDir))
 			if err != nil {
 				GinkgoWriter.Printf("Failed to get SBD device summary: %s\n", err)
 			}
 
 			By("Extracting the node mapping file contents from the agent pod")
-			err = testClients.NodeMapSummary(agentPodName, namespace, "sbd-node-mapping.txt")
+			err = testClients.NodeMapSummary(agentPodName, testNamespace.Name, fmt.Sprintf("%s/node-mapping.txt", testNamespace.ArtifactsDir))
 			if err != nil {
 				GinkgoWriter.Printf("Failed to get node mapping summary: %s\n", err)
 			}
 
 			// Collect agent pod logs
 			for _, pod := range activePods {
-				debugCollector.CollectPodDescription(namespace, pod.Name)
+				debugCollector.CollectPodDescription(testNamespace.Name, pod.Name)
 			}
 		}
 		Eventually(verifyAgentsUp).Should(Succeed())
 
 		// Collect agent logs
-		debugCollector.CollectAgentLogs(namespace)
+		debugCollector.CollectAgentLogs(testNamespace.Name)
 
 	}
 
 	By("Fetching curl-metrics logs")
-	req := testClients.Clientset.CoreV1().Pods(namespace).GetLogs("curl-metrics", &corev1.PodLogOptions{})
+	req := testClients.Clientset.CoreV1().Pods(testNamespace.Name).GetLogs("curl-metrics", &corev1.PodLogOptions{})
 	podLogs, err := req.Stream(testClients.Context)
 	if err == nil {
 		defer podLogs.Close()
