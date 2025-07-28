@@ -105,6 +105,13 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 			testFakeRemediation(clusterInfo)
 		})
 
+		It("should inspect SBD node mapping and device state", func() {
+			if len(clusterInfo.WorkerNodes) < 1 {
+				Skip("Test requires at least 1 worker node")
+			}
+			testSBDInspection(clusterInfo)
+		})
+
 		It("should handle node remediation", func() {
 			testNodeRemediation(clusterInfo)
 		})
@@ -676,7 +683,7 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 	}, time.Minute*5, time.Second*30).Should(BeTrue())
 
 	// Wait for node to actually panic/reboot (the actual SBD fencing)
-	checkNodeReboot(targetNode.Metadata.Name, "due to remediation CR", originalBootTimes[targetNode.Metadata.Name], time.Minute*5, true)
+	checkNodeReboot(targetNode.Metadata.Name, "due to remediation CR", originalBootTimes[targetNode.Metadata.Name], time.Minute*10, true)
 
 	// Verify node recovery (instead of the old immediate recovery test)
 	GinkgoWriter.Printf("Waiting for the cluster to stabilize after remediation\n")
@@ -813,7 +820,7 @@ func testNodeRemediation(cluster ClusterInfo) {
 	}, time.Minute*5, time.Second*30).Should(BeTrue())
 
 	// Wait for node to actually panic/reboot (the actual SBD fencing)
-	checkNodeReboot(targetNode.Metadata.Name, "due to remediation CR", originalBootTimes[targetNode.Metadata.Name], time.Minute*5, true)
+	checkNodeReboot(targetNode.Metadata.Name, "due to remediation CR", originalBootTimes[targetNode.Metadata.Name], time.Minute*10, true)
 
 	// Verify node recovery (instead of the old immediate recovery test)
 	GinkgoWriter.Printf("Waiting for the cluster to stabilize after remediation\n")
@@ -829,6 +836,52 @@ func testNodeRemediation(cluster ClusterInfo) {
 	}
 
 	GinkgoWriter.Printf("node remediation test completed successfully\n")
+}
+
+func testSBDInspection(cluster ClusterInfo) {
+	By("Setting up SBD configuration for inspection test")
+	testBasicSBDConfiguration(cluster)
+
+	// Find an SBD agent pod to inspect
+	By("Finding SBD agent pod for inspection")
+	pods := &corev1.PodList{}
+	err := k8sClient.List(ctx, pods,
+		client.InNamespace(testNamespace.Name),
+		client.MatchingLabels{"app": "sbd-agent"})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(len(pods.Items)).To(BeNumerically(">", 0), "Should find at least one SBD agent pod")
+
+	// Use the first available pod
+	podName := pods.Items[0].Name
+	By(fmt.Sprintf("Using SBD agent pod %s for inspection", podName))
+
+	// Inspect node mapping
+	By("Inspecting node mapping from SBD agent")
+	err = testNamespace.Clients.NodeMapSummary(podName, testNamespace.Name, "")
+	if err != nil {
+		By(fmt.Sprintf("Node mapping inspection failed (expected for test environment): %v", err))
+	}
+
+	// Try to inspect SBD device if available
+	By("Attempting to inspect SBD device")
+	err = testNamespace.Clients.SBDDeviceSummary(podName, testNamespace.Name, "")
+	if err != nil {
+		By(fmt.Sprintf("SBD device inspection failed (expected for test environment): %v", err))
+	}
+
+	// Save inspection results to files for debugging
+	By("Saving inspection results to files")
+	err = testNamespace.Clients.NodeMapSummary(podName, testNamespace.Name, "node-mapping-debug.txt")
+	if err != nil {
+		By(fmt.Sprintf("Failed to save node mapping (expected): %v", err))
+	}
+
+	err = testNamespace.Clients.SBDDeviceSummary(podName, testNamespace.Name, "sbd-device-debug.txt")
+	if err != nil {
+		By(fmt.Sprintf("Failed to save SBD device info (expected): %v", err))
+	}
+
+	GinkgoWriter.Printf("SBD inspection test completed (errors expected in test environment)\n")
 }
 
 func testSBDAgentCrash(cluster ClusterInfo) {

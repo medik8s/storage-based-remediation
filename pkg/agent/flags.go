@@ -120,4 +120,10 @@ const (
 const (
 	// SharedStorageSBDDeviceFile is the filename for the SBD device within shared storage
 	SharedStorageSBDDeviceFile = "sbd-device"
+
+	// SharedStorageNodeMappingFile is the filename for the node mapping within shared storage
+	SharedStorageNodeMappingSuffix = ".nodemap"
+
+	// SharedStorageSBDDeviceDirectory is the directory for the SBD device within shared storage
+	SharedStorageSBDDeviceDirectory = "/sbd-shared"
 )

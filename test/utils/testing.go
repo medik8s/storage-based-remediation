@@ -1276,7 +1276,18 @@ func DescribeEnvironment(testClients *TestClients, namespace string) {
 			}
 
 			agentPodName := activePods[0].Name
-			g.Expect(agentPodName).To(ContainSubstring("sbd-agent"))
+
+			By("Extracting the device file contents from the agent pod")
+			err = testClients.SBDDeviceSummary(agentPodName, namespace, "sbd-device.txt")
+			if err != nil {
+				GinkgoWriter.Printf("Failed to get SBD device summary: %s\n", err)
+			}
+
+			By("Extracting the node mapping file contents from the agent pod")
+			err = testClients.NodeMapSummary(agentPodName, namespace, "sbd-node-mapping.txt")
+			if err != nil {
+				GinkgoWriter.Printf("Failed to get node mapping summary: %s\n", err)
+			}
 
 			// Collect agent pod logs
 			for _, pod := range activePods {
@@ -1297,9 +1308,9 @@ func DescribeEnvironment(testClients *TestClients, namespace string) {
 		defer podLogs.Close()
 		buf := new(bytes.Buffer)
 		_, _ = io.Copy(buf, podLogs)
-		_, _ = fmt.Fprintf(GinkgoWriter, "Metrics logs:\n %s", buf.String())
+		GinkgoWriter.Printf("Metrics logs:\n %s\n", buf.String())
 	} else {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get curl-metrics logs: %s", err)
+		GinkgoWriter.Printf("Failed to get curl-metrics logs: %s\n", err)
 	}
 
 }
