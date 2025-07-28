@@ -218,9 +218,9 @@ func getFileChecksum(testClients *utils.TestClients, podName, namespace, fileTyp
 	case "sbd-device":
 		filePath = "/dev/sbd/sbd-device"
 	case "fence-device":
-		filePath = "/dev/sbd/sbd-device.fence"
+		filePath = "/dev/sbd/sbd-device-fence"
 	case "node-mapping":
-		filePath = "/dev/sbd/sbd-device.node-mapping"
+		filePath = "/dev/sbd/sbd-device-nodemap"
 	default:
 		return "", fmt.Errorf("unknown file type: %s", fileType)
 	}
