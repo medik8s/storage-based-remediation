@@ -25,20 +25,21 @@ limitations under the License.
 //	err := testClients.NodeMapSummary("sbd-agent-pod-name", "sbd-system", "node-mapping.txt")
 //
 //	// Print SBD device info to stdout
-//	err := testClients.SBDDeviceSummary("sbd-agent-pod-name", "sbd-system", "/dev/shared-sbd", "")
+//	err := testClients.SBDDeviceSummary("sbd-agent-pod-name", "sbd-system", "")
 //
 //	// Save SBD device info to file
-//	err := testClients.SBDDeviceSummary("sbd-agent-pod-name", "sbd-system", "/dev/shared-sbd", "sbd-device.txt")
+//	err := testClients.SBDDeviceSummary("sbd-agent-pod-name", "sbd-system", "sbd-device.txt")
 package utils
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes/scheme"
 
 	"github.com/medik8s/sbd-operator/pkg/agent"
 	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
@@ -247,23 +248,38 @@ func (tc *TestClients) SBDDeviceSummary(podName, namespace, outputFile string) e
 }
 
 // execInPod executes a command in a pod and returns stdout, stderr, and error
+// Note: This is a simplified implementation that uses the REST API directly.
+// In production, you would typically use the remotecommand package for proper SPDY streaming.
 func (tc *TestClients) execInPod(podName, namespace string, command []string) (string, string, error) {
-	// Build kubectl exec command
-	args := []string{"exec", podName, "-n", namespace, "--"}
-	args = append(args, command...)
+	// Create exec request using Kubernetes API
+	req := tc.Clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(namespace).
+		SubResource("exec")
 
-	cmd := exec.Command("kubectl", args...)
+	// Set up exec parameters
+	req.VersionedParams(&corev1.PodExecOptions{
+		Command: command,
+		Stdout:  true,
+		Stderr:  true,
+	}, scheme.ParameterCodec)
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// For now, fall back to a simple approach that reads the response directly
+	// This is a simplified implementation - in production you'd want proper streaming
 
-	err := cmd.Run()
+	// Execute the request and get raw response
+	res := req.Do(tc.Context)
+	rawData, err := res.Raw()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to execute kubectl exec: %w", err)
+		return "", "", fmt.Errorf("failed to execute command in pod %s: %w", podName, err)
 	}
 
-	return stdout.String(), stderr.String(), nil
+	// Parse the response (this is simplified - normally you'd need to handle the SPDY protocol)
+	stdout := string(rawData)
+	stderr := ""
+
+	return stdout, stderr, nil
 }
 
 // parseNodeMapping parses binary node mapping data

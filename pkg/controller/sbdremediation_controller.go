@@ -103,7 +103,13 @@ type conditionUpdate struct {
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // SetSBDDevice sets the SBD device for fencing operations
+// DEPRECATED: Use SetFenceDevice instead
 func (r *SBDRemediationReconciler) SetSBDDevice(device *blockdevice.Device) {
+	r.sbdDevice = device
+}
+
+// SetFenceDevice sets the fence device for fencing operations
+func (r *SBDRemediationReconciler) SetFenceDevice(device *blockdevice.Device) {
 	r.sbdDevice = device
 }
 

@@ -398,7 +398,7 @@ func TestSBDAgent_ReadPeerHeartbeat(t *testing.T) {
 	defer agent.Stop()
 
 	// Set the mock device after creation to override the real device
-	agent.setSBDDevice(mockDevice)
+	agent.setSBDDevices(mockDevice, mockDevice)
 
 	// Initially, should return no error for empty slot
 	err = agent.readPeerHeartbeat(2)
@@ -461,7 +461,7 @@ func TestSBDAgent_ReadPeerHeartbeat_InvalidMessage(t *testing.T) {
 	defer agent.Stop()
 
 	// Set the mock device after creation
-	agent.setSBDDevice(mockDevice)
+	agent.setSBDDevices(mockDevice, mockDevice)
 
 	// Write invalid data to peer slot
 	invalidData := []byte("invalid message data")
@@ -506,7 +506,7 @@ func TestSBDAgent_ReadPeerHeartbeat_DeviceError(t *testing.T) {
 	defer agent.Stop()
 
 	// Set the mock device after creation
-	agent.setSBDDevice(mockDevice)
+	agent.setSBDDevices(mockDevice, mockDevice)
 
 	// Configure device to fail reads
 	mockDevice.SetFailRead(true)
@@ -540,7 +540,7 @@ func TestSBDAgent_ReadPeerHeartbeat_NodeIDMismatch(t *testing.T) {
 	defer agent.Stop()
 
 	// Set the mock device after creation
-	agent.setSBDDevice(mockDevice)
+	agent.setSBDDevices(mockDevice, mockDevice)
 
 	// Write a heartbeat message from node 5 in node 2's slot (mismatch)
 	timestamp := uint64(time.Now().UnixNano())
@@ -594,7 +594,7 @@ func TestSBDAgent_PeerMonitorLoop_Integration(t *testing.T) {
 	defer agent.Stop()
 
 	// Set the mock device after creation
-	agent.setSBDDevice(mockDevice)
+	agent.setSBDDevices(mockDevice, mockDevice)
 
 	// Write heartbeats for multiple peers
 	err = mockDevice.WritePeerHeartbeat(2, 12345, 1)
@@ -700,7 +700,7 @@ func TestSBDAgent_WriteHeartbeatToSBD(t *testing.T) {
 	}
 	defer agent.Stop()
 
-	agent.setSBDDevice(mockDevice)
+	agent.setSBDDevices(mockDevice, mockDevice)
 
 	// Write heartbeat
 	err = agent.writeHeartbeatToSBD()
@@ -757,7 +757,7 @@ func TestSBDAgent_WriteHeartbeatToSBD_DeviceError(t *testing.T) {
 	}
 	defer agent.Stop()
 
-	agent.setSBDDevice(mockDevice)
+	agent.setSBDDevices(mockDevice, mockDevice)
 
 	// Configure device to fail writes
 	mockDevice.SetFailWrite(true)
@@ -789,7 +789,7 @@ func TestSBDAgent_WriteHeartbeatToSBD_SyncError(t *testing.T) {
 	}
 	defer agent.Stop()
 
-	agent.setSBDDevice(mockDevice)
+	agent.setSBDDevices(mockDevice, mockDevice)
 
 	// Configure device to fail sync
 	mockDevice.SetFailSync(true)
@@ -943,7 +943,7 @@ func BenchmarkSBDAgent_WriteHeartbeat(b *testing.B) {
 	}
 	defer agent.Stop()
 
-	agent.setSBDDevice(mockDevice)
+	agent.setSBDDevices(mockDevice, mockDevice)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -971,7 +971,7 @@ func BenchmarkSBDAgent_ReadPeerHeartbeat(b *testing.B) {
 	}
 	defer agent.Stop()
 
-	agent.setSBDDevice(mockDevice)
+	agent.setSBDDevices(mockDevice, mockDevice)
 
 	// Write a peer heartbeat
 	err = mockDevice.WritePeerHeartbeat(2, 12345, 1)
@@ -1019,7 +1019,7 @@ func TestSBDAgent_ReadOwnSlotForFenceMessage(t *testing.T) {
 	defer agent.Stop()
 
 	// Set the mock device
-	agent.setSBDDevice(mockDevice)
+	agent.setSBDDevices(mockDevice, mockDevice)
 
 	// Initially, no fence message should be found
 	err = agent.readOwnSlotForFenceMessage()
@@ -1075,7 +1075,7 @@ func TestSBDAgent_ReadOwnSlotForFenceMessage_WrongTarget(t *testing.T) {
 	defer agent.Stop()
 
 	// Set the mock device
-	agent.setSBDDevice(mockDevice)
+	agent.setSBDDevices(mockDevice, mockDevice)
 
 	// Write a fence message targeting a different node
 	err = mockDevice.WriteFenceMessage(2, 5, 100, sbdprotocol.FENCE_REASON_MANUAL)
@@ -1158,7 +1158,7 @@ func TestSBDAgent_WatchdogLoop_WithSelfFence(t *testing.T) {
 	}
 
 	// Set the mock SBD device
-	agent.setSBDDevice(mockSBDDevice)
+	agent.setSBDDevices(mockSBDDevice, mockSBDDevice)
 
 	// Set self-fence detected
 	agent.setSelfFenceDetected(true)
@@ -1632,15 +1632,15 @@ func TestSBDAgent_FileLockingConfiguration(t *testing.T) {
 		defer agent.Stop()
 
 		// Verify file locking is enabled via NodeManager
-		if agent.nodeManager == nil {
+		if agent.heartbeatNodeManager == nil {
 			t.Error("Expected NodeManager to be initialized")
-		} else if !agent.nodeManager.IsFileLockingEnabled() {
+		} else if !agent.heartbeatNodeManager.IsFileLockingEnabled() {
 			t.Error("Expected file locking to be enabled")
 		}
 
 		// Verify coordination strategy
-		if agent.nodeManager != nil {
-			strategy := agent.nodeManager.GetCoordinationStrategy()
+		if agent.heartbeatNodeManager != nil {
+			strategy := agent.heartbeatNodeManager.GetCoordinationStrategy()
 			if strategy != "file-locking" && strategy != "jitter-fallback" {
 				t.Errorf("Expected file-locking or jitter-fallback strategy, got: %s", strategy)
 			}
@@ -1667,15 +1667,15 @@ func TestSBDAgent_FileLockingConfiguration(t *testing.T) {
 		defer agent.Stop()
 
 		// Verify file locking is disabled via NodeManager
-		if agent.nodeManager == nil {
+		if agent.heartbeatNodeManager == nil {
 			t.Error("Expected NodeManager to be initialized")
-		} else if agent.nodeManager.IsFileLockingEnabled() {
+		} else if agent.heartbeatNodeManager.IsFileLockingEnabled() {
 			t.Error("Expected file locking to be disabled")
 		}
 
 		// Verify coordination strategy
-		if agent.nodeManager != nil {
-			strategy := agent.nodeManager.GetCoordinationStrategy()
+		if agent.heartbeatNodeManager != nil {
+			strategy := agent.heartbeatNodeManager.GetCoordinationStrategy()
 			if strategy != "jitter-only" {
 				t.Errorf("Expected jitter-only strategy, got: %s", strategy)
 			}

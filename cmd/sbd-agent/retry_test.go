@@ -46,7 +46,7 @@ func TestSBDAgent_FailureTracking(t *testing.T) {
 	defer agent.Stop()
 
 	// Set the mock device
-	agent.setSBDDevice(mockDevice)
+	agent.setSBDDevices(mockDevice, mockDevice)
 
 	// Test initial failure counts
 	if agent.watchdogFailureCount != 0 {
@@ -300,7 +300,7 @@ func TestSBDAgent_HeartbeatRetryMechanism(t *testing.T) {
 	defer agent.Stop()
 
 	// Set the mock device and make it fail initially
-	agent.setSBDDevice(mockDevice)
+	agent.setSBDDevices(mockDevice, mockDevice)
 	mockDevice.SetFailWrite(true)
 
 	// Test heartbeat write failure

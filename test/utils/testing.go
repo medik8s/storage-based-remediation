@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
@@ -57,6 +58,7 @@ var (
 type TestClients struct {
 	Client    client.Client
 	Clientset *kubernetes.Clientset
+	Config    *rest.Config
 	Context   context.Context
 }
 
@@ -120,6 +122,7 @@ func SetupKubernetesClients() (*TestClients, error) {
 	return &TestClients{
 		Client:    k8sClient,
 		Clientset: clientset,
+		Config:    config,
 		Context:   context.Background(),
 	}, nil
 }

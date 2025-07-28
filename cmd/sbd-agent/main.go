@@ -517,35 +517,44 @@ func (rle *RemediationLeaderElector) setLeader(leader bool) {
 	rle.isLeader = leader
 }
 
+// generateFenceDevicePath creates the fence device path from the heartbeat device path
+// by appending the fence device suffix from agent constants
+func generateFenceDevicePath(heartbeatDevicePath string) string {
+	return heartbeatDevicePath + agent.FenceDeviceSuffix
+}
+
 // SBDAgent represents the main SBD agent with self-fencing capabilities
 type SBDAgent struct {
-	watchdog          WatchdogInterface
-	sbdDevice         BlockDevice
-	sbdDevicePath     string
-	nodeName          string
-	nodeID            uint16
-	petInterval       time.Duration
-	sbdUpdateInterval time.Duration
-	heartbeatInterval time.Duration
-	peerCheckInterval time.Duration
-	rebootMethod      string
-	ioTimeout         time.Duration
-	ctx               context.Context
-	cancel            context.CancelFunc
-	sbdHealthy        bool
-	sbdHealthyMutex   sync.RWMutex
-	heartbeatSequence uint64
-	heartbeatSeqMutex sync.Mutex
-	peerMonitor       *PeerMonitor
-	selfFenceDetected bool
-	selfFenceMutex    sync.RWMutex
-	metricsPort       int
-	metricsServer     *http.Server
+	watchdog            WatchdogInterface
+	heartbeatDevice     BlockDevice // Device used for heartbeat messages
+	fenceDevice         BlockDevice // Device used for fence messages
+	heartbeatDevicePath string      // Path to heartbeat device
+	fenceDevicePath     string      // Path to fence device
+	nodeName            string
+	nodeID              uint16
+	petInterval         time.Duration
+	sbdUpdateInterval   time.Duration
+	heartbeatInterval   time.Duration
+	peerCheckInterval   time.Duration
+	rebootMethod        string
+	ioTimeout           time.Duration
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	sbdHealthy          bool
+	sbdHealthyMutex     sync.RWMutex
+	heartbeatSequence   uint64
+	heartbeatSeqMutex   sync.Mutex
+	peerMonitor         *PeerMonitor
+	selfFenceDetected   bool
+	selfFenceMutex      sync.RWMutex
+	metricsPort         int
+	metricsServer       *http.Server
 
 	// Node mapping for hash-based slot assignment (always enabled)
-	nodeManager      *sbdprotocol.NodeManager
-	nodeManagerStop  chan struct{}
-	staleNodeTimeout time.Duration
+	heartbeatNodeManager *sbdprotocol.NodeManager // Node manager for heartbeat device
+	fenceNodeManager     *sbdprotocol.NodeManager // Node manager for fence device
+	nodeManagerStop      chan struct{}
+	staleNodeTimeout     time.Duration
 
 	// Failure tracking and retry configuration
 	watchdogFailureCount  int
@@ -571,18 +580,18 @@ type SBDAgent struct {
 }
 
 // NewSBDAgent creates a new SBD agent with the specified configuration
-func NewSBDAgent(watchdogPath, sbdDevicePath, nodeName, clusterName string, nodeID uint16, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval time.Duration, sbdTimeoutSeconds uint, rebootMethod string, metricsPort int, staleNodeTimeout time.Duration, fileLockingEnabled bool, ioTimeout time.Duration, k8sClient client.Client, k8sClientset kubernetes.Interface, watchNamespace string, enableFencing bool) (*SBDAgent, error) {
+func NewSBDAgent(watchdogPath, heartbeatDevicePath, nodeName, clusterName string, nodeID uint16, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval time.Duration, sbdTimeoutSeconds uint, rebootMethod string, metricsPort int, staleNodeTimeout time.Duration, fileLockingEnabled bool, ioTimeout time.Duration, k8sClient client.Client, k8sClientset kubernetes.Interface, watchNamespace string, enableFencing bool) (*SBDAgent, error) {
 	// Initialize watchdog first (always required) with softdog fallback for systems without hardware watchdog
 	wd, err := watchdog.NewWithSoftdogFallback(watchdogPath, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize watchdog %s: %w", watchdogPath, err)
 	}
 
-	return NewSBDAgentWithWatchdog(wd, sbdDevicePath, nodeName, clusterName, nodeID, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval, sbdTimeoutSeconds, rebootMethod, metricsPort, staleNodeTimeout, fileLockingEnabled, ioTimeout, k8sClient, k8sClientset, watchNamespace, enableFencing)
+	return NewSBDAgentWithWatchdog(wd, heartbeatDevicePath, nodeName, clusterName, nodeID, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval, sbdTimeoutSeconds, rebootMethod, metricsPort, staleNodeTimeout, fileLockingEnabled, ioTimeout, k8sClient, k8sClientset, watchNamespace, enableFencing)
 }
 
 // NewSBDAgentWithWatchdog creates a new SBD agent with a provided watchdog interface
-func NewSBDAgentWithWatchdog(wd WatchdogInterface, sbdDevicePath, nodeName, clusterName string, nodeID uint16, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval time.Duration, sbdTimeoutSeconds uint, rebootMethod string, metricsPort int, staleNodeTimeout time.Duration, fileLockingEnabled bool, ioTimeout time.Duration, k8sClient client.Client, k8sClientset kubernetes.Interface, watchNamespace string, enableFencing bool) (*SBDAgent, error) {
+func NewSBDAgentWithWatchdog(wd WatchdogInterface, heartbeatDevicePath, nodeName, clusterName string, nodeID uint16, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval time.Duration, sbdTimeoutSeconds uint, rebootMethod string, metricsPort int, staleNodeTimeout time.Duration, fileLockingEnabled bool, ioTimeout time.Duration, k8sClient client.Client, k8sClientset kubernetes.Interface, watchNamespace string, enableFencing bool) (*SBDAgent, error) {
 	// Input validation
 	if wd == nil {
 		return nil, fmt.Errorf("watchdog interface cannot be nil")
@@ -591,8 +600,8 @@ func NewSBDAgentWithWatchdog(wd WatchdogInterface, sbdDevicePath, nodeName, clus
 		return nil, fmt.Errorf("watchdog path cannot be empty")
 	}
 
-	if sbdDevicePath == "" {
-		return nil, fmt.Errorf("SBD device path cannot be empty")
+	if heartbeatDevicePath == "" {
+		return nil, fmt.Errorf("heartbeat device path cannot be empty")
 	}
 	if nodeName == "" {
 		return nil, fmt.Errorf("node name cannot be empty")
@@ -600,6 +609,9 @@ func NewSBDAgentWithWatchdog(wd WatchdogInterface, sbdDevicePath, nodeName, clus
 	if nodeID == 0 || nodeID > 255 {
 		return nil, fmt.Errorf("node ID must be between 1 and 255, got %d", nodeID)
 	}
+
+	// Generate fence device path from heartbeat device path
+	fenceDevicePath := generateFenceDevicePath(heartbeatDevicePath)
 
 	// Validate timing parameters
 	if petInterval <= 0 {
@@ -647,7 +659,8 @@ func NewSBDAgentWithWatchdog(wd WatchdogInterface, sbdDevicePath, nodeName, clus
 
 	agent := &SBDAgent{
 		watchdog:             wd,
-		sbdDevicePath:        sbdDevicePath,
+		heartbeatDevicePath:  heartbeatDevicePath,
+		fenceDevicePath:      fenceDevicePath,
 		nodeName:             nodeName,
 		nodeID:               nodeID,
 		petInterval:          petInterval,
@@ -675,29 +688,35 @@ func NewSBDAgentWithWatchdog(wd WatchdogInterface, sbdDevicePath, nodeName, clus
 		leaderElectionConfig: leaderElectionConfig,
 	}
 
-	// Initialize SBD device
-	if err := agent.initializeSBDDevice(); err != nil {
+	// Initialize heartbeat and fence devices
+	if err := agent.initializeSBDDevices(); err != nil {
 		agent.cancel()
-		return nil, fmt.Errorf("failed to initialize SBD device: %w", err)
+		return nil, fmt.Errorf("failed to initialize SBD devices: %w", err)
 	}
 
-	// Initialize node manager for consistent slot assignment
-	if err := agent.initializeNodeManager(clusterName, fileLockingEnabled); err != nil {
+	// Initialize node managers for consistent slot assignment on both devices
+	if err := agent.initializeNodeManagers(clusterName, fileLockingEnabled); err != nil {
 		agent.cancel()
-		if agent.sbdDevice != nil {
-			agent.sbdDevice.Close()
+		if agent.heartbeatDevice != nil {
+			agent.heartbeatDevice.Close()
 		}
-		return nil, fmt.Errorf("failed to initialize node manager: %w", err)
+		if agent.fenceDevice != nil {
+			agent.fenceDevice.Close()
+		}
+		return nil, fmt.Errorf("failed to initialize node managers: %w", err)
 	}
 
 	// Initialize the PeerMonitor
-	agent.peerMonitor = NewPeerMonitor(sbdTimeoutSeconds, nodeID, agent.nodeManager, logger)
+	agent.peerMonitor = NewPeerMonitor(sbdTimeoutSeconds, nodeID, agent.heartbeatNodeManager, logger)
 
 	// Initialize metrics
 	if err := agent.initMetrics(); err != nil {
 		agent.cancel()
-		if agent.sbdDevice != nil {
-			agent.sbdDevice.Close()
+		if agent.heartbeatDevice != nil {
+			agent.heartbeatDevice.Close()
+		}
+		if agent.fenceDevice != nil {
+			agent.fenceDevice.Close()
 		}
 		return nil, fmt.Errorf("failed to initialize metrics: %w", err)
 	}
@@ -739,58 +758,89 @@ func (s *SBDAgent) initMetrics() error {
 	return nil
 }
 
-// initializeSBDDevice opens and initializes the SBD block device
-func (s *SBDAgent) initializeSBDDevice() error {
-	device, err := blockdevice.OpenWithTimeout(s.sbdDevicePath, s.ioTimeout, logger.WithName("sbd-device"))
+// initializeSBDDevices opens and initializes the SBD block devices
+func (s *SBDAgent) initializeSBDDevices() error {
+	heartbeatDevice, err := blockdevice.OpenWithTimeout(s.heartbeatDevicePath, s.ioTimeout, logger.WithName("heartbeat-device"))
 	if err != nil {
-		return fmt.Errorf("failed to open SBD device %s with timeout %v: %w", s.sbdDevicePath, s.ioTimeout, err)
+		return fmt.Errorf("failed to open heartbeat device %s with timeout %v: %w", s.heartbeatDevicePath, s.ioTimeout, err)
 	}
 
-	s.sbdDevice = device
-	logger.Info("Successfully opened SBD device", "devicePath", s.sbdDevicePath, "ioTimeout", s.ioTimeout)
+	fenceDevice, err := blockdevice.OpenWithTimeout(s.fenceDevicePath, s.ioTimeout, logger.WithName("fence-device"))
+	if err != nil {
+		return fmt.Errorf("failed to open fence device %s with timeout %v: %w", s.fenceDevicePath, s.ioTimeout, err)
+	}
+
+	s.heartbeatDevice = heartbeatDevice
+	s.fenceDevice = fenceDevice
+	logger.Info("Successfully opened SBD devices", "heartbeatDevicePath", s.heartbeatDevicePath, "fenceDevicePath", s.fenceDevicePath, "ioTimeout", s.ioTimeout)
 	return nil
 }
 
-// setSBDDevice allows setting a custom SBD device (useful for testing)
-func (s *SBDAgent) setSBDDevice(device BlockDevice) {
-	s.sbdDevice = device
+// setSBDDevices allows setting custom SBD devices (useful for testing)
+func (s *SBDAgent) setSBDDevices(heartbeatDevice, fenceDevice BlockDevice) {
+	s.heartbeatDevice = heartbeatDevice
+	s.fenceDevice = fenceDevice
 }
 
-// initializeNodeManager initializes the node manager for hash-based slot mapping
-func (s *SBDAgent) initializeNodeManager(clusterName string, fileLockingEnabled bool) error {
-	if s.sbdDevice == nil {
-		return fmt.Errorf("SBD device must be initialized before node manager")
+// initializeNodeManagers initializes the node managers for hash-based slot mapping
+func (s *SBDAgent) initializeNodeManagers(clusterName string, fileLockingEnabled bool) error {
+	if s.heartbeatDevice == nil || s.fenceDevice == nil {
+		return fmt.Errorf("SBD devices must be initialized before node managers")
 	}
 
-	config := sbdprotocol.NodeManagerConfig{
+	heartbeatConfig := sbdprotocol.NodeManagerConfig{
 		ClusterName:        clusterName,
 		SyncInterval:       30 * time.Second,
 		StaleNodeTimeout:   s.staleNodeTimeout,
-		Logger:             logger.WithName("node-manager"),
+		Logger:             logger.WithName("heartbeat-node-manager"),
 		FileLockingEnabled: fileLockingEnabled,
 	}
 
-	nodeManager, err := sbdprotocol.NewNodeManager(s.sbdDevice, config)
-	if err != nil {
-		return fmt.Errorf("failed to create node manager: %w", err)
+	fenceConfig := sbdprotocol.NodeManagerConfig{
+		ClusterName:        clusterName,
+		SyncInterval:       30 * time.Second,
+		StaleNodeTimeout:   s.staleNodeTimeout,
+		Logger:             logger.WithName("fence-node-manager"),
+		FileLockingEnabled: fileLockingEnabled,
 	}
 
-	s.nodeManager = nodeManager
+	heartbeatNodeManager, err := sbdprotocol.NewNodeManager(s.heartbeatDevice, heartbeatConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create heartbeat node manager: %w", err)
+	}
+
+	fenceNodeManager, err := sbdprotocol.NewNodeManager(s.fenceDevice, fenceConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create fence node manager: %w", err)
+	}
+
+	s.heartbeatNodeManager = heartbeatNodeManager
+	s.fenceNodeManager = fenceNodeManager
 
 	// Get or assign slot for this node
-	slotID, err := s.nodeManager.GetSlotForNode(s.nodeName)
+	heartbeatSlotID, err := s.heartbeatNodeManager.GetSlotForNode(s.nodeName)
 	if err != nil {
-		return fmt.Errorf("failed to get slot for node %s: %w", s.nodeName, err)
+		return fmt.Errorf("failed to get slot for node %s on heartbeat device: %w", s.nodeName, err)
+	}
+
+	fenceSlotID, err := s.fenceNodeManager.GetSlotForNode(s.nodeName)
+	if err != nil {
+		return fmt.Errorf("failed to get slot for node %s on fence device: %w", s.nodeName, err)
+	}
+
+	// Ensure both devices use the same slot ID for the node
+	if heartbeatSlotID != fenceSlotID {
+		return fmt.Errorf("slot ID mismatch between devices: heartbeat=%d, fence=%d", heartbeatSlotID, fenceSlotID)
 	}
 
 	// Update the node ID to use the hash-based slot
-	s.nodeID = slotID
-	logger.Info("Node assigned to slot via hash-based mapping",
+	s.nodeID = heartbeatSlotID
+	logger.Info("Node assigned to slots via hash-based mapping",
 		"nodeName", s.nodeName,
-		"slotID", slotID,
+		"slotID", heartbeatSlotID,
 		"clusterName", clusterName,
 		"fileLockingEnabled", fileLockingEnabled,
-		"coordinationStrategy", s.nodeManager.GetCoordinationStrategy())
+		"coordinationStrategy", s.heartbeatNodeManager.GetCoordinationStrategy())
 
 	return nil
 }
@@ -863,9 +913,14 @@ func (s *SBDAgent) incrementFailureCount(operationType string) int {
 			"threshold", MaxConsecutiveFailures)
 
 		// Try to reinitialize the device on next iteration
-		if s.sbdDevice != nil && !s.sbdDevice.IsClosed() {
-			if closeErr := s.sbdDevice.Close(); closeErr != nil {
-				logger.Error(closeErr, "Failed to close SBD device", "devicePath", s.sbdDevicePath)
+		if s.heartbeatDevice != nil && !s.heartbeatDevice.IsClosed() {
+			if closeErr := s.heartbeatDevice.Close(); closeErr != nil {
+				logger.Error(closeErr, "Failed to close heartbeat device", "devicePath", s.heartbeatDevicePath)
+			}
+		}
+		if s.fenceDevice != nil && !s.fenceDevice.IsClosed() {
+			if closeErr := s.fenceDevice.Close(); closeErr != nil {
+				logger.Error(closeErr, "Failed to close fence device", "devicePath", s.fenceDevicePath)
 			}
 		}
 	}
@@ -916,9 +971,9 @@ func (s *SBDAgent) shouldTriggerSelfFence() (bool, string) {
 
 // writeNodeIDToSBD writes the node name to the SBD device at the predefined offset
 func (s *SBDAgent) writeNodeIDToSBD() error {
-	if s.nodeManager != nil {
+	if s.heartbeatNodeManager != nil {
 		// Use NodeManager's file locking for coordination
-		return s.nodeManager.WriteWithLock("write node ID", func() error {
+		return s.heartbeatNodeManager.WriteWithLock("write node ID", func() error {
 			return s.writeNodeIDToSBDInternal()
 		})
 	}
@@ -928,10 +983,10 @@ func (s *SBDAgent) writeNodeIDToSBD() error {
 
 // writeNodeIDToSBDInternal performs the actual write operation without locking
 func (s *SBDAgent) writeNodeIDToSBDInternal() error {
-	if s.sbdDevice == nil || s.sbdDevice.IsClosed() {
+	if s.heartbeatDevice == nil || s.heartbeatDevice.IsClosed() {
 		// Try to reinitialize the device
-		if err := s.initializeSBDDevice(); err != nil {
-			return fmt.Errorf("SBD device is closed and reinitialize failed: %w", err)
+		if err := s.initializeSBDDevices(); err != nil {
+			return fmt.Errorf("SBD devices are closed and reinitialize failed: %w", err)
 		}
 	}
 
@@ -940,7 +995,7 @@ func (s *SBDAgent) writeNodeIDToSBDInternal() error {
 	copy(nodeData, []byte(s.nodeName))
 
 	// Write node name to SBD device
-	n, err := s.sbdDevice.WriteAt(nodeData, SBDNodeIDOffset)
+	n, err := s.heartbeatDevice.WriteAt(nodeData, SBDNodeIDOffset)
 	if err != nil {
 		return fmt.Errorf("failed to write node ID to SBD device: %w", err)
 	}
@@ -950,11 +1005,11 @@ func (s *SBDAgent) writeNodeIDToSBDInternal() error {
 	}
 
 	// Ensure data is committed to storage
-	if err := s.sbdDevice.Sync(); err != nil {
+	if err := s.heartbeatDevice.Sync(); err != nil {
 		return fmt.Errorf("failed to sync SBD device: %w", err)
 	}
 	logger.V(1).Info("Successfully wrote node ID to SBD device",
-		"devicePath", s.sbdDevicePath,
+		"devicePath", s.heartbeatDevicePath,
 		"nodeName", s.nodeName,
 		"offset", SBDNodeIDOffset,
 		"bytesWritten", len(nodeData))
@@ -964,9 +1019,9 @@ func (s *SBDAgent) writeNodeIDToSBDInternal() error {
 
 // writeHeartbeatToSBD writes a heartbeat message to the node's designated slot
 func (s *SBDAgent) writeHeartbeatToSBD() error {
-	if s.nodeManager != nil {
+	if s.heartbeatNodeManager != nil {
 		// Use NodeManager's file locking for coordination
-		return s.nodeManager.WriteWithLock("write heartbeat", func() error {
+		return s.heartbeatNodeManager.WriteWithLock("write heartbeat", func() error {
 			return s.writeHeartbeatToSBDInternal()
 		})
 	}
@@ -976,10 +1031,10 @@ func (s *SBDAgent) writeHeartbeatToSBD() error {
 
 // writeHeartbeatToSBDInternal performs the actual heartbeat write operation without locking
 func (s *SBDAgent) writeHeartbeatToSBDInternal() error {
-	if s.sbdDevice == nil || s.sbdDevice.IsClosed() {
+	if s.heartbeatDevice == nil || s.heartbeatDevice.IsClosed() {
 		// Try to reinitialize the device
-		if err := s.initializeSBDDevice(); err != nil {
-			return fmt.Errorf("SBD device is closed and reinitialize failed: %w", err)
+		if err := s.initializeSBDDevices(); err != nil {
+			return fmt.Errorf("SBD devices are closed and reinitialize failed: %w", err)
 		}
 	}
 
@@ -998,7 +1053,7 @@ func (s *SBDAgent) writeHeartbeatToSBDInternal() error {
 	slotOffset := int64(s.nodeID) * sbdprotocol.SBD_SLOT_SIZE
 
 	// Write heartbeat message to the designated slot
-	n, err := s.sbdDevice.WriteAt(msgBytes, slotOffset)
+	n, err := s.heartbeatDevice.WriteAt(msgBytes, slotOffset)
 	if err != nil {
 		return fmt.Errorf("failed to write heartbeat to SBD device at offset %d: %w", slotOffset, err)
 	}
@@ -1008,7 +1063,7 @@ func (s *SBDAgent) writeHeartbeatToSBDInternal() error {
 	}
 
 	// Ensure data is committed to storage
-	if err := s.sbdDevice.Sync(); err != nil {
+	if err := s.heartbeatDevice.Sync(); err != nil {
 		return fmt.Errorf("failed to sync SBD device after heartbeat write: %w", err)
 	}
 
@@ -1021,7 +1076,7 @@ func (s *SBDAgent) writeHeartbeatToSBDInternal() error {
 
 // readPeerHeartbeat reads and processes a heartbeat from a peer node's slot
 func (s *SBDAgent) readPeerHeartbeat(peerNodeID uint16) error {
-	if s.sbdDevice == nil || s.sbdDevice.IsClosed() {
+	if s.heartbeatDevice == nil || s.heartbeatDevice.IsClosed() {
 		return fmt.Errorf("SBD device is not available")
 	}
 
@@ -1030,7 +1085,7 @@ func (s *SBDAgent) readPeerHeartbeat(peerNodeID uint16) error {
 
 	// Read the entire slot
 	slotData := make([]byte, sbdprotocol.SBD_SLOT_SIZE)
-	n, err := s.sbdDevice.ReadAt(slotData, slotOffset)
+	n, err := s.heartbeatDevice.ReadAt(slotData, slotOffset)
 	if err != nil {
 		// Increment SBD I/O errors counter for read failures
 		sbdIOErrorsCounter.Inc()
@@ -1089,7 +1144,8 @@ func (s *SBDAgent) readPeerHeartbeat(peerNodeID uint16) error {
 func (s *SBDAgent) Start() error {
 	logger.Info("Starting SBD Agent",
 		"watchdogDevice", s.watchdog.Path(),
-		"sbdDevice", s.sbdDevicePath,
+		"heartbeatDevice", s.heartbeatDevicePath,
+		"fenceDevice", s.fenceDevicePath,
 		"nodeName", s.nodeName,
 		"nodeID", s.nodeID,
 		"petInterval", s.petInterval,
@@ -1098,16 +1154,15 @@ func (s *SBDAgent) Start() error {
 		"peerCheckInterval", s.peerCheckInterval)
 
 	// Start node manager periodic sync if using hash mapping
-	if s.nodeManager != nil {
-		s.nodeManagerStop = s.nodeManager.StartPeriodicSync()
+	if s.heartbeatNodeManager != nil {
+		s.nodeManagerStop = s.heartbeatNodeManager.StartPeriodicSync()
 	}
 
 	// Start the watchdog monitoring goroutine
 	go s.watchdogLoop()
 
 	// Start SBD device monitoring if available
-	if s.sbdDevicePath != "" {
-		go s.sbdDeviceLoop()
+	if s.heartbeatDevicePath != "" {
 		go s.heartbeatLoop()
 		go s.peerMonitorLoop()
 	}
@@ -1158,12 +1213,18 @@ func (s *SBDAgent) Stop() error {
 		}
 	}
 
-	// Close SBD device last (after all operations complete)
-	if s.sbdDevice != nil && !s.sbdDevice.IsClosed() {
-		logger.Info("Closing SBD device", "devicePath", s.sbdDevicePath)
-		if err := s.sbdDevice.Close(); err != nil {
-			logger.Error(err, "Failed to close SBD device", "devicePath", s.sbdDevicePath)
-			return fmt.Errorf("failed to close SBD device: %w", err)
+	// Close SBD devices last (after all operations complete)
+	if s.heartbeatDevice != nil && !s.heartbeatDevice.IsClosed() {
+		logger.Info("Closing SBD devices", "heartbeatDevicePath", s.heartbeatDevicePath, "fenceDevicePath", s.fenceDevicePath)
+		if err := s.heartbeatDevice.Close(); err != nil {
+			logger.Error(err, "Failed to close heartbeat device", "devicePath", s.heartbeatDevicePath)
+			return fmt.Errorf("failed to close heartbeat device: %w", err)
+		}
+		if s.fenceDevice != nil && !s.fenceDevice.IsClosed() {
+			if closeErr := s.fenceDevice.Close(); closeErr != nil {
+				logger.Error(closeErr, "Failed to close fence device", "devicePath", s.fenceDevicePath)
+				return fmt.Errorf("failed to close fence device: %w", closeErr)
+			}
 		}
 	}
 
@@ -1272,52 +1333,12 @@ func (s *SBDAgent) watchdogLoop() {
 				}
 			} else {
 				logger.Error(nil, "Skipping watchdog pet - SBD device is unhealthy",
-					"sbdDevicePath", s.sbdDevicePath,
+					"sbdDevicePath", s.heartbeatDevicePath,
 					"sbdHealthy", s.isSBDHealthy())
 				// Mark agent as unhealthy when SBD device is unhealthy
 				agentHealthyGauge.Set(0)
 				// This will cause the system to reboot via watchdog timeout
 				// This is the desired behavior for self-fencing when SBD fails
-			}
-		}
-	}
-}
-
-// sbdDeviceLoop continuously updates the SBD device with node status
-func (s *SBDAgent) sbdDeviceLoop() {
-	ticker := time.NewTicker(s.sbdUpdateInterval)
-	defer ticker.Stop()
-
-	logger.Info("Starting SBD device loop", "interval", s.sbdUpdateInterval)
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			logger.Info("SBD device loop stopping")
-			return
-		case <-ticker.C:
-			// Use retry mechanism for SBD device operations
-			err := retry.Do(s.ctx, s.retryConfig, "write node ID to SBD", func() error {
-				return s.writeNodeIDToSBD()
-			})
-
-			if err != nil {
-				failureCount := s.incrementFailureCount("sbd")
-				logger.Error(err, "Failed to write node ID to SBD device after retries",
-					"devicePath", s.sbdDevicePath,
-					"nodeID", s.nodeID,
-					"failureCount", failureCount,
-					"maxFailures", MaxConsecutiveFailures)
-
-			} else {
-				// Success - reset failure count and update status
-				s.resetFailureCount("sbd")
-				logger.V(1).Info("Successfully updated SBD device with node ID",
-					"devicePath", s.sbdDevicePath,
-					"nodeID", s.nodeID)
-				s.setSBDHealthy(true)
-				// Update agent health status
-				agentHealthyGauge.Set(1)
 			}
 		}
 	}
@@ -1344,7 +1365,7 @@ func (s *SBDAgent) heartbeatLoop() {
 			if err != nil {
 				failureCount := s.incrementFailureCount("heartbeat")
 				logger.Error(err, "Failed to write heartbeat to SBD device after retries",
-					"devicePath", s.sbdDevicePath,
+					"devicePath", s.heartbeatDevicePath,
 					"nodeID", s.nodeID,
 					"failureCount", failureCount,
 					"maxFailures", MaxConsecutiveFailures)
@@ -1355,7 +1376,7 @@ func (s *SBDAgent) heartbeatLoop() {
 				// Only mark as healthy if it was previously unhealthy
 				// The regular SBD device loop will also update this
 				if !s.isSBDHealthy() {
-					logger.Info("SBD device recovered during heartbeat write", "devicePath", s.sbdDevicePath)
+					logger.Info("SBD device recovered during heartbeat write", "devicePath", s.heartbeatDevicePath)
 					s.setSBDHealthy(true)
 					// Update agent health status
 					agentHealthyGauge.Set(1)
@@ -1582,8 +1603,8 @@ func (s *SBDAgent) executeSelfFencing(reason string) {
 
 // readOwnSlotForFenceMessage reads the agent's own slot to check for fence messages
 func (s *SBDAgent) readOwnSlotForFenceMessage() error {
-	if s.sbdDevice == nil || s.sbdDevice.IsClosed() {
-		return fmt.Errorf("SBD device is not available")
+	if s.fenceDevice == nil || s.fenceDevice.IsClosed() {
+		return fmt.Errorf("fence device is not available")
 	}
 
 	// Calculate slot offset for our own node
@@ -1591,7 +1612,7 @@ func (s *SBDAgent) readOwnSlotForFenceMessage() error {
 
 	// Read the entire slot
 	slotData := make([]byte, sbdprotocol.SBD_SLOT_SIZE)
-	n, err := s.sbdDevice.ReadAt(slotData, slotOffset)
+	n, err := s.fenceDevice.ReadAt(slotData, slotOffset)
 	if err != nil {
 		return fmt.Errorf("failed to read own slot %d from offset %d: %w", s.nodeID, slotOffset, err)
 	}
@@ -1993,14 +2014,14 @@ func (s *SBDAgent) addSBDRemediationController() error {
 	}
 
 	// Set up the reconciler with agent resources
-	// Type assert the SBD device to the expected concrete type
-	if sbdDevice, ok := s.sbdDevice.(*blockdevice.Device); ok {
-		reconciler.SetSBDDevice(sbdDevice)
+	// Type assert the fence device to the expected concrete type for fence operations
+	if fenceDevice, ok := s.fenceDevice.(*blockdevice.Device); ok {
+		reconciler.SetFenceDevice(fenceDevice)
 	} else {
-		return fmt.Errorf("SBD device is not of expected type *blockdevice.Device")
+		return fmt.Errorf("fence device is not of expected type *blockdevice.Device")
 	}
 
-	reconciler.SetNodeManager(s.nodeManager)
+	reconciler.SetNodeManager(s.fenceNodeManager)
 	reconciler.SetOwnNodeInfo(s.nodeID, s.nodeName)
 
 	// Set up the controller with the manager

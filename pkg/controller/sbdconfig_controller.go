@@ -652,25 +652,29 @@ func (r *SBDConfigReconciler) ensureSBDDevice(ctx context.Context, sbdConfig *me
 							Args: []string{
 								fmt.Sprintf(`
 set -e
-SBD_DEVICE_PATH="/sbd-shared/%s"
+HEARTBEAT_DEVICE_PATH="/sbd-shared/%s"
+FENCE_DEVICE_PATH="/sbd-shared/%s"
 SBD_DEVICE_SIZE_KB=1024
-NODE_MAP_FILE="$SBD_DEVICE_PATH.nodemap"
+HEARTBEAT_NODE_MAP_FILE="$HEARTBEAT_DEVICE_PATH.nodemap"
+FENCE_NODE_MAP_FILE="$FENCE_DEVICE_PATH.nodemap"
 CLUSTER_NAME="${CLUSTER_NAME:-default-cluster}"
 
-echo "Initializing SBD device and node mapping at $SBD_DEVICE_PATH"
+echo "Initializing SBD devices: heartbeat at $HEARTBEAT_DEVICE_PATH, fence at $FENCE_DEVICE_PATH"
 
 # Function to create initial node mapping file
 create_initial_node_mapping() {
     local node_map_file="$1"
     local cluster_name="$2"
+    local device_type="$3"
     
-    echo "Creating initial node mapping file: $node_map_file"
+    echo "Creating initial node mapping file: $node_map_file (for $device_type device)"
     
     # Create minimal valid node mapping table JSON
     local json_data="{
   \"magic\": [83, 66, 68, 78, 77, 65, 80, 49],
   \"version\": 1,
   \"cluster_name\": \"$cluster_name\",
+  \"device_type\": \"$device_type\",
   \"entries\": {},
   \"slot_usage\": {},
   \"last_update\": \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%S.%%3NZ)\"
@@ -690,47 +694,71 @@ create_initial_node_mapping() {
     echo "Created initial node mapping file: $node_map_file ($(wc -c < "$node_map_file") bytes)"
 }
 
-# Check if both SBD device and node mapping file exist
-if [ -f "$SBD_DEVICE_PATH" ] && [ -f "$NODE_MAP_FILE" ]; then
-    echo "SBD device and node mapping file already exist"
-    # Verify both files have content
-    if [ -s "$SBD_DEVICE_PATH" ] && [ -s "$NODE_MAP_FILE" ]; then
-        echo "Both files are non-empty, initialization complete"
-        exit 0
-    else
-        echo "One or both files are empty, re-initializing..."
-    fi
-elif [ -f "$SBD_DEVICE_PATH" ]; then
-    echo "SBD device exists but node mapping file is missing, creating node mapping..."
-    create_initial_node_mapping "$NODE_MAP_FILE" "$CLUSTER_NAME"
-    exit 0
-else
-    echo "SBD device does not exist, creating both SBD device and node mapping..."
+# Function to create SBD device file
+create_sbd_device() {
+    local device_path="$1"
+    local device_type="$2"
+    
+    echo "Creating $device_type SBD device at $device_path"
+    
+    # Create the SBD device file with specific size (1MB = 1024KB)
+    # This provides space for multiple node slots and metadata
+    dd if=/dev/zero of="$device_path" bs=1024 count=$SBD_DEVICE_SIZE_KB
+    
+    # Set appropriate permissions for the SBD device
+    chmod 664 "$device_path"
+    
+    echo "$device_type SBD device created successfully at $device_path"
+}
+
+# Check if both heartbeat and fence devices and their node mapping files exist
+HEARTBEAT_EXISTS=false
+FENCE_EXISTS=false
+
+if [ -f "$HEARTBEAT_DEVICE_PATH" ] && [ -s "$HEARTBEAT_DEVICE_PATH" ] && [ -f "$HEARTBEAT_NODE_MAP_FILE" ] && [ -s "$HEARTBEAT_NODE_MAP_FILE" ]; then
+    echo "Heartbeat SBD device and node mapping file already exist and are non-empty"
+    HEARTBEAT_EXISTS=true
 fi
 
-# Create the SBD device file with specific size (1MB = 1024KB)
-# This provides space for multiple node slots and metadata
-dd if=/dev/zero of="$SBD_DEVICE_PATH" bs=1024 count=$SBD_DEVICE_SIZE_KB
+if [ -f "$FENCE_DEVICE_PATH" ] && [ -s "$FENCE_DEVICE_PATH" ] && [ -f "$FENCE_NODE_MAP_FILE" ] && [ -s "$FENCE_NODE_MAP_FILE" ]; then
+    echo "Fence SBD device and node mapping file already exist and are non-empty"
+    FENCE_EXISTS=true
+fi
 
-# Set appropriate permissions for the SBD device
-chmod 664 "$SBD_DEVICE_PATH"
+if [ "$HEARTBEAT_EXISTS" = true ] && [ "$FENCE_EXISTS" = true ]; then
+    echo "Both heartbeat and fence SBD devices are properly initialized"
+    exit 0
+fi
 
-# Create the initial node mapping file
-create_initial_node_mapping "$NODE_MAP_FILE" "$CLUSTER_NAME"
+# Create heartbeat device if needed
+if [ "$HEARTBEAT_EXISTS" = false ]; then
+    echo "Creating heartbeat SBD device and node mapping..."
+    create_sbd_device "$HEARTBEAT_DEVICE_PATH" "heartbeat"
+    create_initial_node_mapping "$HEARTBEAT_NODE_MAP_FILE" "$CLUSTER_NAME" "heartbeat"
+fi
 
-# Verify both files were created successfully
-if [ -f "$SBD_DEVICE_PATH" ] && [ -s "$SBD_DEVICE_PATH" ] && [ -f "$NODE_MAP_FILE" ] && [ -s "$NODE_MAP_FILE" ]; then
-    echo "SBD device successfully initialized at $SBD_DEVICE_PATH"
-    echo "Device size: $(ls -lh "$SBD_DEVICE_PATH" | awk '{print $5}')"
-    echo "Node mapping file created at $NODE_MAP_FILE"
-    echo "Node mapping size: $(ls -lh "$NODE_MAP_FILE" | awk '{print $5}')"
+# Create fence device if needed
+if [ "$FENCE_EXISTS" = false ]; then
+    echo "Creating fence SBD device and node mapping..."
+    create_sbd_device "$FENCE_DEVICE_PATH" "fence"
+    create_initial_node_mapping "$FENCE_NODE_MAP_FILE" "$CLUSTER_NAME" "fence"
+fi
+
+# Verify both devices were created successfully
+if [ -f "$HEARTBEAT_DEVICE_PATH" ] && [ -s "$HEARTBEAT_DEVICE_PATH" ] && [ -f "$HEARTBEAT_NODE_MAP_FILE" ] && [ -s "$HEARTBEAT_NODE_MAP_FILE" ] && \
+   [ -f "$FENCE_DEVICE_PATH" ] && [ -s "$FENCE_DEVICE_PATH" ] && [ -f "$FENCE_NODE_MAP_FILE" ] && [ -s "$FENCE_NODE_MAP_FILE" ]; then
+    echo "Both SBD devices successfully initialized:"
+    echo "  Heartbeat device: $HEARTBEAT_DEVICE_PATH ($(ls -lh "$HEARTBEAT_DEVICE_PATH" | awk '{print $5}'))"
+    echo "  Heartbeat node mapping: $HEARTBEAT_NODE_MAP_FILE ($(ls -lh "$HEARTBEAT_NODE_MAP_FILE" | awk '{print $5}'))"
+    echo "  Fence device: $FENCE_DEVICE_PATH ($(ls -lh "$FENCE_DEVICE_PATH" | awk '{print $5}'))"
+    echo "  Fence node mapping: $FENCE_NODE_MAP_FILE ($(ls -lh "$FENCE_NODE_MAP_FILE" | awk '{print $5}'))"
 else
-    echo "ERROR: Failed to create SBD device or node mapping file"
+    echo "ERROR: Failed to create one or more SBD devices or node mapping files"
     exit 1
 fi
 
-echo "SBD device and node mapping initialization completed successfully"
-`, agent.SharedStorageSBDDeviceFile),
+echo "SBD devices initialization completed successfully"
+`, agent.SharedStorageSBDDeviceFile, agent.SharedStorageFenceDeviceFile),
 							},
 							Env: []corev1.EnvVar{
 								{
@@ -1471,9 +1499,10 @@ func (r *SBDConfigReconciler) buildSBDAgentArgs(sbdConfig *medik8sv1alpha1.SBDCo
 
 	// Add shared storage arguments if configured
 	if sbdConfig.Spec.HasSharedStorage() {
-		// Set SBD device to a file within the shared storage mount
-		sbdDevicePath := fmt.Sprintf("%s/%s", sbdConfig.Spec.GetSharedStorageMountPath(), agent.SharedStorageSBDDeviceFile)
-		args = append(args, fmt.Sprintf("--%s=%s", agent.FlagSBDDevice, sbdDevicePath))
+		// Set heartbeat device to a file within the shared storage mount
+		// The fence device will be automatically generated by appending the fence suffix
+		heartbeatDevicePath := fmt.Sprintf("%s/%s", sbdConfig.Spec.GetSharedStorageMountPath(), agent.SharedStorageSBDDeviceFile)
+		args = append(args, fmt.Sprintf("--%s=%s", agent.FlagSBDDevice, heartbeatDevicePath))
 
 		// Enable file locking for shared storage safety
 		args = append(args, fmt.Sprintf("--%s=true", agent.FlagSBDFileLocking))

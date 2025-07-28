@@ -99,7 +99,7 @@ var _ = AfterSuite(func() {
 })
 
 var _ = BeforeEach(func() {
-	GinkgoWriter.Printf("Cleaning up SBDConfigs before each test: %v %v\n", testClients, testNamespace)
+	GinkgoWriter.Printf("Cleaning up SBDConfigs in namespace %v before each test\n", testNamespace.Name)
 	utils.CleanupSBDConfigs(testClients.Client, *testNamespace, testClients.Context)
 })
 
