@@ -12,13 +12,16 @@ import (
 
 	"github.com/medik8s/sbd-operator/test/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
 func main() {
-	if len(os.Args) < 2 {
+	if len(os.Args) > 1 && os.Args[1] == "--help" {
 		fmt.Printf("Usage: %s <namespace> [sbdconfig-name]\n\n", os.Args[0])
 		fmt.Println("This tool validates SBD device file consistency across all agent pods.")
 		fmt.Println()
@@ -37,7 +40,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	namespace := os.Args[1]
+	var namespace string
+	if len(os.Args) > 1 {
+		namespace = os.Args[1]
+	}
 	var sbdConfigName string
 	if len(os.Args) > 2 {
 		sbdConfigName = os.Args[2]
@@ -45,7 +51,9 @@ func main() {
 
 	fmt.Printf("🔍 SBD Device Consistency Validator\n")
 	fmt.Printf("===================================\n")
-	fmt.Printf("Namespace: %s\n", namespace)
+	if namespace != "" {
+		fmt.Printf("Namespace: %s\n", namespace)
+	}
 	if sbdConfigName != "" {
 		fmt.Printf("SBDConfig: %s\n", sbdConfigName)
 	}
@@ -63,6 +71,20 @@ func main() {
 	}
 
 	testClients := &utils.TestClients{}
+
+	// If sbdConfigName is empty, find the first SBDConfig in the namespace and use it
+	if sbdConfigName == "" {
+		fmt.Printf("No SBDConfig name provided, discovering first SBDConfig in namespace %q...\n", namespace)
+		sbdConfigs, err := getSBDConfigs(clientset, namespace)
+		if err != nil {
+			log.Fatalf("Failed to list SBDConfigs in namespace %q: %v", namespace, err)
+		}
+		if len(sbdConfigs) == 0 {
+			log.Fatalf("No SBDConfig resources found in namespace %q", namespace)
+		}
+		sbdConfigName = sbdConfigs[0]
+		fmt.Printf("Using SBDConfig: %s in namespace %s\n", sbdConfigName, namespace)
+	}
 
 	// Discover SBD agent pods
 	fmt.Printf("🚀 Discovering SBD agent pods...\n")
@@ -183,6 +205,44 @@ func getKubeConfig() (*rest.Config, error) {
 	configOverrides := &clientcmd.ConfigOverrides{}
 	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
 	return kubeConfig.ClientConfig()
+}
+
+// getSBDConfigs lists SBDConfig resources in the given namespace
+func getSBDConfigs(clientset *kubernetes.Clientset, namespace string) ([]string, error) {
+	config, err := getKubeConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
+	sbdConfigGVR := schema.GroupVersionResource{
+		Group:    "medik8s.medik8s.io",
+		Version:  "v1alpha1",
+		Resource: "sbdconfigs",
+	}
+
+	var list *unstructured.UnstructuredList
+	if namespace == "" {
+		// Search all namespaces
+		list, err = dynamicClient.Resource(sbdConfigGVR).List(context.TODO(), metav1.ListOptions{})
+	} else {
+		// Search specific namespace
+		list, err = dynamicClient.Resource(sbdConfigGVR).Namespace(namespace).List(context.TODO(), metav1.ListOptions{})
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var names []string
+	for _, item := range list.Items {
+		names = append(names, item.GetName())
+	}
+
+	return names, nil
 }
 
 // getSBDAgentPods discovers SBD agent pods in the given namespace
