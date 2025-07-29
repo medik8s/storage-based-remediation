@@ -26,7 +26,6 @@ COPY api/ api/
 COPY internal/ internal/
 COPY pkg/ pkg/
 COPY vendor/ vendor/
-RUN mkdir -p bin
 RUN go version
 # Build
 # the GOARCH has not a default value to allow the binary be built according to the host where the command
@@ -39,13 +38,13 @@ RUN CGO_ENABLED=${CGO_ENABLED:-0} GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-a
     -X 'github.com/medik8s/sbd-operator/pkg/version.GitCommit=${GIT_COMMIT}' \
     -X 'github.com/medik8s/sbd-operator/pkg/version.GitDescribe=${GIT_DESCRIBE}' \
     -X 'github.com/medik8s/sbd-operator/pkg/version.BuildDate=${BUILD_DATE}'" \
-    -o bin/manager \
+    -o ./manager \
     ./cmd/main.go
 
 # Use UBI minimal as base image to package the manager binary
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 WORKDIR /
-COPY --from=builder /workspace/bin/manager .
+COPY --from=builder /workspace/manager .
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]
