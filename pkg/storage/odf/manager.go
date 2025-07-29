@@ -167,7 +167,14 @@ func (m *Manager) Cleanup(ctx context.Context) error {
 
 	log.Println("🧹 Starting ODF cleanup...")
 
-	// Cleanup in reverse order
+	// Step 1: Cleanup AWS resources if AWS integration was enabled
+	if m.config.EnableAWSIntegration {
+		if err := m.cleanupAWSResources(ctx); err != nil {
+			log.Printf("⚠️ AWS resources cleanup failed: %v", err)
+		}
+	}
+
+	// Step 2: Cleanup Kubernetes resources in reverse order
 	if err := m.cleanupStorageClass(ctx); err != nil {
 		log.Printf("⚠️ StorageClass cleanup failed: %v", err)
 	}
@@ -378,7 +385,7 @@ func (m *Manager) waitForODFOperator(ctx context.Context) error {
 			}
 
 			if subscription != nil {
-				log.Printf("📋 Subscription status: %s", subscription)
+				log.Printf("📋 Subscription status: %s", *subscription)
 			}
 
 			// Check CSV status
@@ -1044,4 +1051,24 @@ func (m *Manager) debugCSVStatus(ctx context.Context, csvGVR schema.GroupVersion
 	}
 
 	return nil
+}
+
+// cleanupAWSResources removes AWS resources created by this tool
+func (m *Manager) cleanupAWSResources(ctx context.Context) error {
+	log.Println("🔍 Checking for AWS resources to clean up...")
+
+	// Create AWS configuration for cleanup
+	awsConfig := &AWSConfig{
+		Region: m.config.AWSRegion,
+	}
+
+	// Initialize AWS manager
+	awsManager, err := NewAWSManager(ctx, awsConfig)
+	if err != nil {
+		log.Printf("ℹ️ AWS integration unavailable for cleanup: %v", err)
+		return nil // Not an error - just skip AWS cleanup
+	}
+
+	// Find and clean up volumes created by this tool
+	return awsManager.CleanupODFVolumes(ctx)
 }

@@ -187,6 +187,128 @@ func (a *AWSManager) ProvisionStorageForNodes(ctx context.Context, nodes []NodeS
 	return nil
 }
 
+// CleanupODFVolumes finds and removes EBS volumes created by this tool
+func (a *AWSManager) CleanupODFVolumes(ctx context.Context) error {
+	log.Println("🔍 Searching for ODF volumes to clean up...")
+
+	// Find volumes created by this tool using tags
+	describeInput := &ec2.DescribeVolumesInput{
+		Filters: []types.Filter{
+			{
+				Name:   aws.String("tag:kubernetes.io/created-by"),
+				Values: []string{"sbd-operator-odf-setup"},
+			},
+			{
+				Name:   aws.String("tag:medik8s.io/component"),
+				Values: []string{"odf-storage"},
+			},
+		},
+	}
+
+	result, err := a.ec2Client.DescribeVolumes(ctx, describeInput)
+	if err != nil {
+		return fmt.Errorf("failed to describe volumes: %w", err)
+	}
+
+	if len(result.Volumes) == 0 {
+		log.Println("✅ No ODF volumes found to clean up")
+		return nil
+	}
+
+	log.Printf("🗑️ Found %d ODF volumes to clean up", len(result.Volumes))
+
+	// Clean up each volume
+	for _, volume := range result.Volumes {
+		if err := a.cleanupVolume(ctx, volume); err != nil {
+			log.Printf("⚠️ Failed to clean up volume %s: %v", *volume.VolumeId, err)
+		}
+	}
+
+	log.Println("✅ ODF volume cleanup completed")
+	return nil
+}
+
+// cleanupVolume detaches and deletes a single EBS volume
+func (a *AWSManager) cleanupVolume(ctx context.Context, volume types.Volume) error {
+	volumeID := *volume.VolumeId
+
+	// Get volume name from tags for logging
+	volumeName := volumeID
+	for _, tag := range volume.Tags {
+		if *tag.Key == "Name" {
+			volumeName = *tag.Value
+			break
+		}
+	}
+
+	log.Printf("🗑️ Cleaning up volume: %s (%s)", volumeName, volumeID)
+
+	// If volume is attached, detach it first
+	if len(volume.Attachments) > 0 {
+		for _, attachment := range volume.Attachments {
+			if attachment.State == types.VolumeAttachmentStateAttached {
+				log.Printf("📎 Detaching volume %s from instance %s", volumeID, *attachment.InstanceId)
+
+				_, err := a.ec2Client.DetachVolume(ctx, &ec2.DetachVolumeInput{
+					VolumeId:   aws.String(volumeID),
+					InstanceId: attachment.InstanceId,
+					Force:      aws.Bool(true), // Force detach for cleanup
+				})
+				if err != nil {
+					return fmt.Errorf("failed to detach volume %s: %w", volumeID, err)
+				}
+
+				// Wait for volume to be detached
+				if err := a.waitForVolumeDetached(ctx, volumeID); err != nil {
+					return fmt.Errorf("failed waiting for volume %s to detach: %w", volumeID, err)
+				}
+			}
+		}
+	}
+
+	// Delete the volume
+	log.Printf("🗑️ Deleting volume: %s", volumeID)
+	_, err := a.ec2Client.DeleteVolume(ctx, &ec2.DeleteVolumeInput{
+		VolumeId: aws.String(volumeID),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete volume %s: %w", volumeID, err)
+	}
+
+	log.Printf("✅ Successfully deleted volume: %s", volumeName)
+	return nil
+}
+
+// waitForVolumeDetached waits for a volume to be detached
+func (a *AWSManager) waitForVolumeDetached(ctx context.Context, volumeID string) error {
+	maxAttempts := 30
+	waitTime := 10 * time.Second
+
+	for i := 0; i < maxAttempts; i++ {
+		result, err := a.ec2Client.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+			VolumeIds: []string{volumeID},
+		})
+		if err != nil {
+			return err
+		}
+
+		if len(result.Volumes) == 0 {
+			return fmt.Errorf("volume %s not found", volumeID)
+		}
+
+		volume := result.Volumes[0]
+		if len(volume.Attachments) == 0 || volume.Attachments[0].State == types.VolumeAttachmentStateDetached {
+			log.Printf("✅ Volume %s is now detached", volumeID)
+			return nil
+		}
+
+		log.Printf("⏳ Waiting for volume %s to detach... (attempt %d/%d)", volumeID, i+1, maxAttempts)
+		time.Sleep(waitTime)
+	}
+
+	return fmt.Errorf("timeout waiting for volume %s to detach", volumeID)
+}
+
 // getCurrentUserIdentity gets the current AWS user/role identity
 func (a *AWSManager) getCurrentUserIdentity(ctx context.Context) (string, error) {
 	// Try to get current user info by attempting a simple IAM operation
