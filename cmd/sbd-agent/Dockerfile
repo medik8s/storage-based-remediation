@@ -23,7 +23,8 @@ WORKDIR /workspace
 USER default
 # Copy go.mod and go.sum files for dependency caching
 # This allows Docker to cache the dependency download step
-COPY --chown=default go.mod go.sum ./
+# OSX-Only COPY --chown=default go.mod go.sum ./
+COPY go.mod go.sum ./
 COPY api/ api/
 COPY cmd/ cmd/
 COPY pkg/ pkg/
