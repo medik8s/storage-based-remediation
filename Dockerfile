@@ -17,7 +17,8 @@ WORKDIR /workspace
 USER default
 
 # Copy the Go Modules manifests
-COPY --chown=default go.mod go.sum ./
+# COPY --chown=default go.mod go.sum ./
+COPY go.mod go.sum ./
 
 # Copy the go source
 COPY cmd/main.go cmd/main.go
