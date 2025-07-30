@@ -32,7 +32,7 @@ RUN go version
 # the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
 RUN CGO_ENABLED=${CGO_ENABLED:-0} GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build \
-    -a -installsuffix cgo \
+    -a -v -installsuffix cgo \
     -ldflags="-w -s -extldflags '-static' \
     -X 'github.com/medik8s/sbd-operator/pkg/version.GitCommit=${GIT_COMMIT}' \
     -X 'github.com/medik8s/sbd-operator/pkg/version.GitDescribe=${GIT_DESCRIBE}' \

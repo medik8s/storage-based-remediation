@@ -103,7 +103,7 @@ CMD ["--watchdog-path=/dev/watchdog", "--watchdog-timeout=30s", "--log-level=inf
 # Container Usage Instructions
 # ==============================================================================
 # To build the image:
-#   docker build -f Dockerfile.sbd-agent -t sbd-agent:latest .
+#   docker build -f cmd/sbd-agent/Dockerfile -t sbd-agent:latest .
 #
 # To run the container with required privileges:
 #   docker run --privileged \

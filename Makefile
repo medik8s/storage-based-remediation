@@ -325,7 +325,7 @@ build-operator-image: manifests generate fmt vet ## Build operator container ima
 build-agent-image: manifests generate fmt vet ## Build agent container image.
 	@echo "Building agent image: $(QUAY_AGENT_IMG):$(TAG)"
 	@echo "Build info: GitDescribe=$(GIT_DESCRIBE), GitCommit=$(GIT_COMMIT), BuildDate=$(BUILD_DATE)"
-	$(CONTAINER_TOOL) build -f Dockerfile.sbd-agent -t sbd-agent:$(TAG) \
+	$(CONTAINER_TOOL) build -f cmd/sbd-agent/Dockerfile -t sbd-agent:$(TAG) \
 		--build-arg BUILD_DATE="$(BUILD_DATE)" \
 		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
 		--build-arg GIT_DESCRIBE="$(GIT_DESCRIBE)" \
@@ -348,7 +348,7 @@ build-multiarch-agent-image: manifests generate fmt vet ## Build multi-platform 
 	@echo "Building multi-platform agent image: $(QUAY_AGENT_IMG):$(TAG)"
 	@echo "Platforms: $(PLATFORMS)"
 	@echo "Build info: GitDescribe=$(GIT_DESCRIBE), GitCommit=$(GIT_COMMIT), BuildDate=$(BUILD_DATE)"
-	$(CONTAINER_TOOL) build --platform=$(PLATFORMS) -f Dockerfile.sbd-agent -t $(QUAY_AGENT_IMG):$(TAG) \
+	$(CONTAINER_TOOL) build --platform=$(PLATFORMS) -f cmd/sbd-agent/Dockerfile -t $(QUAY_AGENT_IMG):$(TAG) \
 		--build-arg BUILD_DATE="$(BUILD_DATE)" \
 		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
 		--build-arg GIT_DESCRIBE="$(GIT_DESCRIBE)" \
