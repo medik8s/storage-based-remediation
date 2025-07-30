@@ -23,6 +23,28 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// createTestSBDRemediation creates a SBDRemediation with standard test conditions
+func createTestSBDRemediation() *SBDRemediation {
+	return &SBDRemediation{
+		Status: SBDRemediationStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:   string(SBDRemediationConditionReady),
+					Status: metav1.ConditionTrue,
+				},
+				{
+					Type:   string(SBDRemediationConditionFencingSucceeded),
+					Status: metav1.ConditionFalse,
+				},
+				{
+					Type:   string(SBDRemediationConditionFencingInProgress),
+					Status: metav1.ConditionUnknown,
+				},
+			},
+		},
+	}
+}
+
 func TestSBDRemediationSpec_TimeoutSecondsValidation(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -261,24 +283,7 @@ func TestSBDRemediation_SetCondition(t *testing.T) {
 }
 
 func TestSBDRemediation_IsConditionTrue(t *testing.T) {
-	remediation := &SBDRemediation{
-		Status: SBDRemediationStatus{
-			Conditions: []metav1.Condition{
-				{
-					Type:   string(SBDRemediationConditionReady),
-					Status: metav1.ConditionTrue,
-				},
-				{
-					Type:   string(SBDRemediationConditionFencingSucceeded),
-					Status: metav1.ConditionFalse,
-				},
-				{
-					Type:   string(SBDRemediationConditionFencingInProgress),
-					Status: metav1.ConditionUnknown,
-				},
-			},
-		},
-	}
+	remediation := createTestSBDRemediation()
 
 	tests := []struct {
 		name          string
@@ -375,24 +380,7 @@ func TestSBDRemediation_IsConditionFalse(t *testing.T) {
 }
 
 func TestSBDRemediation_IsConditionUnknown(t *testing.T) {
-	remediation := &SBDRemediation{
-		Status: SBDRemediationStatus{
-			Conditions: []metav1.Condition{
-				{
-					Type:   string(SBDRemediationConditionReady),
-					Status: metav1.ConditionTrue,
-				},
-				{
-					Type:   string(SBDRemediationConditionFencingSucceeded),
-					Status: metav1.ConditionFalse,
-				},
-				{
-					Type:   string(SBDRemediationConditionFencingInProgress),
-					Status: metav1.ConditionUnknown,
-				},
-			},
-		},
-	}
+	remediation := createTestSBDRemediation()
 
 	tests := []struct {
 		name          string

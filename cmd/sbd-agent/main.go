@@ -128,6 +128,13 @@ const (
 // Global logger instance
 var logger logr.Logger
 
+// Reboot method constants
+const (
+	RebootMethodPanic           = "panic"
+	RebootMethodSystemctlReboot = "systemctl-reboot"
+	RebootMethodNone            = "none"
+)
+
 // metricsOnce ensures metrics are only registered once
 var metricsOnce sync.Once
 
@@ -616,8 +623,8 @@ func NewSBDAgentWithWatchdog(wd WatchdogInterface, heartbeatDevicePath, nodeName
 	if petInterval <= 0 {
 		return nil, fmt.Errorf("pet interval must be positive, got %v", petInterval)
 	}
-	if rebootMethod != "panic" && rebootMethod != "systemctl-reboot" && rebootMethod != "none" {
-		return nil, fmt.Errorf("invalid reboot method '%s', must be 'panic', 'systemctl-reboot', or 'none'", rebootMethod)
+	if rebootMethod != RebootMethodPanic && rebootMethod != RebootMethodSystemctlReboot && rebootMethod != RebootMethodNone {
+		return nil, fmt.Errorf("invalid reboot method '%s', must be '%s', '%s', or '%s'", rebootMethod, RebootMethodPanic, RebootMethodSystemctlReboot, RebootMethodNone)
 	}
 	if metricsPort <= 0 || metricsPort > 65535 {
 		return nil, fmt.Errorf("metrics port must be between 1 and 65535, got %d", metricsPort)
@@ -697,10 +704,14 @@ func NewSBDAgentWithWatchdog(wd WatchdogInterface, heartbeatDevicePath, nodeName
 	if err := agent.initializeNodeManagers(clusterName, fileLockingEnabled); err != nil {
 		agent.cancel()
 		if agent.heartbeatDevice != nil {
-			agent.heartbeatDevice.Close()
+			if closeErr := agent.heartbeatDevice.Close(); closeErr != nil {
+				logger.Error(closeErr, "Failed to close heartbeat device during cleanup")
+			}
 		}
 		if agent.fenceDevice != nil {
-			agent.fenceDevice.Close()
+			if closeErr := agent.fenceDevice.Close(); closeErr != nil {
+				logger.Error(closeErr, "Failed to close fence device during cleanup")
+			}
 		}
 		return nil, fmt.Errorf("failed to initialize node managers: %w", err)
 	}
@@ -712,10 +723,14 @@ func NewSBDAgentWithWatchdog(wd WatchdogInterface, heartbeatDevicePath, nodeName
 	if err := agent.initMetrics(); err != nil {
 		agent.cancel()
 		if agent.heartbeatDevice != nil {
-			agent.heartbeatDevice.Close()
+			if closeErr := agent.heartbeatDevice.Close(); closeErr != nil {
+				logger.Error(closeErr, "Failed to close heartbeat device during cleanup")
+			}
 		}
 		if agent.fenceDevice != nil {
-			agent.fenceDevice.Close()
+			if closeErr := agent.fenceDevice.Close(); closeErr != nil {
+				logger.Error(closeErr, "Failed to close fence device during cleanup")
+			}
 		}
 		return nil, fmt.Errorf("failed to initialize metrics: %w", err)
 	}
@@ -1531,7 +1546,7 @@ func (s *SBDAgent) executeSelfFencing(reason string) {
 	time.Sleep(100 * time.Millisecond)
 
 	switch s.rebootMethod {
-	case "none":
+	case RebootMethodNone:
 		logger.Error(nil, "Self-fencing disabled - would have rebooted node but reboot method is 'none'",
 			"reason", reason,
 			"nodeID", s.nodeID,
@@ -2082,10 +2097,10 @@ func main() {
 	}
 
 	// Validate reboot method
-	if rebootMethodValue != "panic" && rebootMethodValue != "systemctl-reboot" && rebootMethodValue != "none" {
+	if rebootMethodValue != RebootMethodPanic && rebootMethodValue != RebootMethodSystemctlReboot && rebootMethodValue != RebootMethodNone {
 		logger.Error(nil, "Invalid reboot method",
 			"rebootMethod", rebootMethodValue,
-			"validMethods", []string{"panic", "systemctl-reboot", "none"})
+			"validMethods", []string{RebootMethodPanic, RebootMethodSystemctlReboot, RebootMethodNone})
 		os.Exit(1)
 	}
 

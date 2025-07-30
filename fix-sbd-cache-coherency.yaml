@@ -1,0 +1,49 @@
+---
+# Updated StorageClass with aggressive cache coherency for SBD
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: sbd-nfs-aggressive-coherency
+  labels:
+    app.kubernetes.io/managed-by: sbd-operator
+    storage.medik8s.io/type: shared-nfs-aggressive
+provisioner: nfs.csi.k8s.io
+parameters:
+  server: fs-03af5af5e88a8d0d6.efs.ap-southeast-2.amazonaws.com
+  share: /
+mountOptions:
+  - nfsvers=4.1          # NFSv4.1 for better performance
+  - hard                 # Hard mount for reliability
+  - timeo=600            # 60 second timeout
+  - retrans=2            # 2 retransmissions
+  - noresvport           # AWS EFS recommended
+  # AGGRESSIVE CACHE BUSTING OPTIONS
+  - actimeo=0            # Disable ALL attribute caching 
+  - lookupcache=none     # Disable directory lookup caching
+  - rsize=65536          # Smaller read size for coherency  
+  - wsize=65536          # Smaller write size for coherency
+  - sync                 # Force synchronous operations (this may work now)
+  - local_lock=none      # Send all locks to server for coordination
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+---
+# Test SBDConfig using the new StorageClass
+apiVersion: medik8s.medik8s.io/v1alpha1
+kind: SBDConfig
+metadata:
+  name: test-sbd-aggressive-coherency
+  namespace: default
+spec:
+  imagePullPolicy: Always
+  iotimeout: 5s
+  logLevel: debug
+  peerCheckInterval: 5s
+  petIntervalMultiple: 4
+  rebootMethod: none
+  sbdTimeoutSeconds: 30
+  sbdUpdateInterval: 5s
+  sbdWatchdogPath: /dev/watchdog
+  sharedStorageClass: sbd-nfs-aggressive-coherency
+  staleNodeTimeout: 2h0m0s
+  watchdogTimeout: 1m30s 

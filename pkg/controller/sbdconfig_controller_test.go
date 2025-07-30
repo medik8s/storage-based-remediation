@@ -739,7 +739,7 @@ var _ = Describe("SBDConfig Controller", func() {
 			controllerReconciler.emitEvent(resource, EventTypeNormal, "TestReason", "Test message")
 
 			events := mockRecorder.GetEvents()
-			Expect(len(events)).To(Equal(1))
+			Expect(events).To(HaveLen(1))
 			Expect(events[0].EventType).To(Equal(EventTypeNormal))
 			Expect(events[0].Reason).To(Equal("TestReason"))
 			Expect(events[0].Message).To(Equal("Test message"))
@@ -749,7 +749,7 @@ var _ = Describe("SBDConfig Controller", func() {
 			controllerReconciler.emitEventf(resource, EventTypeWarning, "TestFormat", "Formatted message: %s", "test-value")
 
 			events = mockRecorder.GetEvents()
-			Expect(len(events)).To(Equal(1))
+			Expect(events).To(HaveLen(1))
 			Expect(events[0].EventType).To(Equal(EventTypeWarning))
 			Expect(events[0].Reason).To(Equal("TestFormat"))
 			Expect(events[0].Message).To(Equal("Formatted message: test-value"))
@@ -770,7 +770,7 @@ var _ = Describe("SBDConfig Controller", func() {
 
 			// No events should be recorded
 			events := mockRecorder.GetEvents()
-			Expect(len(events)).To(Equal(0))
+			Expect(events).To(BeEmpty())
 		})
 	})
 
