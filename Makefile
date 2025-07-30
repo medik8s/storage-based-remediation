@@ -313,46 +313,30 @@ PLATFORMS ?= linux/arm64,linux/amd64 # Others: linux/s390x,linux/ppc64le
 .PHONY: build-operator-image
 build-operator-image: manifests generate fmt vet ## Build operator container image.
 	@echo "Building operator image: $(QUAY_OPERATOR_IMG):$(TAG)"
-	@echo "Build info: GitDescribe=$(GIT_DESCRIBE), GitCommit=$(GIT_COMMIT), BuildDate=$(BUILD_DATE)"
-	$(CONTAINER_TOOL) build -t sbd-operator:$(TAG) \
-		--build-arg BUILD_DATE="$(BUILD_DATE)" \
-		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
-		--build-arg GIT_DESCRIBE="$(GIT_DESCRIBE)" \
-		.
+	@echo "Git version info will be calculated automatically during build"
+	$(CONTAINER_TOOL) build -t sbd-operator:$(TAG) .
 	$(CONTAINER_TOOL) tag sbd-operator:$(TAG) $(QUAY_OPERATOR_IMG):$(TAG)
 
 .PHONY: build-agent-image  
 build-agent-image: manifests generate fmt vet ## Build agent container image.
 	@echo "Building agent image: $(QUAY_AGENT_IMG):$(TAG)"
-	@echo "Build info: GitDescribe=$(GIT_DESCRIBE), GitCommit=$(GIT_COMMIT), BuildDate=$(BUILD_DATE)"
-	$(CONTAINER_TOOL) build -f cmd/sbd-agent/Dockerfile -t sbd-agent:$(TAG) \
-		--build-arg BUILD_DATE="$(BUILD_DATE)" \
-		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
-		--build-arg GIT_DESCRIBE="$(GIT_DESCRIBE)" \
-		.
+	@echo "Git version info will be calculated automatically during build"
+	$(CONTAINER_TOOL) build -f cmd/sbd-agent/Dockerfile -t sbd-agent:$(TAG) .
 	$(CONTAINER_TOOL) tag sbd-agent:$(TAG) $(QUAY_AGENT_IMG):$(TAG)
 
 .PHONY: build-multiarch-operator-image
 build-multiarch-operator-image: manifests generate fmt vet ## Build multi-platform operator container image.
 	@echo "Building multi-platform operator image: $(QUAY_OPERATOR_IMG):$(TAG)"
 	@echo "Platforms: $(PLATFORMS)"
-	@echo "Build info: GitDescribe=$(GIT_DESCRIBE), GitCommit=$(GIT_COMMIT), BuildDate=$(BUILD_DATE)"
-	$(CONTAINER_TOOL) build --platform=$(PLATFORMS) -t $(QUAY_OPERATOR_IMG):$(TAG) \
-		--build-arg BUILD_DATE="$(BUILD_DATE)" \
-		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
-		--build-arg GIT_DESCRIBE="$(GIT_DESCRIBE)" \
-		.
+	@echo "Git version info will be calculated automatically during build"
+	$(CONTAINER_TOOL) build --platform=$(PLATFORMS) -t $(QUAY_OPERATOR_IMG):$(TAG) .
 
 .PHONY: build-multiarch-agent-image
 build-multiarch-agent-image: manifests generate fmt vet ## Build multi-platform agent container image.
 	@echo "Building multi-platform agent image: $(QUAY_AGENT_IMG):$(TAG)"
 	@echo "Platforms: $(PLATFORMS)"
-	@echo "Build info: GitDescribe=$(GIT_DESCRIBE), GitCommit=$(GIT_COMMIT), BuildDate=$(BUILD_DATE)"
-	$(CONTAINER_TOOL) build --platform=$(PLATFORMS) -f cmd/sbd-agent/Dockerfile -t $(QUAY_AGENT_IMG):$(TAG) \
-		--build-arg BUILD_DATE="$(BUILD_DATE)" \
-		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
-		--build-arg GIT_DESCRIBE="$(GIT_DESCRIBE)" \
-		.
+	@echo "Git version info will be calculated automatically during build"
+	$(CONTAINER_TOOL) build --platform=$(PLATFORMS) -f cmd/sbd-agent/Dockerfile -t $(QUAY_AGENT_IMG):$(TAG) .
 
 .PHONY: build-images
 build-images: build-operator-image build-agent-image ## Build both operator and agent container images.

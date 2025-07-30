@@ -2,8 +2,7 @@
 # Ignore build and test binaries.
 bin/
 
-# Git files and directories
-.git
+# Git files and directories (keeping .git for build metadata)
 .gitignore
 .gitattributes
 
