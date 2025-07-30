@@ -55,7 +55,7 @@ func setupTestDevice(t testingInterface, size int64) (string, func()) {
 		}
 	}
 
-	if err := _ = file.Close(); err != nil {
+	if err := file.Close(); err != nil {
 		t.Fatalf("Failed to close test device file: %v", err)
 	}
 

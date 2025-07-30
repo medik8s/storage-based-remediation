@@ -62,7 +62,7 @@ func testWatchdogDevice(devicePath string) {
 	}
 	defer func() {
 		// Write 'V' to disable watchdog before closing (magic close)
-		_ = file.Write([]byte("V"))
+		_, _ = file.Write([]byte("V"))
 		_ = file.Close()
 	}()
 
@@ -164,7 +164,7 @@ func testAlternativeKeepAlive(file *os.File) {
 	fmt.Printf("Testing write-based keep-alive...\n")
 
 	// Try writing a simple byte
-	n, err := _ = file.Write([]byte{0x01})
+	n, err := file.Write([]byte{0x01})
 	if err != nil {
 		fmt.Printf("❌ Write keep-alive failed: %v\n", err)
 	} else {
@@ -174,7 +174,7 @@ func testAlternativeKeepAlive(file *os.File) {
 	// Try writing specific characters
 	testChars := []byte{'1', 'a', '\n'}
 	for _, char := range testChars {
-		n, err := _ = file.Write([]byte{char})
+		n, err := file.Write([]byte{char})
 		if err != nil {
 			fmt.Printf("❌ Write '%c' failed: %v\n", char, err)
 		} else {

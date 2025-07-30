@@ -1202,7 +1202,7 @@ func TestPreflightChecks_Success(t *testing.T) {
 	}
 	// Write enough data for SBD slots
 	data := make([]byte, 1024*1024) // 1MB
-	_ = sbdFile.Write(data)
+	_, _ = sbdFile.Write(data)
 	_ = sbdFile.Close()
 
 	// Test successful pre-flight checks
@@ -1709,7 +1709,7 @@ func TestPreflightChecks_SBDOnlyMode(t *testing.T) {
 	}
 	// Write enough data for SBD slots
 	data := make([]byte, 1024*1024) // 1MB
-	_ = sbdFile.Write(data)
+	_, _ = sbdFile.Write(data)
 	_ = sbdFile.Close()
 
 	// Use non-existent watchdog path (should fail)
