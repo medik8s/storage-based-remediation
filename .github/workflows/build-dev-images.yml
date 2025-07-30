@@ -1,0 +1,90 @@
+name: Build Dev Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_images:
+        description: 'Push images to registry'
+        required: true
+        default: 'true'
+        type: boolean
+  push:
+    branches-ignore: [ main, master ]
+
+env:
+  REGISTRY: quay.io
+  QUAY_ORG: medik8s
+  OPERATOR_IMG: sbd-operator
+  AGENT_IMG: sbd-agent
+
+jobs:
+  build-dev:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Generate dev image tag
+      id: dev_tag
+      run: |
+        # Clean branch name for use in image tags
+        BRANCH_NAME=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}
+        CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9.-]/-/g' | tr '[:upper:]' '[:lower:]')
+        SHORT_SHA=${GITHUB_SHA:0:8}
+        
+        # For dev builds, use branch-sha format
+        DEV_TAG="${CLEAN_BRANCH}-${SHORT_SHA}"
+        
+        echo "DEV_TAG=${DEV_TAG}" >> $GITHUB_OUTPUT
+        echo "OPERATOR_IMAGE=${REGISTRY}/${QUAY_ORG}/${OPERATOR_IMG}:${DEV_TAG}" >> $GITHUB_OUTPUT
+        echo "AGENT_IMAGE=${REGISTRY}/${QUAY_ORG}/${AGENT_IMG}:${DEV_TAG}" >> $GITHUB_OUTPUT
+
+    - name: Log in to Quay.io
+      if: inputs.push_images == 'true' || github.event_name == 'push'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ secrets.QUAY_USERNAME }}
+        password: ${{ secrets.QUAY_PASSWORD }}
+
+    - name: Build operator dev image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: ${{ inputs.push_images == 'true' || github.event_name == 'push' }}
+        tags: ${{ steps.dev_tag.outputs.OPERATOR_IMAGE }}
+        platforms: linux/amd64
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Build agent dev image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.sbd-agent
+        push: ${{ inputs.push_images == 'true' || github.event_name == 'push' }}
+        tags: ${{ steps.dev_tag.outputs.AGENT_IMAGE }}
+        platforms: linux/amd64
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Dev Image Summary
+      run: |
+        echo "## 🚧 Dev Images Built" >> $GITHUB_STEP_SUMMARY
+        echo "- **Operator**: \`${{ steps.dev_tag.outputs.OPERATOR_IMAGE }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Agent**: \`${{ steps.dev_tag.outputs.AGENT_IMAGE }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch**: \`${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **SHA**: \`${GITHUB_SHA:0:8}\`" >> $GITHUB_STEP_SUMMARY 
