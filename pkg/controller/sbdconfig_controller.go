@@ -78,6 +78,10 @@ const (
 	// OpenShift SCC constants
 	SBDOperatorSCCName = "sbd-operator-sbd-agent-privileged"
 
+	// Default image constants
+	DefaultSBDAgentImage = "sbd-agent:latest"
+	SBDOperatorName      = "sbd-operator"
+
 	// Retry configuration constants for SBDConfig controller
 	// MaxSBDConfigRetries is the maximum number of retry attempts for SBDConfig operations
 	MaxSBDConfigRetries = 3
@@ -183,7 +187,7 @@ func (r *SBDConfigReconciler) getOperatorImage(ctx context.Context, logger logr.
 
 	if podName == "" || podNamespace == "" {
 		logger.Error(nil, "POD_NAME or POD_NAMESPACE environment variables not set, using fallback")
-		return "sbd-agent:latest", nil
+		return DefaultSBDAgentImage, nil
 	}
 
 	// Get the current pod
@@ -191,7 +195,7 @@ func (r *SBDConfigReconciler) getOperatorImage(ctx context.Context, logger logr.
 	err := r.Get(ctx, types.NamespacedName{Name: podName, Namespace: podNamespace}, &pod)
 	if err != nil {
 		logger.Error(err, "Failed to get operator pod", "podName", podName, "podNamespace", podNamespace)
-		return "sbd-agent:latest", nil // Fallback to default
+		return DefaultSBDAgentImage, nil // Fallback to default
 	}
 
 	// Find the manager container (operator container)
@@ -210,7 +214,7 @@ func (r *SBDConfigReconciler) getOperatorImage(ctx context.Context, logger logr.
 	}
 
 	logger.Error(nil, "No containers found in operator pod, using fallback")
-	return "sbd-agent:latest", nil
+	return DefaultSBDAgentImage, nil
 }
 
 // isRunningOnOpenShift detects if the operator is running on OpenShift
@@ -1327,10 +1331,10 @@ func (r *SBDConfigReconciler) ensureServiceAccount(ctx context.Context, sbdConfi
 		serviceAccount.Labels["app"] = "sbd-agent"
 		serviceAccount.Labels["app.kubernetes.io/name"] = "sbd-agent"
 		serviceAccount.Labels["app.kubernetes.io/component"] = "agent"
-		serviceAccount.Labels["app.kubernetes.io/part-of"] = "sbd-operator"
-		serviceAccount.Labels["app.kubernetes.io/managed-by"] = "sbd-operator"
+		serviceAccount.Labels["app.kubernetes.io/part-of"] = SBDOperatorName
+		serviceAccount.Labels["app.kubernetes.io/managed-by"] = SBDOperatorName
 		serviceAccount.Annotations["sbd-operator/shared-resource"] = "true"
-		serviceAccount.Annotations["sbd-operator/managed-by"] = "sbd-operator"
+		serviceAccount.Annotations["sbd-operator/managed-by"] = SBDOperatorName
 
 		return nil
 	})

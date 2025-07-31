@@ -129,7 +129,7 @@ func (a *AWSManager) AnalyzeNodeStorage(ctx context.Context, clientset kubernete
 		return nil, fmt.Errorf("failed to list worker nodes: %w", err)
 	}
 
-	var nodeStorageInfo []NodeStorageInfo
+	nodeStorageInfo := make([]NodeStorageInfo, 0, len(nodes.Items))
 
 	for _, node := range nodes.Items {
 		info, err := a.analyzeNodeStorage(ctx, &node, requiredStoragePerNode)
@@ -448,7 +448,7 @@ func (a *AWSManager) analyzeNodeStorage(ctx context.Context, node *corev1.Node, 
 
 	// Calculate total storage and identify existing volumes
 	var totalStorageGB int64
-	var existingVolumes []string
+	existingVolumes := make([]string, 0, len(volumeOutput.Volumes))
 	var availableStorageGB int64
 
 	for _, volume := range volumeOutput.Volumes {

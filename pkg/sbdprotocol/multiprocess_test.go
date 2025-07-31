@@ -285,7 +285,7 @@ func createSharedDevice(path string, size int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to create device file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Write zeros to initialize the device
 	zeros := make([]byte, size)
@@ -426,7 +426,7 @@ func runNodeProcess(config MultiProcessTestConfig) (*MultiProcessTestResult, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to open shared device: %w", err)
 	}
-	defer device.Close()
+	defer func() { _ = device.Close() }()
 
 	// Create node manager
 	nmConfig := NodeManagerConfig{
@@ -441,7 +441,7 @@ func runNodeProcess(config MultiProcessTestConfig) (*MultiProcessTestResult, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to create node manager: %w", err)
 	}
-	defer nodeManager.Close()
+	defer func() { _ = nodeManager.Close() }()
 
 	// Get or assign slot for this node
 	slotID, err := nodeManager.GetNodeIDForNode(config.NodeName)
@@ -634,7 +634,7 @@ func validateMessageProtocol(t *testing.T, results []*MultiProcessTestResult, de
 		t.Errorf("Failed to open device for validation: %v", err)
 		return
 	}
-	defer device.Close()
+	defer func() { _ = device.Close() }()
 
 	// Check that each node's slot contains valid data
 	for _, result := range results {

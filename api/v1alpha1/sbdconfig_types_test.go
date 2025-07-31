@@ -25,6 +25,44 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// testCase represents a generic test case for validation functions
+type testCase struct {
+	name      string
+	spec      SBDConfigSpec
+	wantError bool
+}
+
+// runValidationTests is a generic helper for testing validation methods
+func runValidationTests(t *testing.T, testName string, tests []testCase, validateFunc func(SBDConfigSpec) error) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateFunc(tt.spec)
+			if (err != nil) != tt.wantError {
+				t.Errorf("%s error = %v, wantError %v", testName, err, tt.wantError)
+			}
+		})
+	}
+}
+
+// testCaseInterval represents a generic test case for interval validation functions
+type testCaseInterval struct {
+	name    string
+	spec    SBDConfigSpec
+	wantErr bool
+}
+
+// runIntervalTests is a generic helper for testing interval validation methods
+func runIntervalTests(t *testing.T, testName string, tests []testCaseInterval, validateFunc func(SBDConfigSpec) error) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateFunc(tt.spec)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("%s error = %v, wantErr %v", testName, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestSBDConfigSpec_GetStaleNodeTimeout(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -65,11 +103,7 @@ func TestSBDConfigSpec_GetStaleNodeTimeout(t *testing.T) {
 }
 
 func TestSBDConfigSpec_ValidateStaleNodeTimeout(t *testing.T) {
-	tests := []struct {
-		name      string
-		spec      SBDConfigSpec
-		wantError bool
-	}{
+	tests := []testCase{
 		{
 			name:      "default timeout is valid",
 			spec:      SBDConfigSpec{},
@@ -112,14 +146,9 @@ func TestSBDConfigSpec_ValidateStaleNodeTimeout(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.spec.ValidateStaleNodeTimeout()
-			if (err != nil) != tt.wantError {
-				t.Errorf("ValidateStaleNodeTimeout() error = %v, wantError %v", err, tt.wantError)
-			}
-		})
-	}
+	runValidationTests(t, "ValidateStaleNodeTimeout()", tests, func(spec SBDConfigSpec) error {
+		return spec.ValidateStaleNodeTimeout()
+	})
 }
 
 func TestConstants(t *testing.T) {
@@ -326,11 +355,7 @@ func TestSBDConfigSpec_GetPetInterval(t *testing.T) {
 }
 
 func TestSBDConfigSpec_ValidateWatchdogTimeout(t *testing.T) {
-	tests := []struct {
-		name      string
-		spec      SBDConfigSpec
-		wantError bool
-	}{
+	tests := []testCase{
 		{
 			name:      "default timeout is valid",
 			spec:      SBDConfigSpec{},
@@ -373,14 +398,9 @@ func TestSBDConfigSpec_ValidateWatchdogTimeout(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.spec.ValidateWatchdogTimeout()
-			if (err != nil) != tt.wantError {
-				t.Errorf("ValidateWatchdogTimeout() error = %v, wantError %v", err, tt.wantError)
-			}
-		})
-	}
+	runValidationTests(t, "ValidateWatchdogTimeout()", tests, func(spec SBDConfigSpec) error {
+		return spec.ValidateWatchdogTimeout()
+	})
 }
 
 func TestSBDConfigSpec_ValidatePetIntervalMultiple(t *testing.T) {
@@ -766,11 +786,7 @@ func TestSBDConfigSpec_ValidateSBDTimeoutSeconds(t *testing.T) {
 }
 
 func TestSBDConfigSpec_ValidateSBDUpdateInterval(t *testing.T) {
-	tests := []struct {
-		name    string
-		spec    SBDConfigSpec
-		wantErr bool
-	}{
+	tests := []testCaseInterval{
 		{
 			name: "nil interval uses default (valid)",
 			spec: SBDConfigSpec{
@@ -815,22 +831,13 @@ func TestSBDConfigSpec_ValidateSBDUpdateInterval(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.spec.ValidateSBDUpdateInterval()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateSBDUpdateInterval() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
+	runIntervalTests(t, "ValidateSBDUpdateInterval()", tests, func(spec SBDConfigSpec) error {
+		return spec.ValidateSBDUpdateInterval()
+	})
 }
 
 func TestSBDConfigSpec_ValidatePeerCheckInterval(t *testing.T) {
-	tests := []struct {
-		name    string
-		spec    SBDConfigSpec
-		wantErr bool
-	}{
+	tests := []testCaseInterval{
 		{
 			name: "nil interval uses default (valid)",
 			spec: SBDConfigSpec{
@@ -875,14 +882,9 @@ func TestSBDConfigSpec_ValidatePeerCheckInterval(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.spec.ValidatePeerCheckInterval()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidatePeerCheckInterval() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
+	runIntervalTests(t, "ValidatePeerCheckInterval()", tests, func(spec SBDConfigSpec) error {
+		return spec.ValidatePeerCheckInterval()
+	})
 }
 
 func TestSBDConfigSpec_ValidateAll(t *testing.T) {

@@ -237,7 +237,7 @@ func getSBDConfigs(clientset *kubernetes.Clientset, namespace string) ([]string,
 		return nil, err
 	}
 
-	var names []string
+	names := make([]string, 0, len(list.Items))
 	for _, item := range list.Items {
 		names = append(names, item.GetName())
 	}

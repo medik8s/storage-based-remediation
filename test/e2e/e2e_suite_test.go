@@ -29,11 +29,6 @@ import (
 )
 
 var (
-	// projectImage is the name of the image which will be build and loaded
-	// with the code source changes to be tested.
-	// It uses environment variables that match the Makefile QUAY_* variables.
-	projectImage = utils.GetProjectImage()
-
 	// Kubernetes clients
 	k8sClient client.Client
 	ctx       context.Context

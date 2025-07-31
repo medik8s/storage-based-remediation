@@ -30,6 +30,11 @@ import (
 	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
 )
 
+const (
+	// Test constants
+	nonExistentWatchdogPath = "/non/existent/watchdog"
+)
+
 // MockBlockDevice is a mock implementation of BlockDevice for testing
 type MockBlockDevice struct {
 	data      []byte
@@ -259,6 +264,29 @@ func (m *MockWatchdog) SetFailPet(fail bool) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	m.failPet = fail
+}
+
+// createTestSBDAgent creates a test SBD agent with mock devices and temporary SBD file
+func createTestSBDAgent(t *testing.T, nodeName string, metricsPort int) (*SBDAgent, *MockWatchdog, *MockBlockDevice, func()) {
+	mockWatchdog := NewMockWatchdog("/dev/watchdog")
+	mockDevice := NewMockBlockDevice("/dev/mock-sbd", 1024*1024) // 1MB
+
+	// Create temporary SBD device file
+	tmpDir := t.TempDir()
+	sbdPath := tmpDir + "/test-sbd"
+	if err := os.WriteFile(sbdPath, make([]byte, 1024*1024), 0644); err != nil {
+		t.Fatalf("Failed to create test SBD device: %v", err)
+	}
+
+	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, sbdPath, nodeName, "test-cluster", 1,
+		1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second, 30, "panic", metricsPort, 10*time.Minute, true,
+		2*time.Second, nil, nil, "", false)
+	if err != nil {
+		t.Fatalf("Failed to create SBD agent: %v", err)
+	}
+
+	cleanup := func() { _ = agent.Stop() }
+	return agent, mockWatchdog, mockDevice, cleanup
 }
 
 // TestPeerMonitor tests the peer monitoring functionality
@@ -733,24 +761,8 @@ func TestSBDAgent_WriteHeartbeatToSBD(t *testing.T) {
 }
 
 func TestSBDAgent_WriteHeartbeatToSBD_DeviceError(t *testing.T) {
-	mockWatchdog := NewMockWatchdog("/dev/watchdog")
-	mockDevice := NewMockBlockDevice("/dev/mock-sbd", 1024*1024) // 1MB
-
-	// Create agent and set mock device
-	// Create temporary SBD device file
-	tmpDir := t.TempDir()
-	sbdPath := tmpDir + "/test-sbd"
-	if err := os.WriteFile(sbdPath, make([]byte, 1024*1024), 0644); err != nil {
-		t.Fatalf("Failed to create test SBD device: %v", err)
-	}
-
-	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, sbdPath, "test-node", "test-cluster", 1,
-		1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second, 30, "panic", 8089, 10*time.Minute, true,
-		2*time.Second, nil, nil, "", false)
-	if err != nil {
-		t.Fatalf("Failed to create SBD agent: %v", err)
-	}
-	defer func() { _ = agent.Stop() }()
+	agent, _, mockDevice, cleanup := createTestSBDAgent(t, "test-node", 8089)
+	defer cleanup()
 
 	agent.setSBDDevices(mockDevice, mockDevice)
 
@@ -758,31 +770,15 @@ func TestSBDAgent_WriteHeartbeatToSBD_DeviceError(t *testing.T) {
 	mockDevice.SetFailWrite(true)
 
 	// Should return error when device write fails
-	err = agent.writeHeartbeatToSBD()
+	err := agent.writeHeartbeatToSBD()
 	if err == nil {
 		t.Error("Expected error when device write fails")
 	}
 }
 
 func TestSBDAgent_WriteHeartbeatToSBD_SyncError(t *testing.T) {
-	mockWatchdog := NewMockWatchdog("/dev/watchdog")
-	mockDevice := NewMockBlockDevice("/dev/mock-sbd", 1024*1024) // 1MB
-
-	// Create agent and set mock device
-	// Create temporary SBD device file
-	tmpDir := t.TempDir()
-	sbdPath := tmpDir + "/test-sbd"
-	if err := os.WriteFile(sbdPath, make([]byte, 1024*1024), 0644); err != nil {
-		t.Fatalf("Failed to create test SBD device: %v", err)
-	}
-
-	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, sbdPath, "test-node", "test-cluster", 1,
-		1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second, 30, "panic", 8090, 10*time.Minute, true,
-		2*time.Second, nil, nil, "", false)
-	if err != nil {
-		t.Fatalf("Failed to create SBD agent: %v", err)
-	}
-	defer func() { _ = agent.Stop() }()
+	agent, _, mockDevice, cleanup := createTestSBDAgent(t, "test-node", 8090)
+	defer cleanup()
 
 	agent.setSBDDevices(mockDevice, mockDevice)
 
@@ -790,30 +786,15 @@ func TestSBDAgent_WriteHeartbeatToSBD_SyncError(t *testing.T) {
 	mockDevice.SetFailSync(true)
 
 	// Should return error when device sync fails
-	err = agent.writeHeartbeatToSBD()
+	err := agent.writeHeartbeatToSBD()
 	if err == nil {
 		t.Error("Expected error when device sync fails")
 	}
 }
 
 func TestSBDAgent_SBDHealthStatus(t *testing.T) {
-	mockWatchdog := NewMockWatchdog("/dev/watchdog")
-
-	// Create agent
-	// Create temporary SBD device file
-	tmpDir := t.TempDir()
-	sbdPath := tmpDir + "/test-sbd"
-	if err := os.WriteFile(sbdPath, make([]byte, 1024*1024), 0644); err != nil {
-		t.Fatalf("Failed to create test SBD device: %v", err)
-	}
-
-	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, sbdPath, "test-node", "test-cluster", 1,
-		1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second, 30, "panic", 8091, 10*time.Minute, true,
-		2*time.Second, nil, nil, "", false)
-	if err != nil {
-		t.Fatalf("Failed to create SBD agent: %v", err)
-	}
-	defer func() { _ = agent.Stop() }()
+	agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8091)
+	defer cleanup()
 
 	// Initially should be false
 	if agent.isSBDHealthy() {
@@ -890,8 +871,8 @@ func TestEnvironmentVariables(t *testing.T) {
 	// Test getNodeIDFromEnv
 	t.Run("getNodeIDFromEnv", func(t *testing.T) {
 		// Clear environment
-		os.Unsetenv("SBD_NODE_ID")
-		os.Unsetenv("NODE_ID")
+		_ = os.Unsetenv("SBD_NODE_ID")
+		_ = os.Unsetenv("NODE_ID")
 
 		// Set SBD_NODE_ID
 		_ = os.Setenv("SBD_NODE_ID", "5")
@@ -1043,7 +1024,7 @@ func TestSBDAgent_ReadOwnSlotForFenceMessage(t *testing.T) {
 	}()
 
 	// This should trigger self-fencing and panic
-	err = agent.readOwnSlotForFenceMessage()
+	_ = agent.readOwnSlotForFenceMessage()
 	// Should not reach here due to panic
 	t.Error("Expected function to panic due to self-fencing")
 }
@@ -1091,24 +1072,8 @@ func TestSBDAgent_ReadOwnSlotForFenceMessage_WrongTarget(t *testing.T) {
 }
 
 func TestSBDAgent_SelfFenceStatus(t *testing.T) {
-	// Create mock devices
-	mockWatchdog := NewMockWatchdog("/dev/mock-watchdog")
-
-	// Create agent with empty SBD device path
-	// Create temporary SBD device file
-	tmpDir := t.TempDir()
-	sbdPath := tmpDir + "/test-sbd"
-	if err := os.WriteFile(sbdPath, make([]byte, 1024*1024), 0644); err != nil {
-		t.Fatalf("Failed to create test SBD device: %v", err)
-	}
-
-	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, sbdPath, "test-node", "test-cluster", 1,
-		1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second, 30, "panic", 8095, 10*time.Minute, true,
-		2*time.Second, nil, nil, "", false)
-	if err != nil {
-		t.Fatalf("Failed to create SBD agent: %v", err)
-	}
-	defer func() { _ = agent.Stop() }()
+	agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8095)
+	defer cleanup()
 
 	// Initially should not be self-fenced
 	if agent.isSelfFenceDetected() {
@@ -1220,7 +1185,7 @@ func TestPreflightChecks_WatchdogMissing(t *testing.T) {
 	}
 
 	// Use non-existent watchdog path
-	watchdogPath := "/non/existent/watchdog"
+	watchdogPath := nonExistentWatchdogPath
 
 	// Test pre-flight checks with missing watchdog device and no SBD device
 	// This should fail because SBD device is always required now
@@ -1713,7 +1678,7 @@ func TestPreflightChecks_SBDOnlyMode(t *testing.T) {
 	_ = sbdFile.Close()
 
 	// Use non-existent watchdog path (should fail)
-	watchdogPath := "/non/existent/watchdog"
+	watchdogPath := nonExistentWatchdogPath
 
 	// Test pre-flight checks with missing watchdog device but working SBD device
 	// This should PASS because SBD device is available (either/or logic)
@@ -1731,7 +1696,7 @@ func TestPreflightChecks_BothFailing(t *testing.T) {
 	}
 
 	// Use non-existent paths for both watchdog and SBD device
-	watchdogPath := "/non/existent/watchdog"
+	watchdogPath := nonExistentWatchdogPath
 	sbdPath := "/non/existent/sbd"
 
 	// Test pre-flight checks with both watchdog and SBD device failing

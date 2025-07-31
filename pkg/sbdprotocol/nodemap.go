@@ -425,10 +425,3 @@ func (table *NodeMapTable) GetStats() map[string]interface{} {
 		"last_update":     table.LastUpdate,
 	}
 }
-
-// incrementVersion safely increments the table version
-func (table *NodeMapTable) incrementVersion() {
-	table.mutex.Lock()
-	defer table.mutex.Unlock()
-	table.Version++
-}

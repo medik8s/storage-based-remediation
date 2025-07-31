@@ -457,7 +457,7 @@ func TestDeviceString(t *testing.T) {
 	}
 
 	// Close device and test string representation when closed
-	device.Close()
+	_ = device.Close()
 	str = device.String()
 	if !strings.Contains(str, testPath) {
 		t.Errorf("Expected string to contain device path %q, got: %s", testPath, str)
@@ -694,7 +694,7 @@ func TestOpenWithTimeout(t *testing.T) {
 				if err == nil {
 					t.Errorf("Expected error but got none")
 					if device != nil {
-						device.Close()
+						_ = device.Close()
 					}
 					return
 				}
@@ -724,7 +724,7 @@ func TestOpenWithTimeout(t *testing.T) {
 				t.Errorf("Expected to write %d bytes, wrote %d", len(testData), n)
 			}
 
-			device.Close()
+			_ = device.Close()
 		})
 	}
 }

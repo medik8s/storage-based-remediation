@@ -39,7 +39,7 @@ func TestIOTimeoutConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open device: %v", err)
 	}
-	defer device.Close()
+	defer func() { _ = device.Close() }()
 
 	// Verify that the timeout is properly configured
 	if device.ioTimeout != DefaultIOTimeout {
@@ -91,7 +91,7 @@ func TestTimeoutErrorMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open device: %v", err)
 	}
-	defer device.Close()
+	defer func() { _ = device.Close() }()
 
 	// Set a very short timeout for testing timeout behavior
 	device.ioTimeout = 1 * time.Nanosecond
@@ -138,7 +138,7 @@ func TestTimeoutPreventsHanging(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open device: %v", err)
 	}
-	defer device.Close()
+	defer func() { _ = device.Close() }()
 
 	// Set a very short timeout (1ms)
 	device.ioTimeout = 1 * time.Millisecond
@@ -148,7 +148,7 @@ func TestTimeoutPreventsHanging(t *testing.T) {
 	testData := []byte("test data")
 
 	// This should complete quickly (either success or timeout error)
-	_, err = device.WriteAt(testData, 0)
+	_, _ = device.WriteAt(testData, 0)
 	elapsed := time.Since(startTime)
 
 	// Operation should complete within a reasonable time (much less than the original DefaultIOTimeout)
@@ -175,7 +175,7 @@ func TestStrictTimeoutEnforcement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open device: %v", err)
 	}
-	defer device.Close()
+	defer func() { _ = device.Close() }()
 
 	// Set timeout to a precise value for testing
 	strictTimeout := 50 * time.Millisecond
@@ -185,7 +185,7 @@ func TestStrictTimeoutEnforcement(t *testing.T) {
 
 	// Test WriteAt strict timeout
 	startTime := time.Now()
-	_, err = device.WriteAt(testData, 0)
+	_, _ = device.WriteAt(testData, 0)
 	writeElapsed := time.Since(startTime)
 
 	// Should complete very close to the timeout period
@@ -206,7 +206,7 @@ func TestStrictTimeoutEnforcement(t *testing.T) {
 	// Test ReadAt strict timeout
 	readBuf := make([]byte, len(testData))
 	startTime = time.Now()
-	_, err = device.ReadAt(readBuf, 0)
+	_, _ = device.ReadAt(readBuf, 0)
 	readElapsed := time.Since(startTime)
 
 	if readElapsed < minExpected {
@@ -221,7 +221,7 @@ func TestStrictTimeoutEnforcement(t *testing.T) {
 
 	// Test Sync strict timeout
 	startTime = time.Now()
-	err = device.Sync()
+	_ = device.Sync()
 	syncElapsed := time.Since(startTime)
 
 	if syncElapsed < minExpected {
@@ -265,7 +265,7 @@ func TestRetryWithTimeouts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open device: %v", err)
 	}
-	defer device.Close()
+	defer func() { _ = device.Close() }()
 
 	// Set a very short timeout to trigger timeout errors
 	device.ioTimeout = 1 * time.Nanosecond
@@ -315,7 +315,7 @@ func TestTimeoutMechanismComparison(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open device: %v", err)
 	}
-	defer device.Close()
+	defer func() { _ = device.Close() }()
 
 	// Test with a reasonable timeout that shows the mechanism works
 	device.ioTimeout = 10 * time.Millisecond

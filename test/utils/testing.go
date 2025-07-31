@@ -135,8 +135,9 @@ func (tc *TestClients) CreateTestNamespace(namePrefix string) (*TestNamespace, e
 
 	// Create the artifacts directory for this test namespace
 	err := os.MkdirAll(fmt.Sprintf("../../%s", artifactsDir), 0755)
-	err = os.MkdirAll("../../sbd-operator-system", 0755)
 	Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("failed to create artifacts directory %s", artifactsDir))
+	err = os.MkdirAll("../../sbd-operator-system", 0755)
+	Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("failed to create operator artifacts directory %s", artifactsDir))
 
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
@@ -931,7 +932,7 @@ func (sav *SBDAgentValidator) ValidateAgentDeployment(opts ValidateAgentDeployme
 		if logStr == "" {
 			return "NO_LOGS_YET"
 		}
-		//GinkgoWriter.Printf("Pod %s logs sample:\n%s\n", podName, logStr)
+		// GinkgoWriter.Printf("Pod %s logs sample:\n%s\n", podName, logStr)
 		return logStr
 	}, opts.LogCheckTimeout, time.Second*10).Should(SatisfyAny(
 		// Accept various states - the test is mainly about configuration correctness
@@ -1029,14 +1030,6 @@ func (sav *SBDAgentValidator) ValidateNoNodeReboots(opts ValidateAgentDeployment
 
 	GinkgoWriter.Printf("SUCCESS: No node reboots detected during SBD agent deployment and operation\n")
 	return nil
-}
-
-// tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,
-// containing only the token field that we need to extract.
-type tokenRequest struct {
-	Status struct {
-		Token string `json:"token"`
-	} `json:"status"`
 }
 
 func CleanupSBDConfigs(k8sClient client.Client, testNS TestNamespace, ctx context.Context) {
@@ -1279,7 +1272,7 @@ func DescribeEnvironment(testClients *TestClients, testNamespace *TestNamespace)
 					activePods = append(activePods, pod)
 				}
 			}
-			g.Expect(len(activePods)).To(BeNumerically(">=", 1), "expected at least 1 SBD agent pod running")
+			g.Expect(activePods).ToNot(BeEmpty(), "expected at least 1 SBD agent pod running")
 
 			// Validate each agent pod's status
 			for _, pod := range activePods {

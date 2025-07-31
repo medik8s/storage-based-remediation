@@ -124,9 +124,11 @@ func main() {
 
 	// Log leadership configuration prominently
 	if enableLeaderElection {
-		setupLog.Info("Leader election ENABLED - this operator instance will participate in leader election for SBD fencing operations")
+		setupLog.Info("Leader election ENABLED - this operator instance will participate in " +
+			"leader election for SBD fencing operations")
 	} else {
-		setupLog.Error(nil, "WARNING: Leader election DISABLED - this is unsafe for production SBD deployments and may cause data corruption!")
+		setupLog.Error(nil, "WARNING: Leader election DISABLED - this is unsafe for production "+
+			"SBD deployments and may cause data corruption!")
 	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled

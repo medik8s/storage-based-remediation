@@ -221,20 +221,20 @@ func SaveNodeMapToFile(nodeMapTable *sbdprotocol.NodeMapTable, filename string) 
 	return nil
 }
 
-// SaveSBDDeviceToFile saves the SBD device summary to a file
-func SaveSBDDeviceToFile(slots []SBDNodeSummary, filename string) error {
+// saveDeviceToFileGeneric is a generic helper function for saving device summaries to file
+func saveDeviceToFileGeneric(slots []SBDNodeSummary, filename, deviceType, noSlotsMessage string) error {
 	file, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %w", filename, err)
 	}
 	defer func() { _ = file.Close() }()
 
-	_, _ = fmt.Fprintf(file, "=== SBD Device Summary ===\n")
+	_, _ = fmt.Fprintf(file, "=== %s Summary ===\n", deviceType)
 	_, _ = fmt.Fprintf(file, "Generated at: %s\n", time.Now().Format("2006-01-02 15:04:05"))
 	_, _ = fmt.Fprintf(file, "Total slots with data: %d\n\n", len(slots))
 
 	if len(slots) == 0 {
-		_, _ = fmt.Fprintf(file, "No active SBD slots found.\n")
+		_, _ = fmt.Fprintf(file, "%s\n", noSlotsMessage)
 		return nil
 	}
 
@@ -246,7 +246,7 @@ func SaveSBDDeviceToFile(slots []SBDNodeSummary, filename string) error {
 		if !slot.Timestamp.IsZero() {
 			timestampStr = slot.Timestamp.Format("15:04:05")
 		}
-		nodeNameStr := "Unknown" // We don't have node name in the SBD message
+		nodeNameStr := "Unknown" // We don't have node name in the message
 		_, _ = fmt.Fprintf(file, "%-8d %-30s %-12s %-20s %-10d\n",
 			slot.NodeID, nodeNameStr, slot.Type, timestampStr, slot.Sequence)
 	}
@@ -255,38 +255,14 @@ func SaveSBDDeviceToFile(slots []SBDNodeSummary, filename string) error {
 	return nil
 }
 
+// SaveSBDDeviceToFile saves SBD device slots to a file for debugging
+func SaveSBDDeviceToFile(slots []SBDNodeSummary, filename string) error {
+	return saveDeviceToFileGeneric(slots, filename, "SBD Device", "No active SBD slots found.")
+}
+
 // SaveFenceDeviceToFile saves the fence device summary to a file
 func SaveFenceDeviceToFile(slots []SBDNodeSummary, filename string) error {
-	file, err := os.Create(filename)
-	if err != nil {
-		return fmt.Errorf("failed to create file %s: %w", filename, err)
-	}
-	defer func() { _ = file.Close() }()
-
-	_, _ = fmt.Fprintf(file, "=== Fence Device Summary ===\n")
-	_, _ = fmt.Fprintf(file, "Generated at: %s\n", time.Now().Format("2006-01-02 15:04:05"))
-	_, _ = fmt.Fprintf(file, "Total slots with data: %d\n\n", len(slots))
-
-	if len(slots) == 0 {
-		_, _ = fmt.Fprintf(file, "No active fence slots found.\n")
-		return nil
-	}
-
-	_, _ = fmt.Fprintf(file, "%-8s %-30s %-12s %-20s %-10s\n", "NodeID", "Node Name", "Type", "Timestamp", "Sequence")
-	_, _ = fmt.Fprintf(file, "%-8s %-30s %-12s %-20s %-10s\n", "------", "---------", "----", "---------", "--------")
-
-	for _, slot := range slots {
-		timestampStr := "N/A"
-		if !slot.Timestamp.IsZero() {
-			timestampStr = slot.Timestamp.Format("15:04:05")
-		}
-		nodeNameStr := "Unknown" // We don't have node name in the fence message
-		_, _ = fmt.Fprintf(file, "%-8d %-30s %-12s %-20s %-10d\n",
-			slot.NodeID, nodeNameStr, slot.Type, timestampStr, slot.Sequence)
-	}
-	_, _ = fmt.Fprintf(file, "\n")
-
-	return nil
+	return saveDeviceToFileGeneric(slots, filename, "Fence Device", "No active fence slots found.")
 }
 
 // NodeMapSummary gets node mapping from a pod and either prints or saves it
@@ -576,21 +552,4 @@ func parseSBDSlot(nodeID uint16, data []byte) (SBDNodeSummary, error) {
 		Type:      typeStr,
 		HasData:   true,
 	}, nil
-}
-
-// isPrintableString checks if a string contains mostly printable characters
-func isPrintableString(s string) bool {
-	if len(s) == 0 {
-		return false
-	}
-
-	printableCount := 0
-	for _, r := range s {
-		if r >= 32 && r <= 126 { // Printable ASCII range
-			printableCount++
-		}
-	}
-
-	// Consider it printable if more than 80% of characters are printable
-	return float64(printableCount)/float64(len(s)) > 0.8
 }

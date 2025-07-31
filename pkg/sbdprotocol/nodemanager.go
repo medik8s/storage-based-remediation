@@ -179,7 +179,7 @@ func (nm *NodeManager) atomicAssignSlot(nodeName string) (uint16, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to acquire device lock: %w", err)
 	}
-	defer nm.releaseDeviceLock(lockFile)
+	defer func() { _ = nm.releaseDeviceLock(lockFile) }()
 
 	for attempt := 0; attempt < MaxAtomicRetries; attempt++ {
 		// Step 1: Load current state from device
@@ -604,7 +604,7 @@ func (nm *NodeManager) clearCorruptedSlot() error {
 	if err != nil {
 		return fmt.Errorf("failed to acquire lock for slot clearing: %w", err)
 	}
-	defer nm.releaseDeviceLock(lockFile)
+	defer func() { _ = nm.releaseDeviceLock(lockFile) }()
 
 	// Remove the corrupted file
 	if err := os.Remove(nm.nodeMapFilePath); err != nil && !os.IsNotExist(err) {
@@ -646,7 +646,7 @@ func (nm *NodeManager) syncToDevice() error {
 	// Atomic rename to final location
 	if err := os.Rename(tempFilePath, nm.nodeMapFilePath); err != nil {
 		// Clean up temporary file on failure
-		os.Remove(tempFilePath)
+		_ = os.Remove(tempFilePath)
 		return fmt.Errorf("failed to rename temporary file to %s: %w", nm.nodeMapFilePath, err)
 	}
 
@@ -842,7 +842,7 @@ func (nm *NodeManager) atomicSyncToDeviceWithLock(expectedVersion uint64, lockFi
 	// Atomic rename to final location
 	if err := os.Rename(tempFilePath, nm.nodeMapFilePath); err != nil {
 		// Clean up temporary file on failure
-		os.Remove(tempFilePath)
+		_ = os.Remove(tempFilePath)
 		return fmt.Errorf("failed to rename temporary file to %s: %w", nm.nodeMapFilePath, err)
 	}
 
@@ -908,7 +908,7 @@ func (nm *NodeManager) acquireDeviceLock() (*os.File, error) {
 	select {
 	case err := <-lockAcquired:
 		if err != nil {
-			lockFile.Close()
+			_ = lockFile.Close()
 			return nil, fmt.Errorf("failed to acquire file lock: %w", err)
 		}
 		nm.logger.V(1).Info("Successfully acquired file lock on node mapping file", "filePath", nm.nodeMapFilePath)
@@ -916,7 +916,7 @@ func (nm *NodeManager) acquireDeviceLock() (*os.File, error) {
 
 	case <-lockCtx.Done():
 		// Timeout occurred, try to close the file and return error
-		lockFile.Close()
+		_ = lockFile.Close()
 		return nil, fmt.Errorf("timeout waiting for file lock on node mapping file after %v", FileLockTimeout)
 	}
 }
@@ -933,41 +933,6 @@ func (nm *NodeManager) releaseDeviceLock(lockFile *os.File) error {
 	if err := lockFile.Close(); err != nil {
 		return fmt.Errorf("failed to release file lock on %s: %w", devicePath, err)
 	}
-	return nil
-}
-
-// createLockFile creates a lock file atomically
-func (nm *NodeManager) createLockFile(lockPath string) error {
-	// Not used in the randomized delay approach
-	return nil
-}
-
-// removeLockFile removes a lock file
-func (nm *NodeManager) removeLockFile(lockPath string) error {
-	// Not used in the randomized delay approach
-	return nil
-}
-
-// verifyWrite verifies that the data was written correctly by reading it back
-func (nm *NodeManager) verifyWrite(expectedData []byte, offset int64) error {
-	readBuffer := make([]byte, len(expectedData))
-	n, err := nm.device.ReadAt(readBuffer, offset)
-	if err != nil {
-		return fmt.Errorf("failed to read back data for verification: %w", err)
-	}
-
-	if n != len(expectedData) {
-		return fmt.Errorf("verification read size mismatch: expected %d bytes, got %d", len(expectedData), n)
-	}
-
-	// Compare the data
-	for i, expected := range expectedData {
-		if readBuffer[i] != expected {
-			return fmt.Errorf("data verification failed at byte %d: expected 0x%02x, got 0x%02x", i, expected, readBuffer[i])
-		}
-	}
-
-	nm.logger.V(2).Info("Write verification successful", "bytesVerified", len(expectedData))
 	return nil
 }
 

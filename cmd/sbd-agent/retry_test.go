@@ -43,7 +43,7 @@ func TestSBDAgent_FailureTracking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create SBD agent: %v", err)
 	}
-	defer agent.Stop()
+	defer func() { _ = agent.Stop() }()
 
 	// Set the mock device
 	agent.setSBDDevices(mockDevice, mockDevice)
@@ -110,7 +110,7 @@ func TestSBDAgent_SelfFenceThreshold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create SBD agent: %v", err)
 	}
-	defer agent.Stop()
+	defer func() { _ = agent.Stop() }()
 
 	// Test that self-fence is not triggered initially
 	shouldFence, reason := agent.shouldTriggerSelfFence()
@@ -138,7 +138,7 @@ func TestSBDAgent_SelfFenceThreshold(t *testing.T) {
 		agent.incrementFailureCount("sbd")
 	}
 
-	shouldFence, reason = agent.shouldTriggerSelfFence()
+	shouldFence, _ = agent.shouldTriggerSelfFence()
 	if !shouldFence {
 		t.Error("Should trigger self-fence for SBD failures")
 	}
@@ -149,7 +149,7 @@ func TestSBDAgent_SelfFenceThreshold(t *testing.T) {
 		agent.incrementFailureCount("heartbeat")
 	}
 
-	shouldFence, reason = agent.shouldTriggerSelfFence()
+	shouldFence, _ = agent.shouldTriggerSelfFence()
 	if !shouldFence {
 		t.Error("Should trigger self-fence for heartbeat failures")
 	}
@@ -173,7 +173,7 @@ func TestSBDAgent_FailureCountReset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create SBD agent: %v", err)
 	}
-	defer agent.Stop()
+	defer func() { _ = agent.Stop() }()
 
 	// Increment some failure counts
 	agent.incrementFailureCount("watchdog")
@@ -221,7 +221,7 @@ func TestSBDAgent_RetryConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create SBD agent: %v", err)
 	}
-	defer agent.Stop()
+	defer func() { _ = agent.Stop() }()
 
 	// Verify retry configuration is properly initialized
 	if agent.retryConfig.MaxRetries != MaxCriticalRetries {
@@ -261,7 +261,7 @@ func TestSBDAgent_WatchdogRetryMechanism(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create SBD agent: %v", err)
 	}
-	defer agent.Stop()
+	defer func() { _ = agent.Stop() }()
 
 	// Test that failures are tracked when watchdog pet fails
 	// We don't start the watchdog loop here, just test the failure tracking mechanism
@@ -297,7 +297,7 @@ func TestSBDAgent_HeartbeatRetryMechanism(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create SBD agent: %v", err)
 	}
-	defer agent.Stop()
+	defer func() { _ = agent.Stop() }()
 
 	// Set the mock device and make it fail initially
 	agent.setSBDDevices(mockDevice, mockDevice)

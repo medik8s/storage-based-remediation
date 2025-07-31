@@ -585,7 +585,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 
 	// Monitor for node becoming NotReady due to loss of shared storage access
 	checkNodeNotReady(targetNode.Metadata.Name, "becomes NotReady due to loss of shared storage access", time.Minute*8, nil)
-	//BeTrue()
+	// BeTrue()
 
 	// Monitor for node disappearing (panic/reboot) or boot ID change
 	checkNodeReboot(targetNode.Metadata.Name, "during storage disruption", originalBootTimes[targetNode.Metadata.Name], time.Minute*2, true)
@@ -848,7 +848,9 @@ func testSBDInspection(cluster ClusterInfo) {
 		client.InNamespace(testNamespace.Name),
 		client.MatchingLabels{"app": "sbd-agent"})
 	Expect(err).NotTo(HaveOccurred())
-	Expect(len(pods.Items)).To(BeNumerically(">", 0), "Should find at least one SBD agent pod")
+	Expect(pods.Items).ToNot(BeEmpty(), "Should find at least one SBD agent pod")
+
+	time.Sleep(1 * time.Minute)
 
 	// Use the first available pod
 	podName := pods.Items[0].Name
@@ -892,14 +894,14 @@ func testSBDInspection(cluster ClusterInfo) {
 		client.InNamespace(testNamespace.Name),
 		client.MatchingLabels{"app": "sbd-agent"})
 	Expect(err).NotTo(HaveOccurred())
-	Expect(len(allPods.Items)).To(BeNumerically(">", 0), "Should find at least one SBD agent pod")
+	Expect(allPods.Items).ToNot(BeEmpty(), "Should find at least one SBD agent pod")
 
 	type podDeviceSummary struct {
 		PodName string
 		Slots   []utils.SBDNodeSummary
 	}
 
-	var summaries []podDeviceSummary
+	summaries := make([]podDeviceSummary, 0, len(allPods.Items))
 
 	for _, pod := range allPods.Items {
 		slots, err := testNamespace.Clients.GetSBDDeviceInfoFromPod(pod.Name, testNamespace.Name)
@@ -963,7 +965,7 @@ func testSBDAgentCrash(cluster ClusterInfo) {
 		client.MatchingLabels{"app": "sbd-agent"},
 		client.MatchingFields{"spec.nodeName": targetNode.Metadata.Name})
 	Expect(err).NotTo(HaveOccurred())
-	Expect(len(pods.Items)).To(BeNumerically(">", 0), "Should find SBD agent pod on target node")
+	Expect(pods.Items).ToNot(BeEmpty(), "Should find SBD agent pod on target node")
 
 	podName := pods.Items[0].Name
 	targetPod := &pods.Items[0]
@@ -1482,7 +1484,7 @@ spec:
 		}
 		GinkgoWriter.Printf("Disruptor pod status: %s\n", pod.Status.Phase)
 		return pod.Status.Phase != corev1.PodPending
-	}, time.Minute*2, time.Second*10)
+	}, time.Minute*2, time.Second*10).Should(BeTrue())
 
 	return &disruptorPodName, nil
 }
@@ -2046,9 +2048,13 @@ func cleanupPreviousTestAttempts() error {
 				By(fmt.Sprintf("Cleaning up any leftover artifacts from previous test runs for instance %s", *instance.InstanceId))
 				err = removeNetworkDisruption(nil, *instance.InstanceId)
 				Expect(err).NotTo(HaveOccurred())
+				err = restoreStorageDisruption(*instance.InstanceId, nil)
+				Expect(err).NotTo(HaveOccurred())
 			}
 		}
 	}
+
+	cleanupTestArtifacts()
 
 	GinkgoWriter.Print("Cleanup of previous test attempts completed")
 	return nil

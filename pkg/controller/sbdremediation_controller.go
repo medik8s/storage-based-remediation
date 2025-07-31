@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -90,13 +89,6 @@ type SBDRemediationReconciler struct {
 	sequence    uint64 // Changed from uint32 to uint64
 }
 
-// conditionUpdate represents an update to a condition
-type conditionUpdate struct {
-	status  metav1.ConditionStatus
-	reason  string
-	message string
-}
-
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdremediations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdremediations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdremediations/finalizers,verbs=update
@@ -151,26 +143,6 @@ func (r *SBDRemediationReconciler) initializeRetryConfigs(logger logr.Logger) {
 	logger.V(1).Info("Retry configurations initialized",
 		"statusRetryConfig", r.statusRetryConfig,
 		"apiRetryConfig", r.apiRetryConfig)
-}
-
-// isTransientKubernetesError checks if an error is likely transient and should be retried
-func (r *SBDRemediationReconciler) isTransientKubernetesError(err error) bool {
-	return apierrors.IsServerTimeout(err) ||
-		apierrors.IsServiceUnavailable(err) ||
-		apierrors.IsTooManyRequests(err) ||
-		apierrors.IsInternalError(err)
-}
-
-// performKubernetesAPIOperationWithRetry performs a Kubernetes API operation with retry logic
-func (r *SBDRemediationReconciler) performKubernetesAPIOperationWithRetry(ctx context.Context, operation string, fn func() error, logger logr.Logger) error {
-	return retry.Do(ctx, r.apiRetryConfig, operation, func() error {
-		err := fn()
-		if err != nil {
-			// Wrap error with retry information
-			return retry.NewRetryableError(err, r.isTransientKubernetesError(err), operation)
-		}
-		return nil
-	})
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -428,15 +400,6 @@ func (r *SBDRemediationReconciler) handleDeletion(ctx context.Context, sbdRemedi
 	return ctrl.Result{}, nil
 }
 
-// getOperatorInstanceID generates a unique identifier for this operator instance
-func (r *SBDRemediationReconciler) getOperatorInstanceID() string {
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = "unknown"
-	}
-	return fmt.Sprintf("%s-%d", hostname, time.Now().Unix())
-}
-
 // emitEventf emits an event for the SBDRemediation resource
 func (r *SBDRemediationReconciler) emitEventf(obj *medik8sv1alpha1.SBDRemediation, eventType, reason, messageFmt string, args ...interface{}) {
 	if r.Recorder != nil {
@@ -457,33 +420,10 @@ func (r *SBDRemediationReconciler) updateRemediationCondition(ctx context.Contex
 	return nil
 }
 
-// updateRemediationConditionWithEvent updates a condition and emits an event
-// Events are always emitted even if condition updates fail, for better observability
-func (r *SBDRemediationReconciler) updateRemediationConditionWithEvent(ctx context.Context, remediation *medik8sv1alpha1.SBDRemediation, conditionType medik8sv1alpha1.SBDRemediationConditionType, status metav1.ConditionStatus, reason, message string, eventType, eventReason, eventMessage string) error {
-	// Always emit the event first for observability, regardless of whether the update succeeds
-	r.emitEventf(remediation, eventType, eventReason, eventMessage)
-
-	// Then try to update the condition
-	if err := r.updateRemediationCondition(ctx, remediation, conditionType, status, reason, message); err != nil {
-		// Log the condition update failure but don't fail the entire operation
-		// since the event was successfully emitted
-		r.emitEventf(remediation, "Warning", "ConditionUpdateFailed",
-			"Failed to update condition %s: %v", conditionType, err)
-		return err
-	}
-
-	return nil
-}
-
 // emitEventOnly emits an event without attempting to update any conditions
 // This is useful for pure observability when condition updates might fail due to RBAC or other issues
 func (r *SBDRemediationReconciler) emitEventOnly(remediation *medik8sv1alpha1.SBDRemediation, eventType, eventReason, eventMessage string) {
 	r.emitEventf(remediation, eventType, eventReason, eventMessage)
-}
-
-// updateRemediationConditionAndEmitEvent is a convenience function that updates a condition and emits an event with the same message
-func (r *SBDRemediationReconciler) updateRemediationConditionAndEmitEvent(ctx context.Context, remediation *medik8sv1alpha1.SBDRemediation, conditionType medik8sv1alpha1.SBDRemediationConditionType, status metav1.ConditionStatus, reason, message, eventType, eventReason string) error {
-	return r.updateRemediationConditionWithEvent(ctx, remediation, conditionType, status, reason, message, eventType, eventReason, message)
 }
 
 // handleFencingFailure is a helper function to handle fencing failures consistently

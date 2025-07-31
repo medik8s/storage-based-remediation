@@ -151,7 +151,7 @@ func TestNodeManager_CoordinationStrategy(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create node manager: %v", err)
 			}
-			defer nm.Close()
+			defer func() { _ = nm.Close() }()
 
 			// Test coordination strategy
 			strategy := nm.GetCoordinationStrategy()
@@ -248,7 +248,7 @@ func TestNodeManager_DevicePersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create second node manager: %v", err)
 	}
-	defer nm2.Close()
+	defer func() { _ = nm2.Close() }()
 
 	// Phase 3: Verify all nodes are correctly loaded
 	for nodeName, expectedSlot := range originalSlots {
@@ -351,7 +351,7 @@ func TestNodeManager_CorruptionRecovery_DISABLED(t *testing.T) {
 	if err := nm1.Sync(); err != nil {
 		t.Fatalf("Failed to sync: %v", err)
 	}
-	nm1.Close()
+	_ = nm1.Close()
 
 	// Phase 2: Corrupt the file data
 	// NOTE: Corruption testing removed due to file-based storage migration

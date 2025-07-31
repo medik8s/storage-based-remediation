@@ -158,7 +158,7 @@ func runSingleConcurrentNode(t *testing.T, devicePath, nodeName string, fileLock
 		t.Errorf("Failed to create NodeManager for %s: %v", nodeName, err)
 		return nil
 	}
-	defer nm.Close()
+	defer func() { _ = nm.Close() }()
 
 	// Get slot assignment
 	slotID, err := nm.GetNodeIDForNode(nodeName)
@@ -267,7 +267,7 @@ func createTestDevice(path string, size int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to create device file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Write zeros to initialize
 	zeros := make([]byte, size)

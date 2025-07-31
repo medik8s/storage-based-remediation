@@ -155,7 +155,7 @@ var _ = Describe("SBD Agent Smoke Tests", Ordered, Label("Smoke", "Agent"), func
 
 			// Clean up temporary file
 			if tmpFile != "" {
-				os.Remove(tmpFile)
+				_ = os.Remove(tmpFile)
 			}
 		})
 

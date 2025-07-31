@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2" // nolint:revive,staticcheck
@@ -225,7 +224,7 @@ func loadImageToCRCPodman(name string) error {
 	if _, err := Run(cmd); err != nil {
 		return fmt.Errorf("failed to save image with docker: %w", err)
 	}
-	defer os.Remove(tempFile)
+	defer func() { _ = os.Remove(tempFile) }()
 
 	// Load the image using CRC's podman with proper environment
 	cmd = exec.Command("bash", "-c", fmt.Sprintf("eval $(crc podman-env) && podman load -i %s", tempFile))
@@ -255,7 +254,7 @@ func loadImageToCRCDocker(name string) error {
 	if _, err := Run(cmd); err != nil {
 		return fmt.Errorf("failed to save image to file: %w", err)
 	}
-	defer os.Remove(tempFile)
+	defer func() { _ = os.Remove(tempFile) }()
 
 	// Load image to CRC's docker daemon
 	cmd = exec.Command("docker", "load", "-i", tempFile)
@@ -267,13 +266,6 @@ func loadImageToCRCDocker(name string) error {
 	}
 
 	return nil
-}
-
-// getCRCDockerSocket returns the path to CRC's docker socket
-func getCRCDockerSocket() string {
-	// This might need adjustment based on CRC version
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".crc", "machines", "crc", "docker.sock")
 }
 
 // extractImageName extracts the image name from a full image tag

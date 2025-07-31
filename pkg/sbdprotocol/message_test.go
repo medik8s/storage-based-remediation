@@ -96,7 +96,7 @@ func TestNewFence(t *testing.T) {
 	nodeID := uint16(42)
 	targetNodeID := uint16(99)
 	sequence := uint64(456)
-	reason := uint8(FENCE_REASON_HEARTBEAT_TIMEOUT)
+	reason := FENCE_REASON_HEARTBEAT_TIMEOUT
 
 	before := time.Now().UnixNano()
 	msg := NewFence(nodeID, targetNodeID, sequence, reason)

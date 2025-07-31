@@ -58,10 +58,10 @@ func TestNew(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create mock file: %v", err)
 				}
-				file.Close()
+				_ = file.Close()
 
 				return tmpFile, func() {
-					os.Remove(tmpFile)
+					_ = os.Remove(tmpFile)
 				}
 			},
 			expectError: false,
@@ -135,7 +135,7 @@ func TestPet(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create mock file: %v", err)
 				}
-				file.Close()
+				_ = file.Close()
 
 				wd, err := New(tmpFile)
 				if err != nil {
@@ -143,7 +143,7 @@ func TestPet(t *testing.T) {
 				}
 
 				// Close the watchdog to test petting a closed device
-				wd.Close()
+				_ = wd.Close()
 				return wd
 			},
 			expectError: true,
@@ -171,7 +171,7 @@ func TestPet(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create mock file: %v", err)
 				}
-				file.Close()
+				_ = file.Close()
 
 				wd, err := New(tmpFile)
 				if err != nil {
@@ -190,7 +190,7 @@ func TestPet(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create mock file: %v", err)
 				}
-				file.Close()
+				_ = file.Close()
 
 				// Change to read-only
 				err = os.Chmod(tmpFile, 0444)
@@ -226,7 +226,7 @@ func TestPet(t *testing.T) {
 			wd := tt.setup()
 			defer func() {
 				if wd.IsOpen() {
-					wd.Close()
+					_ = wd.Close()
 				}
 			}()
 
@@ -264,7 +264,7 @@ func TestClose(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create mock file: %v", err)
 				}
-				file.Close()
+				_ = file.Close()
 
 				wd, err := New(tmpFile)
 				if err != nil {
@@ -272,7 +272,7 @@ func TestClose(t *testing.T) {
 				}
 
 				// Close it once first
-				wd.Close()
+				_ = wd.Close()
 				return wd
 			},
 			expectError: false, // Should not error on double close
@@ -297,7 +297,7 @@ func TestClose(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create mock file: %v", err)
 				}
-				file.Close()
+				_ = file.Close()
 
 				wd, err := New(tmpFile)
 				if err != nil {
@@ -345,7 +345,7 @@ func TestWatchdogProperties(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create mock file: %v", err)
 	}
-	file.Close()
+	_ = file.Close()
 
 	wd, err := New(tmpFile)
 	if err != nil {
@@ -387,7 +387,7 @@ func TestWatchdogLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create mock file: %v", err)
 	}
-	file.Close()
+	_ = file.Close()
 
 	// Create watchdog
 	wd, err := New(tmpFile)
@@ -497,7 +497,7 @@ func TestNewWithSoftdogFallback_ValidPath(t *testing.T) {
 	}
 
 	// If we got here, softdog was loaded successfully
-	defer wd.Close()
+	defer func() { _ = wd.Close() }()
 
 	if !wd.IsSoftdog() {
 		t.Error("Expected watchdog to be marked as softdog")
@@ -623,7 +623,7 @@ func TestNewWithSoftdogFallbackAndTestMode(t *testing.T) {
 	}
 
 	// If we got here, softdog was loaded successfully
-	defer wd.Close()
+	defer func() { _ = wd.Close() }()
 
 	if !wd.IsSoftdog() {
 		t.Error("Expected watchdog to be marked as softdog")
