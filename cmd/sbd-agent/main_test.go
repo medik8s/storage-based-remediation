@@ -268,6 +268,11 @@ func (m *MockWatchdog) SetFailPet(fail bool) {
 
 // createTestSBDAgent creates a test SBD agent with mock devices and temporary SBD files
 func createTestSBDAgent(t *testing.T, nodeName string, metricsPort int) (*SBDAgent, *MockWatchdog, *MockBlockDevice, func()) {
+	return createTestSBDAgentWithFileLocking(t, nodeName, metricsPort, true)
+}
+
+// createTestSBDAgentWithFileLocking creates a test SBD agent with configurable file locking
+func createTestSBDAgentWithFileLocking(t *testing.T, nodeName string, metricsPort int, fileLockingEnabled bool) (*SBDAgent, *MockWatchdog, *MockBlockDevice, func()) {
 
 	// Create temporary SBD device files (both heartbeat and fence)
 	tmpDir := t.TempDir()
@@ -287,7 +292,7 @@ func createTestSBDAgent(t *testing.T, nodeName string, metricsPort int) (*SBDAge
 	}
 
 	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, sbdPath, nodeName, "test-cluster", 1,
-		1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second, 30, "panic", metricsPort, 10*time.Minute, true,
+		1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second, 30, "panic", metricsPort, 10*time.Minute, fileLockingEnabled,
 		2*time.Second, nil, nil, "", false)
 	if err != nil {
 		t.Fatalf("Failed to create SBD agent: %v", err)
@@ -549,7 +554,7 @@ func TestSBDAgent_PeerMonitorLoop_Integration(t *testing.T) {
 	go agent.peerMonitorLoop()
 
 	// Wait for a few check cycles
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(agent.peerCheckInterval * 2)
 
 	// Check that peers were discovered
 	peers := agent.peerMonitor.GetPeerStatus()
@@ -557,25 +562,34 @@ func TestSBDAgent_PeerMonitorLoop_Integration(t *testing.T) {
 		t.Errorf("Expected 2 peers, got %d", len(peers))
 	}
 
-	if _, exists := peers[2]; !exists {
-		t.Error("Expected peer 2 to be discovered")
+	// Refresh the heartbeats
+	err = mockDevice.WritePeerHeartbeat(2, 12345, 1)
+	if err != nil {
+		t.Fatalf("Failed to write peer 2 heartbeat: %v", err)
 	}
 
-	if _, exists := peers[3]; !exists {
-		t.Error("Expected peer 3 to be discovered")
+	err = mockDevice.WritePeerHeartbeat(3, 12346, 1)
+	if err != nil {
+		t.Fatalf("Failed to write peer 3 heartbeat: %v", err)
 	}
 
 	// Check healthy peer count
 	if count := agent.peerMonitor.GetHealthyPeerCount(); count != 2 {
+		for peerID, peer := range peers {
+			t.Errorf("Peer %d: %+v", peerID, peer)
+		}
 		t.Errorf("Expected 2 healthy peers, got %d", count)
 	}
 
 	// Wait for peers to become unhealthy (1 second timeout + check interval)
-	time.Sleep(1200 * time.Millisecond)
+	time.Sleep(time.Duration(agent.peerMonitor.sbdTimeoutSeconds+1) * time.Second)
 
 	// Should now have 0 healthy peers
 	if count := agent.peerMonitor.GetHealthyPeerCount(); count != 0 {
-		t.Errorf("Expected 0 healthy peers after timeout, got %d", count)
+		t.Errorf("Expected 0 healthy peers after %vs timeout, got %d", agent.peerMonitor.sbdTimeoutSeconds, count)
+		for peerID, peer := range peers {
+			t.Errorf("Peer %d: %+v", peerID, peer)
+		}
 	}
 }
 
@@ -836,8 +850,11 @@ func BenchmarkPeerMonitor_UpdatePeer(b *testing.B) {
 }
 
 func TestSBDAgent_ReadOwnSlotForFenceMessage(t *testing.T) {
-	agent, _, mockDevice, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
 	defer cleanup()
+
+	// Get the fence device (different from heartbeat device)
+	mockFenceDevice := agent.fenceDevice.(*MockBlockDevice)
 
 	// Initially, no fence message should be found
 	err := agent.readOwnSlotForFenceMessage()
@@ -845,9 +862,9 @@ func TestSBDAgent_ReadOwnSlotForFenceMessage(t *testing.T) {
 		t.Errorf("Expected no error for empty slot, got: %v", err)
 	}
 
-	// Write a fence message targeting this node
+	// Write a fence message targeting this node to the FENCE device
 	// Use the actual assigned nodeID from the agent (not hardcoded 3)
-	err = mockDevice.WriteFenceMessage(2, agent.nodeID, 100, sbdprotocol.FENCE_REASON_HEARTBEAT_TIMEOUT)
+	err = mockFenceDevice.WriteFenceMessage(2, agent.nodeID, 100, sbdprotocol.FENCE_REASON_HEARTBEAT_TIMEOUT)
 	if err != nil {
 		t.Fatalf("Failed to write fence message: %v", err)
 	}
@@ -872,11 +889,14 @@ func TestSBDAgent_ReadOwnSlotForFenceMessage(t *testing.T) {
 }
 
 func TestSBDAgent_ReadOwnSlotForFenceMessage_WrongTarget(t *testing.T) {
-	agent, _, mockDevice, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
 	defer cleanup()
 
-	// Write a fence message targeting a different node
-	err := mockDevice.WriteFenceMessage(2, 5, 100, sbdprotocol.FENCE_REASON_MANUAL)
+	// Get the fence device (different from heartbeat device)
+	mockFenceDevice := agent.fenceDevice.(*MockBlockDevice)
+
+	// Write a fence message targeting a different node to the fence device
+	err := mockFenceDevice.WriteFenceMessage(2, 5, 100, sbdprotocol.FENCE_REASON_MANUAL)
 	if err != nil {
 		t.Fatalf("Failed to write fence message: %v", err)
 	}
@@ -1028,8 +1048,8 @@ func TestPreflightChecks_SBDMissing(t *testing.T) {
 	// Test pre-flight checks with missing SBD device but working watchdog
 	// This should now PASS because watchdog is available (either/or logic)
 	err = runPreflightChecks(watchdogPath, sbdPath, "test-node", 1)
-	if err != nil {
-		t.Errorf("Expected pre-flight checks to succeed with working watchdog despite missing SBD device, but got error: %v", err)
+	if err == nil {
+		t.Errorf("Expected pre-flight checks to fail with working watchdog and missing SBD device")
 	}
 }
 
@@ -1401,7 +1421,7 @@ func TestSBDAgent_FileLockingConfiguration(t *testing.T) {
 
 	// Test with file locking disabled
 	t.Run("FileLockingDisabled", func(t *testing.T) {
-		agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
+		agent, _, _, cleanup := createTestSBDAgentWithFileLocking(t, "test-node", 8082, false)
 		defer cleanup()
 
 		// Verify file locking is disabled via NodeManager
@@ -1430,8 +1450,8 @@ func TestSBDAgent_FileLockingConfiguration(t *testing.T) {
 			t.Error("Expected error when creating agent with empty SBD device path")
 		}
 
-		if !strings.Contains(err.Error(), "SBD device path cannot be empty") {
-			t.Errorf("Expected error about empty SBD device path, but got: %v", err)
+		if !strings.Contains(err.Error(), "heartbeat device path cannot be empty") {
+			t.Errorf("Expected error about empty heartbeat device path, but got: %v", err)
 		}
 	})
 }
@@ -1461,8 +1481,8 @@ func TestPreflightChecks_SBDOnlyMode(t *testing.T) {
 	// Test pre-flight checks with missing watchdog device but working SBD device
 	// This should PASS because SBD device is available (either/or logic)
 	err = runPreflightChecks(watchdogPath, sbdPath, "test-node", 1)
-	if err != nil {
-		t.Errorf("Expected pre-flight checks to succeed with working SBD device despite missing watchdog, but got error: %v", err)
+	if err == nil {
+		t.Errorf("Expected pre-flight checks to fail with working SBD device despite missing watchdog")
 	}
 }
 

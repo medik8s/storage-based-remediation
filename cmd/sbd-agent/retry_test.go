@@ -177,6 +177,9 @@ func TestSBDAgent_WatchdogRetryMechanism(t *testing.T) {
 	agent, mockWatchdog, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
 	defer cleanup()
 
+	// Configure mock watchdog to fail initially
+	mockWatchdog.SetFailPet(true)
+
 	// Test that failures are tracked when watchdog pet fails
 	// We don't start the watchdog loop here, just test the failure tracking mechanism
 	err := agent.watchdog.Pet()
