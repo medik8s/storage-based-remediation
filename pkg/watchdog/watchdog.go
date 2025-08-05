@@ -147,10 +147,8 @@ func NewWithSoftdogFallbackAndTestMode(path string, testMode bool, logger logr.L
 		"requestedPath", path, "error", err.Error())
 
 	// Check if any watchdog devices exist in the system
-	existingDevices, err := findWatchdogDevices()
-	if err != nil {
-		logger.Error(err, "Failed to scan for existing watchdog devices")
-	} else if len(existingDevices) > 0 {
+	existingDevices := findWatchdogDevices()
+	if len(existingDevices) > 0 {
 		logger.Info("Found existing watchdog devices, not loading softdog",
 			"devices", existingDevices)
 		// If other watchdog devices exist, return the original error
@@ -185,7 +183,7 @@ func NewWithSoftdogFallbackAndTestMode(path string, testMode bool, logger logr.L
 
 // findWatchdogDevices scans the system for existing watchdog devices
 // Returns a list of watchdog device paths found in /dev/
-func findWatchdogDevices() ([]string, error) {
+func findWatchdogDevices() []string {
 	var devices []string
 
 	// Common watchdog device patterns
@@ -215,7 +213,7 @@ func findWatchdogDevices() ([]string, error) {
 		devices = []string{}
 	}
 
-	return devices, nil
+	return devices
 }
 
 // loadSoftdogModule attempts to load the Linux softdog kernel module

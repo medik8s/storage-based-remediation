@@ -578,9 +578,14 @@ func (a *AWSManager) provisionVolumeForNode(ctx context.Context, nodeInfo NodeSt
 func (a *AWSManager) waitForVolumesAttached(ctx context.Context, nodes []NodeStorageInfo) error {
 	// This is a simplified implementation - in a real scenario, we'd track the specific volume IDs
 	// and wait for their attachment status
-	log.Println("⏳ Waiting 60 seconds for volume attachments to complete...")
-	time.Sleep(60 * time.Second)
-	return nil
+	log.Printf("⏳ Waiting 60 seconds for volume attachments to complete on %d nodes...", len(nodes))
+
+	select {
+	case <-time.After(60 * time.Second):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // getNextAvailableDevice finds the next available device name for the instance

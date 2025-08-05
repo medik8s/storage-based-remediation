@@ -105,15 +105,15 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 			if len(clusterInfo.WorkerNodes) < 3 {
 				Skip("Test requires at least 3 worker nodes")
 			}
-			testBasicSBDConfiguration(clusterInfo)
+			testBasicSBDConfiguration()
 		})
 
 		It("should inspect SBD node mapping and device state", func() {
-			testSBDInspection(clusterInfo)
+			testSBDInspection()
 		})
 
 		It("should handle fake remediation CRs", func() {
-			testFakeRemediation(clusterInfo)
+			testFakeRemediation()
 		})
 
 		It("should handle node remediation", func() {
@@ -141,7 +141,7 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 			if len(clusterInfo.WorkerNodes) < 3 {
 				Skip("Test requires at least 3 worker nodes")
 			}
-			testIncompatibleStorageClass(clusterInfo)
+			testIncompatibleStorageClass()
 		})
 
 		It("should handle SBD agent crash and recovery", func() {
@@ -268,7 +268,7 @@ func selectActualWorkerNode(cluster ClusterInfo) NodeInfo {
 	return selectedNode
 }
 
-func testBasicSBDConfiguration(cluster ClusterInfo) {
+func testBasicSBDConfiguration() {
 	By("Creating SBDConfig with proper agent deployment")
 
 	// Look for a storage class that supports RWX (ReadWriteMany) access mode
@@ -345,7 +345,7 @@ func isRWXCompatibleProvisioner(provisioner string) bool {
 	return rwxProvisioners[provisioner]
 }
 
-func testIncompatibleStorageClass(cluster ClusterInfo) {
+func testIncompatibleStorageClass() {
 	By("Testing SBD controller rejection of incompatible storage classes")
 
 	// First, create a gp3-csi storage class (EBS - ReadWriteOnce only)
@@ -543,7 +543,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 	}
 
 	By("Setting up SBD configuration for storage access test")
-	testBasicSBDConfiguration(cluster)
+	testBasicSBDConfiguration()
 
 	// Select a random actual worker node for testing (not control plane)
 	targetNode := selectActualWorkerNode(cluster)
@@ -609,7 +609,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 func testKubeletCommunicationFailure(cluster ClusterInfo) {
 
 	By("Setting up SBD configuration for kubelet communication test")
-	testBasicSBDConfiguration(cluster)
+	testBasicSBDConfiguration()
 
 	// Select a random actual worker node for testing (not control plane)
 	targetNode := selectActualWorkerNode(cluster)
@@ -701,9 +701,9 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 	GinkgoWriter.Printf("kubelet-based communication failure test completed successfully\n")
 }
 
-func testFakeRemediation(cluster ClusterInfo) {
+func testFakeRemediation() {
 	By("Setting up SBD configuration for remediation loop test")
-	testBasicSBDConfiguration(cluster)
+	testBasicSBDConfiguration()
 
 	// Create SBDRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
 	By("Creating SBDRemediation CR to simulate external operator behavior")
@@ -777,7 +777,7 @@ func testFakeRemediation(cluster ClusterInfo) {
 
 func testNodeRemediation(cluster ClusterInfo) {
 	By("Setting up SBD configuration for node remediation test")
-	testBasicSBDConfiguration(cluster)
+	testBasicSBDConfiguration()
 
 	// Select a random actual worker node for testing (not control plane)
 	targetNode := selectActualWorkerNode(cluster)
@@ -837,9 +837,9 @@ func testNodeRemediation(cluster ClusterInfo) {
 	GinkgoWriter.Printf("node remediation test completed successfully\n")
 }
 
-func testSBDInspection(cluster ClusterInfo) {
+func testSBDInspection() {
 	By("Setting up SBD configuration for inspection test")
-	testBasicSBDConfiguration(cluster)
+	testBasicSBDConfiguration()
 
 	// Find an SBD agent pod to inspect
 	By("Finding SBD agent pod for inspection")
@@ -953,7 +953,7 @@ func testSBDInspection(cluster ClusterInfo) {
 
 func testSBDAgentCrash(cluster ClusterInfo) {
 	By("Setting up SBD configuration for agent crash test")
-	testBasicSBDConfiguration(cluster)
+	testBasicSBDConfiguration()
 
 	targetNode := selectActualWorkerNode(cluster)
 	By(fmt.Sprintf("Testing SBD agent crash and recovery on verified worker node %s", targetNode.Metadata.Name))
@@ -1019,7 +1019,7 @@ func testSBDAgentCrash(cluster ClusterInfo) {
 
 func testNonFencingFailure(cluster ClusterInfo) {
 	By("Testing non-fencing failure scenario")
-	testBasicSBDConfiguration(cluster)
+	testBasicSBDConfiguration()
 
 	By("Creating a temporary resource constraint that should not trigger fencing")
 	// Create a pod that uses resources but doesn't cause critical failure
@@ -1132,7 +1132,7 @@ spec:
 
 func testLargeClusterCoordination(cluster ClusterInfo) {
 	By(fmt.Sprintf("Testing SBD coordination with %d worker nodes", len(cluster.WorkerNodes)))
-	testBasicSBDConfiguration(cluster)
+	testBasicSBDConfiguration()
 
 	By("Verifying SBD agents coordinate across large cluster")
 	Eventually(func() bool {

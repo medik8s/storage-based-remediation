@@ -75,7 +75,7 @@ func main() {
 	// If sbdConfigName is empty, find the first SBDConfig in the namespace and use it
 	if sbdConfigName == "" {
 		fmt.Printf("No SBDConfig name provided, discovering first SBDConfig in namespace %q...\n", namespace)
-		sbdConfigs, err := getSBDConfigs(clientset, namespace)
+		sbdConfigs, err := getSBDConfigs(namespace)
 		if err != nil {
 			log.Fatalf("Failed to list SBDConfigs in namespace %q: %v", namespace, err)
 		}
@@ -114,19 +114,19 @@ func main() {
 		checksums[podName] = make(map[string]string)
 
 		// Get checksums for each file type
-		if checksum, err := getFileChecksum(testClients, podName, namespace, "sbd-device"); err == nil {
+		if checksum, err := getFileChecksum(podName, namespace, "sbd-device"); err == nil {
 			checksums[podName]["sbd-device"] = checksum
 		} else {
 			fmt.Printf("  ⚠️  Failed to get sbd-device checksum: %v\n", err)
 		}
 
-		if checksum, err := getFileChecksum(testClients, podName, namespace, "fence-device"); err == nil {
+		if checksum, err := getFileChecksum(podName, namespace, "fence-device"); err == nil {
 			checksums[podName]["fence-device"] = checksum
 		} else {
 			fmt.Printf("  ⚠️  Failed to get fence-device checksum: %v\n", err)
 		}
 
-		if checksum, err := getFileChecksum(testClients, podName, namespace, "node-mapping"); err == nil {
+		if checksum, err := getFileChecksum(podName, namespace, "node-mapping"); err == nil {
 			checksums[podName]["node-mapping"] = checksum
 		} else {
 			fmt.Printf("  ⚠️  Failed to get node-mapping checksum: %v\n", err)
@@ -167,7 +167,7 @@ func main() {
 	fmt.Printf("===================================\n")
 	fmt.Printf("Monitoring SBD device changes over 30 seconds...\n\n")
 
-	timedConsistencyCheck(testClients, pods, namespace)
+	timedConsistencyCheck(pods, namespace)
 
 	// Phase 4: Cache coherency test
 	fmt.Printf("\n📊 Phase 4: Cache Coherency Validation\n")
@@ -208,7 +208,7 @@ func getKubeConfig() (*rest.Config, error) {
 }
 
 // getSBDConfigs lists SBDConfig resources in the given namespace
-func getSBDConfigs(clientset *kubernetes.Clientset, namespace string) ([]string, error) {
+func getSBDConfigs(namespace string) ([]string, error) {
 	config, err := getKubeConfig()
 	if err != nil {
 		return nil, err
@@ -272,7 +272,7 @@ func getSBDAgentPods(clientset *kubernetes.Clientset, namespace, sbdConfigName s
 }
 
 // getFileChecksum gets the checksum of a specific SBD file from a pod
-func getFileChecksum(testClients *utils.TestClients, podName, namespace, fileType string) (string, error) {
+func getFileChecksum(podName, namespace, fileType string) (string, error) {
 	var filePath string
 	switch fileType {
 	case "sbd-device":
@@ -340,7 +340,7 @@ func analyzeConsistency(checksums map[string]map[string]string) {
 }
 
 // timedConsistencyCheck monitors consistency over time
-func timedConsistencyCheck(testClients *utils.TestClients, pods []string, namespace string) {
+func timedConsistencyCheck(pods []string, namespace string) {
 	interval := 5 * time.Second
 	duration := 30 * time.Second
 	iterations := int(duration / interval)
@@ -349,7 +349,7 @@ func timedConsistencyCheck(testClients *utils.TestClients, pods []string, namesp
 		fmt.Printf("Check %d/%d (time: %s)\n", i+1, iterations, time.Now().Format("15:04:05"))
 
 		for _, podName := range pods {
-			checksum, err := getFileChecksum(testClients, podName, namespace, "sbd-device")
+			checksum, err := getFileChecksum(podName, namespace, "sbd-device")
 			if err != nil {
 				fmt.Printf("  %s: ERROR - %v\n", podName, err)
 			} else {

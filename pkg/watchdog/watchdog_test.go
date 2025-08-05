@@ -439,10 +439,7 @@ func TestWatchdogLifecycle(t *testing.T) {
 }
 
 func TestFindWatchdogDevices(t *testing.T) {
-	devices, err := findWatchdogDevices()
-	if err != nil {
-		t.Fatalf("findWatchdogDevices() failed: %v", err)
-	}
+	devices := findWatchdogDevices()
 
 	// Result should be a slice (may be empty on systems without watchdog devices)
 	if devices == nil {
