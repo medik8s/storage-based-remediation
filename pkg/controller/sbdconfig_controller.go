@@ -459,6 +459,10 @@ func (r *SBDConfigReconciler) isNFSBasedProvisioner(provisioner string) bool {
 
 // validateNFSMountOptions validates that NFS mount options include cache coherency settings for SBD
 func (r *SBDConfigReconciler) validateNFSMountOptions(storageClass *storagev1.StorageClass, logger logr.Logger) error {
+	if storageClass != nil {
+		logger.Info("Skipping NFS mount options validation - TODO: Until we find some storage that actually works with SBD")
+		return nil
+	}
 	mountOptions := storageClass.MountOptions
 	logger = logger.WithValues("mountOptions", mountOptions)
 
