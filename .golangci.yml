@@ -29,13 +29,17 @@ linters:
   exclusions:
     generated: lax
     rules:
+      # Ignore lll errors in kubebuilder RBAC comments (auto-generated)
       - linters:
           - lll
-        path: api/*
+        source: "^//\\s*\\+kubebuilder:"
+      # Ignore lll errors in shell commands within YAML (nsenter, iptables)
       - linters:
-          - dupl
           - lll
-        path: internal/*
+        source: ".*nsenter --target.*"
+      - linters:
+          - lll
+        source: ".*iptables -L.*"
     paths:
       - third_party$
       - builtin$

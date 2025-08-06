@@ -496,7 +496,8 @@ func (s *SBDConfigSpec) ValidateSharedStorageClass() error {
 		if !unicode.IsLetter(rune(storageClassName[0])) && !unicode.IsDigit(rune(storageClassName[0])) {
 			return fmt.Errorf("shared storage class name must start with alphanumeric character")
 		}
-		if !unicode.IsLetter(rune(storageClassName[len(storageClassName)-1])) && !unicode.IsDigit(rune(storageClassName[len(storageClassName)-1])) {
+		lastChar := rune(storageClassName[len(storageClassName)-1])
+		if !unicode.IsLetter(lastChar) && !unicode.IsDigit(lastChar) {
 			return fmt.Errorf("shared storage class name must end with alphanumeric character")
 		}
 	}
@@ -717,7 +718,11 @@ func (c *SBDConfig) GetCondition(conditionType SBDConfigConditionType) *metav1.C
 }
 
 // SetCondition sets the given condition on the SBDConfig
-func (c *SBDConfig) SetCondition(conditionType SBDConfigConditionType, status metav1.ConditionStatus, reason, message string) {
+func (c *SBDConfig) SetCondition(
+	conditionType SBDConfigConditionType,
+	status metav1.ConditionStatus,
+	reason, message string,
+) {
 	now := metav1.Now()
 
 	// Find existing condition

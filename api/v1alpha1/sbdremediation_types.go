@@ -127,7 +127,11 @@ func (r *SBDRemediation) GetCondition(conditionType SBDRemediationConditionType)
 }
 
 // SetCondition sets the given condition on the SBDRemediation
-func (r *SBDRemediation) SetCondition(conditionType SBDRemediationConditionType, status metav1.ConditionStatus, reason, message string) {
+func (r *SBDRemediation) SetCondition(
+	conditionType SBDRemediationConditionType,
+	status metav1.ConditionStatus,
+	reason, message string,
+) {
 	now := metav1.Now()
 
 	// Find existing condition

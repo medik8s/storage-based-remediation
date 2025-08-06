@@ -1791,6 +1791,8 @@ spec:
 	// VALIDATION: Verify that iptables rules are actually applied
 	By("Validating that storage disruption rules are successfully applied...")
 	validationPodName := fmt.Sprintf("sbd-e2e-storage-validator-%d", time.Now().Unix())
+
+	//nolint:lll
 	validationPodYAML := fmt.Sprintf(`apiVersion: v1
 kind: Pod
 metadata:
@@ -1954,6 +1956,7 @@ func restoreStorageDisruption(instanceID string, disruptorPodNames []string) err
 
 	// Create a cleanup pod to remove the iptables rules
 	cleanupPodName := fmt.Sprintf("sbd-e2e-storage-cleanup-%d", time.Now().Unix())
+	//nolint:lll
 	cleanupPodYAML := fmt.Sprintf(`apiVersion: v1
 kind: Pod
 metadata:

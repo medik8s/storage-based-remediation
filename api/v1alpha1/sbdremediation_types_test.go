@@ -430,7 +430,12 @@ func TestSBDRemediation_HelperMethods(t *testing.T) {
 		}
 
 		// Set fencing succeeded condition
-		remediation.SetCondition(SBDRemediationConditionFencingSucceeded, metav1.ConditionTrue, "Succeeded", "Fencing completed")
+		remediation.SetCondition(
+			SBDRemediationConditionFencingSucceeded,
+			metav1.ConditionTrue,
+			"Succeeded",
+			"Fencing completed",
+		)
 		if !remediation.IsFencingSucceeded() {
 			t.Error("Expected IsFencingSucceeded to be true after setting condition")
 		}
@@ -452,7 +457,12 @@ func TestSBDRemediation_HelperMethods(t *testing.T) {
 		}
 
 		// Set fencing in progress condition
-		remediation.SetCondition(SBDRemediationConditionFencingInProgress, metav1.ConditionTrue, "InProgress", "Fencing in progress")
+		remediation.SetCondition(
+			SBDRemediationConditionFencingInProgress,
+			metav1.ConditionTrue,
+			"InProgress",
+			"Fencing in progress",
+		)
 		if !remediation.IsFencingInProgress() {
 			t.Error("Expected IsFencingInProgress to be true after setting condition")
 		}
@@ -484,7 +494,12 @@ func TestSBDRemediation_HelperMethods(t *testing.T) {
 		}
 
 		// Set leadership condition
-		remediation.SetCondition(SBDRemediationConditionLeadershipAcquired, metav1.ConditionTrue, "Acquired", "Leadership acquired")
+		remediation.SetCondition(
+			SBDRemediationConditionLeadershipAcquired,
+			metav1.ConditionTrue,
+			"Acquired",
+			"Leadership acquired",
+		)
 		if !remediation.HasLeadership() {
 			t.Error("Expected HasLeadership to be true after setting condition")
 		}
@@ -499,9 +514,24 @@ func TestSBDRemediation_MultipleConditions(t *testing.T) {
 	}
 
 	// Set multiple conditions in sequence
-	remediation.SetCondition(SBDRemediationConditionLeadershipAcquired, metav1.ConditionTrue, "Acquired", "Leadership acquired")
-	remediation.SetCondition(SBDRemediationConditionFencingInProgress, metav1.ConditionTrue, "InProgress", "Fencing started")
-	remediation.SetCondition(SBDRemediationConditionFencingSucceeded, metav1.ConditionTrue, "Succeeded", "Fencing completed")
+	remediation.SetCondition(
+		SBDRemediationConditionLeadershipAcquired,
+		metav1.ConditionTrue,
+		"Acquired",
+		"Leadership acquired",
+	)
+	remediation.SetCondition(
+		SBDRemediationConditionFencingInProgress,
+		metav1.ConditionTrue,
+		"InProgress",
+		"Fencing started",
+	)
+	remediation.SetCondition(
+		SBDRemediationConditionFencingSucceeded,
+		metav1.ConditionTrue,
+		"Succeeded",
+		"Fencing completed",
+	)
 	remediation.SetCondition(SBDRemediationConditionReady, metav1.ConditionTrue, "Succeeded", "Remediation complete")
 
 	// Verify all conditions are present
@@ -524,7 +554,12 @@ func TestSBDRemediation_MultipleConditions(t *testing.T) {
 	}
 
 	// Update one condition and verify others remain unchanged
-	remediation.SetCondition(SBDRemediationConditionFencingInProgress, metav1.ConditionFalse, "Completed", "Fencing no longer in progress")
+	remediation.SetCondition(
+		SBDRemediationConditionFencingInProgress,
+		metav1.ConditionFalse,
+		"Completed",
+		"Fencing no longer in progress",
+	)
 
 	if len(remediation.Status.Conditions) != 4 {
 		t.Errorf("Expected 4 conditions after update, got %d", len(remediation.Status.Conditions))

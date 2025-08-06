@@ -52,7 +52,10 @@ func (v *SBDConfigValidator) ValidateCreate(ctx context.Context, obj runtime.Obj
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
-func (v *SBDConfigValidator) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+func (v *SBDConfigValidator) ValidateUpdate(
+	ctx context.Context,
+	oldObj, newObj runtime.Object,
+) (admission.Warnings, error) {
 	sbdConfig := newObj.(*SBDConfig)
 	sbdconfiglog.Info("validate update", "name", sbdConfig.Name, "namespace", sbdConfig.Namespace)
 
