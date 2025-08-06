@@ -101,7 +101,7 @@ func TestConcurrentNodeManagers(t *testing.T) {
 				t.Fatalf("Failed to reset test device: %v", err)
 			}
 
-			results := runConcurrentNodeTest(t, sharedDevice, tt.numNodes, tt.fileLockingEnabled, tt.testDuration)
+			results := runConcurrentNodeTest(t, sharedDevice, tt.numNodes, tt.testDuration)
 			validateConcurrentResults(t, results, tt.numNodes)
 		})
 	}
@@ -119,7 +119,7 @@ type NodeTestResult struct {
 }
 
 // runConcurrentNodeTest runs multiple NodeManagers concurrently
-func runConcurrentNodeTest(t *testing.T, devicePath string, numNodes int, fileLockingEnabled bool,
+func runConcurrentNodeTest(t *testing.T, devicePath string, numNodes int,
 	duration time.Duration) []*NodeTestResult {
 	var wg sync.WaitGroup
 	results := make([]*NodeTestResult, numNodes)
@@ -130,7 +130,7 @@ func runConcurrentNodeTest(t *testing.T, devicePath string, numNodes int, fileLo
 			defer wg.Done()
 
 			nodeName := fmt.Sprintf("test-node-%d", nodeIndex+1)
-			result := runSingleConcurrentNode(t, devicePath, nodeName, fileLockingEnabled, duration)
+			result := runSingleConcurrentNode(t, devicePath, nodeName, duration)
 			results[nodeIndex] = result
 		}(i)
 	}
@@ -140,7 +140,7 @@ func runConcurrentNodeTest(t *testing.T, devicePath string, numNodes int, fileLo
 }
 
 // runSingleConcurrentNode runs a single node for the concurrent test
-func runSingleConcurrentNode(t *testing.T, devicePath, nodeName string, fileLockingEnabled bool,
+func runSingleConcurrentNode(t *testing.T, devicePath, nodeName string,
 	duration time.Duration) *NodeTestResult {
 	// Use shared mock device so all nodes can see each other's heartbeats
 	deviceSize := int(SBD_SLOT_SIZE * (SBD_MAX_NODES + 1))

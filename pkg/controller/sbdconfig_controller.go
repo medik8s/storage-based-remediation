@@ -1251,7 +1251,7 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Update the SBDConfig status with retry logic
 	err = r.performKubernetesAPIOperationWithRetry(ctx, "update SBDConfig status", func() error {
-		return r.updateStatus(ctx, &sbdConfig, actualDaemonSet, logger)
+		return r.updateStatus(ctx, &sbdConfig, actualDaemonSet)
 	}, logger)
 
 	if err != nil {
@@ -1727,7 +1727,7 @@ func (r *SBDConfigReconciler) buildVolumes(sbdConfig *medik8sv1alpha1.SBDConfig)
 
 // updateStatus updates the SBDConfig status based on the DaemonSet state
 func (r *SBDConfigReconciler) updateStatus(
-	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, daemonSet *appsv1.DaemonSet, logger logr.Logger) error {
+	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, daemonSet *appsv1.DaemonSet) error {
 	// Check if we need to fetch the latest DaemonSet status
 	latestDaemonSet := &appsv1.DaemonSet{}
 	err := r.Get(ctx, types.NamespacedName{

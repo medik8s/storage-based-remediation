@@ -282,7 +282,7 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// Execute fencing
-	if err := r.executeFencing(ctx, &sbdRemediation, logger); err != nil {
+	if err := r.executeFencing(&sbdRemediation, logger); err != nil {
 		r.handleFencingFailure(ctx, &sbdRemediation, err, logger)
 		return ctrl.Result{}, err
 	}
@@ -293,11 +293,7 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"timeoutSeconds", sbdRemediation.Spec.TimeoutSeconds)
 
 	// Check if target node has been fenced (stopped heartbeating and/or became NotReady)
-	fenced, err := r.checkFencingCompletion(ctx, &sbdRemediation, logger)
-	if err != nil {
-		r.handleFencingFailure(ctx, &sbdRemediation, err, logger)
-		return ctrl.Result{}, err
-	}
+	fenced := r.checkFencingCompletion(ctx, &sbdRemediation, logger)
 
 	if !fenced {
 		// Still waiting for fencing to complete, requeue to check again
@@ -314,7 +310,7 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 // executeFencing performs the actual fencing operation via SBD device
 func (r *SBDRemediationReconciler) executeFencing(
-	ctx context.Context, remediation *medik8sv1alpha1.SBDRemediation, logger logr.Logger) error {
+	remediation *medik8sv1alpha1.SBDRemediation, logger logr.Logger) error {
 	targetNodeName := remediation.Spec.NodeName
 
 	// Get target node ID using node manager
@@ -517,7 +513,7 @@ func (r *SBDRemediationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // checkFencingCompletion checks if the target node has been successfully fenced
 func (r *SBDRemediationReconciler) checkFencingCompletion(
-	ctx context.Context, remediation *medik8sv1alpha1.SBDRemediation, logger logr.Logger) (bool, error) {
+	ctx context.Context, remediation *medik8sv1alpha1.SBDRemediation, logger logr.Logger) bool {
 	targetNodeName := remediation.Spec.NodeName
 	timeoutSeconds := remediation.Spec.TimeoutSeconds
 	if timeoutSeconds == 0 {
@@ -529,7 +525,7 @@ func (r *SBDRemediationReconciler) checkFencingCompletion(
 	if fencingStartTime.IsZero() {
 		// Record when we started fencing monitoring
 		r.recordFencingStartTime(ctx, remediation)
-		return false, nil // First check, need to wait
+		return false // First check, need to wait
 	}
 
 	elapsed := time.Since(fencingStartTime)
@@ -568,7 +564,7 @@ func (r *SBDRemediationReconciler) checkFencingCompletion(
 			"elapsed", elapsed)
 	}
 
-	return fenced, nil
+	return fenced
 }
 
 // isNodeNotReady checks if the target node is NotReady in Kubernetes

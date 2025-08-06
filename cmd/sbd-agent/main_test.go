@@ -267,9 +267,9 @@ func (m *MockWatchdog) SetFailPet(fail bool) {
 }
 
 // createTestSBDAgent creates a test SBD agent with mock devices and temporary SBD files
-func createTestSBDAgent(t *testing.T, nodeName string, metricsPort int) (
+func createTestSBDAgent(t *testing.T, metricsPort int) (
 	*SBDAgent, *MockWatchdog, *MockBlockDevice, func()) {
-	return createTestSBDAgentWithFileLocking(t, nodeName, metricsPort, true)
+	return createTestSBDAgentWithFileLocking(t, "test-node", metricsPort, true)
 }
 
 // createTestSBDAgentWithFileLocking creates a test SBD agent with configurable file locking
@@ -419,7 +419,7 @@ func TestPeerMonitor_SequenceValidation(t *testing.T) {
 
 func TestSBDAgent_ReadPeerHeartbeat(t *testing.T) {
 
-	agent, _, mockDevice, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, mockDevice, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Initially, should return no error for empty slot
@@ -462,7 +462,7 @@ func TestSBDAgent_ReadPeerHeartbeat(t *testing.T) {
 }
 
 func TestSBDAgent_ReadPeerHeartbeat_InvalidMessage(t *testing.T) {
-	agent, _, mockDevice, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, mockDevice, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Write invalid data to peer slot
@@ -487,7 +487,7 @@ func TestSBDAgent_ReadPeerHeartbeat_InvalidMessage(t *testing.T) {
 }
 
 func TestSBDAgent_ReadPeerHeartbeat_DeviceError(t *testing.T) {
-	agent, _, mockDevice, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, mockDevice, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Configure device to fail reads
@@ -501,7 +501,7 @@ func TestSBDAgent_ReadPeerHeartbeat_DeviceError(t *testing.T) {
 }
 
 func TestSBDAgent_ReadPeerHeartbeat_NodeIDMismatch(t *testing.T) {
-	agent, _, mockDevice, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, mockDevice, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Write a heartbeat message from node 5 in node 2's slot (mismatch)
@@ -538,7 +538,7 @@ func TestSBDAgent_ReadPeerHeartbeat_NodeIDMismatch(t *testing.T) {
 }
 
 func TestSBDAgent_PeerMonitorLoop_Integration(t *testing.T) {
-	agent, _, mockDevice, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, mockDevice, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Write heartbeats for multiple peers
@@ -596,7 +596,7 @@ func TestSBDAgent_PeerMonitorLoop_Integration(t *testing.T) {
 }
 
 func TestSBDAgent_NewSBDAgent(t *testing.T) {
-	agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, _, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Verify configuration
@@ -621,7 +621,7 @@ func TestSBDAgent_NewSBDAgent(t *testing.T) {
 }
 
 func TestSBDAgent_WriteHeartbeatToSBD(t *testing.T) {
-	agent, _, mockDevice, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, mockDevice, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 	// Write heartbeat
 	err := agent.writeHeartbeatToSBD()
@@ -659,7 +659,7 @@ func TestSBDAgent_WriteHeartbeatToSBD(t *testing.T) {
 }
 
 func TestSBDAgent_WriteHeartbeatToSBD_DeviceError(t *testing.T) {
-	agent, _, mockDevice, cleanup := createTestSBDAgent(t, "test-node", 8089)
+	agent, _, mockDevice, cleanup := createTestSBDAgent(t, 8089)
 	defer cleanup()
 
 	// Configure device to fail writes
@@ -673,7 +673,7 @@ func TestSBDAgent_WriteHeartbeatToSBD_DeviceError(t *testing.T) {
 }
 
 func TestSBDAgent_WriteHeartbeatToSBD_SyncError(t *testing.T) {
-	agent, _, mockDevice, cleanup := createTestSBDAgent(t, "test-node", 8090)
+	agent, _, mockDevice, cleanup := createTestSBDAgent(t, 8090)
 	defer cleanup()
 
 	// Configure device to fail sync
@@ -687,7 +687,7 @@ func TestSBDAgent_WriteHeartbeatToSBD_SyncError(t *testing.T) {
 }
 
 func TestSBDAgent_SBDHealthStatus(t *testing.T) {
-	agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8091)
+	agent, _, _, cleanup := createTestSBDAgent(t, 8091)
 	defer cleanup()
 
 	// Initially should be false
@@ -709,7 +709,7 @@ func TestSBDAgent_SBDHealthStatus(t *testing.T) {
 }
 
 func TestSBDAgent_HeartbeatSequence(t *testing.T) {
-	agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, _, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Get initial sequence numbers
@@ -856,7 +856,7 @@ func BenchmarkPeerMonitor_UpdatePeer(b *testing.B) {
 }
 
 func TestSBDAgent_ReadOwnSlotForFenceMessage(t *testing.T) {
-	agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, _, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Get the fence device (different from heartbeat device)
@@ -895,7 +895,7 @@ func TestSBDAgent_ReadOwnSlotForFenceMessage(t *testing.T) {
 }
 
 func TestSBDAgent_ReadOwnSlotForFenceMessage_WrongTarget(t *testing.T) {
-	agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, _, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Get the fence device (different from heartbeat device)
@@ -920,7 +920,7 @@ func TestSBDAgent_ReadOwnSlotForFenceMessage_WrongTarget(t *testing.T) {
 }
 
 func TestSBDAgent_SelfFenceStatus(t *testing.T) {
-	agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8095)
+	agent, _, _, cleanup := createTestSBDAgent(t, 8095)
 	defer cleanup()
 
 	// Initially should not be self-fenced
@@ -948,7 +948,7 @@ func TestSBDAgent_WatchdogLoop_WithSelfFence(t *testing.T) {
 	}
 
 	// Create mock watchdog and SBD device
-	agent, mockWatchdog, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, mockWatchdog, _, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Set self-fence detected
@@ -1407,7 +1407,7 @@ func TestSBDAgent_FileLockingConfiguration(t *testing.T) {
 	// Test with file locking enabled
 	t.Run("FileLockingEnabled", func(t *testing.T) {
 
-		agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
+		agent, _, _, cleanup := createTestSBDAgent(t, 8081)
 		defer cleanup()
 
 		// Verify file locking is enabled via NodeManager

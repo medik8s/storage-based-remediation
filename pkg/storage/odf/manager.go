@@ -24,6 +24,12 @@ import (
 	"k8s.io/client-go/util/homedir"
 )
 
+const (
+	// Operator names for ODF/OCS
+	ODFOperatorName = "odf-operator"
+	OCSOperatorName = "ocs-operator" // legacy name
+)
+
 // Config holds ODF-specific configuration
 type Config struct {
 	StorageClassName       string
@@ -204,7 +210,7 @@ func (m *Manager) checkODFOperator(ctx context.Context) error {
 
 	for _, sub := range subscriptions.Items {
 		if name, found, _ := unstructured.NestedString(sub.Object, "spec", "name"); found {
-			if name == "odf-operator" || name == "ocs-operator" {
+			if name == ODFOperatorName || name == OCSOperatorName {
 				return nil
 			}
 		}
@@ -301,13 +307,13 @@ func (m *Manager) createSubscription(ctx context.Context) error {
 			"apiVersion": "operators.coreos.com/v1alpha1",
 			"kind":       "Subscription",
 			"metadata": map[string]interface{}{
-				"name":      "odf-operator",
+				"name":      ODFOperatorName,
 				"namespace": m.config.Namespace,
 			},
 			"spec": map[string]interface{}{
 				"channel":             "stable-4.19",
 				"installPlanApproval": "Automatic",
-				"name":                "odf-operator",
+				"name":                ODFOperatorName,
 				"source":              "redhat-operators",
 				"sourceNamespace":     "openshift-marketplace",
 			},
@@ -318,25 +324,25 @@ func (m *Manager) createSubscription(ctx context.Context) error {
 		subscription, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
 		// If odf-operator fails, try legacy ocs-operator
-		if strings.Contains(err.Error(), "odf-operator") {
-			log.Println("⚠️ odf-operator not found, trying legacy ocs-operator...")
+		if strings.Contains(err.Error(), ODFOperatorName) {
+			log.Println("⚠️ " + ODFOperatorName + " not found, trying legacy " + OCSOperatorName + "...")
 
 			// Update subscription to use ocs-operator
-			subscription.Object["metadata"].(map[string]interface{})["name"] = "ocs-operator"
-			subscription.Object["spec"].(map[string]interface{})["name"] = "ocs-operator"
+			subscription.Object["metadata"].(map[string]interface{})["name"] = OCSOperatorName
+			subscription.Object["spec"].(map[string]interface{})["name"] = OCSOperatorName
 			subscription.Object["spec"].(map[string]interface{})["channel"] = "stable-4.15"
 
 			_, err = m.dynamicClient.Resource(subscriptionGVR).Namespace(m.config.Namespace).Create(ctx,
 				subscription, metav1.CreateOptions{})
 			if err != nil && !errors.IsAlreadyExists(err) {
-				return fmt.Errorf("failed to create Subscription for both odf-operator and ocs-operator: %w", err)
+				return fmt.Errorf("failed to create Subscription for both %s and %s: %w", ODFOperatorName, OCSOperatorName, err)
 			}
-			log.Println("✅ Legacy ocs-operator Subscription created")
+			log.Println("✅ Legacy " + OCSOperatorName + " Subscription created")
 		} else {
 			return fmt.Errorf("failed to create Subscription: %w", err)
 		}
 	} else {
-		log.Println("✅ odf-operator Subscription created")
+		log.Println("✅ " + ODFOperatorName + " Subscription created")
 	}
 
 	return nil
@@ -405,7 +411,7 @@ func (m *Manager) waitForODFOperator(ctx context.Context) error {
 			for _, csv := range csvs.Items {
 				if name, found, _ := unstructured.NestedString(csv.Object, "metadata", "name"); found {
 					// Look for both odf-operator and ocs-operator (legacy name)
-					if strings.Contains(name, "odf-operator") || strings.Contains(name, "ocs-operator") {
+					if strings.Contains(name, ODFOperatorName) || strings.Contains(name, OCSOperatorName) {
 						foundODFCSV = true
 						phase, found, _ := unstructured.NestedString(csv.Object, "status", "phase")
 						if found {
@@ -940,7 +946,7 @@ func (m *Manager) checkSubscriptionStatus(ctx context.Context,
 
 	for _, sub := range subscriptions.Items {
 		if name, found, _ := unstructured.NestedString(sub.Object, "spec", "name"); found {
-			if name == "odf-operator" || name == "ocs-operator" {
+			if name == ODFOperatorName || name == OCSOperatorName {
 				// Get subscription status
 				if conditions, found, _ := unstructured.NestedSlice(sub.Object, "status", "conditions"); found {
 					for _, conditionInterface := range conditions {

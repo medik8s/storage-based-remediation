@@ -24,7 +24,7 @@ import (
 )
 
 func TestSBDAgent_FailureTracking(t *testing.T) {
-	agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, _, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Test initial failure counts
@@ -72,7 +72,7 @@ func TestSBDAgent_FailureTracking(t *testing.T) {
 }
 
 func TestSBDAgent_SelfFenceThreshold(t *testing.T) {
-	agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, _, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Test that self-fence is not triggered initially
@@ -119,7 +119,7 @@ func TestSBDAgent_SelfFenceThreshold(t *testing.T) {
 }
 
 func TestSBDAgent_FailureCountReset(t *testing.T) {
-	agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, _, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Increment some failure counts
@@ -151,7 +151,7 @@ func TestSBDAgent_FailureCountReset(t *testing.T) {
 }
 
 func TestSBDAgent_RetryConfiguration(t *testing.T) {
-	agent, _, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, _, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Verify retry configuration is properly initialized
@@ -174,7 +174,7 @@ func TestSBDAgent_RetryConfiguration(t *testing.T) {
 }
 
 func TestSBDAgent_WatchdogRetryMechanism(t *testing.T) {
-	agent, mockWatchdog, _, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, mockWatchdog, _, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	// Configure mock watchdog to fail initially
@@ -196,7 +196,7 @@ func TestSBDAgent_WatchdogRetryMechanism(t *testing.T) {
 }
 
 func TestSBDAgent_HeartbeatRetryMechanism(t *testing.T) {
-	agent, _, mockDevice, cleanup := createTestSBDAgent(t, "test-node", 8081)
+	agent, _, mockDevice, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
 	mockDevice.SetFailWrite(true)

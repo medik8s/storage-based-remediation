@@ -39,6 +39,9 @@ const metricsServiceName = "sbd-operator-controller-manager-metrics-service"
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "sbd-operator-metrics-binding"
 
+// conditionTypeReady represents the Ready condition type
+const conditionTypeReady = "Ready"
+
 var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), func() {
 
 	// Verify the environment is set up correctly (setup handled by Makefile)
@@ -186,7 +189,7 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 					return false
 				}
 				for _, condition := range foundSBDConfig.Status.Conditions {
-					if condition.Type == "Ready" {
+					if condition.Type == conditionTypeReady {
 						return true
 					}
 				}
@@ -242,7 +245,7 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 					return false
 				}
 				for _, condition := range foundSBDRemediation.Status.Conditions {
-					if condition.Type == "Ready" {
+					if condition.Type == conditionTypeReady {
 						return true
 					}
 				}
@@ -328,7 +331,7 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 						hasFencingFailed := false
 
 						for _, condition := range foundSBDRemediation.Status.Conditions {
-							if condition.Type == "Ready" && condition.Status == "True" {
+							if condition.Type == conditionTypeReady && condition.Status == "True" {
 								hasReady = true
 							}
 							if condition.Type == "FencingSucceeded" && condition.Status == "False" {
@@ -406,7 +409,7 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 				hasNodeMappingError := false
 
 				for _, condition := range foundSBDRemediation.Status.Conditions {
-					if condition.Type == "Ready" && condition.Status == "True" {
+					if condition.Type == conditionTypeReady && condition.Status == "True" {
 						hasReady = true
 					}
 					if condition.Type == "FencingSucceeded" && condition.Status == "False" {

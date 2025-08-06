@@ -44,6 +44,11 @@ import (
 	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
 )
 
+const (
+	// notAvailableText represents a value that is not available or unknown
+	notAvailableText = "N/A"
+)
+
 // SBDNodeSummary represents a summary of SBD node information for display purposes
 type SBDNodeSummary struct {
 	NodeID    uint16
@@ -152,7 +157,7 @@ func PrintSBDDevice(slots []SBDNodeSummary) {
 	fmt.Printf("%-8s %-12s %-20s %-10s\n", "------", "----", "---------", "--------")
 
 	for _, slot := range slots {
-		timestampStr := "N/A"
+		timestampStr := notAvailableText
 		if !slot.Timestamp.IsZero() {
 			timestampStr = slot.Timestamp.Format("15:04:05")
 		}
@@ -176,7 +181,7 @@ func PrintFenceDevice(slots []SBDNodeSummary) {
 	fmt.Printf("%-8s %-12s %-20s %-10s\n", "------", "----", "---------", "--------")
 
 	for _, slot := range slots {
-		timestampStr := "N/A"
+		timestampStr := notAvailableText
 		if !slot.Timestamp.IsZero() {
 			timestampStr = slot.Timestamp.Format("15:04:05")
 		}
@@ -244,7 +249,7 @@ func saveDeviceToFileGeneric(slots []SBDNodeSummary, filename, deviceType, noSlo
 	_, _ = fmt.Fprintf(file, "%-8s %-30s %-12s %-20s %-10s\n", "------", "---------", "----", "---------", "--------")
 
 	for _, slot := range slots {
-		timestampStr := "N/A"
+		timestampStr := notAvailableText
 		if !slot.Timestamp.IsZero() {
 			timestampStr = slot.Timestamp.Format("15:04:05")
 		}
