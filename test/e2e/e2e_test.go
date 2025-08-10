@@ -1190,6 +1190,36 @@ func cleanupTestArtifacts() {
 		}
 	}
 
+	// Clean up Ceph storage disruptor pods (they have timestamped names)
+	cephStorageDisruptorPods := &corev1.PodList{}
+	err = k8sClient.List(ctx, cephStorageDisruptorPods, client.InNamespace("default"),
+		client.MatchingLabels{"app": "sbd-e2e-ceph-storage-disruptor"})
+	if err == nil {
+		for _, pod := range cephStorageDisruptorPods.Items {
+			_ = k8sClient.Delete(ctx, &pod)
+		}
+	}
+
+	// Clean up AWS storage disruptor pods (they have timestamped names)
+	awsStorageDisruptorPods := &corev1.PodList{}
+	err = k8sClient.List(ctx, awsStorageDisruptorPods, client.InNamespace("default"),
+		client.MatchingLabels{"app": "sbd-e2e-aws-storage-disruptor"})
+	if err == nil {
+		for _, pod := range awsStorageDisruptorPods.Items {
+			_ = k8sClient.Delete(ctx, &pod)
+		}
+	}
+
+	// Clean up kubelet disruptor pods (they have timestamped names)
+	kubeletDisruptorPods := &corev1.PodList{}
+	err = k8sClient.List(ctx, kubeletDisruptorPods, client.InNamespace("default"),
+		client.MatchingLabels{"app": "sbd-e2e-kubelet-disruptor"})
+	if err == nil {
+		for _, pod := range kubeletDisruptorPods.Items {
+			_ = k8sClient.Delete(ctx, &pod)
+		}
+	}
+
 	// Clean up storage cleanup pods (they have timestamped names)
 	storageCleanupPods := &corev1.PodList{}
 	err = k8sClient.List(ctx, storageCleanupPods, client.InNamespace("default"),
@@ -1206,6 +1236,26 @@ func cleanupTestArtifacts() {
 		client.MatchingLabels{"app": "sbd-e2e-storage-validator"})
 	if err == nil {
 		for _, pod := range storageValidationPods.Items {
+			_ = k8sClient.Delete(ctx, &pod)
+		}
+	}
+
+	// Clean up Ceph storage validation pods (they have timestamped names)
+	cephValidationPods := &corev1.PodList{}
+	err = k8sClient.List(ctx, cephValidationPods, client.InNamespace("default"),
+		client.MatchingLabels{"app": "sbd-e2e-ceph-storage-validator"})
+	if err == nil {
+		for _, pod := range cephValidationPods.Items {
+			_ = k8sClient.Delete(ctx, &pod)
+		}
+	}
+
+	// Clean up AWS storage validation pods (they have timestamped names)
+	awsValidationPods := &corev1.PodList{}
+	err = k8sClient.List(ctx, awsValidationPods, client.InNamespace("default"),
+		client.MatchingLabels{"app": "sbd-e2e-aws-storage-validator"})
+	if err == nil {
+		for _, pod := range awsValidationPods.Items {
 			_ = k8sClient.Delete(ctx, &pod)
 		}
 	}
@@ -2048,7 +2098,7 @@ metadata:
   name: %s
   namespace: default
   labels:
-    app: sbd-e2e-storage-disruptor
+    app: sbd-e2e-aws-storage-disruptor
 spec:
   hostNetwork: true
   hostPID: true
@@ -2137,7 +2187,7 @@ spec:
 `, disruptorPodName, nodeName)
 
 	// Create the pod using k8s API
-	By(fmt.Sprintf("Creating Ceph storage disruptor pod: %s", disruptorPodName))
+	By(fmt.Sprintf("Creating AWS storage disruptor pod: %s", disruptorPodName))
 	var disruptorPod corev1.Pod
 	err := yaml.Unmarshal([]byte(disruptorPodYAML), &disruptorPod)
 	if err != nil {
@@ -2146,7 +2196,7 @@ spec:
 
 	err = k8sClient.Create(ctx, &disruptorPod)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Ceph disruptor pod: %w", err)
+		return nil, fmt.Errorf("failed to create AWS disruptor pod: %w", err)
 	}
 
 	// Wait for pod to start and apply storage disruption rules
@@ -2166,7 +2216,7 @@ spec:
 
 	// VALIDATION: Verify that iptables rules are actually applied
 	By("Validating that storage disruption rules are successfully applied...")
-	validationPodName := fmt.Sprintf("sbd-e2e-storage-validator-%d", time.Now().Unix())
+	validationPodName := fmt.Sprintf("sbd-e2e-aws-storage-validator-%d", time.Now().Unix())
 
 	//nolint:lll
 	validationPodYAML := fmt.Sprintf(`apiVersion: v1
@@ -2175,7 +2225,7 @@ metadata:
   name: %s
   namespace: default
   labels:
-    app: sbd-e2e-storage-validator
+    app: sbd-e2e-aws-storage-validator
 spec:
   hostNetwork: true
   hostPID: true
@@ -2188,7 +2238,7 @@ spec:
     - /bin/bash
     - -c
     - |
-      echo "Storage disruption validation starting..."
+      echo "AWS storage disruption validation starting..."
       
       # Check if iptables rules are present
       echo "Checking iptables rules..."
@@ -2222,7 +2272,7 @@ spec:
         echo "Warning: netcat not available, skipping connectivity test"
       fi
       
-      echo "VALIDATION PASSED: Storage disruption rules are active and blocking access"
+      echo "VALIDATION PASSED: AWS storage disruption rules are active and blocking access"
       echo "Validation completed successfully"
     securityContext:
       privileged: true
@@ -2242,20 +2292,20 @@ spec:
 `, validationPodName, nodeName)
 
 	// Create validation pod
-	By(fmt.Sprintf("Creating Ceph storage disruption validation pod: %s", validationPodName))
+	By(fmt.Sprintf("Creating AWS storage disruption validation pod: %s", validationPodName))
 	var validationPod corev1.Pod
 	err = yaml.Unmarshal([]byte(validationPodYAML), &validationPod)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal Ceph validation pod YAML: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal AWS validation pod YAML: %w", err)
 	}
 
 	err = k8sClient.Create(ctx, &validationPod)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Ceph validation pod: %w", err)
+		return nil, fmt.Errorf("failed to create AWS validation pod: %w", err)
 	}
 
 	// Wait for validation to complete
-	By("Waiting for storage disruption validation to complete...")
+	By("Waiting for AWS storage disruption validation to complete...")
 	validationSucceeded := false
 	Eventually(func() bool {
 		pod := &corev1.Pod{}
@@ -2271,7 +2321,7 @@ spec:
 
 		if pod.Status.Phase == corev1.PodFailed {
 			// Get logs for debugging
-			By("Validation failed - retrieving logs for analysis...")
+			By("AWS validation failed - retrieving logs for analysis...")
 			return true
 		}
 
@@ -2279,19 +2329,19 @@ spec:
 	}, time.Minute*2, time.Second*10).Should(BeTrue())
 
 	// Clean up validation pod
-	By(fmt.Sprintf("Cleaning up validation pod: %s", validationPodName))
+	By(fmt.Sprintf("Cleaning up AWS validation pod: %s", validationPodName))
 	err = k8sClient.Delete(ctx, &validationPod)
 	if err != nil {
-		By(fmt.Sprintf("Warning: Could not delete validation pod %s: %v", validationPodName, err))
+		By(fmt.Sprintf("Warning: Could not delete AWS validation pod %s: %v", validationPodName, err))
 	}
 
 	// Check validation results
 	if !validationSucceeded {
 		// Clean up disruptor pod since validation failed
-		By("Validation failed - cleaning up disruptor pod")
+		By("AWS validation failed - cleaning up disruptor pod")
 		err = k8sClient.Delete(ctx, &disruptorPod)
 		if err != nil {
-			By(fmt.Sprintf("Warning: Could not delete disruptor pod %s: %v", disruptorPodName, err))
+			By(fmt.Sprintf("Warning: Could not delete AWS disruptor pod %s: %v", disruptorPodName, err))
 		}
 		return nil, fmt.Errorf(
 			"storage disruption validation failed - iptables rules were not successfully applied or are not effective")
