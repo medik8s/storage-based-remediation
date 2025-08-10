@@ -1793,6 +1793,7 @@ metadata:
   labels:
     app: sbd-e2e-ceph-storage-disruptor
 spec:
+  automountServiceAccountToken: false
   hostNetwork: true
   hostPID: true
   nodeName: %s
@@ -1958,6 +1959,7 @@ metadata:
   labels:
     app: sbd-e2e-ceph-storage-validator
 spec:
+  automountServiceAccountToken: false
   hostNetwork: true
   hostPID: true
   nodeName: %s
@@ -2100,6 +2102,7 @@ metadata:
   labels:
     app: sbd-e2e-aws-storage-disruptor
 spec:
+  automountServiceAccountToken: false
   hostNetwork: true
   hostPID: true
   nodeName: %s
@@ -2227,6 +2230,7 @@ metadata:
   labels:
     app: sbd-e2e-aws-storage-validator
 spec:
+  automountServiceAccountToken: false
   hostNetwork: true
   hostPID: true
   nodeName: %s
@@ -2400,6 +2404,7 @@ metadata:
   labels:
     app: sbd-e2e-storage-cleanup
 spec:
+  automountServiceAccountToken: false
   hostNetwork: true
   hostPID: true
   nodeName: %s
