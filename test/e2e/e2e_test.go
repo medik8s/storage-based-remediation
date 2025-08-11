@@ -130,7 +130,7 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 			testStorageAccessInterruption(clusterInfo)
 		})
 
-		It("should trigger fencing when kubelet communication is interrupted", func() {
+		It("should not trigger fencing when kubelet communication is interrupted", func() {
 			if len(clusterInfo.WorkerNodes) < 3 {
 				Skip("Test requires at least 3 worker nodes for safe communication disruption testing")
 			}
