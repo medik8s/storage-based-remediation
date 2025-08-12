@@ -40,6 +40,8 @@ import (
 	"strings"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
+
 	"github.com/medik8s/sbd-operator/pkg/agent"
 	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
 )
@@ -118,77 +120,77 @@ func (tc *TestClients) GetFenceDeviceInfoFromPod(podName, namespace string) ([]S
 
 // PrintNodeMap prints the node mapping summary to stdout
 func PrintNodeMap(nodeMapTable *sbdprotocol.NodeMapTable) {
-	fmt.Printf("=== Node Mapping Summary ===\n")
-	fmt.Printf("Cluster name: %s\n", nodeMapTable.ClusterName)
-	fmt.Printf("Version: %d\n", nodeMapTable.Version)
-	fmt.Printf("Last update: %s\n", nodeMapTable.LastUpdate)
-	fmt.Printf("Checksum: %d\n", nodeMapTable.Checksum)
-	fmt.Printf("Entries: %d\n", len(nodeMapTable.Entries))
+	GinkgoWriter.Printf("\n=== Node Mapping Summary ===\n")
+	GinkgoWriter.Printf("Cluster name: %s\n", nodeMapTable.ClusterName)
+	GinkgoWriter.Printf("Version: %d\n", nodeMapTable.Version)
+	GinkgoWriter.Printf("Last update: %s\n", nodeMapTable.LastUpdate)
+	GinkgoWriter.Printf("Checksum: %d\n", nodeMapTable.Checksum)
+	GinkgoWriter.Printf("Entries: %d\n", len(nodeMapTable.Entries))
 
 	if len(nodeMapTable.Entries) == 0 {
-		fmt.Printf("No active node mappings found.\n")
+		GinkgoWriter.Printf("No active node mappings found.\n")
 		return
 	}
 
-	fmt.Printf("%-6s %-30s %-20s\n", "NodeID", "Node Name", "Last Seen")
-	fmt.Printf("%-6s %-30s %-20s\n", "------", "---------", "---------")
+	GinkgoWriter.Printf("%-6s %-30s %-20s\n", "NodeID", "Node Name", "Last Seen")
+	GinkgoWriter.Printf("%-6s %-30s %-20s\n", "------", "---------", "---------")
 
 	for _, entry := range nodeMapTable.Entries {
 		lastSeenStr := "Never"
 		if !entry.LastSeen.IsZero() {
 			lastSeenStr = entry.LastSeen.Format("2006-01-02 15:04:05")
 		}
-		fmt.Printf("%-6d %-30s %-20s\n", entry.NodeID, entry.NodeName, lastSeenStr)
+		GinkgoWriter.Printf("%-6d %-30s %-20s\n", entry.NodeID, entry.NodeName, lastSeenStr)
 	}
-	fmt.Printf("\n")
+	GinkgoWriter.Printf("\n")
 }
 
 // PrintSBDDevice prints the SBD device summary to stdout
 func PrintSBDDevice(slots []SBDNodeSummary) {
-	fmt.Printf("=== SBD Device Summary ===\n")
-	fmt.Printf("Total slots with data: %d\n\n", len(slots))
+	GinkgoWriter.Printf("\n=== SBD Device Summary ===\n")
+	GinkgoWriter.Printf("Total slots with data: %d\n\n", len(slots))
 
 	if len(slots) == 0 {
-		fmt.Printf("No active SBD slots found.\n")
+		GinkgoWriter.Printf("No active SBD slots found.\n")
 		return
 	}
 
-	fmt.Printf("%-8s %-12s %-20s %-10s\n", "NodeID", "Type", "Timestamp", "Sequence")
-	fmt.Printf("%-8s %-12s %-20s %-10s\n", "------", "----", "---------", "--------")
+	GinkgoWriter.Printf("%-8s %-12s %-20s %-10s\n", "NodeID", "Type", "Timestamp", "Sequence")
+	GinkgoWriter.Printf("%-8s %-12s %-20s %-10s\n", "------", "----", "---------", "--------")
 
 	for _, slot := range slots {
 		timestampStr := notAvailableText
 		if !slot.Timestamp.IsZero() {
 			timestampStr = slot.Timestamp.Format("15:04:05")
 		}
-		fmt.Printf("%-8d %-12s %-20s %-10d\n",
+		GinkgoWriter.Printf("%-8d %-12s %-20s %-10d\n",
 			slot.NodeID, slot.Type, timestampStr, slot.Sequence)
 	}
-	fmt.Printf("\n")
+	GinkgoWriter.Printf("\n")
 }
 
 // PrintFenceDevice prints the fence device summary to stdout
 func PrintFenceDevice(slots []SBDNodeSummary) {
-	fmt.Printf("=== Fence Device Summary ===\n")
-	fmt.Printf("Total slots with data: %d\n\n", len(slots))
+	GinkgoWriter.Printf("\n=== Fence Device Summary ===\n")
+	GinkgoWriter.Printf("Total slots with data: %d\n\n", len(slots))
 
 	if len(slots) == 0 {
-		fmt.Printf("No active fence slots found.\n")
+		GinkgoWriter.Printf("No active fence slots found.\n")
 		return
 	}
 
-	fmt.Printf("%-8s %-12s %-20s %-10s\n", "NodeID", "Type", "Timestamp", "Sequence")
-	fmt.Printf("%-8s %-12s %-20s %-10s\n", "------", "----", "---------", "--------")
+	GinkgoWriter.Printf("%-8s %-12s %-20s %-10s\n", "NodeID", "Type", "Timestamp", "Sequence")
+	GinkgoWriter.Printf("%-8s %-12s %-20s %-10s\n", "------", "----", "---------", "--------")
 
 	for _, slot := range slots {
 		timestampStr := notAvailableText
 		if !slot.Timestamp.IsZero() {
 			timestampStr = slot.Timestamp.Format("15:04:05")
 		}
-		fmt.Printf("%-8d %-12s %-20s %-10d\n",
+		GinkgoWriter.Printf("%-8d %-12s %-20s %-10d\n",
 			slot.NodeID, slot.Type, timestampStr, slot.Sequence)
 	}
-	fmt.Printf("\n")
+	GinkgoWriter.Printf("\n")
 }
 
 // SaveNodeMapToFile saves the node mapping summary to a file
@@ -283,7 +285,7 @@ func (tc *TestClients) NodeMapSummary(podName, namespace, outputFile string) err
 		if err := SaveNodeMapToFile(nodeMapTable, outputFile); err != nil {
 			return fmt.Errorf("failed to save node map to file: %w", err)
 		}
-		fmt.Printf("Node mapping summary saved to: %s\n", outputFile)
+		GinkgoWriter.Printf("Node mapping summary saved to: %s\n", outputFile)
 	} else {
 		PrintNodeMap(nodeMapTable)
 	}
@@ -302,7 +304,7 @@ func (tc *TestClients) SBDDeviceSummary(podName, namespace, outputFile string) e
 		if err := SaveSBDDeviceToFile(slots, outputFile); err != nil {
 			return fmt.Errorf("failed to save SBD device info to file: %w", err)
 		}
-		fmt.Printf("SBD device summary saved to: %s\n", outputFile)
+		GinkgoWriter.Printf("SBD device summary saved to: %s\n", outputFile)
 	} else {
 		PrintSBDDevice(slots)
 	}
@@ -321,7 +323,7 @@ func (tc *TestClients) FenceDeviceSummary(podName, namespace, outputFile string)
 		if err := SaveFenceDeviceToFile(slots, outputFile); err != nil {
 			return fmt.Errorf("failed to save fence device info to file: %w", err)
 		}
-		fmt.Printf("Fence device summary saved to: %s\n", outputFile)
+		GinkgoWriter.Printf("Fence device summary saved to: %s\n", outputFile)
 	} else {
 		PrintFenceDevice(slots)
 	}
