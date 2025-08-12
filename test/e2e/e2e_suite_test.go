@@ -23,6 +23,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/medik8s/sbd-operator/test/utils"
@@ -94,6 +95,33 @@ var _ = AfterSuite(func() {
 })
 
 var _ = BeforeEach(func() {
+	By("waiting for all cluster nodes to be Ready before test")
+	Eventually(func() bool {
+		nodeList, err := testClients.Clientset.CoreV1().Nodes().List(testClients.Context, metav1.ListOptions{})
+		if err != nil {
+			GinkgoWriter.Printf("Failed to list nodes: %v\n", err)
+			return false
+		}
+		if len(nodeList.Items) == 0 {
+			GinkgoWriter.Printf("No nodes found in cluster\n")
+			return false
+		}
+		for _, node := range nodeList.Items {
+			ready := false
+			for _, cond := range node.Status.Conditions {
+				if cond.Type == "Ready" && cond.Status == "True" {
+					ready = true
+					break
+				}
+			}
+			if !ready {
+				GinkgoWriter.Printf("Node %s is not Ready\n", node.Name)
+				return false
+			}
+		}
+		return true
+	}, "10m", "20s").Should(BeTrue(), "expected all nodes to be Ready before test")
+
 	GinkgoWriter.Printf("Cleaning up SBDConfigs in namespace %v before each test\n", testNamespace.Name)
 	utils.CleanupSBDConfigs(testClients.Client, *testNamespace, testClients.Context)
 })
