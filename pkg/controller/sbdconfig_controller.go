@@ -625,10 +625,10 @@ func (r *SBDConfigReconciler) testRWXSupport(
 
 // ensurePVC ensures that a PVC exists for shared storage when SharedStorageClass is specified
 func (r *SBDConfigReconciler) ensurePVC(
-	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, logger logr.Logger) error {
+	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, logger logr.Logger) (controllerutil.OperationResult, error) {
 	if !sbdConfig.Spec.HasSharedStorage() {
 		// No shared storage configured, nothing to do
-		return nil
+		return controllerutil.OperationResultNone, nil
 	}
 
 	pvcName := sbdConfig.Spec.GetSharedStoragePVCName(sbdConfig.Name)
@@ -667,7 +667,7 @@ func (r *SBDConfigReconciler) ensurePVC(
 
 	// Set controller reference
 	if err := controllerutil.SetControllerReference(sbdConfig, desiredPVC, r.Scheme); err != nil {
-		return fmt.Errorf("failed to set controller reference on PVC: %w", err)
+		return controllerutil.OperationResultNone, fmt.Errorf("failed to set controller reference on PVC: %w", err)
 	}
 
 	// Use CreateOrUpdate to manage the PVC
@@ -694,7 +694,7 @@ func (r *SBDConfigReconciler) ensurePVC(
 
 	if err != nil {
 		logger.Error(err, "Failed to create or update PVC")
-		return fmt.Errorf("failed to create or update PVC '%s': %w", pvcName, err)
+		return result, fmt.Errorf("failed to create or update PVC '%s': %w", pvcName, err)
 	}
 
 	logger.Info("PVC operation completed",
@@ -717,15 +717,15 @@ func (r *SBDConfigReconciler) ensurePVC(
 		logger.V(1).Info("PVC unchanged")
 	}
 
-	return nil
+	return result, nil
 }
 
 // ensureSBDDevice ensures that the SBD device file exists in shared storage when SharedStorageClass is specified
 func (r *SBDConfigReconciler) ensureSBDDevice(
-	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, logger logr.Logger) error {
+	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, logger logr.Logger) (controllerutil.OperationResult, error) {
 	if !sbdConfig.Spec.HasSharedStorage() {
 		// No shared storage configured, nothing to do
-		return nil
+		return controllerutil.OperationResultNone, nil
 	}
 
 	pvcName := sbdConfig.Spec.GetSharedStoragePVCName(sbdConfig.Name)
@@ -934,7 +934,7 @@ echo "SBD devices initialization completed successfully"
 
 	// Set controller reference
 	if err := controllerutil.SetControllerReference(sbdConfig, desiredJob, r.Scheme); err != nil {
-		return fmt.Errorf("failed to set controller reference on SBD device init job: %w", err)
+		return controllerutil.OperationResultNone, fmt.Errorf("failed to set controller reference on SBD device init job: %w", err)
 	}
 
 	// Check if job already exists and is completed
@@ -944,7 +944,7 @@ echo "SBD devices initialization completed successfully"
 		// Job exists, check if it's completed successfully
 		if existingJob.Status.Succeeded > 0 {
 			logger.V(1).Info("SBD device initialization job already completed successfully")
-			return nil
+			return controllerutil.OperationResultNone, nil
 		}
 
 		// If job failed, delete it so it can be recreated
@@ -953,10 +953,10 @@ echo "SBD devices initialization completed successfully"
 				"failedCount", existingJob.Status.Failed)
 			if err := r.Delete(ctx, existingJob); err != nil {
 				logger.Error(err, "Failed to delete failed SBD device init job")
-				return fmt.Errorf("failed to delete failed SBD device init job: %w", err)
+				return controllerutil.OperationResultNone, fmt.Errorf("failed to delete failed SBD device init job: %w", err)
 			}
 			// Wait a bit for deletion to complete
-			return fmt.Errorf("recreating failed SBD device init job, will retry")
+			return controllerutil.OperationResultUpdated, nil
 		}
 
 		// Job is still running - prevent DaemonSet creation until job completes
@@ -964,11 +964,11 @@ echo "SBD devices initialization completed successfully"
 			"job.name", jobName,
 			"job.active", existingJob.Status.Active,
 			"job.conditions", len(existingJob.Status.Conditions))
-		return fmt.Errorf(
+		return controllerutil.OperationResultNone, fmt.Errorf(
 			"SBD device initialization job '%s' is still running, DaemonSet creation will be delayed until job completes",
 			jobName)
 	} else if !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to get SBD device init job: %w", err)
+		return controllerutil.OperationResultNone, fmt.Errorf("failed to get SBD device init job: %w", err)
 	}
 
 	// Create the job
@@ -977,17 +977,14 @@ echo "SBD devices initialization completed successfully"
 		logger.Error(err, "Failed to create SBD device initialization job")
 		r.emitEventf(sbdConfig, EventTypeWarning, ReasonSBDDeviceInitError,
 			"Failed to create SBD device initialization job: %v", err)
-		return fmt.Errorf("failed to create SBD device initialization job: %w", err)
+		return controllerutil.OperationResultNone, fmt.Errorf("failed to create SBD device initialization job: %w", err)
 	}
 
 	logger.Info("SBD device initialization job created successfully, waiting for completion before creating DaemonSet")
 	r.emitEventf(sbdConfig, EventTypeNormal, ReasonSBDDeviceInitialized,
 		"SBD device initialization job '%s' created successfully", jobName)
 
-	// Return error to trigger requeue and wait for job completion
-	return fmt.Errorf(
-		"SBD device initialization job '%s' was just created, DaemonSet creation will be delayed until job completes",
-		jobName)
+	return controllerutil.OperationResultCreated, nil
 }
 
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -1066,7 +1063,7 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if !controllerutil.ContainsFinalizer(&sbdConfig, SBDConfigFinalizerName) {
 		logger.Info("Adding finalizer to SBDConfig")
 		controllerutil.AddFinalizer(&sbdConfig, SBDConfigFinalizerName)
-		return ctrl.Result{}, r.Update(ctx, &sbdConfig)
+		return ctrl.Result{Requeue: true}, r.Update(ctx, &sbdConfig)
 	}
 
 	// Get the operator image first for logging and DaemonSet creation
@@ -1153,29 +1150,20 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Ensure PVC exists for shared storage
-	err = r.performKubernetesAPIOperationWithRetry(ctx, "ensure PVC", func() error {
-		return r.ensurePVC(ctx, &sbdConfig, logger)
-	}, logger)
-
+	action, err := r.ensurePVC(ctx, &sbdConfig, logger)
 	if err != nil {
 		logger.Error(err, "Failed to ensure PVC after retries",
 			"namespace", sbdConfig.Namespace,
 			"operation", "pvc-creation")
 		r.emitEventf(&sbdConfig, EventTypeWarning, ReasonPVCError,
 			"Failed to ensure PVC for shared storage in namespace '%s': %v", sbdConfig.Namespace, err)
-
-		// Return requeue with backoff for transient errors
-		if r.isTransientKubernetesError(err) {
-			return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
-		}
-		return ctrl.Result{}, err
+	} else if action != controllerutil.OperationResultNone {
+		// Return requeue with backoff
+		return ctrl.Result{Requeue: true}, err
 	}
 
 	// Ensure SBD device exists in shared storage
-	err = r.performKubernetesAPIOperationWithRetry(ctx, "ensure SBD device", func() error {
-		return r.ensureSBDDevice(ctx, &sbdConfig, logger)
-	}, logger)
-
+	action, err = r.ensureSBDDevice(ctx, &sbdConfig, logger)
 	if err != nil {
 		logger.Error(err, "Failed to ensure SBD device after retries",
 			"namespace", sbdConfig.Namespace,
@@ -1183,11 +1171,9 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.emitEventf(&sbdConfig, EventTypeWarning, ReasonSBDDeviceInitError,
 			"Failed to ensure SBD device in shared storage in namespace '%s': %v", sbdConfig.Namespace, err)
 
-		// Return requeue with backoff for transient errors
-		if r.isTransientKubernetesError(err) {
-			return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
-		}
-		return ctrl.Result{}, err
+		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+	} else if action != controllerutil.OperationResultNone {
+		return ctrl.Result{Requeue: true}, err
 	}
 
 	// Define the desired DaemonSet
@@ -1205,21 +1191,19 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		},
 	}
 
-	var result controllerutil.OperationResult
-	err = r.performKubernetesAPIOperationWithRetry(ctx, "create or update DaemonSet", func() error {
-		var err error
-		result, err = controllerutil.CreateOrUpdate(ctx, r.Client, actualDaemonSet, func() error {
-			// Update the DaemonSet spec with the desired configuration
-			actualDaemonSet.Spec = desiredDaemonSet.Spec
-			actualDaemonSet.Labels = desiredDaemonSet.Labels
-			actualDaemonSet.Annotations = desiredDaemonSet.Annotations
+	daemonSetLogger.Info("Creating or updating DaemonSet",
+		"operation", "daemonset-create-or-update",
+		"desired.image", desiredDaemonSet.Spec.Template.Spec.Containers[0].Image)
 
-			// Set the controller reference
-			return controllerutil.SetControllerReference(&sbdConfig, actualDaemonSet, r.Scheme)
-		})
-		return err
-	}, daemonSetLogger)
+	action, err = controllerutil.CreateOrUpdate(ctx, r.Client, actualDaemonSet, func() error {
+		// Update the DaemonSet spec with the desired configuration
+		actualDaemonSet.Spec = desiredDaemonSet.Spec
+		actualDaemonSet.Labels = desiredDaemonSet.Labels
+		actualDaemonSet.Annotations = desiredDaemonSet.Annotations
 
+		// Set the controller reference
+		return controllerutil.SetControllerReference(&sbdConfig, actualDaemonSet, r.Scheme)
+	})
 	if err != nil {
 		daemonSetLogger.Error(err, "Failed to create or update DaemonSet after retries",
 			"operation", "daemonset-create-or-update",
@@ -1227,39 +1211,19 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.emitEventf(&sbdConfig, EventTypeWarning, ReasonDaemonSetError,
 			"Failed to create or update DaemonSet '%s': %v", desiredDaemonSet.Name, err)
 
-		// Return requeue with backoff for transient errors
-		if r.isTransientKubernetesError(err) {
-			return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
-		}
-		return ctrl.Result{}, err
-	}
-
-	daemonSetLogger.Info("DaemonSet operation completed",
-		"operation", result,
-		"daemonset.generation", actualDaemonSet.Generation,
-		"daemonset.resourceVersion", actualDaemonSet.ResourceVersion)
-
-	// Emit event for DaemonSet management
-	switch result {
-	case controllerutil.OperationResultCreated:
+		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+	} else if action != controllerutil.OperationResultNone {
+		// Emit event for DaemonSet management
 		r.emitEventf(&sbdConfig, EventTypeNormal, ReasonDaemonSetManaged,
-			"DaemonSet '%s' for SBD Agent created successfully", actualDaemonSet.Name)
-		daemonSetLogger.Info("DaemonSet created successfully")
-	case controllerutil.OperationResultUpdated:
-		r.emitEventf(&sbdConfig, EventTypeNormal, ReasonDaemonSetManaged,
-			"DaemonSet '%s' for SBD Agent updated successfully", actualDaemonSet.Name)
-		daemonSetLogger.Info("DaemonSet updated successfully")
-	default:
-		r.emitEventf(&sbdConfig, EventTypeNormal, ReasonDaemonSetManaged,
-			"DaemonSet '%s' for SBD Agent managed", actualDaemonSet.Name)
-		daemonSetLogger.V(1).Info("DaemonSet unchanged")
+			"DaemonSet '%s' for SBD Agent %s successfully", actualDaemonSet.Name, action)
+		daemonSetLogger.Info("DaemonSet %s successfully", action)
+		return ctrl.Result{Requeue: true}, err
 	}
 
 	// Update the SBDConfig status with retry logic
 	err = r.performKubernetesAPIOperationWithRetry(ctx, "update SBDConfig status", func() error {
 		return r.updateStatus(ctx, &sbdConfig, actualDaemonSet)
 	}, logger)
-
 	if err != nil {
 		logger.Error(err, "Failed to update SBDConfig status after retries",
 			"operation", "status-update",
@@ -1268,16 +1232,12 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			"Failed to update SBDConfig status: %v", err)
 
 		// Return requeue with backoff for transient errors
-		if r.isTransientKubernetesError(err) {
-			return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
-		}
-		return ctrl.Result{}, err
+		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
 	}
 
 	logger.Info("Successfully reconciled SBDConfig",
 		"operation", "reconcile-complete",
-		"daemonset.name", actualDaemonSet.Name,
-		"result", result)
+		"daemonset.name", actualDaemonSet.Name)
 
 	// Emit success event for SBDConfig reconciliation
 	r.emitEventf(&sbdConfig, EventTypeNormal, ReasonSBDConfigReconciled,
