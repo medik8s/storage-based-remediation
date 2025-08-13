@@ -1248,7 +1248,8 @@ func CleanupSBDConfigs(testNamespace *TestNamespace) {
 	By("Cleaning up SBD configuration and waiting for agents to terminate")
 	// Clean up all SBDConfigs in the test namespace
 	sbdConfigs := &medik8sv1alpha1.SBDConfigList{}
-	err := testNamespace.Clients.Client.List(testNamespace.Clients.Context, sbdConfigs, client.InNamespace(testNamespace.Name))
+	err := testNamespace.Clients.Client.List(
+		testNamespace.Clients.Context, sbdConfigs, client.InNamespace(testNamespace.Name))
 	if err == nil {
 		for _, config := range sbdConfigs.Items {
 			err := testNamespace.CleanupSBDConfig(&config)
@@ -1261,7 +1262,8 @@ func CleanupSBDConfigs(testNamespace *TestNamespace) {
 	By("Cleaning up SBDRemediation CRs to prevent namespace deletion issues")
 	// Clean up all SBDRemediations in the test namespace
 	sbdRemediations := &medik8sv1alpha1.SBDRemediationList{}
-	err = testNamespace.Clients.Client.List(testNamespace.Clients.Context, sbdRemediations, client.InNamespace(testNamespace.Name))
+	err = testNamespace.Clients.Client.List(
+		testNamespace.Clients.Context, sbdRemediations, client.InNamespace(testNamespace.Name))
 	if err == nil {
 		for _, remediation := range sbdRemediations.Items {
 			// Remove finalizers first to prevent stuck resources
@@ -1469,7 +1471,8 @@ func DescribeEnvironment(testClients *TestClients, testNamespace *TestNamespace)
 					debugCollector.CollectPodLogs(testNamespace.Name, pod.Name, container.Name)
 				}
 			}
-			GinkgoWriter.Printf("Saved definition and logs for %d pods in namespace %q\n", len(podList.Items), testNamespace.Name)
+			GinkgoWriter.Printf("Saved definition and logs for %d pods in namespace %q\n",
+				len(podList.Items), testNamespace.Name)
 		}
 
 		By("Fetching SBDConfig CRs")

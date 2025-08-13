@@ -509,7 +509,8 @@ func WaitForNodesReady(testNamespace *TestNamespace, timeout, interval string, a
 	firstPass := attemptReboot
 	By("Waiting for all cluster nodes to be Ready")
 	Eventually(func() bool {
-		nodeList, err := testNamespace.Clients.Clientset.CoreV1().Nodes().List(testNamespace.Clients.Context, metav1.ListOptions{})
+		nodeList, err := testNamespace.Clients.Clientset.CoreV1().Nodes().List(
+			testNamespace.Clients.Context, metav1.ListOptions{})
 		if err != nil {
 			GinkgoWriter.Printf("Failed to list nodes: %v\n", err)
 			return false
@@ -524,7 +525,8 @@ func WaitForNodesReady(testNamespace *TestNamespace, timeout, interval string, a
 				if cond.Type == "Ready" && cond.Status == "True" {
 					break
 				} else if cond.Type == "Ready" {
-					GinkgoWriter.Printf("Node %s has Ready status %s, message %s, reason %s\n", node.Name, cond.Status, cond.Message, cond.Reason)
+					GinkgoWriter.Printf("Node %s has Ready status %s, message %s, reason %s\n",
+						node.Name, cond.Status, cond.Message, cond.Reason)
 					if firstPass {
 						RebootAWSInstanceForNode(testNamespace.Clients, node.Name)
 					}

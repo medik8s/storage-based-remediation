@@ -1195,7 +1195,8 @@ func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 
 	// Clean up storage disruptor pods (they have timestamped names)
 	storageDisruptorPods := &corev1.PodList{}
-	err := testNamespace.Clients.Client.List(testNamespace.Clients.Context, storageDisruptorPods, client.InNamespace("default"),
+	err := testNamespace.Clients.Client.List(
+		testNamespace.Clients.Context, storageDisruptorPods, client.InNamespace("default"),
 		client.MatchingLabels{"app": "sbd-e2e-storage-disruptor"})
 	if err == nil {
 		for _, pod := range storageDisruptorPods.Items {
@@ -1206,7 +1207,8 @@ func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 
 	// Clean up Ceph storage disruptor pods (they have timestamped names)
 	cephStorageDisruptorPods := &corev1.PodList{}
-	err = testNamespace.Clients.Client.List(testNamespace.Clients.Context, cephStorageDisruptorPods, client.InNamespace("default"),
+	err = testNamespace.Clients.Client.List(
+		testNamespace.Clients.Context, cephStorageDisruptorPods, client.InNamespace("default"),
 		client.MatchingLabels{"app": "sbd-e2e-ceph-storage-disruptor"})
 	if err == nil {
 		for _, pod := range cephStorageDisruptorPods.Items {
@@ -1217,7 +1219,8 @@ func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 
 	// Clean up AWS storage disruptor pods (they have timestamped names)
 	awsStorageDisruptorPods := &corev1.PodList{}
-	err = testNamespace.Clients.Client.List(testNamespace.Clients.Context, awsStorageDisruptorPods, client.InNamespace("default"),
+	err = testNamespace.Clients.Client.List(
+		testNamespace.Clients.Context, awsStorageDisruptorPods, client.InNamespace("default"),
 		client.MatchingLabels{"app": "sbd-e2e-aws-storage-disruptor"})
 	if err == nil {
 		for _, pod := range awsStorageDisruptorPods.Items {
@@ -1228,7 +1231,8 @@ func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 
 	// Clean up kubelet disruptor pods (they have timestamped names)
 	kubeletDisruptorPods := &corev1.PodList{}
-	err = testNamespace.Clients.Client.List(testNamespace.Clients.Context, kubeletDisruptorPods, client.InNamespace("default"),
+	err = testNamespace.Clients.Client.List(
+		testNamespace.Clients.Context, kubeletDisruptorPods, client.InNamespace("default"),
 		client.MatchingLabels{"app": "sbd-e2e-kubelet-disruptor"})
 	if err == nil {
 		for _, pod := range kubeletDisruptorPods.Items {
@@ -1238,7 +1242,8 @@ func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 
 	// Clean up storage cleanup pods (they have timestamped names)
 	storageCleanupPods := &corev1.PodList{}
-	err = testNamespace.Clients.Client.List(testNamespace.Clients.Context, storageCleanupPods, client.InNamespace("default"),
+	err = testNamespace.Clients.Client.List(
+		testNamespace.Clients.Context, storageCleanupPods, client.InNamespace("default"),
 		client.MatchingLabels{"app": "sbd-e2e-storage-cleanup"})
 	if err == nil {
 		for _, pod := range storageCleanupPods.Items {
@@ -1248,7 +1253,8 @@ func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 
 	// Clean up storage validation pods (they have timestamped names)
 	storageValidationPods := &corev1.PodList{}
-	err = testNamespace.Clients.Client.List(testNamespace.Clients.Context, storageValidationPods, client.InNamespace("default"),
+	err = testNamespace.Clients.Client.List(
+		testNamespace.Clients.Context, storageValidationPods, client.InNamespace("default"),
 		client.MatchingLabels{"app": "sbd-e2e-storage-validator"})
 	if err == nil {
 		for _, pod := range storageValidationPods.Items {
@@ -1258,7 +1264,8 @@ func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 
 	// Clean up Ceph storage validation pods (they have timestamped names)
 	cephValidationPods := &corev1.PodList{}
-	err = testNamespace.Clients.Client.List(testNamespace.Clients.Context, cephValidationPods, client.InNamespace("default"),
+	err = testNamespace.Clients.Client.List(
+		testNamespace.Clients.Context, cephValidationPods, client.InNamespace("default"),
 		client.MatchingLabels{"app": "sbd-e2e-ceph-storage-validator"})
 	if err == nil {
 		for _, pod := range cephValidationPods.Items {
@@ -1268,7 +1275,8 @@ func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 
 	// Clean up AWS storage validation pods (they have timestamped names)
 	awsValidationPods := &corev1.PodList{}
-	err = testNamespace.Clients.Client.List(testNamespace.Clients.Context, awsValidationPods, client.InNamespace("default"),
+	err = testNamespace.Clients.Client.List(
+		testNamespace.Clients.Context, awsValidationPods, client.InNamespace("default"),
 		client.MatchingLabels{"app": "sbd-e2e-aws-storage-validator"})
 	if err == nil {
 		for _, pod := range awsValidationPods.Items {
@@ -1289,7 +1297,8 @@ func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 	// Clean up SBDRemediation CRs to prevent namespace deletion issues
 	By("Cleaning up SBDRemediation CRs from test namespace")
 	sbdRemediations := &medik8sv1alpha1.SBDRemediationList{}
-	err = testNamespace.Clients.Client.List(testNamespace.Clients.Context, sbdRemediations, client.InNamespace(testNamespace.Name))
+	err = testNamespace.Clients.Client.List(
+		testNamespace.Clients.Context, sbdRemediations, client.InNamespace(testNamespace.Name))
 	if err == nil {
 		for _, remediation := range sbdRemediations.Items {
 			// Remove finalizers first to prevent stuck resources
@@ -1988,7 +1997,7 @@ spec:
 			"Ceph storage disruption validation failed - iptables rules were not successfully applied or are not effective")
 	}
 
-	GinkgoWriter.Printf("Ceph storage disruption validation successful - node %s should lose Ceph storage access\n", nodeName)
+	GinkgoWriter.Printf("Ceph storage disruption validation successful for node %s\n", nodeName)
 	return []string{disruptorPodName}, nil
 }
 

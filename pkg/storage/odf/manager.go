@@ -605,15 +605,15 @@ func (m *Manager) waitForStorageCluster(ctx context.Context) error {
 						if !ok {
 							continue
 						}
-						
+
 						condType, _ := condMap["type"].(string)
 						message, _ := condMap["message"].(string)
 						reason, _ := condMap["reason"].(string)
-						
+
 						if condType == "ReconcileComplete" && strings.Contains(message, "Not enough nodes found") {
 							log.Printf("⚠️ StorageCluster Error: %s (Reason: %s)", message, reason)
 							log.Println("🔄 Attempting to fix node labeling issue...")
-							
+
 							if err := m.labelWorkerNodesForStorage(ctx); err != nil {
 								log.Printf("⚠️ Failed to re-label nodes: %v", err)
 							} else {
