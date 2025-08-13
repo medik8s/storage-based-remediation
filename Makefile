@@ -102,13 +102,11 @@ test-e2e-clean: test-prep test-e2e ## Run e2e tests with complete deployment pip
 
 .PHONY: test-e2e
 test-e2e: ginkgo ## Run e2e tests again (assumes operator already deployed).
-	@mkdir -p testrun/sbd-operator-system
 	@echo "Running e2e tests (operator must be already deployed)..."
 	$(GINKGO) $(TEST_ARGS) test/e2e | tee testrun/execution.log
 
 .PHONY: test-e2e-with-webhooks  
 test-e2e-with-webhooks: sync-test-files ## Run e2e tests with webhooks enabled using deployment pipeline.
-	@mkdir -p testrun/sbd-operator-system
 	@echo "Running e2e tests with webhooks enabled via deployment pipeline..."
 	@# The run-tests.sh script handles webhook certificate generation automatically
 	@scripts/prep-tests.sh --type e2e --env cluster -v 
@@ -116,7 +114,6 @@ test-e2e-with-webhooks: sync-test-files ## Run e2e tests with webhooks enabled u
 
 .PHONY: test-smoke
 test-smoke: ginkgo ## Run smoke tests with building images.
-	@mkdir -p testrun/sbd-operator-system
 	@echo "Running smoke tests with image building..."
 	$(GINKGO) $(TEST_ARGS) test/e2e | tee testrun/execution.log
 
