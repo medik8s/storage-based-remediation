@@ -234,10 +234,14 @@ func (tn *TestNamespace) CleanupSBDConfig(sbdConfig *medik8sv1alpha1.SBDConfig) 
 			Name:      sbdConfig.Name,
 			Namespace: tn.Name,
 		}, &config)
-		if err != nil && !errors.IsNotFound(err) {
+		if err != nil && errors.IsNotFound(err) {
+			return true
+		} else if err != nil {
 			GinkgoWriter.Printf("Failed to get SBDConfig %s: %v\n", sbdConfig.Name, err)
+			return false
 		}
-		return errors.IsNotFound(err)
+		GinkgoWriter.Printf("Got SBDConfig %s\n", sbdConfig.Name)
+		return false
 	}, time.Minute*5, time.Second*5).Should(BeTrue(), fmt.Sprintf("SBDConfig %s not deleted", sbdConfig.Name))
 
 	// Wait for associated pods to be terminated
