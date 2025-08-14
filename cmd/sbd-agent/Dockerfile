@@ -6,8 +6,6 @@ FROM registry.access.redhat.com/ubi9/go-toolset:latest AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
-USER default
-
 # Set GOTOOLCHAIN to auto to allow Go to download newer versions
 ENV GOTOOLCHAIN=auto
 
@@ -26,7 +24,10 @@ COPY .git/ .git/
 # Copy the entire source code
 RUN ls -al
 RUN go version
-RUN mkdir -p bin
+
+USER root
+RUN mkdir -p bin && chown -R default:root bin
+USER default
 
 # Calculate version information from git and build the SBD Agent binary
 # CGO_ENABLED=0: Disable CGO for a static binary

@@ -24,6 +24,10 @@ COPY .git/ .git/
 
 RUN go version
 
+USER root
+RUN mkdir -p bin && chown -R default:root bin
+USER default
+
 # Calculate version information from git
 RUN export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") && \
     export GIT_DESCRIBE=$(git describe --tags --dirty 2>/dev/null || echo "unknown") && \
@@ -38,13 +42,13 @@ RUN export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown"
         -X 'github.com/medik8s/sbd-operator/pkg/version.GitCommit=$GIT_COMMIT' \
         -X 'github.com/medik8s/sbd-operator/pkg/version.GitDescribe=$GIT_DESCRIBE' \
         -X 'github.com/medik8s/sbd-operator/pkg/version.BuildDate=$BUILD_DATE'" \
-        -o ./manager \
+        -o ./bin/manager \
         ./cmd/main.go
 
 # Use UBI minimal as base image to package the manager binary
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 WORKDIR /
-COPY --from=builder /workspace/manager .
+COPY --from=builder /workspace/bin/manager .
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]
