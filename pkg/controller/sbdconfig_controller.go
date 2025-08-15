@@ -1839,9 +1839,10 @@ func (r *SBDConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.DaemonSet{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
-		WithEventFilter(r.filterEvents()).
 		Named("sbdconfig").
 		Complete(r)
+
+	//	WithEventFilter(r.filterEvents()).
 
 	if err != nil {
 		logger.Error(err, "Failed to setup SBDConfig controller")
