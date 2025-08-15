@@ -43,6 +43,8 @@ import (
 	"github.com/medik8s/sbd-operator/test/utils"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // ClusterInfo holds information about the test cluster
@@ -115,6 +117,20 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 			testFakeRemediation()
 		})
 
+		It("should reject incompatible storage classes", func() {
+			if len(clusterInfo.WorkerNodes) < 3 {
+				Skip("Test requires at least 3 worker nodes")
+			}
+			testIncompatibleStorageClass()
+		})
+
+		It("should handle SBD agent crash and recovery", func() {
+			if len(clusterInfo.WorkerNodes) < 3 {
+				Skip("Test requires at least 3 worker nodes")
+			}
+			testSBDAgentCrash(clusterInfo)
+		})
+
 		It("should handle node remediation", func() {
 			if len(clusterInfo.WorkerNodes) < 2 {
 				Skip("Test requires at least 2 worker nodes")
@@ -134,20 +150,6 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 				Skip("Test requires at least 3 worker nodes for safe communication disruption testing")
 			}
 			testKubeletCommunicationFailure(clusterInfo)
-		})
-
-		It("should reject incompatible storage classes", func() {
-			if len(clusterInfo.WorkerNodes) < 3 {
-				Skip("Test requires at least 3 worker nodes")
-			}
-			testIncompatibleStorageClass()
-		})
-
-		It("should handle SBD agent crash and recovery", func() {
-			if len(clusterInfo.WorkerNodes) < 3 {
-				Skip("Test requires at least 3 worker nodes")
-			}
-			testSBDAgentCrash(clusterInfo)
 		})
 
 		It("should handle non-fencing failures gracefully", func() {
@@ -490,6 +492,10 @@ func checkNodeReboot(nodeName, reason, originalBootTime string, timeout time.Dur
 	}
 
 	if target {
+		By(fmt.Sprintf("Cleaning up remediated node %s", nodeName))
+		err := cleanupRemediatedWorkloads(testNamespace, nodeName)
+		Expect(err).NotTo(HaveOccurred(), "Failed to cleanup remediated node %s", nodeName)
+
 		// Wait longer for node to come back online after reboot
 		By(fmt.Sprintf("Waiting for node %s to come back online after reboot", nodeName))
 		Eventually(func() bool {
@@ -509,8 +515,62 @@ func checkNodeReboot(nodeName, reason, originalBootTime string, timeout time.Dur
 			return false
 		}, time.Minute*10, time.Second*30).Should(BeTrue())
 
-		err := cleanupRemediatedWorkloads(testNamespace, nodeName)
-		Expect(err).NotTo(HaveOccurred(), "Failed to cleanup remediated node %s", nodeName)
+		// If Ceph is being used for storage, wait for the Ceph cluster to be healthy
+		By("Waiting for Ceph cluster to be healthy")
+		Eventually(func() bool {
+			// Use unstructured to avoid compile-time Ceph API dependency
+			cephClusters := &unstructured.UnstructuredList{}
+			cephClusters.SetGroupVersionKind(schema.GroupVersionKind{
+				Group:   "ceph.rook.io",
+				Version: "v1",
+				Kind:    "CephClusterList",
+			})
+
+			err := k8sClient.List(ctx, cephClusters)
+			if err != nil {
+				GinkgoWriter.Printf("Ceph clusters not found: %v\n", err)
+				return true // No Ceph clusters means we don't need to wait for them
+			}
+
+			if len(cephClusters.Items) == 0 {
+				GinkgoWriter.Printf("No Ceph clusters found\n")
+				return true // No clusters to check
+			}
+
+			// Check health status via unstructured access
+			allHealthy := true
+			for _, cephCluster := range cephClusters.Items {
+				name := cephCluster.GetName()
+				health, found, err := unstructured.NestedString(cephCluster.Object, "status", "ceph", "health")
+				if err != nil || !found {
+					GinkgoWriter.Printf("Ceph cluster %s health status not available: found=%v, err=%v\n", name, found, err)
+					// allHealthy = false
+					// continue
+				}
+
+				phase, found, err := unstructured.NestedString(cephCluster.Object, "status", "phase")
+				if err != nil || !found {
+					GinkgoWriter.Printf("Ceph cluster %s phase not available: found=%v, err=%v\n", name, found, err)
+					// allHealthy = false
+					// continue
+				}
+
+				if health != "HEALTH_ERR" {
+					GinkgoWriter.Printf("Ceph cluster %s is healthy (%s), phase %s\n", name, health, phase)
+				} else {
+					GinkgoWriter.Printf("Ceph cluster %s is NOT healthy (%s), phase %s\n", name, health, phase)
+					allHealthy = false
+				}
+			}
+			return allHealthy
+		}, time.Minute*10, time.Second*30).Should(BeTrue())
+
+		By("Waiting for the cluster to settle")
+		// Give time for the cluster to settle down
+		// Proceeding too quickly appears to cause nodes to reboot and fail the test, because reasons...
+		// 5 minutes isn't enough, but 10 minutes seems to work
+		time.Sleep(10 * time.Minute)
+
 	}
 }
 
@@ -615,30 +675,14 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 	By("Obtaining the original boot time of the node")
 	originalBootTimes := getNodeBootIDs(cluster)
 
-	// Get AWS instance ID for the target node
-	instanceID, err := getInstanceIDFromNode(targetNode.Metadata.Name)
-	Expect(err).NotTo(HaveOccurred())
-	GinkgoWriter.Printf("Target node %s has AWS instance ID: %s\n", targetNode.Metadata.Name, instanceID)
-
 	// Create storage disruption by blocking network access to shared storage
 	By("Creating AWS storage disruption by blocking network access to shared storage")
-	disruptorPods, err := createStorageDisruption(instanceID)
+	disruptorPods, err := createStorageDisruption(targetNode.Metadata.Name)
 	if err != nil {
 		// If storage disruption cannot be created, skip this test
 		Skip(fmt.Sprintf("Skipping storage disruption test: %v", err))
 	}
 	GinkgoWriter.Printf("Created %d storage disruptor pods for node %s\n", len(disruptorPods), targetNode.Metadata.Name)
-
-	// Ensure cleanup happens even if test fails
-	// defer func() {
-	// 	By("Cleaning up AWS storage disruption")
-	// 	err := restoreStorageDisruption(instanceID, disruptorPods)
-	// 	if err != nil {
-	// 		GinkgoWriter.Printf("Warning: failed to restore storage disruption: %v\n", err)
-	// 	} else {
-	// 		By("Successfully restored network access to shared storage")
-	// 	}
-	// }()
 
 	// Wait for network-level storage disruption to take effect
 	By("Waiting for storage disruption to take effect")
@@ -648,6 +692,19 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 	checkNodeNotReady(targetNode.Metadata.Name, "becomes NotReady due to loss of shared storage access",
 		time.Minute*8, nil)
 	// BeTrue()
+
+	for _, pod := range disruptorPods {
+		By(fmt.Sprintf("Initiating deletion of disruptor pod %v...", pod))
+		// Try to delete the disruptor pod so that it isn't restarted when the node becomes Ready
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pod,
+				Namespace: "default",
+			},
+		}
+		err = k8sClient.Delete(ctx, pod, client.PropagationPolicy(metav1.DeletePropagationBackground))
+		Expect(err).NotTo(HaveOccurred())
+	}
 
 	// Monitor for node disappearing (panic/reboot) or boot ID change
 	checkNodeReboot(targetNode.Metadata.Name, "during storage disruption",
@@ -692,19 +749,6 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(disruptionPodName).NotTo(BeNil())
 
-	defer func() {
-		By(fmt.Sprintf("Initiating deletion of disruptor pod %v...", disruptionPodName))
-		// Try to delete the disruptor pod so that it isn't restarted when the node becomes Ready
-		pod := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      *disruptionPodName,
-				Namespace: "default",
-			},
-		}
-		err = k8sClient.Delete(ctx, pod)
-		Expect(err).NotTo(HaveOccurred())
-	}()
-
 	// Wait for kubelet to be stopped and node to become NotReady
 	By("Waiting for node to become NotReady due to kubelet termination...")
 	checkNodeNotReady(targetNode.Metadata.Name, "becomes NotReady due to kubelet termination",
@@ -712,6 +756,17 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 
 	checkNodeReboot(targetNode.Metadata.Name, "due to kubelet termination",
 		originalBootTimes[targetNode.Metadata.Name], time.Minute*2, false)
+
+	By(fmt.Sprintf("Initiating deletion of disruptor pod %v...", disruptionPodName))
+	// Try to delete the disruptor pod so that it isn't restarted when the node becomes Ready
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      *disruptionPodName,
+			Namespace: "default",
+		},
+	}
+	err = k8sClient.Delete(ctx, pod, client.PropagationPolicy(metav1.DeletePropagationBackground))
+	Expect(err).NotTo(HaveOccurred())
 
 	// Create SBDRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
 	By("Creating SBDRemediation CR to simulate external operator behavior")
@@ -944,7 +999,7 @@ func testSBDInspection() {
 	Expect(err).NotTo(HaveOccurred(), "Failed to retrieve fence device info")
 
 	// Save inspection results to files for debugging
-	By("Saving inspection results to files")
+	By(fmt.Sprintf("Saving inspection results to files %s", testNamespace.ArtifactsDir))
 	err = testNamespace.Clients.NodeMapSummary(podName, testNamespace.Name,
 		fmt.Sprintf("%s/node-mapping-debug.txt", testNamespace.ArtifactsDir))
 	Expect(err).NotTo(HaveOccurred(), "Failed to save node mapping")
@@ -1235,7 +1290,7 @@ func testLargeClusterCoordination(cluster ClusterInfo) {
 	GinkgoWriter.Printf("Large cluster coordination test completed successfully\n")
 }
 
-func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
+func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 	// Clean up any disruption pods or test artifacts
 	disruptionPods := []string{"storage-disruptor", "network-disruptor", "resource-consumer", "kubelet-stress-test"}
 
@@ -1339,11 +1394,15 @@ func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 		}
 		_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, pod)
 	}
+}
+
+func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
+	cleanupDisruptionPods(testNamespace)
 
 	// Clean up SBDRemediation CRs to prevent namespace deletion issues
 	By("Cleaning up SBDRemediation CRs from test namespace")
 	sbdRemediations := &medik8sv1alpha1.SBDRemediationList{}
-	err = testNamespace.Clients.Client.List(
+	err := testNamespace.Clients.Client.List(
 		testNamespace.Clients.Context, sbdRemediations, client.InNamespace(testNamespace.Name))
 	if err == nil {
 		for _, remediation := range sbdRemediations.Items {
@@ -1706,16 +1765,8 @@ func detectStorageBackend() (StorageBackendType, string, error) {
 }
 
 // createStorageDisruption creates network-level disruption to block access to shared storage
-func createStorageDisruption(instanceID string) ([]string, error) {
-	By(fmt.Sprintf("Creating network-level storage disruption for instance %s", instanceID))
-
-	// Get the node name from the instance ID
-	nodeName, err := getNodeNameFromInstanceID(instanceID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get node name for instance %s: %w", instanceID, err)
-	}
-
-	By(fmt.Sprintf("Target node: %s", nodeName))
+func createStorageDisruption(nodeName string) ([]string, error) {
+	By(fmt.Sprintf("Creating network-level storage disruption for node %s", nodeName))
 
 	// Detect storage backend to use appropriate disruption method
 	storageBackend, storageClassName, err := detectStorageBackend()

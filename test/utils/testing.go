@@ -152,7 +152,7 @@ func (tc *TestClients) CreateTestNamespace(namespace string) (*TestNamespace, er
 
 	tns := &TestNamespace{
 		Name:         namespace,
-		ArtifactsDir: artifactsDir,
+		ArtifactsDir: testFlags.ArtifactsDir,
 		Clients:      tc,
 	}
 
@@ -654,6 +654,52 @@ func (dc *DebugCollector) collectJobPodLogs(namespace, jobName string) {
 	}
 }
 
+// CollectSBDRemediations collects SBDRemediation CRs
+func (dc *DebugCollector) CollectSBDRemediations(namespace string) {
+	By(fmt.Sprintf("Fetching SBDRemediations in namespace %s", namespace))
+	remediations := &medik8sv1alpha1.SBDRemediationList{}
+	err := dc.Clients.Client.List(dc.Clients.Context, remediations, client.InNamespace(namespace))
+	if err == nil {
+		for _, remediation := range remediations.Items {
+			yaml, err := yaml.Marshal(remediation)
+			if err == nil {
+				logFileName := fmt.Sprintf("%s/%s.yaml", dc.ArtifactsDir, remediation.Name)
+				if f, fileErr := os.Create(logFileName); fileErr == nil {
+					defer func() { _ = f.Close() }()
+					_, _ = f.Write(yaml)
+					GinkgoWriter.Printf("SBDRemediation %s saved to %s\n", remediation.Name, logFileName)
+				} else {
+					GinkgoWriter.Printf("Failed to write SBDRemediation to file %s: %s\n", logFileName, fileErr)
+					GinkgoWriter.Printf("SBDRemediation %s:\n%s\n", remediation.Name, string(yaml))
+				}
+			}
+		}
+	}
+}
+
+// CollectSBDConfigs collects SBDConfig CRs
+func (dc *DebugCollector) CollectSBDConfigs(namespace string) {
+	By(fmt.Sprintf("Fetching SBDConfigs in namespace %s", namespace))
+	configs := &medik8sv1alpha1.SBDConfigList{}
+	err := dc.Clients.Client.List(dc.Clients.Context, configs, client.InNamespace(namespace))
+	if err == nil {
+		for _, config := range configs.Items {
+			yaml, err := yaml.Marshal(config)
+			if err == nil {
+				logFileName := fmt.Sprintf("%s/%s.yaml", dc.ArtifactsDir, config.Name)
+				if f, fileErr := os.Create(logFileName); fileErr == nil {
+					defer func() { _ = f.Close() }()
+					_, _ = f.Write(yaml)
+					GinkgoWriter.Printf("SBDConfig %s saved to %s\n", config.Name, logFileName)
+				} else {
+					GinkgoWriter.Printf("Failed to write SBDConfig to file %s: %s\n", logFileName, fileErr)
+					GinkgoWriter.Printf("SBDConfig %s:\n%s\n", config.Name, string(yaml))
+				}
+			}
+		}
+	}
+}
+
 // CollectPodLogs collects logs from a specific pod container
 func (dc *DebugCollector) CollectPodLogs(namespace, podName, containerName string) {
 	By(fmt.Sprintf("Fetching logs from pod %s container %s", podName, containerName))
@@ -996,7 +1042,6 @@ func (dsc *DaemonSetChecker) WaitForDaemonSet(labels map[string]string,
 			if err != nil {
 				GinkgoWriter.Printf("Failed to list Jobs: %v\n", err)
 			} else {
-				GinkgoWriter.Printf("Jobs in namespace %s:\n", dsc.Namespace)
 				for _, job := range jobs.Items {
 					yaml, err := yaml.Marshal(job.Status)
 					if err != nil {
@@ -1014,15 +1059,8 @@ func (dsc *DaemonSetChecker) WaitForDaemonSet(labels map[string]string,
 			if err != nil {
 				GinkgoWriter.Printf("Failed to list Pods: %v\n", err)
 			} else {
-				GinkgoWriter.Printf("Pods in namespace %s:\n", dsc.Namespace)
 				for _, pod := range pods.Items {
-					yaml, err := yaml.Marshal(pod.Status)
-					if err != nil {
-						GinkgoWriter.Printf("Failed to marshal pod status: %v\n", err)
-						GinkgoWriter.Printf("Pod %s: %+v\n", pod.Name, pod.Status)
-					} else {
-						GinkgoWriter.Printf("Pod %s status:\n %s\n", pod.Name, string(yaml))
-					}
+					GinkgoWriter.Printf("Pod %s: %v\n", pod.Name, pod.Status.Phase)
 				}
 			}
 			return false
@@ -1204,6 +1242,11 @@ func (sav *SBDAgentValidator) ValidateAgentDeployment(opts ValidateAgentDeployme
 			return fmt.Errorf("did not find critical log message: %s", successString)
 		}
 	}
+
+	if err := sav.TestNS.Clients.NodeMapSummary(podName, sav.TestNS.Name, ""); err != nil {
+		GinkgoWriter.Printf("Failed to get node mapping: %v\n", err)
+	}
+
 	return nil
 }
 
@@ -1484,37 +1527,8 @@ func DescribeEnvironment(testClients *TestClients, testNamespace *TestNamespace)
 				len(podList.Items), testNamespace.Name)
 		}
 
-		By("Fetching SBDConfig CRs")
-		sbdConfigs := &medik8sv1alpha1.SBDConfigList{}
-		err = testClients.Client.List(testClients.Context, sbdConfigs, client.InNamespace(testNamespace.Name))
-		if err != nil {
-			GinkgoWriter.Printf("Failed to get SBDConfig CRs: %s", err)
-		} else {
-			GinkgoWriter.Printf("SBDConfig CRs found: %d\n", len(sbdConfigs.Items))
-			for i, config := range sbdConfigs.Items {
-				GinkgoWriter.Printf("SBDConfig %d:\n", i+1)
-				GinkgoWriter.Printf("  Name: %s\n", config.Name)
-				GinkgoWriter.Printf("  Namespace: %s\n", config.Namespace)
-				GinkgoWriter.Printf("  Status: %+v\n", config.Status)
-				GinkgoWriter.Printf("  Spec: %+v\n", config.Spec)
-			}
-		}
-
-		By("Fetching SBDRemediation CRs")
-		sbdRemediations := &medik8sv1alpha1.SBDRemediationList{}
-		err = testClients.Client.List(testClients.Context, sbdRemediations, client.InNamespace(testNamespace.Name))
-		if err != nil {
-			GinkgoWriter.Printf("Failed to get SBDRemediation CRs: %s", err)
-		} else {
-			GinkgoWriter.Printf("SBDRemediation CRs found: %d\n", len(sbdRemediations.Items))
-			for i, remediation := range sbdRemediations.Items {
-				GinkgoWriter.Printf("SBDRemediation %d:\n", i+1)
-				GinkgoWriter.Printf("  Name: %s\n", remediation.Name)
-				GinkgoWriter.Printf("  Namespace: %s\n", remediation.Namespace)
-				GinkgoWriter.Printf("  Status: %+v\n", remediation.Status)
-				GinkgoWriter.Printf("  Spec: %+v\n", remediation.Spec)
-			}
-		}
+		debugCollector.CollectSBDConfigs(testNamespace.Name)
+		debugCollector.CollectSBDRemediations(testNamespace.Name)
 
 		By("validating that SBD agent pods are running as expected")
 		verifyAgentsUp := func(g Gomega) {
