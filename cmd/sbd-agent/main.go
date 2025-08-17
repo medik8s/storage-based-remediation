@@ -772,7 +772,11 @@ func NewSBDAgentWithWatchdog(wd WatchdogInterface, heartbeatDevicePath, nodeName
 
 	// Get the first SBDConfig object from the POD_NAMESPACE
 	sbdConfigs := &v1alpha1.SBDConfigList{}
-	if err := sbdAgent.k8sClient.List(sbdAgent.ctx, sbdConfigs, client.InNamespace(os.Getenv("POD_NAMESPACE"))); err != nil {
+	if err := sbdAgent.k8sClient.List(
+		sbdAgent.ctx,
+		sbdConfigs,
+		client.InNamespace(os.Getenv("POD_NAMESPACE")),
+	); err != nil {
 		logger.Error(err, "Failed to list SBDConfig objects")
 	} else if len(sbdConfigs.Items) > 0 {
 		sbdAgent.recorderObject = &sbdConfigs.Items[0]
@@ -1169,14 +1173,9 @@ func (s *SBDAgent) Start() error {
 	}
 
 	// Start fencing loop if enabled
-	go func() {
-		if err := s.controllerManager.Start(s.ctx); err != nil {
-			logger.Error(err, "Controller manager failed")
-		}
-	}()
+	logger.Info("Starting SBD Agent controller manager")
+	return s.controllerManager.Start(s.ctx)
 
-	logger.Info("SBD Agent started successfully")
-	return nil
 }
 
 // Stop gracefully shuts down the SBD agent

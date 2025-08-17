@@ -1287,6 +1287,7 @@ func (sav *SBDAgentValidator) ValidateAgentDeployment(opts ValidateAgentDeployme
 		"level\":\"error",
 		"Error",
 		"ERROR",
+		"Failed to start SBD agent",
 		"failed to pet watchdog",
 		"watchdog device is not open",
 		"Failed to unmarshal message from own slot",
@@ -1306,7 +1307,7 @@ func (sav *SBDAgentValidator) ValidateAgentDeployment(opts ValidateAgentDeployme
 
 	By("verifying SBD agent started successfully")
 	successStrings := []string{
-		"SBD Agent started successfully",
+		"Starting SBD Agent controller manager",
 		"Starting watchdog loop",
 		"Starting peer monitor loop",
 		"Starting SBD heartbeat loop",

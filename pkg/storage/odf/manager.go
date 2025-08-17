@@ -492,7 +492,11 @@ func (m *Manager) labelWorkerNodesForStorage(ctx context.Context) error {
 	}
 
 	if labeledCount < m.config.ReplicaCount {
-		return fmt.Errorf("insufficient storage nodes: labeled %d nodes, but need %d replicas", labeledCount, m.config.ReplicaCount)
+		return fmt.Errorf(
+			"insufficient storage nodes: labeled %d nodes, but need %d replicas",
+			labeledCount,
+			m.config.ReplicaCount,
+		)
 	}
 
 	log.Printf("✅ Successfully labeled %d worker nodes for ODF storage", labeledCount)

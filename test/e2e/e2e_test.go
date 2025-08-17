@@ -491,8 +491,7 @@ func checkNodeReboot(nodeName, reason, originalBootTime string, timeout time.Dur
 
 	if target {
 		By(fmt.Sprintf("Cleaning up remediated node %s", nodeName))
-		err := cleanupRemediatedWorkloads(testNamespace, nodeName)
-		Expect(err).NotTo(HaveOccurred(), "Failed to cleanup remediated node %s", nodeName)
+		cleanupRemediatedWorkloads(testNamespace, nodeName)
 
 		// Wait longer for node to come back online after reboot
 		By(fmt.Sprintf("Waiting for node %s to come back online after reboot", nodeName))

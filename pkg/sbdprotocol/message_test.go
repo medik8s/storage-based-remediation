@@ -651,7 +651,11 @@ func TestSBDMarshalUnmarshalRoundtrip(t *testing.T) {
 
 		// Compare all relevant header fields (checksum is recomputed on marshal)
 		if string(originalMsg.Header.Magic[:]) != string(unmarshaledMsg.Header.Magic[:]) {
-			t.Errorf("Magic mismatch: expected %q, got %q", string(originalMsg.Header.Magic[:]), string(unmarshaledMsg.Header.Magic[:]))
+			t.Errorf(
+				"Magic mismatch: expected %q, got %q",
+				string(originalMsg.Header.Magic[:]),
+				string(unmarshaledMsg.Header.Magic[:]),
+			)
 		}
 		if originalMsg.Header.Version != unmarshaledMsg.Header.Version {
 			t.Errorf("Version mismatch: expected %d, got %d", originalMsg.Header.Version, unmarshaledMsg.Header.Version)

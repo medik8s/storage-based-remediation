@@ -374,7 +374,10 @@ func (r *SBDRemediationReconciler) writeFenceMessage(targetNodeID uint16,
 }
 
 // clearFenceSlotForNode clears the SBD slot associated with the provided node name.
-func (r *SBDRemediationReconciler) clearFenceSlotForNode(remediation *medik8sv1alpha1.SBDRemediation, logger logr.Logger) error {
+func (r *SBDRemediationReconciler) clearFenceSlotForNode(
+	remediation *medik8sv1alpha1.SBDRemediation,
+	logger logr.Logger,
+) error {
 
 	nodeID, err := r.nodeManager.GetNodeIDForNode(remediation.Spec.NodeName)
 	if err != nil {
@@ -634,7 +637,9 @@ func (r *SBDRemediationReconciler) hasNodeStoppedHeartbeating(nodeName string, l
 	}
 
 	// Parse the header to check message timestamp
-	header, err := sbdprotocol.Unmarshal(slotData[:sbdprotocol.SBD_HEADER_SIZE])
+	header, err := sbdprotocol.Unmarshal(
+		slotData[:sbdprotocol.SBD_HEADER_SIZE],
+	)
 	if err != nil {
 		logger.V(1).Info("Could not parse SBD header, assuming node stopped", "error", err)
 		return true, nil
@@ -644,11 +649,32 @@ func (r *SBDRemediationReconciler) hasNodeStoppedHeartbeating(nodeName string, l
 	messageAge := time.Since(messageTimestamp)
 	switch header.Type {
 	case sbdprotocol.SBD_MSG_TYPE_HEARTBEAT:
-		logger.Info("Checking SBD header", "type", "heartbeat", "age", messageAge, "timestamp", messageTimestamp, "rawTimestamp", header.Timestamp, "nodeID", header.NodeID)
+		logger.Info(
+			"Checking SBD header",
+			"type", "heartbeat",
+			"age", messageAge,
+			"timestamp", messageTimestamp,
+			"rawTimestamp", header.Timestamp,
+			"nodeID", header.NodeID,
+		)
 	case sbdprotocol.SBD_MSG_TYPE_FENCE:
-		logger.Info("Checking SBD header", "type", "fence", "age", messageAge, "timestamp", messageTimestamp, "rawTimestamp", header.Timestamp, "nodeID", header.NodeID)
+		logger.Info(
+			"Checking SBD header",
+			"type", "fence",
+			"age", messageAge,
+			"timestamp", messageTimestamp,
+			"rawTimestamp", header.Timestamp,
+			"nodeID", header.NodeID,
+		)
 	default:
-		logger.Info("Checking SBD header", "type", header.Type, "age", messageAge, "timestamp", messageTimestamp, "rawTimestamp", header.Timestamp, "nodeID", header.NodeID)
+		logger.Info(
+			"Checking SBD header",
+			"type", header.Type,
+			"age", messageAge,
+			"timestamp", messageTimestamp,
+			"rawTimestamp", header.Timestamp,
+			"nodeID", header.NodeID,
+		)
 	}
 
 	// Check if this is a heartbeat message and if it's recent

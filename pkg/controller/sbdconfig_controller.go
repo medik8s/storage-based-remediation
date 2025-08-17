@@ -606,15 +606,15 @@ func (r *SBDConfigReconciler) testRWXSupport(
 	if err != nil {
 		logger.Error(err, "Failed to list events for test PVC")
 	} else {
-		for _, event := range events.Items {
-			message := strings.ToLower(event.Message)
+		for _, evt := range events.Items {
+			message := strings.ToLower(evt.Message)
 			if strings.Contains(message, "readwritemany") &&
 				(strings.Contains(message, "not supported") || strings.Contains(message, "unsupported") ||
 					strings.Contains(message, "invalid")) {
-				return fmt.Errorf("storage class does not support ReadWriteMany access mode: %s", event.Message)
+				return fmt.Errorf("storage class does not support ReadWriteMany access mode: %s", evt.Message)
 			}
 			if strings.Contains(message, "access mode") && strings.Contains(message, "not supported") {
-				return fmt.Errorf("storage class does not support required access mode: %s", event.Message)
+				return fmt.Errorf("storage class does not support required access mode: %s", evt.Message)
 			}
 		}
 	}
@@ -625,7 +625,12 @@ func (r *SBDConfigReconciler) testRWXSupport(
 
 // ensurePVC ensures that a PVC exists for shared storage when SharedStorageClass is specified
 func (r *SBDConfigReconciler) ensurePVC(
-	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, logger logr.Logger) (controllerutil.OperationResult, error) {
+	ctx context.Context,
+	sbdConfig *medik8sv1alpha1.SBDConfig,
+	logger logr.Logger,
+) (
+	controllerutil.OperationResult, error,
+) {
 	if !sbdConfig.Spec.HasSharedStorage() {
 		// No shared storage configured, nothing to do
 		return controllerutil.OperationResultNone, nil
@@ -722,7 +727,12 @@ func (r *SBDConfigReconciler) ensurePVC(
 
 // ensureSBDDevice ensures that the SBD device file exists in shared storage when SharedStorageClass is specified
 func (r *SBDConfigReconciler) ensureSBDDevice(
-	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, logger logr.Logger) (controllerutil.OperationResult, error) {
+	ctx context.Context,
+	sbdConfig *medik8sv1alpha1.SBDConfig,
+	logger logr.Logger,
+) (
+	controllerutil.OperationResult, error,
+) {
 	if !sbdConfig.Spec.HasSharedStorage() {
 		// No shared storage configured, nothing to do
 		return controllerutil.OperationResultNone, nil
@@ -934,7 +944,11 @@ echo "SBD devices initialization completed successfully"
 
 	// Set controller reference
 	if err := controllerutil.SetControllerReference(sbdConfig, desiredJob, r.Scheme); err != nil {
-		return controllerutil.OperationResultNone, fmt.Errorf("failed to set controller reference on SBD device init job: %w", err)
+		return controllerutil.OperationResultNone,
+			fmt.Errorf(
+				"failed to set controller reference on SBD device init job: %w",
+				err,
+			)
 	}
 
 	// Check if job already exists and is completed
@@ -1793,6 +1807,7 @@ func mustParseQuantity(s string) resource.Quantity {
 }
 
 // Example predicate that only triggers on meaningful changes
+// nolint:unused // kept for future event debugging
 func (r *SBDConfigReconciler) filterEvents() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
