@@ -285,12 +285,17 @@ func (tn *TestNamespace) NewPodStatusChecker(labels map[string]string) *PodStatu
 	}
 }
 
+const (
+	// Default operator namespace
+	OperatorNamespaceName = "sbd-operator-system"
+)
+
 func (tn *TestNamespace) OperatorNamespace() *TestNamespace {
-	if tn.Name == "sbd-operator-system" {
+	if tn.Name == OperatorNamespaceName {
 		return tn
 	}
 	return &TestNamespace{
-		Name:         "sbd-operator-system",
+		Name:         OperatorNamespaceName,
 		ArtifactsDir: tn.ArtifactsDir,
 		Clients:      tn.Clients,
 	}
@@ -334,7 +339,13 @@ func (tn *TestNamespace) PodLogsContain(expectedLogs []string) (bool, error) {
 			for _, expectedLog := range expectedLogs {
 				if strings.Contains(line, expectedLog) {
 					expectedLogs = removeLog(expectedLogs, expectedLog)
-					GinkgoWriter.Printf("Agent pod %s has log: %s (%d remaining): %s\n", pod.Name, expectedLog, len(expectedLogs), line)
+					GinkgoWriter.Printf(
+						"Agent pod %s has log: %s (%d remaining): %s\n",
+						pod.Name,
+						expectedLog,
+						len(expectedLogs),
+						line,
+					)
 					break
 				}
 			}
@@ -717,22 +728,24 @@ func (dc *DebugCollector) collectJobPodLogs(namespace, jobName string) {
 }
 
 // CollectSBDRemediations collects SBDRemediation CRs
+//
+//nolint:dupl // similar to CollectSBDConfigs; kept distinct for clarity
 func (dc *DebugCollector) CollectSBDRemediations(namespace string) {
 	By(fmt.Sprintf("Fetching SBDRemediations in namespace %s", namespace))
 	remediations := &medik8sv1alpha1.SBDRemediationList{}
 	err := dc.Clients.Client.List(dc.Clients.Context, remediations, client.InNamespace(namespace))
 	if err == nil {
 		for _, remediation := range remediations.Items {
-			yaml, err := yaml.Marshal(remediation)
+			data, err := yaml.Marshal(remediation)
 			if err == nil {
 				logFileName := fmt.Sprintf("%s/%s.yaml", dc.ArtifactsDir, remediation.Name)
 				if f, fileErr := os.Create(logFileName); fileErr == nil {
 					defer func() { _ = f.Close() }()
-					_, _ = f.Write(yaml)
+					_, _ = f.Write(data)
 					GinkgoWriter.Printf("SBDRemediation %s saved to %s\n", remediation.Name, logFileName)
 				} else {
 					GinkgoWriter.Printf("Failed to write SBDRemediation to file %s: %s\n", logFileName, fileErr)
-					GinkgoWriter.Printf("SBDRemediation %s:\n%s\n", remediation.Name, string(yaml))
+					GinkgoWriter.Printf("SBDRemediation %s:\n%s\n", remediation.Name, string(data))
 				}
 			}
 		}
@@ -740,22 +753,24 @@ func (dc *DebugCollector) CollectSBDRemediations(namespace string) {
 }
 
 // CollectSBDConfigs collects SBDConfig CRs
+//
+//nolint:dupl // similar to CollectSBDRemediations; kept distinct for clarity
 func (dc *DebugCollector) CollectSBDConfigs(namespace string) {
 	By(fmt.Sprintf("Fetching SBDConfigs in namespace %s", namespace))
 	configs := &medik8sv1alpha1.SBDConfigList{}
 	err := dc.Clients.Client.List(dc.Clients.Context, configs, client.InNamespace(namespace))
 	if err == nil {
 		for _, config := range configs.Items {
-			yaml, err := yaml.Marshal(config)
+			data, err := yaml.Marshal(config)
 			if err == nil {
 				logFileName := fmt.Sprintf("%s/%s.yaml", dc.ArtifactsDir, config.Name)
 				if f, fileErr := os.Create(logFileName); fileErr == nil {
 					defer func() { _ = f.Close() }()
-					_, _ = f.Write(yaml)
+					_, _ = f.Write(data)
 					GinkgoWriter.Printf("SBDConfig %s saved to %s\n", config.Name, logFileName)
 				} else {
 					GinkgoWriter.Printf("Failed to write SBDConfig to file %s: %s\n", logFileName, fileErr)
-					GinkgoWriter.Printf("SBDConfig %s:\n%s\n", config.Name, string(yaml))
+					GinkgoWriter.Printf("SBDConfig %s:\n%s\n", config.Name, string(data))
 				}
 			}
 		}

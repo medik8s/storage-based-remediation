@@ -571,7 +571,7 @@ func checkNodeReboot(nodeName, reason, originalBootTime string, timeout time.Dur
 	}
 }
 
-func cleanupRemediatedWorkloads(testNamespace *utils.TestNamespace, nodeName string) error {
+func cleanupRemediatedWorkloads(testNamespace *utils.TestNamespace, nodeName string) {
 	// Force-Delete any SBD agent pods from the node, since they will be left in a terminating state due to the reboot
 	pods := &corev1.PodList{}
 	err := k8sClient.List(ctx, pods, client.InNamespace(testNamespace.Name), client.MatchingLabels{"app": "sbd-agent"})
@@ -598,9 +598,15 @@ func cleanupRemediatedWorkloads(testNamespace *utils.TestNamespace, nodeName str
 		}
 	}
 
-	// Force-delete any failed operator pods from the node, since they will be left in a terminating state due to the reboot
+	// Force-delete any failed operator pods from the node
+	// They may be left in a terminating state due to the reboot
 	operatorPods := &corev1.PodList{}
-	err = k8sClient.List(ctx, operatorPods, client.InNamespace(testNamespace.Name), client.MatchingLabels{"app": "sbd-operator"})
+	err = k8sClient.List(
+		ctx,
+		operatorPods,
+		client.InNamespace(testNamespace.Name),
+		client.MatchingLabels{"app": "sbd-operator"},
+	)
 	Expect(err).NotTo(HaveOccurred(), "Failed to list SBD operator pods")
 
 	for _, pod := range operatorPods.Items {
@@ -623,8 +629,6 @@ func cleanupRemediatedWorkloads(testNamespace *utils.TestNamespace, nodeName str
 			}, time.Minute*5, time.Second*10).Should(BeTrue(), "SBD operator pod %s was not removed", pod.Name)
 		}
 	}
-
-	return nil
 }
 
 func checkNodeNotReady(nodeName, reason string, timeout time.Duration, enforceFn func() gomegatypes.GomegaMatcher) {
@@ -1290,7 +1294,7 @@ func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 	if err == nil {
 		for _, pod := range storageDisruptorPods.Items {
 			_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, &pod)
-			removeStorageDisruption(pod.Spec.NodeName)
+			_ = removeStorageDisruption(pod.Spec.NodeName)
 		}
 	}
 
@@ -1302,7 +1306,7 @@ func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 	if err == nil {
 		for _, pod := range cephStorageDisruptorPods.Items {
 			_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, &pod)
-			removeStorageDisruption(pod.Spec.NodeName)
+			_ = removeStorageDisruption(pod.Spec.NodeName)
 		}
 	}
 
@@ -1314,7 +1318,7 @@ func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 	if err == nil {
 		for _, pod := range awsStorageDisruptorPods.Items {
 			_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, &pod)
-			removeStorageDisruption(pod.Spec.NodeName)
+			_ = removeStorageDisruption(pod.Spec.NodeName)
 		}
 	}
 
@@ -1619,6 +1623,7 @@ func createNetworkDisruption(nodeName string) (*string, error) {
 	disruptorPodName := fmt.Sprintf("sbd-e2e-kubelet-disruptor-%d", time.Now().Unix())
 
 	// Create privileged pod that stops kubelet service
+	// nolint:lll
 	disruptorPodYAML := fmt.Sprintf(`apiVersion: v1
 kind: Pod
 metadata:
@@ -1691,24 +1696,6 @@ spec:
 	return &disruptorPodName, nil
 }
 
-// getNodeNameFromInstanceID maps an EC2 instance ID to a Kubernetes node name
-func getNodeNameFromInstanceID(instanceID string) (string, error) {
-	// Get all nodes and find the one with matching provider ID
-	nodes := &corev1.NodeList{}
-	err := k8sClient.List(ctx, nodes)
-	if err != nil {
-		return "", fmt.Errorf("failed to list nodes: %w", err)
-	}
-
-	for _, node := range nodes.Items {
-		if strings.Contains(node.Spec.ProviderID, instanceID) {
-			return node.Name, nil
-		}
-	}
-
-	return "", fmt.Errorf("no node found with instance ID %s", instanceID)
-}
-
 // StorageBackendType represents the type of storage backend in use
 type StorageBackendType string
 
@@ -1778,6 +1765,8 @@ func createStorageDisruption(nodeName string) ([]string, error) {
 }
 
 // createCephStorageDisruption creates network-level disruption specifically for Ceph storage
+//
+//nolint:dupl // similar to AWS variant; duplication is intentional for backend-specific details
 func createCephStorageDisruption(nodeName string) ([]string, error) {
 	By(fmt.Sprintf("Creating Ceph storage disruption for node %s", nodeName))
 
@@ -1785,6 +1774,7 @@ func createCephStorageDisruption(nodeName string) ([]string, error) {
 	disruptorPodName := fmt.Sprintf("sbd-e2e-ceph-storage-disruptor-%d", time.Now().Unix())
 
 	// Create privileged pod that disrupts Ceph storage access
+	// nolint:lll
 	disruptorPodYAML := fmt.Sprintf(`apiVersion: v1
 kind: Pod
 metadata:
@@ -2087,6 +2077,8 @@ spec:
 }
 
 // createAWSStorageDisruption creates network-level disruption for AWS/EFS storage
+//
+//nolint:dupl // similar to Ceph variant; duplication is intentional for backend-specific details
 func createAWSStorageDisruption(nodeName string) ([]string, error) {
 	By(fmt.Sprintf("Creating AWS/EFS storage disruption for node %s", nodeName))
 
@@ -2094,6 +2086,7 @@ func createAWSStorageDisruption(nodeName string) ([]string, error) {
 	disruptorPodName := fmt.Sprintf("sbd-e2e-aws-storage-disruptor-%d", time.Now().Unix())
 
 	// Create privileged pod that disrupts shared storage access
+	// nolint:lll
 	disruptorPodYAML := fmt.Sprintf(`apiVersion: v1
 kind: Pod
 metadata:

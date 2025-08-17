@@ -528,7 +528,8 @@ func WaitForNodesReady(testNamespace *TestNamespace, timeout, interval string, a
 					GinkgoWriter.Printf("Node %s has Ready status %s, message %s, reason %s\n",
 						node.Name, cond.Status, cond.Message, cond.Reason)
 					if firstPass {
-						RebootAWSInstanceForNode(testNamespace.Clients, node.Name)
+						// Best-effort: reboot instance to recover; ignore error in readiness poll
+						_ = RebootAWSInstanceForNode(testNamespace.Clients, node.Name)
 					}
 					allReady = false
 				}

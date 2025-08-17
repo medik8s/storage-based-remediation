@@ -40,7 +40,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/ginkgo/v2"
 
 	"github.com/medik8s/sbd-operator/pkg/agent"
 	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
@@ -120,77 +120,77 @@ func (tc *TestClients) GetFenceDeviceInfoFromPod(podName, namespace string) ([]S
 
 // PrintNodeMap prints the node mapping summary to stdout
 func PrintNodeMap(nodeMapTable *sbdprotocol.NodeMapTable) {
-	GinkgoWriter.Printf("\n=== Node Mapping Summary ===\n")
-	GinkgoWriter.Printf("Cluster name: %s\n", nodeMapTable.ClusterName)
-	GinkgoWriter.Printf("Version: %d\n", nodeMapTable.Version)
-	GinkgoWriter.Printf("Last update: %s\n", nodeMapTable.LastUpdate)
-	GinkgoWriter.Printf("Checksum: %d\n", nodeMapTable.Checksum)
-	GinkgoWriter.Printf("Entries: %d\n", len(nodeMapTable.Entries))
+	ginkgo.GinkgoWriter.Printf("\n=== Node Mapping Summary ===\n")
+	ginkgo.GinkgoWriter.Printf("Cluster name: %s\n", nodeMapTable.ClusterName)
+	ginkgo.GinkgoWriter.Printf("Version: %d\n", nodeMapTable.Version)
+	ginkgo.GinkgoWriter.Printf("Last update: %s\n", nodeMapTable.LastUpdate)
+	ginkgo.GinkgoWriter.Printf("Checksum: %d\n", nodeMapTable.Checksum)
+	ginkgo.GinkgoWriter.Printf("Entries: %d\n", len(nodeMapTable.Entries))
 
 	if len(nodeMapTable.Entries) == 0 {
-		GinkgoWriter.Printf("No active node mappings found.\n")
+		ginkgo.GinkgoWriter.Printf("No active node mappings found.\n")
 		return
 	}
 
-	GinkgoWriter.Printf("%-6s %-30s %-20s\n", "NodeID", "Node Name", "Last Seen")
-	GinkgoWriter.Printf("%-6s %-30s %-20s\n", "------", "---------", "---------")
+	ginkgo.GinkgoWriter.Printf("%-6s %-30s %-20s\n", "NodeID", "Node Name", "Last Seen")
+	ginkgo.GinkgoWriter.Printf("%-6s %-30s %-20s\n", "------", "---------", "---------")
 
 	for _, entry := range nodeMapTable.Entries {
 		lastSeenStr := "Never"
 		if !entry.LastSeen.IsZero() {
 			lastSeenStr = entry.LastSeen.Format("2006-01-02 15:04:05")
 		}
-		GinkgoWriter.Printf("%-6d %-30s %-20s\n", entry.NodeID, entry.NodeName, lastSeenStr)
+		ginkgo.GinkgoWriter.Printf("%-6d %-30s %-20s\n", entry.NodeID, entry.NodeName, lastSeenStr)
 	}
-	GinkgoWriter.Printf("\n")
+	ginkgo.GinkgoWriter.Printf("\n")
 }
 
 // PrintSBDDevice prints the SBD device summary to stdout
 func PrintSBDDevice(slots []SBDNodeSummary) {
-	GinkgoWriter.Printf("\n=== SBD Device Summary ===\n")
-	GinkgoWriter.Printf("Total slots with data: %d\n\n", len(slots))
+	ginkgo.GinkgoWriter.Printf("\n=== SBD Device Summary ===\n")
+	ginkgo.GinkgoWriter.Printf("Total slots with data: %d\n\n", len(slots))
 
 	if len(slots) == 0 {
-		GinkgoWriter.Printf("No active SBD slots found.\n")
+		ginkgo.GinkgoWriter.Printf("No active SBD slots found.\n")
 		return
 	}
 
-	GinkgoWriter.Printf("%-8s %-12s %-20s %-10s\n", "NodeID", "Type", "Timestamp", "Sequence")
-	GinkgoWriter.Printf("%-8s %-12s %-20s %-10s\n", "------", "----", "---------", "--------")
+	ginkgo.GinkgoWriter.Printf("%-8s %-12s %-20s %-10s\n", "NodeID", "Type", "Timestamp", "Sequence")
+	ginkgo.GinkgoWriter.Printf("%-8s %-12s %-20s %-10s\n", "------", "----", "---------", "--------")
 
 	for _, slot := range slots {
 		timestampStr := notAvailableText
 		if !slot.Timestamp.IsZero() {
 			timestampStr = slot.Timestamp.Format("15:04:05")
 		}
-		GinkgoWriter.Printf("%-8d %-12s %-20s %-10d\n",
+		ginkgo.GinkgoWriter.Printf("%-8d %-12s %-20s %-10d\n",
 			slot.NodeID, slot.Type, timestampStr, slot.Sequence)
 	}
-	GinkgoWriter.Printf("\n")
+	ginkgo.GinkgoWriter.Printf("\n")
 }
 
 // PrintFenceDevice prints the fence device summary to stdout
 func PrintFenceDevice(slots []SBDNodeSummary) {
-	GinkgoWriter.Printf("\n=== Fence Device Summary ===\n")
-	GinkgoWriter.Printf("Total slots with data: %d\n\n", len(slots))
+	ginkgo.GinkgoWriter.Printf("\n=== Fence Device Summary ===\n")
+	ginkgo.GinkgoWriter.Printf("Total slots with data: %d\n\n", len(slots))
 
 	if len(slots) == 0 {
-		GinkgoWriter.Printf("No active fence slots found.\n")
+		ginkgo.GinkgoWriter.Printf("No active fence slots found.\n")
 		return
 	}
 
-	GinkgoWriter.Printf("%-8s %-12s %-20s %-10s\n", "NodeID", "Type", "Timestamp", "Sequence")
-	GinkgoWriter.Printf("%-8s %-12s %-20s %-10s\n", "------", "----", "---------", "--------")
+	ginkgo.GinkgoWriter.Printf("%-8s %-12s %-20s %-10s\n", "NodeID", "Type", "Timestamp", "Sequence")
+	ginkgo.GinkgoWriter.Printf("%-8s %-12s %-20s %-10s\n", "------", "----", "---------", "--------")
 
 	for _, slot := range slots {
 		timestampStr := notAvailableText
 		if !slot.Timestamp.IsZero() {
 			timestampStr = slot.Timestamp.Format("15:04:05")
 		}
-		GinkgoWriter.Printf("%-8d %-12s %-20s %-10d\n",
+		ginkgo.GinkgoWriter.Printf("%-8d %-12s %-20s %-10d\n",
 			slot.NodeID, slot.Type, timestampStr, slot.Sequence)
 	}
-	GinkgoWriter.Printf("\n")
+	ginkgo.GinkgoWriter.Printf("\n")
 }
 
 // SaveNodeMapToFile saves the node mapping summary to a file
@@ -285,7 +285,7 @@ func (tc *TestClients) NodeMapSummary(podName, namespace, outputFile string) err
 		if err := SaveNodeMapToFile(nodeMapTable, outputFile); err != nil {
 			return fmt.Errorf("failed to save node map to file: %w", err)
 		}
-		GinkgoWriter.Printf("Node mapping summary saved to: %s\n", outputFile)
+		ginkgo.GinkgoWriter.Printf("Node mapping summary saved to: %s\n", outputFile)
 	} else {
 		PrintNodeMap(nodeMapTable)
 	}
@@ -304,7 +304,7 @@ func (tc *TestClients) SBDDeviceSummary(podName, namespace, outputFile string) e
 		if err := SaveSBDDeviceToFile(slots, outputFile); err != nil {
 			return fmt.Errorf("failed to save SBD device info to file: %w", err)
 		}
-		GinkgoWriter.Printf("SBD device summary saved to: %s\n", outputFile)
+		ginkgo.GinkgoWriter.Printf("SBD device summary saved to: %s\n", outputFile)
 	} else {
 		PrintSBDDevice(slots)
 	}
@@ -323,7 +323,7 @@ func (tc *TestClients) FenceDeviceSummary(podName, namespace, outputFile string)
 		if err := SaveFenceDeviceToFile(slots, outputFile); err != nil {
 			return fmt.Errorf("failed to save fence device info to file: %w", err)
 		}
-		GinkgoWriter.Printf("Fence device summary saved to: %s\n", outputFile)
+		ginkgo.GinkgoWriter.Printf("Fence device summary saved to: %s\n", outputFile)
 	} else {
 		PrintFenceDevice(slots)
 	}
@@ -333,10 +333,10 @@ func (tc *TestClients) FenceDeviceSummary(podName, namespace, outputFile string)
 
 // ValidateStorageConfiguration validates that storage is properly configured for SBD
 func (tc *TestClients) ValidateStorageConfiguration(podName, namespace string) error {
-	fmt.Printf("=== Validating Storage Configuration for SBD ===\n")
+	ginkgo.GinkgoWriter.Printf("=== Validating Storage Configuration for SBD ===\n")
 
 	// Check mount information
-	fmt.Println("--- NFS Mount Information ---")
+	ginkgo.GinkgoWriter.Printf("--- NFS Mount Information ---\n")
 	mountInfo, err := tc.getMountInfo(podName, namespace)
 	if err != nil {
 		return fmt.Errorf("failed to get mount info: %w", err)
@@ -348,18 +348,18 @@ func (tc *TestClients) ValidateStorageConfiguration(podName, namespace string) e
 	}
 
 	// Test file locking behavior
-	fmt.Println("--- File Locking Test ---")
+	ginkgo.GinkgoWriter.Printf("--- File Locking Test ---\n")
 	if err := tc.testFileLocking(podName, namespace); err != nil {
 		return fmt.Errorf("file locking test failed: %w", err)
 	}
 
 	// Test cache coherency
-	fmt.Println("--- Cache Coherency Test ---")
+	ginkgo.GinkgoWriter.Printf("--- Cache Coherency Test ---\n")
 	if err := tc.testCacheCoherency(podName, namespace); err != nil {
 		return fmt.Errorf("cache coherency test failed: %w", err)
 	}
 
-	fmt.Printf("✅ Storage configuration validation passed\n\n")
+	ginkgo.GinkgoWriter.Printf("✅ Storage configuration validation passed\n\n")
 	return nil
 }
 
@@ -375,7 +375,7 @@ func (tc *TestClients) getMountInfo(podName, namespace string) (string, error) {
 
 // validateNFSMountOptions validates that mount options include required cache coherency settings
 func validateNFSMountOptions(mountInfo string) error {
-	fmt.Printf("Mount info: %s\n", mountInfo)
+	ginkgo.GinkgoWriter.Printf("Mount info: %s\n", mountInfo)
 
 	requiredOptions := []string{"cache=none", "sync"}
 	recommendedOptions := []string{"local_lock=none"}
@@ -391,7 +391,7 @@ func validateNFSMountOptions(mountInfo string) error {
 		return fmt.Errorf("❌ Missing required NFS mount options: %v. These are required for SBD cache coherency", missing)
 	}
 
-	fmt.Printf("✅ Required mount options present: %v\n", requiredOptions)
+	ginkgo.GinkgoWriter.Printf("✅ Required mount options present: %v\n", requiredOptions)
 
 	// Check recommended options
 	missingRec := []string{}
@@ -402,9 +402,9 @@ func validateNFSMountOptions(mountInfo string) error {
 	}
 
 	if len(missingRec) > 0 {
-		fmt.Printf("⚠️  Missing recommended options: %v\n", missingRec)
+		ginkgo.GinkgoWriter.Printf("⚠️  Missing recommended options: %v\n", missingRec)
 	} else {
-		fmt.Printf("✅ Recommended mount options present: %v\n", recommendedOptions)
+		ginkgo.GinkgoWriter.Printf("✅ Recommended mount options present: %v\n", recommendedOptions)
 	}
 
 	return nil
@@ -425,7 +425,7 @@ func (tc *TestClients) testFileLocking(podName, namespace string) error {
 	cleanupCmd := []string{"rm", "-f", testFile}
 	_, _, _ = tc.execInPod(podName, namespace, cleanupCmd)
 
-	fmt.Printf("✅ File locking test passed\n")
+	ginkgo.GinkgoWriter.Printf("✅ File locking test passed\n")
 	return nil
 }
 
@@ -456,7 +456,7 @@ func (tc *TestClients) testCacheCoherency(podName, namespace string) error {
 	cleanupCmd := []string{"rm", "-f", testFile}
 	_, _, _ = tc.execInPod(podName, namespace, cleanupCmd)
 
-	fmt.Printf("✅ Cache coherency test passed\n")
+	ginkgo.GinkgoWriter.Printf("✅ Cache coherency test passed\n")
 	return nil
 }
 
@@ -518,7 +518,7 @@ func parseSBDDevice(data []byte) ([]SBDNodeSummary, error) {
 			if err == nil && slot.HasData {
 				slots = append(slots, slot)
 			} else {
-				fmt.Printf("Failed to parse SBD slot: %v\n", err)
+				ginkgo.GinkgoWriter.Printf("Failed to parse SBD slot: %v\n", err)
 				return nil, fmt.Errorf("failed to parse SBD slot: %w", err)
 			}
 		}

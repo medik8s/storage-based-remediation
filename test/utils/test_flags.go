@@ -29,12 +29,20 @@ var (
 	debugMode = flag.Bool("debug", false, "Enable debug output and additional logging")
 
 	// Cluster configuration
-	nodeSelector = flag.String("node-selector", "", "Node selector for targeting specific nodes (e.g., 'node-role.kubernetes.io/worker=')")
+	nodeSelector = flag.String(
+		"node-selector",
+		"",
+		"Node selector for targeting specific nodes (e.g., 'node-role.kubernetes.io/worker=')",
+	)
 
 	// Test environment
 	keepResources = flag.Bool("keep-resources", false, "Keep test resources after completion (useful for debugging)")
-	artifactsDir  = flag.String("artifacts-dir", fmt.Sprintf("test-%d", now), "Directory to store test artifacts (defaults to auto-generated)")
-	testID        = flag.String("test-id", fmt.Sprintf("%d", now), "Test ID for identifying test runs")
+	artifactsDir  = flag.String(
+		"artifacts-dir",
+		fmt.Sprintf("test-%d", now),
+		"Directory to store test artifacts (defaults to auto-generated)",
+	)
+	testID = flag.String("test-id", fmt.Sprintf("%d", now), "Test ID for identifying test runs")
 
 	// AWS/Cloud specific (for disruption testing)
 	testAWSRegion = flag.String("aws-region", "", "AWS region for disruption testing")
