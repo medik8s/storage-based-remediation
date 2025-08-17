@@ -17,9 +17,7 @@ limitations under the License.
 package e2e
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"math/rand"
 	"os"
 	"regexp"
@@ -124,18 +122,18 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 			testIncompatibleStorageClass()
 		})
 
-		It("should handle SBD agent crash and recovery", func() {
-			if len(clusterInfo.WorkerNodes) < 3 {
-				Skip("Test requires at least 3 worker nodes")
-			}
-			testSBDAgentCrash(clusterInfo)
-		})
-
 		It("should handle node remediation", func() {
 			if len(clusterInfo.WorkerNodes) < 2 {
 				Skip("Test requires at least 2 worker nodes")
 			}
 			testNodeRemediation(clusterInfo)
+		})
+
+		It("should handle SBD agent crash and recovery", func() {
+			if len(clusterInfo.WorkerNodes) < 3 {
+				Skip("Test requires at least 3 worker nodes")
+			}
+			testSBDAgentCrash(clusterInfo)
 		})
 
 		It("should trigger fencing when SBD agent loses storage access", func() {
@@ -239,8 +237,8 @@ func discoverClusterTopology() {
 // Test implementation functions
 
 // selectActualWorkerNode selects a random worker node that is verified to not be a control plane node
-func selectActualWorkerNode(cluster ClusterInfo) NodeInfo {
-	var actualWorkerNodes []NodeInfo
+func selectWorkerNode(cluster ClusterInfo) NodeInfo {
+	var workerNodes []NodeInfo
 	for _, node := range cluster.WorkerNodes {
 		// Double-check this is not a control plane node by examining labels
 		isControlPlane := false
@@ -251,19 +249,19 @@ func selectActualWorkerNode(cluster ClusterInfo) NodeInfo {
 			}
 		}
 		if !isControlPlane {
-			actualWorkerNodes = append(actualWorkerNodes, node)
+			workerNodes = append(workerNodes, node)
 		}
 	}
 
-	if len(actualWorkerNodes) == 0 {
+	if len(workerNodes) == 0 {
 		Skip("No actual worker nodes found for testing - all nodes appear to be control plane")
 	}
 
 	// Select a random actual worker node
-	selectedNode := actualWorkerNodes[rand.Intn(len(actualWorkerNodes))]
+	selectedNode := workerNodes[rand.Intn(len(workerNodes))]
 
 	// Log the selection for debugging
-	GinkgoWriter.Printf("Selected actual worker node: %s (verified not control plane)\n", selectedNode.Metadata.Name)
+	GinkgoWriter.Printf("Selected worker node: %s\n", selectedNode.Metadata.Name)
 
 	return selectedNode
 }
@@ -544,18 +542,18 @@ func checkNodeReboot(nodeName, reason, originalBootTime string, timeout time.Dur
 				health, found, err := unstructured.NestedString(cephCluster.Object, "status", "ceph", "health")
 				if err != nil || !found {
 					GinkgoWriter.Printf("Ceph cluster %s health status not available: found=%v, err=%v\n", name, found, err)
-					// allHealthy = false
-					// continue
+					allHealthy = false
+					continue
 				}
 
 				phase, found, err := unstructured.NestedString(cephCluster.Object, "status", "phase")
 				if err != nil || !found {
 					GinkgoWriter.Printf("Ceph cluster %s phase not available: found=%v, err=%v\n", name, found, err)
-					// allHealthy = false
-					// continue
+					allHealthy = false
+					continue
 				}
 
-				if health != "HEALTH_ERR" {
+				if health != "HEALTH_ERR" && phase == "Ready" {
 					GinkgoWriter.Printf("Ceph cluster %s is healthy (%s), phase %s\n", name, health, phase)
 				} else {
 					GinkgoWriter.Printf("Ceph cluster %s is NOT healthy (%s), phase %s\n", name, health, phase)
@@ -569,8 +567,7 @@ func checkNodeReboot(nodeName, reason, originalBootTime string, timeout time.Dur
 		// Give time for the cluster to settle down
 		// Proceeding too quickly appears to cause nodes to reboot and fail the test, because reasons...
 		// 5 minutes isn't enough, but 10 minutes seems to work
-		time.Sleep(10 * time.Minute)
-
+		time.Sleep(1 * time.Minute)
 	}
 }
 
@@ -667,7 +664,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 	testBasicSBDConfiguration()
 
 	// Select a random actual worker node for testing (not control plane)
-	targetNode := selectActualWorkerNode(cluster)
+	targetNode := selectWorkerNode(cluster)
 	By(fmt.Sprintf("Testing storage access interruption on verified worker node %s", targetNode.Metadata.Name))
 
 	// Node should self-fence when it loses storage access (no SBDRemediation CR needed)
@@ -733,7 +730,7 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 	testBasicSBDConfiguration()
 
 	// Select a random actual worker node for testing (not control plane)
-	targetNode := selectActualWorkerNode(cluster)
+	targetNode := selectWorkerNode(cluster)
 	By(fmt.Sprintf("Testing kubelet communication failure on verified worker node %s", targetNode.Metadata.Name))
 
 	// Get AWS instance ID for the target node
@@ -858,46 +855,37 @@ func testFakeRemediation() {
 			if remediation.Spec.NodeName != "fake-node" {
 				By(fmt.Sprintf("SBD remediation found for node %s: %+v", "fake-node", remediation.Status))
 				return false
+			} else {
+				return checkFencingOperation("fake-node", false)
 			}
 		}
 
-		expectedLogs := []string{
+		return false
+	}, time.Minute*3, time.Second*30).Should(BeTrue())
+}
+
+func checkFencingOperation(nodeName string, expectSuccess bool) bool {
+	var expectedLogs []string
+
+	if expectSuccess {
+		expectedLogs = []string{
 			"Starting SBDRemediation reconciliation",
 			"Starting fencing operation",
 			"Fencing operation completed successfully",
+			"Cleared fencing operation",
 		}
-
-		agentPods := &corev1.PodList{}
-		err = k8sClient.List(ctx, agentPods, client.InNamespace(testNamespace.Name),
-			client.MatchingLabels{"app": "sbd-agent"})
-		Expect(err).NotTo(HaveOccurred())
-		for _, agentPod := range agentPods.Items {
-			req := testNamespace.Clients.Clientset.CoreV1().Pods(testNamespace.Name).GetLogs(agentPod.Name,
-				&corev1.PodLogOptions{})
-			podLogs, err := req.Stream(testNamespace.Clients.Context)
-			if err == nil {
-				defer func() { _ = podLogs.Close() }()
-				buf := new(bytes.Buffer)
-				_, _ = io.Copy(buf, podLogs)
-
-				allFound := true
-				for _, log := range expectedLogs {
-					if !strings.Contains(buf.String(), log) {
-						allFound = false
-					} else {
-						GinkgoWriter.Printf("Agent pod %s has log: %s\n", agentPod.Name, log)
-					}
-				}
-				if allFound {
-					GinkgoWriter.Printf("Agent pod %s has all expected logs\n", agentPod.Name)
-					return true
-				}
-			} else {
-				GinkgoWriter.Printf("Agent pod %s has no logs: %v\n", agentPod.Name, err)
-			}
+	} else {
+		expectedLogs = []string{
+			"Starting SBDRemediation reconciliation",
+			"Starting fencing operation",
+			"Target node not found in node manager",
+			"Fencing operation failed",
 		}
-		return false
-	}, time.Minute*3, time.Second*30).Should(BeTrue())
+	}
+
+	GinkgoWriter.Printf("Checking for %d logs related to remediation of %s\n", len(expectedLogs), nodeName)
+	found, _ := testNamespace.PodLogsContain(expectedLogs)
+	return found
 }
 
 func testNodeRemediation(cluster ClusterInfo) {
@@ -905,7 +893,7 @@ func testNodeRemediation(cluster ClusterInfo) {
 	testBasicSBDConfiguration()
 
 	// Select a random actual worker node for testing (not control plane)
-	targetNode := selectActualWorkerNode(cluster)
+	targetNode := selectWorkerNode(cluster)
 	originalBootTimes := getNodeBootIDs(cluster)
 
 	// Create SBDRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
@@ -947,9 +935,9 @@ func testNodeRemediation(cluster ClusterInfo) {
 	checkNodeReboot(targetNode.Metadata.Name, "due to remediation CR",
 		originalBootTimes[targetNode.Metadata.Name], time.Minute*10, true)
 
-	// Verify node recovery (instead of the old immediate recovery test)
-	GinkgoWriter.Printf("Waiting for the cluster to stabilize after remediation\n")
-	time.Sleep(30 * time.Second)
+	Eventually(func() bool {
+		return checkFencingOperation(targetNode.Metadata.Name, true)
+	}, time.Minute*5, time.Second*30).Should(BeTrue())
 
 	// Verify other nodes remain stable during the disruption
 	By("Verifying other nodes remained stable during network disruption")
@@ -1083,7 +1071,7 @@ func testSBDAgentCrash(cluster ClusterInfo) {
 	By("Setting up SBD configuration for agent crash test")
 	testBasicSBDConfiguration()
 
-	targetNode := selectActualWorkerNode(cluster)
+	targetNode := selectWorkerNode(cluster)
 	By(fmt.Sprintf("Testing SBD agent crash and recovery on verified worker node %s", targetNode.Metadata.Name))
 
 	// Get the SBD agent pod on the target node
