@@ -85,9 +85,10 @@ type SBDRemediationReconciler struct {
 
 	// SBD device for fencing operations
 	sbdDevice   *blockdevice.Device
+	fenceDevice *blockdevice.Device
 	nodeManager *sbdprotocol.NodeManager
 	ownNodeID   uint16
-	ownNodeName string
+	ownNodeName string // Changed from uint32 to uint64
 	sequence    uint64 // Changed from uint32 to uint64
 }
 
@@ -96,15 +97,14 @@ type SBDRemediationReconciler struct {
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdremediations/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
-// SetSBDDevice sets the SBD device for fencing operations
-// DEPRECATED: Use SetFenceDevice instead
+// SetSBDDevice sets the Heartbeat device for checking heartbeat age
 func (r *SBDRemediationReconciler) SetSBDDevice(device *blockdevice.Device) {
 	r.sbdDevice = device
 }
 
 // SetFenceDevice sets the fence device for fencing operations
 func (r *SBDRemediationReconciler) SetFenceDevice(device *blockdevice.Device) {
-	r.sbdDevice = device
+	r.fenceDevice = device
 }
 
 // SetNodeManager sets the node manager for node ID resolution
@@ -242,24 +242,19 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Check if fencing is already in progress
 	if sbdRemediation.IsFencingInProgress() {
 		logger.Info("SBDRemediation fencing already in progress")
-		// Requeue to check for completion
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-	}
+		// Check if target node has been fenced (stopped heartbeating and/or became NotReady)
+		fenced := r.checkFencingCompletion(ctx, &sbdRemediation, logger)
 
-	// Check if we're in agent-based mode (no SBD device configured)
-	if r.sbdDevice == nil || r.sbdDevice.IsClosed() {
-		logger.Info("Controller running in agent-based mode - delegating fencing to agents")
-		r.emitEventOnly(&sbdRemediation, "Normal", ReasonAgentDelegated,
-			"Fencing operation delegated to SBD agents")
+		if !fenced {
+			// Still waiting for fencing to complete, requeue to check again
+			logger.V(1).Info("Fencing not yet complete, requeueing for monitoring",
+				"targetNode", sbdRemediation.Spec.NodeName)
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
 
-		// In agent-based mode, mark as in progress and let agents handle fencing
-		_ = r.updateRemediationCondition(ctx, &sbdRemediation,
-			medik8sv1alpha1.SBDRemediationConditionReady,
-			metav1.ConditionFalse,
-			"AgentDelegated",
-			"Fencing operation delegated to SBD agents")
-
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		// Fencing completed successfully
+		r.handleFencingSuccess(ctx, &sbdRemediation, logger)
+		return ctrl.Result{}, nil
 	}
 
 	if r.nodeManager == nil {
@@ -292,20 +287,7 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"targetNode", sbdRemediation.Spec.NodeName,
 		"timeoutSeconds", sbdRemediation.Spec.TimeoutSeconds)
 
-	// Check if target node has been fenced (stopped heartbeating and/or became NotReady)
-	fenced := r.checkFencingCompletion(ctx, &sbdRemediation, logger)
-
-	if !fenced {
-		// Still waiting for fencing to complete, requeue to check again
-		logger.V(1).Info("Fencing not yet complete, requeueing for monitoring",
-			"targetNode", sbdRemediation.Spec.NodeName)
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-	}
-
-	// Fencing completed successfully
-	r.handleFencingSuccess(ctx, &sbdRemediation, logger)
-
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 }
 
 // executeFencing performs the actual fencing operation via SBD device
@@ -314,9 +296,10 @@ func (r *SBDRemediationReconciler) executeFencing(
 	targetNodeName := remediation.Spec.NodeName
 
 	// Get target node ID using node manager
-	targetNodeID, err := r.nodeManager.GetNodeIDForNode(targetNodeName)
+	targetNodeID, err := r.nodeManager.LookupNodeIDForNode(targetNodeName)
 	if err != nil {
-		return fmt.Errorf("failed to get node ID for target node %s: %w", targetNodeName, err)
+		logger.Info("Target node not found in node manager", "targetNode", targetNodeName)
+		return err
 	}
 
 	logger.Info("Writing fence message to SBD device",
@@ -339,13 +322,15 @@ func (r *SBDRemediationReconciler) executeFencing(
 // writeFenceMessage writes a fence message to the target node's slot in the SBD device
 func (r *SBDRemediationReconciler) writeFenceMessage(targetNodeID uint16,
 	reason medik8sv1alpha1.SBDRemediationReason, logger logr.Logger) error {
-	if r.sbdDevice == nil || r.sbdDevice.IsClosed() {
+	if r.fenceDevice == nil || r.fenceDevice.IsClosed() {
 		return fmt.Errorf("SBD device is not available")
 	}
 
 	// Create fence message
-	fenceReason := sbdprotocol.FENCE_REASON_MANUAL // Map from CR reason to SBD reason
+	fenceReason := sbdprotocol.FENCE_REASON_NONE // Map from CR reason to SBD reason
 	switch reason {
+	case medik8sv1alpha1.SBDRemediationReasonNone:
+		fenceReason = sbdprotocol.FENCE_REASON_NONE
 	case medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout:
 		fenceReason = sbdprotocol.FENCE_REASON_HEARTBEAT_TIMEOUT
 	case medik8sv1alpha1.SBDRemediationReasonNodeUnresponsive:
@@ -364,7 +349,7 @@ func (r *SBDRemediationReconciler) writeFenceMessage(targetNodeID uint16,
 	slotOffset := int64(targetNodeID) * sbdprotocol.SBD_SLOT_SIZE
 
 	// Write fence message to target node's slot
-	n, err := r.sbdDevice.WriteAt(msgData, slotOffset)
+	n, err := r.fenceDevice.WriteAt(msgData, slotOffset)
 	if err != nil {
 		return fmt.Errorf("failed to write fence message to slot %d (offset %d): %w", targetNodeID, slotOffset, err)
 	}
@@ -374,7 +359,7 @@ func (r *SBDRemediationReconciler) writeFenceMessage(targetNodeID uint16,
 	}
 
 	// Sync to ensure data is written to storage
-	if err := r.sbdDevice.Sync(); err != nil {
+	if err := r.fenceDevice.Sync(); err != nil {
 		return fmt.Errorf("failed to sync fence message to storage: %w", err)
 	}
 
@@ -384,6 +369,29 @@ func (r *SBDRemediationReconciler) writeFenceMessage(targetNodeID uint16,
 		"reason", fenceReason,
 		"slotOffset", slotOffset,
 		"messageSize", len(msgData))
+
+	return nil
+}
+
+// clearFenceSlotForNode clears the SBD slot associated with the provided node name.
+func (r *SBDRemediationReconciler) clearFenceSlotForNode(remediation *medik8sv1alpha1.SBDRemediation, logger logr.Logger) error {
+
+	nodeID, err := r.nodeManager.GetNodeIDForNode(remediation.Spec.NodeName)
+	if err != nil {
+		return fmt.Errorf("failed to get node ID for %s: %w", remediation.Spec.NodeName, err)
+	}
+	if err := r.writeFenceMessage(nodeID, medik8sv1alpha1.SBDRemediationReasonNone, logger); err != nil {
+		return fmt.Errorf("failed to write fence message to node %s: %w", remediation.Spec.NodeName, err)
+	}
+
+	logger.Info("Cleared SBD slot for node after remediation completion",
+		"nodeName", remediation.Spec.NodeName,
+		"nodeID", nodeID)
+
+	r.emitEventf(remediation, "Normal", ReasonCompleted,
+		"Cleared SBD slot for node after remediation completion",
+		"nodeName", remediation.Spec.NodeName,
+		"nodeID", nodeID)
 
 	return nil
 }
@@ -486,9 +494,19 @@ func (r *SBDRemediationReconciler) handleFencingSuccess(
 		logger.Error(err, "Failed to update ready condition")
 	}
 
+	// Best-effort clear of the target node's slot after successful remediation
+	if err := r.clearFenceSlotForNode(remediation, logger); err != nil {
+		logger.Error(err, "Failed to clear SBD slot after remediation completion",
+			"node", remediation.Spec.NodeName)
+	}
+
 	// Emit success event
 	r.emitEventf(remediation, "Normal", ReasonNodeFenced,
 		"Node '%s' has been fenced successfully", remediation.Spec.NodeName)
+
+	logger.Info("Cleared fencing operation",
+		"targetNode", remediation.Spec.NodeName)
+
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -622,10 +640,20 @@ func (r *SBDRemediationReconciler) hasNodeStoppedHeartbeating(nodeName string, l
 		return true, nil
 	}
 
+	messageTimestamp := time.Unix(int64(header.Timestamp)/1000000000, 0)
+	messageAge := time.Since(messageTimestamp)
+	switch header.Type {
+	case sbdprotocol.SBD_MSG_TYPE_HEARTBEAT:
+		logger.Info("Checking SBD header", "type", "heartbeat", "age", messageAge, "timestamp", messageTimestamp, "rawTimestamp", header.Timestamp, "nodeID", header.NodeID)
+	case sbdprotocol.SBD_MSG_TYPE_FENCE:
+		logger.Info("Checking SBD header", "type", "fence", "age", messageAge, "timestamp", messageTimestamp, "rawTimestamp", header.Timestamp, "nodeID", header.NodeID)
+	default:
+		logger.Info("Checking SBD header", "type", header.Type, "age", messageAge, "timestamp", messageTimestamp, "rawTimestamp", header.Timestamp, "nodeID", header.NodeID)
+	}
+
 	// Check if this is a heartbeat message and if it's recent
 	if header.Type == sbdprotocol.SBD_MSG_TYPE_HEARTBEAT {
 		// Check if the heartbeat is old (more than 2x normal heartbeat interval)
-		messageAge := time.Since(time.Unix(int64(header.Timestamp), 0))
 		maxHeartbeatAge := 60 * time.Second // Conservative estimate for max heartbeat age
 
 		if messageAge > maxHeartbeatAge {

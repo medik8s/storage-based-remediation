@@ -44,6 +44,8 @@ const (
 	SBDRemediationReasonNodeUnresponsive SBDRemediationReason = "NodeUnresponsive"
 	// SBDRemediationReasonManualFencing indicates manual fencing was requested
 	SBDRemediationReasonManualFencing SBDRemediationReason = "ManualFencing"
+	// SBDRemediationReasonNone indicates no fencing is required
+	SBDRemediationReasonNone SBDRemediationReason = "None"
 )
 
 // SBDRemediationSpec defines the desired state of SBDRemediation.

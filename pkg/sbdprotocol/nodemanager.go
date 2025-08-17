@@ -171,9 +171,19 @@ func (nm *NodeManager) GetNodeIDForNode(nodeName string) (uint16, error) {
 		return nodeID, nil
 	}
 	nm.mutex.RUnlock()
-
-	// No assignment found, need to assign a new node ID
 	return nm.atomicAssignSlot(nodeName)
+}
+
+func (nm *NodeManager) LookupNodeIDForNode(nodeName string) (uint16, error) {
+	nm.mutex.RLock()
+
+	// Check if we already have a node ID assignment
+	if nodeID, found := nm.table.GetNodeIDForNode(nodeName); found {
+		nm.mutex.RUnlock()
+		return nodeID, nil
+	}
+	nm.mutex.RUnlock()
+	return 0, fmt.Errorf("node %s not found in mapping", nodeName)
 }
 
 // atomicAssignSlot assigns a slot using Compare-and-Swap operations

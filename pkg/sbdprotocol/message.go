@@ -49,6 +49,9 @@ const (
 
 // SBD Fence Reason Constants
 const (
+	// FENCE_REASON_NONE indicates no fencing is required
+	FENCE_REASON_NONE uint8 = 0x00
+
 	// FENCE_REASON_HEARTBEAT_TIMEOUT indicates fencing due to missed heartbeats
 	FENCE_REASON_HEARTBEAT_TIMEOUT uint8 = 0x01
 

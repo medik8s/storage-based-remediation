@@ -40,6 +40,7 @@ import (
 
 	// Kubernetes imports for SBDRemediation CR watching
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -109,6 +110,9 @@ var (
 	// I/O timeout configuration
 	ioTimeout = flag.Duration("io-timeout", 2*time.Second,
 		"Timeout for I/O operations (prevents indefinite hanging when storage becomes unresponsive)")
+
+	// Previous fencing message flag
+	previousFenceMessage = false
 )
 
 const (
@@ -1611,7 +1615,7 @@ func (s *SBDAgent) readOwnSlotForFenceMessage() error {
 		}
 
 		// Check if this fence message is directed at us
-		if fenceMsg.TargetNodeID == s.nodeID {
+		if fenceMsg.TargetNodeID == s.nodeID && fenceMsg.Reason != sbdprotocol.FENCE_REASON_NONE {
 			reason := fmt.Sprintf("Fence message received from node %d, reason: %s",
 				fenceMsg.Header.NodeID, sbdprotocol.GetFenceReasonName(fenceMsg.Reason))
 			logger.Error(nil, "Fence message detected in own slot",
@@ -1625,8 +1629,16 @@ func (s *SBDAgent) readOwnSlotForFenceMessage() error {
 
 			// Execute self-fencing immediately
 			s.executeSelfFencing(reason)
+		} else if fenceMsg.TargetNodeID == s.nodeID {
+			if !previousFenceMessage {
+				previousFenceMessage = true
+				logger.Info("Previous fencing operation is complete",
+					"targetNodeID", fenceMsg.TargetNodeID,
+					"ourNodeID", s.nodeID,
+					"sourceNodeID", fenceMsg.Header.NodeID)
+			}
 		} else {
-			logger.V(1).Info("Fence message in own slot not directed at us",
+			logger.Error(nil, "Fence message in own slot not directed at us",
 				"targetNodeID", fenceMsg.TargetNodeID,
 				"ourNodeID", s.nodeID,
 				"sourceNodeID", fenceMsg.Header.NodeID)
@@ -1912,6 +1924,9 @@ func initializeKubernetesClients(kubeconfigPath string) (client.Client, kubernet
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		return nil, nil, fmt.Errorf("failed to add SBDRemediation types to scheme: %w", err)
 	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		return nil, nil, fmt.Errorf("failed to add v1 types to scheme: %w", err)
+	}
 
 	// Create controller-runtime client for CR operations
 	k8sClient, err := client.New(config, client.Options{Scheme: scheme})
@@ -1987,6 +2002,12 @@ func (s *SBDAgent) addSBDRemediationController() error {
 		reconciler.SetFenceDevice(fenceDevice)
 	} else {
 		return fmt.Errorf("fence device is not of expected type *blockdevice.Device")
+	}
+
+	if sbdDevice, ok := s.heartbeatDevice.(*blockdevice.Device); ok {
+		reconciler.SetSBDDevice(sbdDevice)
+	} else {
+		return fmt.Errorf("SBD device is not of expected type *blockdevice.Device")
 	}
 
 	reconciler.SetNodeManager(s.nodeManager)

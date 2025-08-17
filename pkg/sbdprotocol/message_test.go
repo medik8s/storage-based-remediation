@@ -634,6 +634,8 @@ func TestSBDMarshalUnmarshalRoundtrip(t *testing.T) {
 		originalMsg := SBDHeartbeatMessage{
 			Header: NewHeartbeat(42, 123),
 		}
+		// Use fixed timestamp to allow strict equality checks
+		originalMsg.Header.Timestamp = 1640995200000000000
 
 		// Marshal
 		data, err := MarshalHeartbeat(originalMsg)
@@ -647,9 +649,21 @@ func TestSBDMarshalUnmarshalRoundtrip(t *testing.T) {
 			t.Fatalf("UnmarshalHeartbeat failed: %v", err)
 		}
 
-		// Compare
+		// Compare all relevant header fields (checksum is recomputed on marshal)
+		if string(originalMsg.Header.Magic[:]) != string(unmarshaledMsg.Header.Magic[:]) {
+			t.Errorf("Magic mismatch: expected %q, got %q", string(originalMsg.Header.Magic[:]), string(unmarshaledMsg.Header.Magic[:]))
+		}
+		if originalMsg.Header.Version != unmarshaledMsg.Header.Version {
+			t.Errorf("Version mismatch: expected %d, got %d", originalMsg.Header.Version, unmarshaledMsg.Header.Version)
+		}
+		if originalMsg.Header.Type != unmarshaledMsg.Header.Type {
+			t.Errorf("Type mismatch: expected %d, got %d", originalMsg.Header.Type, unmarshaledMsg.Header.Type)
+		}
 		if originalMsg.Header.NodeID != unmarshaledMsg.Header.NodeID {
 			t.Errorf("NodeID mismatch: expected %d, got %d", originalMsg.Header.NodeID, unmarshaledMsg.Header.NodeID)
+		}
+		if originalMsg.Header.Timestamp != unmarshaledMsg.Header.Timestamp {
+			t.Errorf("Timestamp mismatch: expected %d, got %d", originalMsg.Header.Timestamp, unmarshaledMsg.Header.Timestamp)
 		}
 		if originalMsg.Header.Sequence != unmarshaledMsg.Header.Sequence {
 			t.Errorf("Sequence mismatch: expected %d, got %d", originalMsg.Header.Sequence, unmarshaledMsg.Header.Sequence)
