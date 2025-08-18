@@ -394,7 +394,8 @@ func TestSBDAgent_NewSBDAgent(t *testing.T) {
 	// Test invalid configurations
 	invalidWatchdog := mocks.NewMockWatchdog("")
 	_, err := NewSBDAgentWithWatchdog(invalidWatchdog, "/dev/invalid-sbd", "", "test-cluster", 0, 0, 0, 0, 0, 0,
-		"invalid", 8087, 10*time.Minute, true, 2*time.Second, testutils.NewFakeClient(t), &rest.Config{}, createManagerPrefix())
+		"invalid", 8087, 10*time.Minute, true, 2*time.Second, testutils.NewFakeClient(t),
+		&rest.Config{}, createManagerPrefix())
 	if err == nil {
 		t.Error("Expected error for invalid configuration")
 	}
