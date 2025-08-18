@@ -290,37 +290,25 @@ func (r *SBDConfigReconciler) ensureSCCPermissions(
 		return controllerutil.OperationResultNone, fmt.Errorf("failed to get SCC '%s': %w", SBDOperatorSCCName, err)
 	}
 
-	// Check if the service account is already in the users list
-	users, found, err := unstructured.NestedStringSlice(scc.Object, "users")
-	if err != nil {
-		sccLogger.Error(err, "Failed to get users from SCC")
-		return controllerutil.OperationResultNone, fmt.Errorf("failed to get users from SCC: %w", err)
-	}
-
-	if !found {
-		users = []string{}
-	}
-
-	// Check if service account is already present
-	for _, user := range users {
-		if user == serviceAccountUser {
-			sccLogger.V(1).Info("Service account already has SCC permissions", "serviceAccount", serviceAccountUser)
-			return controllerutil.OperationResultNone, nil
-		}
-	}
-
-	// Add the service account to the users list
-	users = append(users, serviceAccountUser)
-
-	// Update the SCC
-	err = unstructured.SetNestedStringSlice(scc.Object, users, "users")
-	if err != nil {
-		sccLogger.Error(err, "Failed to set users in SCC")
-		return controllerutil.OperationResultNone, fmt.Errorf("failed to set users in SCC: %w", err)
-	}
-
-	// Perform the update with retry logic
+	// Perform the update with retry logic and ensure the users list contains our SA
 	result, err := controllerutil.CreateOrUpdate(ctx, r.Client, scc, func() error {
+		users, found, err := unstructured.NestedStringSlice(scc.Object, "users")
+		if err != nil {
+			return fmt.Errorf("failed to get users from SCC: %w", err)
+		}
+		if !found {
+			users = []string{}
+		}
+		for _, user := range users {
+			if user == serviceAccountUser {
+				// Already present, nothing to change
+				return nil
+			}
+		}
+		users = append(users, serviceAccountUser)
+		if err := unstructured.SetNestedStringSlice(scc.Object, users, "users"); err != nil {
+			return fmt.Errorf("failed to set users in SCC: %w", err)
+		}
 		return nil
 	})
 	if err != nil {
