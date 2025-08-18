@@ -466,7 +466,8 @@ type SBDAgent struct {
 	retryConfig           retry.Config
 
 	// Kubernetes client for SBDRemediation CR watching and fencing coordination
-	k8sClient client.Client
+	k8sClient  client.Client
+	restConfig *rest.Config
 
 	// Controller manager for SBDRemediation reconciliation
 	controllerManager manager.Manager
@@ -512,6 +513,7 @@ func NewSBDAgent(
 		fileLockingEnabled,
 		ioTimeout,
 		k8sClient,
+		nil,
 		controllerNamespace,
 	)
 }
@@ -529,6 +531,7 @@ func NewSBDAgentWithWatchdog(
 	fileLockingEnabled bool,
 	ioTimeout time.Duration,
 	k8sClient client.Client,
+	restConfig *rest.Config,
 	controllerNamespace string,
 ) (*SBDAgent, error) {
 	// Input validation
@@ -613,6 +616,7 @@ func NewSBDAgentWithWatchdog(
 		lastFailureReset:    time.Now(),
 		retryConfig:         retryConfig,
 		k8sClient:           k8sClient,
+		restConfig:          restConfig,
 		controllerManager:   nil, // Will be initialized below
 		controllerNamespace: controllerNamespace,
 		recorder:            nil,
@@ -1815,11 +1819,15 @@ func initializeKubernetesClients(kubeconfigPath string) (client.Client, kubernet
 // initializeControllerManager initializes the controller manager for SBDRemediation reconciliation
 func (s *SBDAgent) initializeControllerManager() error {
 	// Get Kubernetes config
-	config, err := ctrl.GetConfig()
-	if err != nil {
+
+	var err error
+	config := s.restConfig
+	if config == nil {
+		config, err = ctrl.GetConfig()
+	}
+	if config == nil {
 		return fmt.Errorf("failed to get Kubernetes config: %w", err)
 	}
-
 	// Set the controller-runtime logger to use our structured logger
 	// This must be done before creating the controller manager
 	ctrl.SetLogger(logger)
