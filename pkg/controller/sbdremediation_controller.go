@@ -224,6 +224,7 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		logger.Info("Added finalizer to SBDRemediation",
 			"finalizer", SBDRemediationFinalizer)
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Emit initial event for remediation initiation
