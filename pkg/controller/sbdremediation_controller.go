@@ -510,14 +510,18 @@ func (r *SBDRemediationReconciler) handleFencingSuccess(
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *SBDRemediationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *SBDRemediationReconciler) SetupWithManager(mgr ctrl.Manager, suffix string) error {
 	logger := mgr.GetLogger().WithName("setup").WithValues("controller", "SBDRemediation")
 
 	logger.Info("Setting up SBDRemediation controller with fencing capabilities")
 
+	controllerName := "sbdremediation"
+	if suffix != "" {
+		controllerName = fmt.Sprintf("%s-%s", controllerName, suffix)
+	}
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&medik8sv1alpha1.SBDRemediation{}).
-		Named("sbdremediation").
+		Named(controllerName).
 		Complete(r)
 
 	if err != nil {

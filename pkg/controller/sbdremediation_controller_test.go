@@ -194,7 +194,7 @@ var _ = Describe("SBDRemediation Controller", func() {
 						Namespace: "default",
 					},
 					Spec: medik8sv1alpha1.SBDRemediationSpec{
-						NodeName:       "worker-4",
+						NodeName:       "fake-node-1",
 						Reason:         medik8sv1alpha1.SBDRemediationReasonNodeUnresponsive,
 						TimeoutSeconds: 300,
 					},
@@ -215,7 +215,7 @@ var _ = Describe("SBDRemediation Controller", func() {
 				By("Verifying the resource exists and is processable")
 				finalResource := &medik8sv1alpha1.SBDRemediation{}
 				Expect(k8sClient.Get(ctx, namespacedName, finalResource)).To(Succeed())
-				Expect(finalResource.Spec.NodeName).To(Equal("worker-4"))
+				Expect(finalResource.Spec.NodeName).To(Equal("fake-node-1"))
 				Expect(finalResource.Spec.Reason).To(Equal(medik8sv1alpha1.SBDRemediationReasonNodeUnresponsive))
 			})
 		})
@@ -281,7 +281,7 @@ var _ = Describe("SBDRemediation Controller", func() {
 			}
 
 			By("Setting up with manager")
-			err = reconciler.SetupWithManager(mgr)
+			err = reconciler.SetupWithManager(mgr, time.Now().Format("20060102150405"))
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})

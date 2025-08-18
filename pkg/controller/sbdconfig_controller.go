@@ -258,10 +258,10 @@ func (r *SBDConfigReconciler) isRunningOnOpenShift(logger logr.Logger) bool {
 // ensureSCCPermissions ensures that the service account has the required SCC permissions
 // This function updates the existing SCC to include the service account from the target namespace
 func (r *SBDConfigReconciler) ensureSCCPermissions(
-	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, namespaceName string, logger logr.Logger) error {
+	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, namespaceName string, logger logr.Logger) (controllerutil.OperationResult, error) {
 	if !r.isRunningOnOpenShift(logger) {
 		logger.V(1).Info("Not running on OpenShift, skipping SCC management")
-		return nil
+		return controllerutil.OperationResultNone, nil
 	}
 
 	sccLogger := logger.WithValues("scc.name", SBDOperatorSCCName, "namespace", namespaceName)
@@ -278,19 +278,19 @@ func (r *SBDConfigReconciler) ensureSCCPermissions(
 			sccLogger.Error(err, "Required SCC not found - ensure OpenShift installer was used",
 				"scc", SBDOperatorSCCName,
 				"requiredServiceAccount", serviceAccountUser)
-			return fmt.Errorf(
+			return controllerutil.OperationResultNone, fmt.Errorf(
 				"required SCC '%s' not found - ensure the operator was installed using the OpenShift installer: %w",
 				SBDOperatorSCCName, err)
 		}
 		sccLogger.Error(err, "Failed to get SCC")
-		return fmt.Errorf("failed to get SCC '%s': %w", SBDOperatorSCCName, err)
+		return controllerutil.OperationResultNone, fmt.Errorf("failed to get SCC '%s': %w", SBDOperatorSCCName, err)
 	}
 
 	// Check if the service account is already in the users list
 	users, found, err := unstructured.NestedStringSlice(scc.Object, "users")
 	if err != nil {
 		sccLogger.Error(err, "Failed to get users from SCC")
-		return fmt.Errorf("failed to get users from SCC: %w", err)
+		return controllerutil.OperationResultNone, fmt.Errorf("failed to get users from SCC: %w", err)
 	}
 
 	if !found {
@@ -301,7 +301,7 @@ func (r *SBDConfigReconciler) ensureSCCPermissions(
 	for _, user := range users {
 		if user == serviceAccountUser {
 			sccLogger.V(1).Info("Service account already has SCC permissions", "serviceAccount", serviceAccountUser)
-			return nil
+			return controllerutil.OperationResultNone, nil
 		}
 	}
 
@@ -312,20 +312,19 @@ func (r *SBDConfigReconciler) ensureSCCPermissions(
 	err = unstructured.SetNestedStringSlice(scc.Object, users, "users")
 	if err != nil {
 		sccLogger.Error(err, "Failed to set users in SCC")
-		return fmt.Errorf("failed to set users in SCC: %w", err)
+		return controllerutil.OperationResultNone, fmt.Errorf("failed to set users in SCC: %w", err)
 	}
 
 	// Perform the update with retry logic
-	err = r.performKubernetesAPIOperationWithRetry(ctx, "update SCC", func() error {
-		return r.Update(ctx, scc)
-	}, sccLogger)
-
+	result, err := controllerutil.CreateOrUpdate(ctx, r.Client, scc, func() error {
+		return nil
+	})
 	if err != nil {
 		sccLogger.Error(err, "Failed to update SCC after retries", "serviceAccount", serviceAccountUser)
 		r.emitEventf(sbdConfig, EventTypeWarning, ReasonSCCError,
 			"Failed to update SCC '%s' to grant permissions to service account '%s': %v",
 			SBDOperatorSCCName, serviceAccountUser, err)
-		return fmt.Errorf("failed to update SCC '%s': %w", SBDOperatorSCCName, err)
+		return controllerutil.OperationResultNone, fmt.Errorf("failed to update SCC '%s': %w", SBDOperatorSCCName, err)
 	}
 
 	sccLogger.Info("Successfully updated SCC to grant permissions to service account",
@@ -335,7 +334,7 @@ func (r *SBDConfigReconciler) ensureSCCPermissions(
 	r.emitEventf(sbdConfig, EventTypeNormal, ReasonSCCManaged,
 		"SCC '%s' updated to grant permissions to service account '%s'", SBDOperatorSCCName, serviceAccountUser)
 
-	return nil
+	return result, nil
 }
 
 // validateStorageClass validates that the specified storage class supports ReadWriteMany access mode
@@ -977,6 +976,8 @@ echo "SBD devices initialization completed successfully"
 		logger.Info("SBD device initialization job is still running, waiting for completion before creating DaemonSet",
 			"job.name", jobName,
 			"job.active", existingJob.Status.Active,
+			"job.succeeded", existingJob.Status.Succeeded,
+			"job.failed", existingJob.Status.Failed,
 			"job.conditions", len(existingJob.Status.Conditions))
 		return controllerutil.OperationResultNone, fmt.Errorf(
 			"SBD device initialization job '%s' is still running, DaemonSet creation will be delayed until job completes",
@@ -1033,12 +1034,9 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.initializeRetryConfig(logger)
 	}
 
-	// Retrieve the SBDConfig object with retry logic
+	// Retrieve the SBDConfig object
 	var sbdConfig medik8sv1alpha1.SBDConfig
-	err := r.performKubernetesAPIOperationWithRetry(ctx, "get SBDConfig", func() error {
-		return r.Get(ctx, req.NamespacedName, &sbdConfig)
-	}, logger)
-
+	err := r.Get(ctx, req.NamespacedName, &sbdConfig)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// The SBDConfig resource was deleted
@@ -1048,7 +1046,7 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, nil
 		}
 		// Error reading the object - requeue with backoff for transient errors
-		logger.Error(err, "Failed to get SBDConfig after retries",
+		logger.Error(err, "Failed to get SBDConfig",
 			"name", req.Name,
 			"namespace", req.Namespace)
 
@@ -1106,10 +1104,7 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Ensure the service account and RBAC resources exist with retry logic
 	// Deploy in the same namespace as the SBDConfig CR
-	err = r.performKubernetesAPIOperationWithRetry(ctx, "ensure service account", func() error {
-		return r.ensureServiceAccount(ctx, &sbdConfig, sbdConfig.Namespace, logger)
-	}, logger)
-
+	result, err := r.ensureServiceAccount(ctx, &sbdConfig, sbdConfig.Namespace, logger)
 	if err != nil {
 		logger.Error(err, "Failed to ensure service account exists after retries",
 			"namespace", sbdConfig.Namespace,
@@ -1117,17 +1112,14 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.emitEventf(&sbdConfig, EventTypeWarning, ReasonServiceAccountError,
 			"Failed to ensure service account 'sbd-agent' exists in namespace '%s': %v", sbdConfig.Namespace, err)
 
-		// Return requeue with backoff for transient errors
-		if r.isTransientKubernetesError(err) {
-			return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
-		}
-		return ctrl.Result{}, err
+		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+
+	} else if result != controllerutil.OperationResultNone {
+		return ctrl.Result{Requeue: true}, err
 	}
 
 	// Ensure SCC permissions are configured for OpenShift
-	err = r.performKubernetesAPIOperationWithRetry(ctx, "ensure SCC permissions", func() error {
-		return r.ensureSCCPermissions(ctx, &sbdConfig, sbdConfig.Namespace, logger)
-	}, logger)
+	result, err = r.ensureSCCPermissions(ctx, &sbdConfig, sbdConfig.Namespace, logger)
 
 	if err != nil {
 		logger.Error(err, "Failed to ensure SCC permissions after retries",
@@ -1137,10 +1129,9 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			"Failed to ensure SCC permissions for service account 'sbd-agent' in namespace '%s': %v", sbdConfig.Namespace, err)
 
 		// Return requeue with backoff for transient errors
-		if r.isTransientKubernetesError(err) {
-			return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
-		}
-		return ctrl.Result{}, err
+		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+	} else if result != controllerutil.OperationResultNone {
+		return ctrl.Result{Requeue: true}, err
 	}
 
 	// Validate storage class compatibility
@@ -1156,8 +1147,11 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			"Failed to validate storage class compatibility for PVC '%s': %v",
 			sbdConfig.Spec.GetSharedStoragePVCName(sbdConfig.Name), err)
 
-		// Return requeue with backoff
-		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+		// Return requeue with backoff for transient errors
+		if r.isTransientKubernetesError(err) {
+			return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+		}
+		return ctrl.Result{}, err
 	}
 
 	// Ensure PVC exists for shared storage
@@ -1227,7 +1221,6 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.emitEventf(&sbdConfig, EventTypeNormal, ReasonDaemonSetManaged,
 			"DaemonSet '%s' for SBD Agent %s successfully", actualDaemonSet.Name, action)
 		daemonSetLogger.Info(fmt.Sprintf("DaemonSet %s successfully", action))
-		return ctrl.Result{Requeue: true}, err
 	}
 
 	// Update the SBDConfig status with retry logic
@@ -1305,7 +1298,7 @@ func (r *SBDConfigReconciler) handleDeletion(
 
 // ensureServiceAccount creates the service account and RBAC resources if they don't exist
 func (r *SBDConfigReconciler) ensureServiceAccount(
-	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, namespaceName string, logger logr.Logger) error {
+	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, namespaceName string, logger logr.Logger) (controllerutil.OperationResult, error) {
 	// Create the service account - SHARED across multiple SBDConfigs in the same namespace
 	serviceAccount := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1348,7 +1341,7 @@ func (r *SBDConfigReconciler) ensureServiceAccount(
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create or update service account: %w", err)
+		return result, fmt.Errorf("failed to create or update service account: %w", err)
 	}
 
 	if result == controllerutil.OperationResultCreated {
@@ -1394,7 +1387,7 @@ func (r *SBDConfigReconciler) ensureServiceAccount(
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create or update cluster role binding: %w", err)
+		return result, fmt.Errorf("failed to create or update cluster role binding: %w", err)
 	}
 
 	if result == controllerutil.OperationResultCreated {
@@ -1404,7 +1397,7 @@ func (r *SBDConfigReconciler) ensureServiceAccount(
 			"ClusterRoleBinding 'sbd-agent-%s-%s' created", namespaceName, sbdConfig.Name)
 	}
 
-	return nil
+	return result, nil
 }
 
 // buildDaemonSet constructs the desired DaemonSet based on the SBDConfig

@@ -470,13 +470,16 @@ type SBDAgent struct {
 
 	// Controller manager for SBDRemediation reconciliation
 	controllerManager manager.Manager
+
+	// Namespace for controller reconciliation (configurable for testing)
+	controllerNamespace string
 }
 
 // NewSBDAgent creates a new SBD agent with the specified configuration
 func NewSBDAgent(watchdogPath, heartbeatDevicePath, nodeName, clusterName string,
 	nodeID uint16, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval time.Duration,
 	sbdTimeoutSeconds uint, rebootMethod string, metricsPort int, staleNodeTimeout time.Duration,
-	fileLockingEnabled bool, ioTimeout time.Duration, k8sClient client.Client) (*SBDAgent, error) {
+	fileLockingEnabled bool, ioTimeout time.Duration, k8sClient client.Client, controllerNamespace string) (*SBDAgent, error) {
 	// Initialize watchdog first (always required) with softdog fallback for systems without hardware watchdog
 	wd, err := watchdog.NewWithSoftdogFallback(watchdogPath, logger)
 	if err != nil {
@@ -485,14 +488,14 @@ func NewSBDAgent(watchdogPath, heartbeatDevicePath, nodeName, clusterName string
 
 	return NewSBDAgentWithWatchdog(wd, heartbeatDevicePath, nodeName, clusterName, nodeID,
 		petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval, sbdTimeoutSeconds,
-		rebootMethod, metricsPort, staleNodeTimeout, fileLockingEnabled, ioTimeout, k8sClient)
+		rebootMethod, metricsPort, staleNodeTimeout, fileLockingEnabled, ioTimeout, k8sClient, controllerNamespace)
 }
 
 // NewSBDAgentWithWatchdog creates a new SBD agent with a provided watchdog interface
 func NewSBDAgentWithWatchdog(wd mocks.WatchdogInterface, heartbeatDevicePath, nodeName, clusterName string,
 	nodeID uint16, petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval time.Duration,
 	sbdTimeoutSeconds uint, rebootMethod string, metricsPort int, staleNodeTimeout time.Duration,
-	fileLockingEnabled bool, ioTimeout time.Duration, k8sClient client.Client) (*SBDAgent, error) {
+	fileLockingEnabled bool, ioTimeout time.Duration, k8sClient client.Client, controllerNamespace string) (*SBDAgent, error) {
 	// Input validation
 	if wd == nil {
 		return nil, fmt.Errorf("watchdog interface cannot be nil")
@@ -576,6 +579,7 @@ func NewSBDAgentWithWatchdog(wd mocks.WatchdogInterface, heartbeatDevicePath, no
 		retryConfig:         retryConfig,
 		k8sClient:           k8sClient,
 		controllerManager:   nil, // Will be initialized below
+		controllerNamespace: controllerNamespace,
 		recorder:            nil,
 		recorderObject:      nil,
 	}
@@ -1833,7 +1837,7 @@ func (s *SBDAgent) addSBDRemediationController() error {
 	reconciler.SetOwnNodeInfo(s.nodeID, s.nodeName)
 
 	// Set up the controller with the manager
-	if err := reconciler.SetupWithManager(s.controllerManager); err != nil {
+	if err := reconciler.SetupWithManager(s.controllerManager, s.controllerNamespace); err != nil {
 		return fmt.Errorf("failed to setup SBDRemediation controller with manager: %w", err)
 	}
 
@@ -1967,7 +1971,7 @@ func main() {
 	sbdAgent, err := NewSBDAgent(*watchdogPath, *sbdDevice, nodeNameValue, *clusterName, nodeIDValue,
 		*petInterval, *sbdUpdateInterval, heartbeatInterval, *peerCheckInterval, sbdTimeoutValue,
 		rebootMethodValue, *metricsPort, *staleNodeTimeout, *sbdFileLocking, *ioTimeout,
-		k8sClient)
+		k8sClient, "")
 	if err != nil {
 		logger.Error(err, "Failed to create SBD agent",
 			"watchdogPath", *watchdogPath,
