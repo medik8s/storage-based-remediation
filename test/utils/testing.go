@@ -1657,9 +1657,6 @@ func DescribeEnvironment(testClients *TestClients, testNamespace *TestNamespace)
 		}
 		Eventually(verifyAgentsUp).Should(Succeed())
 
-		// Collect agent logs
-		debugCollector.CollectAgentLogs(testNamespace.Name)
-
 		// Collect the definition of any storage jobs
 		debugCollector.CollectStorageJobs(testNamespace.Name)
 	}
