@@ -17,10 +17,11 @@ rules:
   - ""
   resources:
   - nodes
-  - pods
   verbs:
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - ""
@@ -34,6 +35,14 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - apps
@@ -60,10 +69,23 @@ rules:
   - update
   - watch
 - apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - medik8s.medik8s.io
   resources:
   - sbdconfigs
   - sbdremediations
+  - sbdremediationtemplates
   verbs:
   - create
   - delete
@@ -77,6 +99,7 @@ rules:
   resources:
   - sbdconfigs/finalizers
   - sbdremediations/finalizers
+  - sbdremediationtemplates/finalizers
   verbs:
   - update
 - apiGroups:
@@ -84,6 +107,7 @@ rules:
   resources:
   - sbdconfigs/status
   - sbdremediations/status
+  - sbdremediationtemplates/status
   verbs:
   - get
   - patch
