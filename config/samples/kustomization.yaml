@@ -1,5 +1,6 @@
 ## Append samples of your project ##
 resources:
-- medik8s_v1alpha1_sbdconfig.yaml
 - medik8s_v1alpha1_sbdremediation.yaml
+- medik8s_v1alpha1_sbdremediationtemplate.yaml
+- medik8s_v1alpha1_sbdconfig.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

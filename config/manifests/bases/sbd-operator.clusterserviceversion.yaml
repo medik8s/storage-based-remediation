@@ -1,0 +1,60 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: '[]'
+    capabilities: Basic Install
+  name: sbd-operator.v0.0.0
+  namespace: placeholder
+spec:
+  apiservicedefinitions: {}
+  customresourcedefinitions:
+    owned:
+    - description: SBDConfig is the Schema for the sbdconfigs API.
+      displayName: SBDConfig
+      kind: SBDConfig
+      name: sbdconfigs.medik8s.medik8s.io
+      version: v1alpha1
+    - description: SBDRemediation is the Schema for the sbdremediations API.
+      displayName: SBDRemediation
+      kind: SBDRemediation
+      name: sbdremediations.medik8s.medik8s.io
+      version: v1alpha1
+    - description: SBDRemediationTemplate is the Schema for the sbdremediationtemplates
+        API.
+      displayName: SBDRemediation Template
+      kind: SBDRemediationTemplate
+      name: sbdremediationtemplates.medik8s.medik8s.io
+      version: v1alpha1
+  description: TBD
+  displayName: SBD
+  icon:
+  - base64data: ""
+    mediatype: ""
+  install:
+    spec:
+      deployments: null
+    strategy: ""
+  installModes:
+  - supported: false
+    type: OwnNamespace
+  - supported: false
+    type: SingleNamespace
+  - supported: false
+    type: MultiNamespace
+  - supported: true
+    type: AllNamespaces
+  keywords:
+  - sbd
+  - storage
+  - remediation
+  links:
+  - name: SBD Operator
+    url: https://medik8s.io
+  maintainers:
+  - email: medik8s@googlegroups.com
+    name: Medik8s Team
+  maturity: alpha
+  provider:
+    name: medik8s
+  version: 0.0.0

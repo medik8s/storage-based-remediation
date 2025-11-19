@@ -1,0 +1,258 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  creationTimestamp: null
+  name: sbdconfigs.medik8s.medik8s.io
+spec:
+  group: medik8s.medik8s.io
+  names:
+    kind: SBDConfig
+    listKind: SBDConfigList
+    plural: sbdconfigs
+    singular: sbdconfig
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: SBDConfig is the Schema for the sbdconfigs API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: SBDConfigSpec defines the desired state of SBDConfig.
+            properties:
+              image:
+                description: |-
+                  Image is the container image for the SBD agent DaemonSet
+                  If not specified, defaults to sbd-agent from the same registry/org/tag as the operator
+                type: string
+              imagePullPolicy:
+                default: IfNotPresent
+                description: |-
+                  ImagePullPolicy defines the pull policy for the SBD agent container image.
+                  Valid values are Always, Never, and IfNotPresent.
+                  Defaults to IfNotPresent for production stability.
+                enum:
+                - Always
+                - Never
+                - IfNotPresent
+                type: string
+              iotimeout:
+                default: 2s
+                description: |-
+                  IOTimeout defines the timeout for SBD I/O operations.
+                  This determines how long the system will wait for SBD I/O operations to complete.
+                  The value must be between 100 milliseconds and 5 minutes.
+                pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
+                type: string
+              logLevel:
+                default: info
+                description: |-
+                  LogLevel defines the logging level for the SBD agent pods.
+                  Valid values are debug, info, warn, and error.
+                  Debug provides the most verbose logging, while error only logs error messages.
+                enum:
+                - debug
+                - info
+                - warn
+                - error
+                type: string
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: |-
+                  NodeSelector is a selector which must be true for the SBD agent pod to fit on a node.
+                  This allows users to control which nodes the SBD agent runs on by specifying node labels.
+                  If not specified, defaults to worker nodes only (node-role.kubernetes.io/worker: "").
+                  The selector is merged with the default requirement for kubernetes.io/os=linux.
+                type: object
+              peerCheckInterval:
+                default: 5s
+                description: |-
+                  PeerCheckInterval defines the interval for checking peer node heartbeats in the SBD device.
+                  This determines how frequently each node reads and processes heartbeats from other nodes.
+                  More frequent checks provide faster peer failure detection but increase I/O load on the shared storage.
+                  The value must be between 1 second and 60 seconds.
+                pattern: ^([0-9]+(\.[0-9]+)?(s|m))+$
+                type: string
+              petIntervalMultiple:
+                default: 4
+                description: |-
+                  PetIntervalMultiple defines the multiple used to calculate the pet interval from the watchdog timeout.
+                  Pet interval = watchdog timeout / pet interval multiple.
+                  This ensures the pet interval is always shorter than the watchdog timeout with a safety margin.
+                  The value must be between 3.0 and 20.0, with 4.0 providing a good balance of safety and efficiency.
+                format: int32
+                maximum: 20
+                minimum: 3
+                type: integer
+              rebootMethod:
+                default: panic
+                description: |-
+                  RebootMethod defines the method to use for self-fencing when a node needs to be rebooted.
+                  Valid values are "panic" (immediate kernel panic), "systemctl-reboot" (graceful systemctl reboot),
+                  and "none" (disable self-fencing, rely only on watchdog hardware timeout).
+                  Panic provides the fastest failover but less graceful shutdown, while systemctl-reboot allows
+                  for graceful service shutdown but may be slower. The "none" option disables agent-initiated
+                  self-fencing and relies solely on hardware watchdog timeout for node fencing.
+                enum:
+                - panic
+                - systemctl-reboot
+                - none
+                type: string
+              sbdTimeoutSeconds:
+                default: 30
+                description: |-
+                  SBDTimeoutSeconds defines the SBD timeout in seconds, which determines the heartbeat interval.
+                  The heartbeat interval is calculated as SBD timeout divided by 2.
+                  This value controls how quickly the cluster can detect and respond to node failures.
+                  The value must be between 10 and 300 seconds.
+                format: int32
+                maximum: 300
+                minimum: 10
+                type: integer
+              sbdUpdateInterval:
+                default: 5s
+                description: |-
+                  SBDUpdateInterval defines the interval for updating the SBD device with node status information.
+                  This determines how frequently each node writes its status to the shared SBD device.
+                  More frequent updates provide faster failure detection but increase I/O load on the shared storage.
+                  The value must be between 1 second and 60 seconds.
+                pattern: ^([0-9]+(\.[0-9]+)?(s|m))+$
+                type: string
+              sbdWatchdogPath:
+                default: /dev/watchdog
+                description: |-
+                  SbdWatchdogPath is the path to the watchdog device on the host
+                  If not specified, defaults to "/dev/watchdog"
+                type: string
+              sharedStorageClass:
+                description: |-
+                  SharedStorageClass is the name of a StorageClass to use for creating shared storage.
+                  When specified, the controller will create a PVC using this StorageClass and mount it
+                  in the agent DaemonSet for cross-node coordination, slot assignment, and shared configuration data.
+                  The StorageClass must support ReadWriteMany (RWX) access mode.
+                type: string
+              staleNodeTimeout:
+                default: 1h
+                description: |-
+                  StaleNodeTimeout defines how long to wait before considering a node stale and removing it from slot mapping
+                  This timeout determines when inactive nodes are cleaned up from the shared SBD device slot assignments.
+                  Nodes that haven't updated their heartbeat within this duration will be considered stale and their slots
+                  will be freed for reuse by new nodes. The value must be at least 1 minute.
+                pattern: ^([0-9]+(\.[0-9]+)?(s|m|h))+$
+                type: string
+              watchdogTimeout:
+                default: 60s
+                description: |-
+                  WatchdogTimeout defines the watchdog timeout duration for the hardware/software watchdog device.
+                  This determines how long the system will wait before triggering a reboot if the watchdog is not pet.
+                  The pet interval is calculated as watchdog timeout divided by the pet interval multiple.
+                  The value must be between 10 seconds and 300 seconds (5 minutes).
+                pattern: ^([0-9]+(\.[0-9]+)?(s|m|h))+$
+                type: string
+            type: object
+          status:
+            description: SBDConfigStatus defines the observed state of SBDConfig.
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                  of the SBDConfig's current state
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              readyNodes:
+                description: ReadyNodes is the number of nodes where the SBD agent
+                  is ready
+                format: int32
+                type: integer
+              totalNodes:
+                description: TotalNodes is the total number of nodes where the SBD
+                  agent should be deployed
+                format: int32
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: null
+  storedVersions: null

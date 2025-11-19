@@ -2,8 +2,9 @@
 # since it depends on service name and namespace that are out of this kustomize package.
 # It should be run by config/default
 resources:
-- bases/medik8s.medik8s.io_sbdconfigs.yaml
 - bases/medik8s.medik8s.io_sbdremediations.yaml
+- bases/medik8s.medik8s.io_sbdremediationtemplates.yaml
+- bases/medik8s.medik8s.io_sbdconfigs.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

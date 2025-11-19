@@ -68,7 +68,7 @@ import (
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdremediations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
-// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
 
 var (
 	watchdogPath    = flag.String(agent.FlagWatchdogPath, agent.DefaultWatchdogPath, "Path to the watchdog device")
@@ -1860,6 +1860,9 @@ func (s *SBDAgent) getScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		logger.Error(err, "Failed to add v1alpha1 types to scheme")
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		logger.Error(err, "Failed to add core v1 types to scheme")
 	}
 	return scheme
 }

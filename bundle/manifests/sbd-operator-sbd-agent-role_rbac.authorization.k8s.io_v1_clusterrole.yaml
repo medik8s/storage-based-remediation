@@ -1,0 +1,62 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  creationTimestamp: null
+  name: sbd-operator-sbd-agent-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - medik8s.medik8s.io
+  resources:
+  - sbdconfigs
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - medik8s.medik8s.io
+  resources:
+  - sbdconfigs/status
+  verbs:
+  - get
+- apiGroups:
+  - medik8s.medik8s.io
+  resources:
+  - sbdremediations
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - medik8s.medik8s.io
+  resources:
+  - sbdremediations/status
+  verbs:
+  - get
+  - patch
+  - update

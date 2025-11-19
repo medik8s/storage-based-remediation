@@ -38,6 +38,9 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the sbd-operator itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- sbdremediationtemplate_admin_role.yaml
+- sbdremediationtemplate_editor_role.yaml
+- sbdremediationtemplate_viewer_role.yaml
 - sbdremediation_admin_role.yaml
 - sbdremediation_editor_role.yaml
 - sbdremediation_viewer_role.yaml
