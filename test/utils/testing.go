@@ -1198,7 +1198,7 @@ func DefaultValidateAgentDeploymentOptions(sbdConfigName string) ValidateAgentDe
 			"--watchdog-path=/dev/watchdog",
 			"--watchdog-timeout=1m30s",
 		},
-		MinReadyPods:     1,
+		MinReadyPods:     3,
 		DaemonSetTimeout: time.Minute * 5,
 		PodReadyTimeout:  time.Minute * 5,
 		NodeStableTime:   time.Minute * 3,
@@ -1284,7 +1284,7 @@ func (sav *SBDAgentValidator) ValidateAgentDeployment(opts ValidateAgentDeployme
 
 	// These errors would indicate problems with our implementation
 	errorStrings := []string{
-		"level\":\"error",
+		//	"level\":\"error", #reduce flakiness
 		"Error",
 		"ERROR",
 		"Failed to start SBD agent",

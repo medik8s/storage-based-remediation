@@ -124,6 +124,16 @@ var _ = BeforeEach(func() {
 })
 
 var _ = AfterEach(func() {
+	createReportAndCleanUp()
+	utils.WaitForNodesReady(testNamespace, "10m", "30s", false)
+	utils.CleanupSBDConfigs(testNamespace)
+})
+
+func createReportAndCleanUp() {
+	DeferCleanup(func() {
+		By("Cleaning up previous test attempts")
+		cleanupTestArtifacts(testNamespace)
+	})
 	specReport := CurrentSpecReport()
 	if specReport.Failed() {
 		GinkgoWriter.Printf("\n\n--------------------------------\n")
@@ -132,12 +142,7 @@ var _ = AfterEach(func() {
 		utils.DescribeEnvironment(testClients, testNamespace.OperatorNamespace())
 		utils.DescribeEnvironment(testClients, testNamespace)
 	}
-
-	By("Cleaning up previous test attempts")
-	cleanupTestArtifacts(testNamespace)
-	utils.WaitForNodesReady(testNamespace, "10m", "30s", false)
-	utils.CleanupSBDConfigs(testNamespace)
-})
+}
 
 // var _ = AfterAll(func() {
 // })
