@@ -127,6 +127,8 @@ const (
 	MaxConsecutiveFailures = 5
 	// FailureCountResetInterval is the interval after which failure counts are reset
 	FailureCountResetInterval = 10 * time.Minute
+	// SBDDefaultTimeoutSec used to calculate the heartbeat, would use SBD_TIMEOUT_SECONDS var if exist
+	SBDDefaultTimeoutSec = 30
 
 	// File locking constants
 	// FileLockTimeout is the maximum time to wait for acquiring a file lock
@@ -337,31 +339,31 @@ func (pm *PeerMonitor) CheckPeerLiveness() {
 	defer pm.peersMutex.Unlock()
 
 	now := time.Now()
-	timeout := time.Duration(pm.sbdTimeoutSeconds) * time.Second
+	heartbeatInterval := time.Duration(pm.sbdTimeoutSeconds) / 2 * time.Second
+	timeout := heartbeatInterval * MaxConsecutiveFailures
 
-	for nodeID, peer := range pm.peers {
+	for peerNodeID, peer := range pm.peers {
 		timeSinceLastSeen := now.Sub(peer.LastSeen)
 		wasHealthy := peer.IsHealthy
 
 		// Consider peer unhealthy if we haven't seen a heartbeat within timeout
 		peer.IsHealthy = timeSinceLastSeen <= timeout
-
 		// Update metrics if status changed
 		if wasHealthy != peer.IsHealthy {
-			pm.updatePeerMetrics(nodeID, peer.IsHealthy)
+			pm.updatePeerMetrics(peerNodeID, peer.IsHealthy)
 		}
 
 		// Log status change
 		if wasHealthy && !peer.IsHealthy {
 			pm.logger.Error(nil, "Peer node became unhealthy",
-				"nodeID", nodeID,
+				"nodeID", peerNodeID,
 				"timeSinceLastSeen", timeSinceLastSeen,
 				"timeout", timeout,
 				"lastTimestamp", peer.LastTimestamp,
 				"lastSequence", peer.LastSequence)
 		} else if !wasHealthy && peer.IsHealthy {
 			pm.logger.Info("Peer node recovered to healthy status",
-				"nodeID", nodeID,
+				"nodeID", peerNodeID,
 				"timeSinceLastSeen", timeSinceLastSeen,
 				"lastTimestamp", peer.LastTimestamp,
 				"lastSequence", peer.LastSequence)
@@ -1341,7 +1343,7 @@ func getSBDTimeoutFromEnv() uint {
 		}
 	}
 
-	return 30 // Default timeout
+	return SBDDefaultTimeoutSec // Default timeout
 }
 
 // getRebootMethodFromEnv gets the reboot method from environment variables if not provided via flag
@@ -1949,7 +1951,7 @@ func main() {
 
 	// Determine SBD timeout
 	sbdTimeoutValue := *sbdTimeoutSeconds
-	if sbdTimeoutValue == 30 { // Check if it's still the default
+	if sbdTimeoutValue == SBDDefaultTimeoutSec { // Check if it's still the default
 		sbdTimeoutValue = getSBDTimeoutFromEnv()
 		logger.Info("Using SBD timeout from environment or default",
 			"sbdTimeoutSeconds", sbdTimeoutValue)
