@@ -1234,7 +1234,10 @@ func (s *SBDAgent) peerMonitorLoop() {
 	defer ticker.Stop()
 
 	logger.Info("Starting peer monitor loop", "interval", s.peerCheckInterval)
-
+	// Clean any old fence message from our own slot before entering the loop
+	if err := s.cleanOwnFenceSlotIfPresent(logger); err != nil {
+		logger.Info("Error cleaning own fence slot", "error", err)
+	}
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -1274,6 +1277,63 @@ func (s *SBDAgent) peerMonitorLoop() {
 			logger.Info("Cluster status", "healthyPeers", healthyPeers)
 		}
 	}
+}
+
+// cleanOwnFenceSlotIfPresent checks the agent's own slot for a fence message and clears it if present.
+// Any fence message found at this point is considered redundant and will be cleared by writing a NONE fence.
+func (s *SBDAgent) cleanOwnFenceSlotIfPresent(logger logr.Logger) error {
+	if s.fenceDevice == nil || s.fenceDevice.IsClosed() {
+		return fmt.Errorf("fence device is not available")
+	}
+
+	// Calculate slot offset for our own node
+	slotOffset := int64(s.nodeID) * sbdprotocol.SBD_SLOT_SIZE
+
+	// Read the header
+	headerBuf := make([]byte, sbdprotocol.SBD_HEADER_SIZE)
+	n, err := s.fenceDevice.ReadAt(headerBuf, slotOffset)
+	if err != nil {
+		return fmt.Errorf("failed to read header from own slot %d at offset %d: %w", s.nodeID, slotOffset, err)
+	}
+	if n < sbdprotocol.SBD_HEADER_SIZE {
+		return nil
+	}
+	if sbdprotocol.IsEmptySlot(headerBuf) {
+		return nil
+	}
+
+	header, err := sbdprotocol.Unmarshal(headerBuf)
+	if err != nil {
+		logger.V(1).Info("Failed to unmarshal header from own slot while cleaning", "nodeID", s.nodeID, "error", err)
+		return nil
+	}
+	if header.Type != sbdprotocol.SBD_MSG_TYPE_FENCE {
+		return nil
+	}
+
+	logger.Info("Found old fence message in own slot; clearing",
+		"ourNodeID", s.nodeID,
+		"rawTimestamp", header.Timestamp,
+		"sequence", header.Sequence)
+
+	// Write NONE fence to clear
+	clearFence := sbdprotocol.NewFence(s.nodeID, s.nodeID, 0, sbdprotocol.FENCE_REASON_NONE)
+	data, err := sbdprotocol.MarshalFence(clearFence)
+	if err != nil {
+		return fmt.Errorf("failed to marshal clear fence message: %w", err)
+	}
+	wrote, err := s.fenceDevice.WriteAt(data, slotOffset)
+	if err != nil {
+		return fmt.Errorf("failed to write clear fence message at offset %d: %w", slotOffset, err)
+	}
+	if wrote != len(data) {
+		return fmt.Errorf("partial write clearing own fence slot: wrote %d expected %d", wrote, len(data))
+	}
+	if err := s.fenceDevice.Sync(); err != nil {
+		return fmt.Errorf("failed to sync fence device after clearing: %w", err)
+	}
+	logger.Info("Cleared old fence message from own slot", "ourNodeID", s.nodeID)
+	return nil
 }
 
 // validateSBDDevice checks if the SBD device is accessible
