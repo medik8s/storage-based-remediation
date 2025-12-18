@@ -47,6 +47,8 @@ rules:
   resources:
   - sbdremediations
   verbs:
+  - create
+  - delete
   - get
   - list
   - patch
