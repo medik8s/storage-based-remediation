@@ -445,31 +445,6 @@ func (r *SBDRemediationReconciler) writeFenceMessage(targetNodeID uint16,
 	return nil
 }
 
-// clearFenceSlotForNode clears the SBD slot associated with the provided node name.
-func (r *SBDRemediationReconciler) clearFenceSlotForNode(
-	remediation *medik8sv1alpha1.SBDRemediation,
-	logger logr.Logger,
-) error {
-
-	nodeID, err := r.nodeManager.GetNodeIDForNode(remediation.Spec.NodeName)
-	if err != nil {
-		return fmt.Errorf("failed to get node ID for %s: %w", remediation.Spec.NodeName, err)
-	}
-	if err := r.writeFenceMessage(nodeID, medik8sv1alpha1.SBDRemediationReasonNone, logger); err != nil {
-		return fmt.Errorf("failed to write fence message to node %s: %w", remediation.Spec.NodeName, err)
-	}
-
-	logger.Info("Cleared SBD slot for node after remediation completion",
-		"nodeName", remediation.Spec.NodeName,
-		"nodeID", nodeID)
-
-	r.emitEventf(remediation, "Normal", ReasonCompleted,
-		"Cleared SBD slot for node %s (%d) after remediation completion",
-		remediation.Spec.NodeName, nodeID)
-
-	return nil
-}
-
 // handleDeletion handles the deletion of a SBDRemediation resource
 func (r *SBDRemediationReconciler) handleDeletion(
 	ctx context.Context, sbdRemediation *medik8sv1alpha1.SBDRemediation, logger logr.Logger) (ctrl.Result, error) {
@@ -583,12 +558,6 @@ func (r *SBDRemediationReconciler) handleFencingSuccess(
 	}
 	if err := r.updateRemediationCondition(ctx, remediation, medik8sv1alpha1.SBDRemediationConditionReady, metav1.ConditionTrue, ReasonCompleted, "Remediation completed successfully", logger); err != nil {
 		logger.Error(err, "Failed to update ready condition")
-	}
-
-	// Best-effort clear of the target node's slot after successful remediation
-	if err := r.clearFenceSlotForNode(remediation, logger); err != nil {
-		logger.Error(err, "Failed to clear SBD slot after remediation completion",
-			"node", remediation.Spec.NodeName)
 	}
 
 	// Emit success event
