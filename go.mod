@@ -1,6 +1,6 @@
 module github.com/medik8s/sbd-operator
 
-go 1.24.0
+go 1.24.4
 
 require (
 	github.com/aws/aws-sdk-go v1.55.8
