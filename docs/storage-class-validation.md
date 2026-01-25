@@ -17,6 +17,7 @@ The SBD controller validates storage classes in two ways:
 The controller maintains a list of known RWX-compatible provisioners:
 
 **Compatible Provisioners:**
+
 - `efs.csi.aws.com` (AWS EFS)
 - `file.csi.azure.com` (Azure Files)
 - `filestore.csi.storage.gke.io` (GCP Filestore)
@@ -27,6 +28,7 @@ The controller maintains a list of known RWX-compatible provisioners:
 - Various NFS provisioners
 
 **Incompatible Provisioners:**
+
 - `ebs.csi.aws.com` (AWS EBS)
 - `disk.csi.azure.com` (Azure Disk)
 - `pd.csi.storage.gke.io` (GCP Persistent Disk)
@@ -59,25 +61,30 @@ If an incompatible storage class is detected, the controller will:
 4. **Requeue the Reconciliation** with exponential backoff
 
 Example error message:
-```
+
+```text
 StorageClass 'gp3-csi' does not support ReadWriteMany access mode required for SBD shared storage
 ```
 
 ## Compatible Storage Solutions
 
 ### AWS
+
 - **EFS (Elastic File System)**: Use `efs.csi.aws.com` provisioner
 - **Third-party NFS**: Use NFS CSI drivers
 
 ### Azure
+
 - **Azure Files**: Use `file.csi.azure.com` provisioner
 - **Third-party NFS**: Use NFS CSI drivers
 
 ### GCP
+
 - **Filestore**: Use `filestore.csi.storage.gke.io` provisioner
 - **Third-party NFS**: Use NFS CSI drivers
 
 ### On-Premises
+
 - **NFS**: Use various NFS CSI drivers
 - **CephFS**: Use `cephfs.csi.ceph.com` provisioner
 - **GlusterFS**: Use GlusterFS provisioners
@@ -87,11 +94,13 @@ StorageClass 'gp3-csi' does not support ReadWriteMany access mode required for S
 The SBD operator includes comprehensive tests for storage class validation:
 
 ### Unit Tests
+
 - Tests for known provisioner detection
 - Tests for temporary PVC creation and cleanup
 - Tests for proper error handling and event emission
 
 ### E2E Tests
+
 - Tests with compatible storage classes (EFS, NFS)
 - Tests with incompatible storage classes (EBS, Azure Disk)
 - Tests with non-existent storage classes
@@ -117,16 +126,19 @@ The SBD operator includes comprehensive tests for storage class validation:
 To debug storage class validation issues:
 
 1. **Check Events:**
+
    ```bash
    kubectl get events -n <namespace> --field-selector involvedObject.name=<sbdconfig-name>
    ```
 
 2. **Check Controller Logs:**
+
    ```bash
    kubectl logs -n sbd-operator-system deployment/sbd-operator-controller-manager
    ```
 
 3. **Check PVC Status:**
+
    ```bash
    kubectl get pvc -n <namespace>
    kubectl describe pvc <pvc-name> -n <namespace>
@@ -183,4 +195,4 @@ The storage class validation is implemented in the SBD controller's reconciliati
 4. **Retry Logic**: Transient errors are retried with exponential backoff
 5. **Event Emission**: Users get clear feedback about validation failures
 
-This ensures that SBD configurations are validated early and users get clear feedback about any issues. 
+This ensures that SBD configurations are validated early and users get clear feedback about any issues.

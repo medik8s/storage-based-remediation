@@ -47,6 +47,7 @@ kubectl get svc -n openshift-storage -l app=rook-ceph-mon -o jsonpath='{.items[*
 ```
 
 **Ceph-Specific Features:**
+
 - Targets Ceph Monitor communication (port 6789)
 - Blocks OSD data traffic (ports 6800-7300)
 - Discovers actual Ceph service IPs dynamically
@@ -66,13 +67,14 @@ iptables -I OUTPUT -d 169.254.0.0/16 -j DROP
 ```
 
 **AWS-Specific Features:**
+
 - Targets NFS v4 protocol used by EFS
 - Blocks AWS EFS mount target IP ranges
 - Compatible with AWS network architecture
 
 ## Test Implementation
 
-### Storage Backend Detection
+### Detection Implementation
 
 ```go
 type StorageBackendType string
@@ -104,11 +106,13 @@ func detectStorageBackend() (StorageBackendType, string, error) {
 Each storage backend includes specific validation:
 
 **Ceph Validation:**
+
 - Verifies iptables rules for ports 6789, 6800-7300
 - Tests connectivity to Ceph Monitor ports (should fail)
 - Counts expected number of blocking rules (minimum 4)
 
 **AWS Validation:**
+
 - Verifies iptables rules for port 2049 and IP ranges
 - Tests connectivity to EFS mount targets (should fail)
 - Validates AWS-specific network blocking
@@ -167,6 +171,7 @@ kubectl get svc -n openshift-storage -l app=rook-ceph-mon
 ### Recovery Verification
 
 After cleanup, the test verifies:
+
 - All iptables rules are removed
 - Storage connectivity is restored
 - Nodes regain access to shared storage
@@ -175,16 +180,19 @@ After cleanup, the test verifies:
 ## Error Handling
 
 ### Detection Failures
+
 - Falls back to AWS/NFS-style disruption for unknown backends
 - Logs warnings but continues with test execution
 - Provides comprehensive cleanup regardless of backend type
 
-### Validation Failures  
+### Validation Failures
+
 - Automatic cleanup of disruption pods
 - Detailed logging of iptables rule status
 - Graceful test failure with diagnostic information
 
 ### Cleanup Failures
+
 - Multiple cleanup attempts with different methods
 - Warning logs for partial cleanup failures
 - Manual intervention guidance in failure messages
@@ -192,18 +200,21 @@ After cleanup, the test verifies:
 ## Best Practices
 
 ### Test Environment Requirements
+
 - Privileged pod execution capability
 - Network policy compatibility with iptables rules
 - Sufficient permissions for StorageClass inspection
 - Access to storage backend namespaces (e.g., openshift-storage)
 
 ### Security Considerations
+
 - Uses least privilege required for each storage type
 - Temporary disruption with automatic cleanup
 - Host network access limited to disruption duration
 - iptables rules are specific and targeted
 
 ### Performance Impact
+
 - Minimal resource usage (128Mi memory, 100m CPU)
 - Short-duration disruption (maximum 10 minutes)
 - Efficient rule application and removal
@@ -223,7 +234,7 @@ After cleanup, the test verifies:
    - Ensure no conflicting network policies
    - Verify iptables backend compatibility
 
-3. **Storage Backend Misdetection**
+3. **Storage Backend Mis-detection**
    - Check StorageClass provisioner names
    - Verify storage backend is properly configured
    - Review detection logic for new provisioner types
@@ -236,6 +247,7 @@ After cleanup, the test verifies:
 ### Debug Information
 
 Enable detailed logging:
+
 ```bash
 # View disruption pod logs
 kubectl logs -l app=sbd-e2e-ceph-storage-disruptor
@@ -250,16 +262,19 @@ kubectl exec <disruption-pod> -- iptables -L OUTPUT -n -v
 ## Future Enhancements
 
 ### Planned Storage Backends
+
 - GlusterFS support with gluster-specific disruption
 - iSCSI storage with SCSI-level disruption
 - Cloud-specific block storage improvements
 
 ### Enhanced Validation
+
 - Real storage I/O testing during disruption
 - Performance impact measurement
 - Network latency simulation
 
 ### Advanced Features
+
 - Multiple simultaneous storage backend testing
 - Graduated disruption severity levels
-- Storage backend failover testing 
+- Storage backend failover testing

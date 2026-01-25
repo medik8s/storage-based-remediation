@@ -159,4 +159,4 @@ spec:
           claimName: sbd-shared-storage
 ```
 
-This setup ensures high availability while maintaining safe, coordinated fencing operations across the cluster. 
+This setup ensures high availability while maintaining safe, coordinated fencing operations across the cluster.

@@ -24,7 +24,9 @@ The operator consists of two main components:
 ## Custom Resources
 
 ### SBDConfig
+
 Defines the SBD configuration for the cluster:
+
 - Shared block device PVC name
 - Timeout settings
 - Watchdog device path
@@ -32,7 +34,9 @@ Defines the SBD configuration for the cluster:
 - Reboot methods
 
 ### SBDRemediation
+
 Triggers node remediation operations:
+
 - Target node specification
 - Remediation status tracking
 - Integration with Medik8s Node Healthcheck Operator
@@ -40,6 +44,7 @@ Triggers node remediation operations:
 ## Quick Start
 
 ### Prerequisites
+
 - Kubernetes cluster with CSI driver supporting `volumeMode: Block`
 - Shared block storage with concurrent multi-node access (e.g., Ceph RBD, cloud provider shared volumes)
 - Cluster nodes with kernel watchdog support
@@ -47,18 +52,21 @@ Triggers node remediation operations:
 ### Installation
 
 1. Install the operator:
-```bash
-make deploy
-```
+
+    ```bash
+    make deploy
+    ```
 
 2. Create an SBDConfig:
-```bash
-kubectl apply -f config/samples/medik8s_v1alpha1_sbdconfig.yaml
-```
+
+    ```bash
+    kubectl apply -f config/samples/medik8s_v1alpha1_sbdconfig.yaml
+    ```
 
 ### Development
 
 Build and test locally:
+
 ```bash
 # Build the operator
 make build
@@ -87,7 +95,7 @@ Comprehensive documentation is available in the `docs/` directory:
 The project includes comprehensive testing:
 
 - **Unit Tests**: `make test`
-- **E2E Tests**: `make test-e2e` 
+- **E2E Tests**: `make test-e2e`
 - **Smoke Tests**: `make test-smoke`
 
 E2E tests deploy a complete operator environment and verify functionality end-to-end.

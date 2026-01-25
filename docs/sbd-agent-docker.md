@@ -101,7 +101,7 @@ docker run -d \
 ### Container Options
 
 | Option | Description | Example |
-|--------|-------------|---------|
+| ------ | ----------- | ------- |
 | `--privileged` | Full container privileges | Required for device access |
 | `--cap-add=SYS_ADMIN` | System administration capabilities | Required for watchdog |
 | `--cap-add=SYS_RAWIO` | Raw I/O access | Required for block devices |
@@ -112,7 +112,7 @@ docker run -d \
 ## Command Line Arguments
 
 | Argument | Description | Default | Example |
-|----------|-------------|---------|---------|
+| -------- | ----------- | ------- | ------- |
 | `--watchdog-path` | Path to watchdog device | `/dev/watchdog` | `--watchdog-path=/dev/watchdog0` |
 | `--watchdog-timeout` | Pet interval for watchdog | `30s` | `--watchdog-timeout=15s` |
 | `--sbd-device` | Path to SBD block device | (empty) | `--sbd-device=/dev/disk/by-id/sbd-device` |
@@ -397,4 +397,4 @@ spec:
 - [Linux Watchdog Documentation](https://www.kernel.org/doc/Documentation/watchdog/watchdog-api.txt)
 - [SBD Fencing Documentation](https://clusterlabs.org/doc/)
 - [Kubernetes Security Contexts](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
-- [Docker Security Best Practices](https://docs.docker.com/engine/security/) 
+- [Docker Security Best Practices](https://docs.docker.com/engine/security/)

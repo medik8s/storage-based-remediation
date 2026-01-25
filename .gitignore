@@ -48,3 +48,12 @@ cluster/
 dist/
 config/manager/kustomization.yaml
 deploy/sbd-agent-daemonset-*.yaml
+
+# Documentation
+docs/prompt.md
+
+# Debug files
+sbd-device-debug.txt
+sbd-device.txt
+sbd-node-mapping.txt
+node-mapping-debug.txt

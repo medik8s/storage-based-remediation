@@ -2,7 +2,40 @@
 
 ## Overview
 
-SBDConfig is a cluster-scoped Kubernetes custom resource that configures the SBD (STONITH Block Device) operator for high-availability clustering with automatic node remediation. The SBD operator provides watchdog-based fencing to ensure cluster integrity by automatically rebooting unresponsive nodes.
+SBDConfig is a namespaced Kubernetes custom resource that configures the Storage-based Remediation operator (formerly SBD operator) for high-availability clustering with automatic node remediation. The operator provides watchdog-based fencing to ensure cluster integrity by automatically rebooting unresponsive nodes.
+
+## Quick Start
+
+For a quick setup, follow these steps:
+
+1. **Install the operator** from OperatorHub (OpenShift) or using manifests (Kubernetes)
+2. **Create the SCC** (OpenShift only) - see [Installation](#installation) section
+3. **Create an SBDConfig** with required fields:
+
+    ```yaml
+    apiVersion: medik8s.medik8s.io/v1alpha1
+    kind: SBDConfig
+    metadata:
+      name: default
+      namespace: openshift-operators  # or your preferred namespace
+    spec:
+      # REQUIRED: Must specify image explicitly (see Known Issues)
+      image: "registry.redhat.io/workload-availability/storage-base-remediation-agent-rhel9:v0.1.0"
+      
+      # Configure shared storage for multi-node coordination
+      # Replace with your StorageClass that supports ReadWriteMany (RWX)
+      sharedStorageClass: "ocs-storagecluster-cephfs"  # Example: use your actual StorageClass name
+    ```
+
+4. **Verify deployment:**
+
+   ```bash
+   kubectl get sbdconfig
+   kubectl get daemonset -n <namespace>
+   kubectl get pods -n <namespace> -l app=sbd-agent
+   ```
+
+For detailed information, see the sections below.
 
 ## Key Features
 
@@ -27,9 +60,39 @@ SBDConfig is a cluster-scoped Kubernetes custom resource that configures the SBD
 - Storage that supports POSIX file locking (NFS, CephFS, GlusterFS)
 - **StorageClass** with ReadWriteMany (RWX) access mode support
 
+## Known Issues and Workarounds
+
+### Issue 1: Invalid Default Image Path
+
+**Problem**: When creating an SBDConfig without specifying `spec.image`, the operator attempts to use an invalid default image path that doesn't exist in the registry.
+
+**Workaround**: **Always specify `spec.image` explicitly** in your SBDConfig. Use one of these valid images:
+
+- Red Hat: `registry.redhat.io/workload-availability/storage-base-remediation-agent-rhel9:v0.1.0`
+- Community: `quay.io/medik8s/sbd-agent:latest` (if available)
+
+**Example:**
+
+```yaml
+spec:
+  image: "registry.redhat.io/workload-availability/storage-base-remediation-agent-rhel9:v0.1.0"  # Required
+```
+
+### Issue 2: Missing SecurityContextConstraints (OpenShift Only)
+
+**Problem**: The operator cannot create SecurityContextConstraints (SCC) at runtime on OpenShift. Without the SCC, agent pods cannot start with the required privileges.
+
+**Workaround**: Create the SCC manually **before** creating your first SBDConfig. See the [Installation](#installation) section for the complete SCC YAML.
+
+**Steps:**
+
+1. Apply the SCC YAML provided in the Installation section
+2. Verify the SCC was created: `oc get scc sbd-operator-sbd-agent-privileged`
+3. Then create your SBDConfig resources
+
 ## Multiple SBDConfig Support
 
-**New in v1.1+**: The SBD operator now supports multiple SBDConfig resources in the same namespace, enabling advanced deployment scenarios:
+**New**: The Storage-based Remediation operator now supports multiple SBDConfig resources in the same namespace, enabling advanced deployment scenarios:
 
 ### Use Cases
 
@@ -88,16 +151,88 @@ This creates:
 
 ## Installation
 
+The Storage-based Remediation operator is available in the Red Hat Ecosystem Catalog as a Tech Preview operator. You can install it via Operator Lifecycle Manager (OLM) on OpenShift or standard Kubernetes.
+
+### OpenShift (Recommended)
+
+1. **Install the operator from OperatorHub:**
+   - Navigate to **Operators** → **OperatorHub** in the OpenShift web console
+   - Search for "Storage Base Remediation" or "Storage-based Remediation" or "SBD"
+   - Click **Install** and follow the installation wizard
+   - Select your desired namespace (e.g., `openshift-operators`)
+
+2. **Create SecurityContextConstraints (SCC) - Required Workaround:**
+
+   ⚠️ **Known Issue**: The operator cannot create SecurityContextConstraints at runtime. You must create the SCC manually before creating an SBDConfig.
+
+   Apply the following SCC:
+
+   ```yaml
+   apiVersion: security.openshift.io/v1
+   kind: SecurityContextConstraints
+   metadata:
+     name: sbd-operator-sbd-agent-privileged
+     annotations:
+       kubernetes.io/description: SecurityContextConstraints for SBD Agent pods that
+         require privileged access to hardware watchdog and block devices
+     labels:
+       app: sbd-agent
+       app.kubernetes.io/component: openshift-resources
+       app.kubernetes.io/name: sbd-operator
+   allowHostDirVolumePlugin: true
+   allowHostIPC: false
+   allowHostNetwork: true
+   allowHostPID: true
+   allowHostPorts: false
+   allowPrivilegedContainer: true
+   allowedCapabilities:
+   - SYS_ADMIN
+   - SYS_MODULE
+   defaultAddCapabilities: null
+   fsGroup:
+     type: RunAsAny
+   groups: []
+   priority: 10
+   readOnlyRootFilesystem: false
+   requiredDropCapabilities: null
+   runAsUser:
+     type: RunAsAny
+   seLinuxContext:
+     type: RunAsAny
+   seccompProfiles:
+   - '*'
+   supplementalGroups:
+     type: RunAsAny
+   users: []
+   volumes:
+   - configMap
+   - downwardAPI
+   - emptyDir
+   - hostPath
+   - persistentVolumeClaim
+   - projected
+   - secret
+   ```
+
+   ```bash
+   oc apply -f scc.yaml
+   ```
+
+3. **Verify operator installation:**
+
+   ```bash
+   oc get csv -n openshift-operators | grep storage-base-remediation
+   oc get pods -n openshift-operators | grep -wE 'storage-base-remediation|sbd'
+   ```
+
 ### Standard Kubernetes
 
-```bash
-kubectl apply -f https://github.com/medik8s/sbd-operator/releases/latest/download/install.yaml
-```
-
-### OpenShift
+For standard Kubernetes clusters, you can install the operator using kubectl:
 
 ```bash
-kubectl apply -f https://github.com/medik8s/sbd-operator/releases/latest/download/install-openshift.yaml
+# Note: Installation manifests may be available in the repository
+# Check the repository for the latest installation instructions
+# Repository: https://github.com/medik8s/storage-base-remediation
 ```
 
 ## Configuration Reference
@@ -112,18 +247,18 @@ kubectl apply -f https://github.com/medik8s/sbd-operator/releases/latest/downloa
   - Must exist on all nodes or softdog will be used as fallback
   - Common paths: `/dev/watchdog`, `/dev/watchdog0`, `/dev/watchdog1`
 
-#### `image` (string, optional)
+#### `image` (string, **required**)
 
-- **Default**: `sbd-agent:latest`
+- **Default**: None (currently must be specified)
 - **Description**: Container image for the SBD agent DaemonSet
+- **⚠️ Important**: This field is currently **required** due to a known issue where the operator's default image path is invalid
+- **Valid Images**:
+  - Red Hat: `registry.redhat.io/workload-availability/storage-base-remediation-agent-rhel9:v0.1.0`
+  - Community: `quay.io/medik8s/sbd-agent:latest` (if available)
 - **Recommended**: Use specific version tags for production
-- **Example**: `quay.io/medik8s/sbd-agent:v1.0.0`
+- **Example**: `registry.redhat.io/workload-availability/storage-base-remediation-agent-rhel9:v0.1.0`
 
-#### `namespace` (string, optional)
-
-- **Default**: `sbd-system`
-- **Description**: Namespace where the SBD agent DaemonSet will be deployed
-- **Notes**: Namespace will be created if it doesn't exist
+**Note**: The namespace for the SBD agent DaemonSet is determined by the `metadata.namespace` field of the SBDConfig resource, not a spec field. The DaemonSet will be deployed in the same namespace as the SBDConfig.
 
 #### `staleNodeTimeout` (duration, optional)
 
@@ -135,7 +270,7 @@ kubectl apply -f https://github.com/medik8s/sbd-operator/releases/latest/downloa
 
 #### `sharedStorageClass` (string, optional)
 
-- **Default**: None (shared storage disabled)
+- **Default**: None (shared storage disabled; use for testing purposes)
 - **Description**: StorageClass name for automatic shared storage provisioning
 - **Requirements**:
   - StorageClass must support ReadWriteMany (RWX) access mode
@@ -143,13 +278,28 @@ kubectl apply -f https://github.com/medik8s/sbd-operator/releases/latest/downloa
 - **Examples**: `"efs-sc"`, `"nfs-client"`, `"cephfs"`, `"glusterfs"`
 - **Behavior**: When specified, the controller automatically creates a PVC using this StorageClass
 
-The controller automatically chooses a sensible mount path (`/sbd-shared`) for shared storage, eliminating the need for manual configuration and reducing potential conflicts.
+The controller automatically chooses a sensible mount path (`/dev/sbd`) for shared storage, eliminating the need for manual configuration and reducing potential conflicts.
 
 ### SBDConfig Status Fields
 
-#### `daemonSetReady` (boolean)
+The SBDConfig status uses Kubernetes Conditions to track the state of the operator components:
 
-- **Description**: Indicates if the SBD agent DaemonSet is ready and running
+#### `conditions` (array)
+
+- **Description**: Array of condition objects representing the latest observations of the SBDConfig state
+- **Condition Types**:
+  - **DaemonSetReady**: Indicates if the SBD agent DaemonSet is ready and running
+  - **SharedStorageReady**: Indicates if shared storage is properly configured (when using sharedStorageClass)
+  - **Ready**: Overall readiness condition - true when all components are operational
+
+Each condition contains:
+
+- `type`: The condition type (e.g., "DaemonSetReady")
+- `status`: "True", "False", or "Unknown"
+- `reason`: Machine-readable reason for the condition status
+- `message`: Human-readable message describing the condition
+- `lastTransitionTime`: When the condition last changed
+- `observedGeneration`: The generation of the SBDConfig that this condition is based on
 
 #### `readyNodes` (int32)
 
@@ -158,6 +308,27 @@ The controller automatically chooses a sensible mount path (`/sbd-shared`) for s
 #### `totalNodes` (int32)
 
 - **Description**: Total number of nodes where the SBD agent should be deployed
+
+**Example status:**
+
+```yaml
+status:
+  conditions:
+  - type: DaemonSetReady
+    status: "True"
+    reason: DaemonSetReady
+    message: All 3 SBD agent pods are ready
+  - type: SharedStorageReady
+    status: "True"
+    reason: SharedStorageConfigured
+    message: Shared storage PVC 'default-shared-storage' is configured
+  - type: Ready
+    status: "True"
+    reason: Ready
+    message: SBDConfig is ready and all components are operational
+  readyNodes: 3
+  totalNodes: 3
+```
 
 ## Configuration Examples
 
@@ -170,10 +341,11 @@ apiVersion: medik8s.medik8s.io/v1alpha1
 kind: SBDConfig
 metadata:
   name: basic-sbd
+  namespace: sbd-system  # DaemonSet will be created in this namespace
 spec:
-  # Use defaults for most settings
-  image: "quay.io/medik8s/sbd-agent:v1.0.0"
-  namespace: "sbd-system"
+  # Image is required - must be specified explicitly
+  image: "registry.redhat.io/workload-availability/storage-base-remediation-agent-rhel9:v0.1.0"
+  # Use defaults for most other settings
 ```
 
 ### Production Configuration
@@ -185,12 +357,10 @@ apiVersion: medik8s.medik8s.io/v1alpha1
 kind: SBDConfig
 metadata:
   name: production-sbd
+  namespace: high-availability  # DaemonSet will be created in this namespace
 spec:
-  # Specific image version for reproducibility
-  image: "quay.io/medik8s/sbd-agent:v1.2.3"
-  
-  # Custom namespace
-  namespace: "high-availability"
+  # Specific image version for reproducibility (required)
+  image: "registry.redhat.io/workload-availability/storage-base-remediation-agent-rhel9:v0.1.0"
   
   # Custom watchdog device
   sbdWatchdogPath: "/dev/watchdog1"
@@ -208,15 +378,19 @@ apiVersion: medik8s.medik8s.io/v1alpha1
 kind: SBDConfig
 metadata:
   name: dev-sbd
+  namespace: sbd-system
 spec:
-  # Use latest for development
-  image: "quay.io/medik8s/sbd-agent:latest"
+  # Image is required - use appropriate image for your environment
+  image: "registry.redhat.io/workload-availability/storage-base-remediation-agent-rhel9:v0.1.0"
   
   # Faster cleanup for rapid testing
   staleNodeTimeout: "5m"
   
   # Default watchdog path (will use softdog if no hardware watchdog)
   sbdWatchdogPath: "/dev/watchdog"
+  
+  # Disable self-fencing for testing (rely only on watchdog timeout)
+  rebootMethod: "none"
 ```
 
 ### Multi-Cluster Configuration
@@ -228,18 +402,18 @@ apiVersion: medik8s.medik8s.io/v1alpha1
 kind: SBDConfig
 metadata:
   name: cluster-west-sbd
+  namespace: sbd-cluster-west
 spec:
-  image: "quay.io/medik8s/sbd-agent:v1.0.0"
-  namespace: "sbd-cluster-west"
+  image: "registry.redhat.io/workload-availability/storage-base-remediation-agent-rhel9:v0.1.0"
   staleNodeTimeout: "45m"
 ---
 apiVersion: medik8s.medik8s.io/v1alpha1
 kind: SBDConfig
 metadata:
   name: cluster-east-sbd
+  namespace: sbd-cluster-east
 spec:
-  image: "quay.io/medik8s/sbd-agent:v1.0.0"
-  namespace: "sbd-cluster-east"
+  image: "registry.redhat.io/workload-availability/storage-base-remediation-agent-rhel9:v0.1.0"
   staleNodeTimeout: "45m"
 ```
 
@@ -259,14 +433,21 @@ kubectl describe sbdconfig basic-sbd
 ### Monitor Deployment
 
 ```bash
-# Check SBD agent DaemonSet
-kubectl get daemonset -n sbd-system
+# Check SBDConfig status
+kubectl get sbdconfig -n <namespace>
+kubectl describe sbdconfig <name> -n <namespace>
+
+# Check SBD agent DaemonSet (replace <namespace> with your namespace)
+kubectl get daemonset -n <namespace>
 
 # Check agent pods
-kubectl get pods -n sbd-system
+kubectl get pods -n <namespace> -l app=sbd-agent
 
 # View agent logs
-kubectl logs -n sbd-system -l app=sbd-agent
+kubectl logs -n <namespace> -l app=sbd-agent
+
+# Check status conditions
+kubectl get sbdconfig <name> -n <namespace> -o jsonpath='{.status.conditions[*].type}{"\n"}{.status.conditions[*].status}'
 ```
 
 ### Update Configuration
@@ -282,12 +463,15 @@ kubectl apply -f updated-sbdconfig.yaml
 ### Remove SBDConfig
 
 ```bash
-# Delete configuration (this will remove all SBD agents)
-kubectl delete sbdconfig basic-sbd
+# Delete configuration (this will remove the associated DaemonSet)
+kubectl delete sbdconfig <name> -n <namespace>
 
 # Verify cleanup
-kubectl get pods -n sbd-system
+kubectl get pods -n <namespace> -l app=sbd-agent
+kubectl get daemonset -n <namespace>
 ```
+
+**Note**: The shared service account (`sbd-agent`) in the namespace is not automatically deleted when removing an SBDConfig, as other SBDConfigs in the same namespace may still be using it. The service account will be cleaned up when the namespace is deleted or can be manually removed if no longer needed.
 
 ## Storage Integration
 
@@ -313,22 +497,22 @@ kubectl get pods -n sbd-system
 
 ### Storage Configuration
 
-The SBD operator automatically detects storage capabilities:
+The Storage-based Remediation operator enables file locking when shared storage is configured. The SBD agent automatically falls back to jitter coordination if file locking is unavailable:
 
-- **File locking enabled**: Used with NFS, CephFS, GlusterFS
-- **Jitter coordination**: Used with block storage without file locking
+- **File locking enabled**: Enabled by default when shared storage is configured; works with NFS, CephFS, GlusterFS
+- **Jitter coordination**: Automatically used as fallback when file locking fails or is unavailable
 - **Watchdog-only**: Used when no shared storage is configured
 
 ## Shared Storage Configuration
 
 ### StorageClass-Based Approach (Recommended)
 
-The SBD operator supports automatic shared storage provisioning using Kubernetes StorageClasses. This approach simplifies configuration and ensures proper PVC lifecycle management.
+The Storage-based Remediation operator supports automatic shared storage provisioning using Kubernetes StorageClasses. This approach simplifies configuration and ensures proper PVC lifecycle management.
 
 #### Requirements
 
 - **StorageClass**: Must support ReadWriteMany (RWX) access mode
-- **Storage Backend**: Must support POSIX file locking (NFS, CephFS, GlusterFS, EFS)
+- **Storage Backend**: POSIX file locking is recommended (NFS, CephFS, GlusterFS, EFS) but not required; the agent automatically falls back to jitter coordination if file locking is unavailable
 - **Permissions**: Controller needs permissions to create/manage PVCs
 
 #### Configuration
@@ -338,9 +522,10 @@ apiVersion: medik8s.medik8s.io/v1alpha1
 kind: SBDConfig
 metadata:
   name: shared-storage-example
+  namespace: sbd-system
 spec:
-  # Basic configuration
-  image: "quay.io/medik8s/sbd-agent:v1.0.0"
+  # Image is required
+  image: "registry.redhat.io/workload-availability/storage-base-remediation-agent-rhel9:v0.1.0"
   watchdogTimeout: "60s"
   
   # Shared storage configuration
@@ -376,7 +561,11 @@ apiVersion: medik8s.medik8s.io/v1alpha1
 kind: SBDConfig
 metadata:
   name: custom-storage-sbd
+  namespace: sbd-system
 spec:
+  # Image is required
+  image: "registry.redhat.io/workload-availability/storage-base-remediation-agent-rhel9:v0.1.0"
+  
   # Use custom StorageClass with specific parameters
   sharedStorageClass: "custom-nfs-sc"
   
@@ -436,28 +625,54 @@ kubectl logs -n sbd-system -l app=sbd-agent | grep -i error
 **Diagnosis**:
 
 ```bash
-kubectl describe pods -n sbd-system
-kubectl logs -n sbd-system <pod-name>
+kubectl describe pods -n <namespace>
+kubectl logs -n <namespace> <pod-name>
 ```
 
 **Common Causes**:
 
-- **Insufficient privileges**: Ensure SecurityContextConstraints (OpenShift) or PodSecurityPolicy
-- **Missing watchdog device**: Check if `/dev/watchdog` exists on nodes
-- **Resource constraints**: Verify node resources and limits
+1. **Invalid Image Path (Known Issue)**: If you didn't specify `spec.image`, pods will fail with `ImagePullBackOff` or `ErrImagePull`
+   - **Solution**: Always specify `spec.image` explicitly. See [Known Issues and Workarounds](#known-issues-and-workarounds)
 
-**Solutions**:
+2. **Missing SCC (OpenShift Only)**: Pods cannot start without the required SecurityContextConstraints
+   - **Solution**: Create the SCC manually before creating SBDConfig. See [Installation](#installation) section
 
-```bash
-# For OpenShift - check SCC
-oc get scc sbd-agent-scc
+3. **Insufficient privileges**: Ensure SecurityContextConstraints (OpenShift) or PodSecurityPolicy is configured
 
-# For missing watchdog - check node
-kubectl debug node/<node-name> -- ls -la /dev/watchdog*
+   - **Solution**: Verify SCC exists and includes the service account:
 
-# For resources - check node capacity
-kubectl describe node <node-name>
-```
+     ```bash
+     oc get scc sbd-operator-sbd-agent-privileged
+     oc get scc sbd-operator-sbd-agent-privileged -o yaml | grep -A 5 users
+     ```
+
+4. **Missing watchdog device**: Check if `/dev/watchdog` exists on nodes
+
+   - **Solution**:
+    For OpenShift (OCP):
+
+     ```bash
+     oc debug node/<node-name> -- chroot /host sh -c 'ls -la /dev/watchdog*'
+     ```
+
+     For Standard Kubernetes:
+
+     ```bash
+     kubectl debug node/<node-name> -it --image=busybox --profile=sysadmin -- chroot /host sh -c 'ls -la /dev/watchdog*'
+     ```
+
+   - The agent will automatically fall back to `softdog` if no hardware watchdog is available
+
+5. **Resource constraints**: Verify node resources
+
+   - **Required resources per node for scheduling**: Each SBD agent pod requires at minimum:
+     - CPU: 50m (0.05 cores)
+     - Memory: 128Mi
+   - **Solution**:
+
+     ```bash
+     kubectl describe node <node-name>
+     ```
 
 #### Watchdog Device Issues
 
@@ -466,9 +681,6 @@ kubectl describe node <node-name>
 **Diagnosis**:
 
 ```bash
-# Check available watchdog devices on nodes
-kubectl debug node/<node-name> -- ls -la /dev/watchdog*
-
 # Check dmesg for watchdog-related messages
 kubectl debug node/<node-name> -- dmesg | grep -i watchdog
 ```
@@ -486,18 +698,23 @@ kubectl debug node/<node-name> -- dmesg | grep -i watchdog
 **Diagnosis**:
 
 ```bash
-# Check storage connectivity
-kubectl logs -n sbd-system -l app=sbd-agent | grep -i "sbd device"
+# Check storage connectivity (replace <namespace> with your namespace)
+kubectl logs -n <namespace> -l app=sbd-agent | grep -iE "(error|failed|device|node mapping)"
 
 # Verify file locking capability
-kubectl logs -n sbd-system -l app=sbd-agent | grep -i "coordination strategy"
+kubectl logs -n <namespace> -l app=sbd-agent | grep -iE "(file lock|jitter coordination|coordination)"
+
+# Check PVC status
+kubectl get pvc -n <namespace>
+kubectl describe pvc <pvc-name> -n <namespace>
 ```
 
 **Solutions**:
 
-- **File locking**: Ensure storage supports POSIX file locking
+- **File locking**: Ensure storage supports POSIX file locking (NFS, CephFS, GlusterFS)
 - **Permissions**: Verify read/write access to shared storage
 - **Network**: Check network connectivity to storage backend
+- **StorageClass**: Verify the StorageClass supports ReadWriteMany (RWX) access mode
 
 #### Node Slot Exhaustion
 
@@ -552,18 +769,9 @@ The SBD agent requires elevated privileges for:
 
 ### OpenShift Security
 
-For OpenShift, the agent uses SecurityContextConstraints:
+For OpenShift, the agent requires SecurityContextConstraints (SCC) to run with the necessary privileges. **Important**: At this time, the SCC must be created manually before creating SBDConfig resources (see [Known Issues and Workarounds](#known-issues-and-workarounds)).
 
-```yaml
-# Automatically created by OpenShift installer
-apiVersion: security.openshift.io/v1
-kind: SecurityContextConstraint
-metadata:
-  name: sbd-agent-scc
-allowPrivilegedContainer: true
-allowHostDirVolumePlugin: true
-allowHostPID: true
-```
+The required SCC is named `sbd-operator-sbd-agent-privileged` and is provided in the [Installation](#installation) section.
 
 ### Network Security
 
@@ -653,6 +861,12 @@ For complete API documentation, see:
 - [SBDConfig API Types](../api/v1alpha1/sbdconfig_types.go)
 - [Generated CRD](../config/crd/bases/medik8s.medik8s.io_sbdconfigs.yaml)
 - [Sample Configurations](../config/samples/)
+
+## Repository
+
+The source code for the Storage-based Remediation operator is available at:
+
+- <https://github.com/medik8s/storage-base-remediation>
 
 ## Related Documentation
 
