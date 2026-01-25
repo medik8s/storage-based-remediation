@@ -16,11 +16,13 @@ SBDConfig is a cluster-scoped Kubernetes custom resource that configures the SBD
 ## Prerequisites
 
 ### Required
+
 - Kubernetes cluster (1.21+) or OpenShift (4.8+)
 - Cluster administrator privileges
 - Nodes with watchdog devices (hardware or software)
 
 ### Optional (for shared storage mode)
+
 - Shared block storage accessible from all nodes
 - Storage that supports POSIX file locking (NFS, CephFS, GlusterFS)
 - **StorageClass** with ReadWriteMany (RWX) access mode support
@@ -30,23 +32,27 @@ SBDConfig is a cluster-scoped Kubernetes custom resource that configures the SBD
 **New in v1.1+**: The SBD operator now supports multiple SBDConfig resources in the same namespace, enabling advanced deployment scenarios:
 
 ### Use Cases
+
 - **A/B Testing**: Deploy different SBD agent versions side by side
 - **Gradual Rollouts**: Roll out new configurations incrementally
 - **Environment Separation**: Separate dev/staging configs in the same namespace
 - **Different Requirements**: Multiple teams with different SBD settings
 
 ### How It Works
+
 - **Shared Service Account**: All SBDConfigs in a namespace share the same `sbd-agent` service account
 - **Separate DaemonSets**: Each SBDConfig creates its own DaemonSet with unique naming
 - **Independent Configurations**: Each SBDConfig can have different images, timeouts, and settings
 - **Automatic Cleanup**: Deleting an SBDConfig only removes its specific resources
 
 ### Resource Naming
+
 - Service Account: `sbd-agent` (shared across all SBDConfigs in namespace)
 - DaemonSet: `sbd-agent-{sbdconfig-name}` (unique per SBDConfig)
 - ClusterRoleBinding: `sbd-agent-{namespace}-{sbdconfig-name}` (globally unique)
 
 ### Example: Multiple Configurations
+
 ```yaml
 # Production configuration
 apiVersion: medik8s.medik8s.io/v1alpha1
@@ -74,6 +80,7 @@ spec:
 ```
 
 This creates:
+
 - Shared service account: `my-app/sbd-agent`
 - Production DaemonSet: `my-app/sbd-agent-production-sbd`
 - Canary DaemonSet: `my-app/sbd-agent-canary-sbd`
@@ -82,11 +89,13 @@ This creates:
 ## Installation
 
 ### Standard Kubernetes
+
 ```bash
 kubectl apply -f https://github.com/medik8s/sbd-operator/releases/latest/download/install.yaml
 ```
 
 ### OpenShift
+
 ```bash
 kubectl apply -f https://github.com/medik8s/sbd-operator/releases/latest/download/install-openshift.yaml
 ```
@@ -96,24 +105,28 @@ kubectl apply -f https://github.com/medik8s/sbd-operator/releases/latest/downloa
 ### SBDConfig Fields
 
 #### `sbdWatchdogPath` (string, optional)
+
 - **Default**: `/dev/watchdog`
 - **Description**: Path to the watchdog device on cluster nodes
-- **Notes**: 
+- **Notes**:
   - Must exist on all nodes or softdog will be used as fallback
   - Common paths: `/dev/watchdog`, `/dev/watchdog0`, `/dev/watchdog1`
 
 #### `image` (string, optional)
+
 - **Default**: `sbd-agent:latest`
 - **Description**: Container image for the SBD agent DaemonSet
 - **Recommended**: Use specific version tags for production
 - **Example**: `quay.io/medik8s/sbd-agent:v1.0.0`
 
 #### `namespace` (string, optional)
+
 - **Default**: `sbd-system`
 - **Description**: Namespace where the SBD agent DaemonSet will be deployed
 - **Notes**: Namespace will be created if it doesn't exist
 
 #### `staleNodeTimeout` (duration, optional)
+
 - **Default**: `1h`
 - **Range**: `1m` to `24h`
 - **Description**: Time before inactive nodes are cleaned up from slot mapping
@@ -121,9 +134,10 @@ kubectl apply -f https://github.com/medik8s/sbd-operator/releases/latest/downloa
 - **Format**: Go duration format (e.g., `30m`, `2h`, `90s`)
 
 #### `sharedStorageClass` (string, optional)
+
 - **Default**: None (shared storage disabled)
 - **Description**: StorageClass name for automatic shared storage provisioning
-- **Requirements**: 
+- **Requirements**:
   - StorageClass must support ReadWriteMany (RWX) access mode
   - Storage backend must support POSIX file locking for coordination
 - **Examples**: `"efs-sc"`, `"nfs-client"`, `"cephfs"`, `"glusterfs"`
@@ -134,12 +148,15 @@ The controller automatically chooses a sensible mount path (`/sbd-shared`) for s
 ### SBDConfig Status Fields
 
 #### `daemonSetReady` (boolean)
+
 - **Description**: Indicates if the SBD agent DaemonSet is ready and running
 
 #### `readyNodes` (int32)
+
 - **Description**: Number of nodes where the SBD agent is ready and operational
 
 #### `totalNodes` (int32)
+
 - **Description**: Total number of nodes where the SBD agent should be deployed
 
 ## Configuration Examples
@@ -277,17 +294,20 @@ kubectl get pods -n sbd-system
 ### Supported Storage Types
 
 #### ✅ **Fully Supported (with file locking)**
+
 - **NFS**: Network File System with full POSIX locking
 - **CephFS**: Ceph filesystem with distributed locking
 - **GlusterFS**: Distributed filesystem with locking support
 
 #### ⚠️ **Partially Supported (jitter coordination)**
+
 - **Ceph RBD**: Block storage without file locking
 - **iSCSI**: Block storage protocols
 - **Local storage**: Node-local block devices
 - **Cloud block storage**: AWS EBS, Azure Disk, GCP PD
 
 #### ❌ **Not Recommended**
+
 - **Object storage**: S3, MinIO, etc. (not block devices)
 - **Read-only storage**: ConfigMaps, Secrets
 
@@ -306,11 +326,13 @@ The SBD operator automatically detects storage capabilities:
 The SBD operator supports automatic shared storage provisioning using Kubernetes StorageClasses. This approach simplifies configuration and ensures proper PVC lifecycle management.
 
 #### Requirements
+
 - **StorageClass**: Must support ReadWriteMany (RWX) access mode
 - **Storage Backend**: Must support POSIX file locking (NFS, CephFS, GlusterFS, EFS)
 - **Permissions**: Controller needs permissions to create/manage PVCs
 
 #### Configuration
+
 ```yaml
 apiVersion: medik8s.medik8s.io/v1alpha1
 kind: SBDConfig
@@ -325,14 +347,16 @@ spec:
   sharedStorageClass: "efs-sc"              # Required: StorageClass name
 ```
 
-#### How It Works
+#### How StorageClass Provisioning Works
+
 1. **Automatic PVC Creation**: Controller creates a PVC using the specified StorageClass
 2. **RWX Validation**: Ensures the StorageClass supports ReadWriteMany access mode
 3. **DaemonSet Integration**: Mounts the PVC in all sbd-agent pods
 4. **Coordination**: Enables cross-node coordination via shared storage
 5. **Lifecycle Management**: PVC is owned by SBDConfig and cleaned up automatically
 
-#### Supported Storage Types
+#### StorageClass Examples
+
 - **AWS EFS**: `efs-sc` (via EFS CSI driver)
 - **NFS**: `nfs-client` (via NFS CSI driver)
 - **CephFS**: `cephfs` (via Ceph CSI driver)
@@ -410,17 +434,20 @@ kubectl logs -n sbd-system -l app=sbd-agent | grep -i error
 **Symptoms**: Pods in `Pending` or `CrashLoopBackOff` state
 
 **Diagnosis**:
+
 ```bash
 kubectl describe pods -n sbd-system
 kubectl logs -n sbd-system <pod-name>
 ```
 
 **Common Causes**:
+
 - **Insufficient privileges**: Ensure SecurityContextConstraints (OpenShift) or PodSecurityPolicy
 - **Missing watchdog device**: Check if `/dev/watchdog` exists on nodes
 - **Resource constraints**: Verify node resources and limits
 
 **Solutions**:
+
 ```bash
 # For OpenShift - check SCC
 oc get scc sbd-agent-scc
@@ -437,6 +464,7 @@ kubectl describe node <node-name>
 **Symptoms**: Logs showing "failed to open watchdog device"
 
 **Diagnosis**:
+
 ```bash
 # Check available watchdog devices on nodes
 kubectl debug node/<node-name> -- ls -la /dev/watchdog*
@@ -446,6 +474,7 @@ kubectl debug node/<node-name> -- dmesg | grep -i watchdog
 ```
 
 **Solutions**:
+
 - **Hardware watchdog**: Ensure hardware watchdog is enabled in BIOS/UEFI
 - **Software fallback**: The agent will automatically try to load `softdog` module
 - **Custom path**: Update `sbdWatchdogPath` if watchdog is at non-standard location
@@ -455,6 +484,7 @@ kubectl debug node/<node-name> -- dmesg | grep -i watchdog
 **Symptoms**: I/O errors or coordination failures
 
 **Diagnosis**:
+
 ```bash
 # Check storage connectivity
 kubectl logs -n sbd-system -l app=sbd-agent | grep -i "sbd device"
@@ -464,6 +494,7 @@ kubectl logs -n sbd-system -l app=sbd-agent | grep -i "coordination strategy"
 ```
 
 **Solutions**:
+
 - **File locking**: Ensure storage supports POSIX file locking
 - **Permissions**: Verify read/write access to shared storage
 - **Network**: Check network connectivity to storage backend
@@ -473,6 +504,7 @@ kubectl logs -n sbd-system -l app=sbd-agent | grep -i "coordination strategy"
 **Symptoms**: Logs showing "all preferred slots are occupied"
 
 **Diagnosis**:
+
 ```bash
 # Check number of active nodes
 kubectl get nodes
@@ -482,6 +514,7 @@ kubectl get sbdconfig -o yaml | grep staleNodeTimeout
 ```
 
 **Solutions**:
+
 - **Reduce timeout**: Lower `staleNodeTimeout` for faster cleanup
 - **Manual cleanup**: Remove stale node entries if needed
 - **Scale considerations**: SBD supports up to 255 nodes per cluster
@@ -512,6 +545,7 @@ resources:
 ### Privileges Required
 
 The SBD agent requires elevated privileges for:
+
 - **Watchdog access**: Direct hardware device access
 - **System reboot**: Ability to trigger node reboot
 - **Shared storage**: Access to block devices
@@ -519,6 +553,7 @@ The SBD agent requires elevated privileges for:
 ### OpenShift Security
 
 For OpenShift, the agent uses SecurityContextConstraints:
+
 ```yaml
 # Automatically created by OpenShift installer
 apiVersion: security.openshift.io/v1
@@ -582,6 +617,7 @@ spec:
 ### With Grafana Dashboard
 
 Key metrics to visualize:
+
 - Node health status over time
 - Watchdog pet success rate
 - Storage I/O error trends
@@ -613,6 +649,7 @@ groups:
 ## API Reference
 
 For complete API documentation, see:
+
 - [SBDConfig API Types](../api/v1alpha1/sbdconfig_types.go)
 - [Generated CRD](../config/crd/bases/medik8s.medik8s.io_sbdconfigs.yaml)
 - [Sample Configurations](../config/samples/)
@@ -622,4 +659,4 @@ For complete API documentation, see:
 - [SBD Coordination Strategies](sbd-coordination-strategies.md)
 - [SBD Agent Prometheus Metrics](sbd-agent-prometheus-metrics.md)
 - [Design Documentation](design.md)
-- [OpenShift Configuration](../config/openshift/README.md) 
+- [OpenShift Configuration](../config/openshift/README.md)
