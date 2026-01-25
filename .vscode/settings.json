@@ -1,3 +1,12 @@
 {
-    "makefile.configureOnOpen": false
+    "makefile.configureOnOpen": false,
+    "cSpell.words": [
+        "cephfs",
+        "Gluster",
+        "glusterfs",
+        "kustomization",
+        "medik",
+        "sbdconfig",
+        "STONITH"
+    ]
 }
