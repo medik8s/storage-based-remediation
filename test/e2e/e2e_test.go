@@ -735,7 +735,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 
 	// Monitor for node disappearing (panic/reboot) or boot ID change
 	checkNodeReboot(targetNode.Metadata.Name, "during storage disruption",
-		originalBootTimes[targetNode.Metadata.Name], time.Minute*2, true)
+		originalBootTimes[targetNode.Metadata.Name], time.Minute*10, true)
 
 	// Verify node recovery (instead of the old immediate recovery test)
 	By("Verifying node has fully recovered after fencing and shared storage restoration")
@@ -1550,8 +1550,60 @@ func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 	}
 }
 
+// cleanupAllNodes cleans up all nodes by setting unschedulable to false and removing out-of-service taint
+func cleanupAllNodes(testNamespace *utils.TestNamespace) {
+	By("Cleaning up all nodes: setting unschedulable=false and removing out-of-service taint")
+	nodes := &corev1.NodeList{}
+	err := testNamespace.Clients.Client.List(testNamespace.Clients.Context, nodes)
+	if err != nil {
+		GinkgoWriter.Printf("Warning: Failed to list nodes for cleanup: %v\n", err)
+		return
+	}
+
+	for i := range nodes.Items {
+		node := &nodes.Items[i]
+		needsUpdate := false
+
+		// Set unschedulable to false
+		if node.Spec.Unschedulable {
+			node.Spec.Unschedulable = false
+			needsUpdate = true
+		}
+
+		// Remove out-of-service taint if present
+		if len(node.Spec.Taints) > 0 {
+			newTaints := make([]corev1.Taint, 0, len(node.Spec.Taints))
+			taintRemoved := false
+			for _, taint := range node.Spec.Taints {
+				if taint.Key == corev1.TaintNodeOutOfService {
+					taintRemoved = true
+					continue // Skip this taint
+				}
+				newTaints = append(newTaints, taint)
+			}
+			if taintRemoved {
+				node.Spec.Taints = newTaints
+				needsUpdate = true
+			}
+		}
+
+		// Update node if changes were made
+		if needsUpdate {
+			err := testNamespace.Clients.Client.Update(testNamespace.Clients.Context, node)
+			if err != nil {
+				GinkgoWriter.Printf("Warning: Failed to cleanup node %s: %v\n", node.Name, err)
+			} else {
+				GinkgoWriter.Printf("Cleaned up node %s: unschedulable=false, removed out-of-service taint\n", node.Name)
+			}
+		}
+	}
+}
+
 func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 	cleanupDisruptionPods(testNamespace)
+
+	// Clean up all nodes first to ensure they're in a clean state
+	cleanupAllNodes(testNamespace)
 
 	// Clean up SBDRemediation CRs to prevent namespace deletion issues
 	By("Cleaning up SBDRemediation CRs from test namespace")

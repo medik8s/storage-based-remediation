@@ -24,7 +24,7 @@ import (
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -140,6 +140,16 @@ var _ = Describe("SBDRemediation Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
+			workerNode := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "worker-2",
+				},
+			}
+			Expect(k8sClient.Create(ctx, workerNode)).To(Succeed())
+			DeferCleanup(func() {
+				Expect(k8sClient.Delete(ctx, workerNode)).To(Succeed())
+			})
+
 			By("Initial reconcile to add finalizer")
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: namespacedName,
@@ -202,6 +212,16 @@ var _ = Describe("SBDRemediation Controller", func() {
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
+				workerNode := &corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: resourceName,
+					},
+				}
+				Expect(k8sClient.Create(ctx, workerNode)).To(Succeed())
+				DeferCleanup(func() {
+					Expect(k8sClient.Delete(ctx, workerNode)).To(Succeed())
+				})
+
 				By("Reconciling the resource multiple times")
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: namespacedName,
@@ -236,6 +256,16 @@ var _ = Describe("SBDRemediation Controller", func() {
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+				workerNode := &corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "worker-4",
+					},
+				}
+				Expect(k8sClient.Create(ctx, workerNode)).To(Succeed())
+				DeferCleanup(func() {
+					Expect(k8sClient.Delete(ctx, workerNode)).To(Succeed())
+				})
 
 				By("Reconciling the resource multiple times")
 				for i := 0; i < 3; i++ {
