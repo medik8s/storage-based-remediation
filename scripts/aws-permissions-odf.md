@@ -5,6 +5,7 @@ The `setup-odf-storage` tool requires specific AWS IAM permissions to automatica
 ## Overview
 
 When deploying ODF on AWS clusters, the tool can automatically:
+
 - Analyze existing worker node storage capacity
 - Provision additional EBS volumes if needed
 - Attach volumes to worker nodes
@@ -156,6 +157,7 @@ For production environments, restrict access to specific clusters and resources:
 ## Setup Options
 
 ### Option 1: IAM User with Policy (Development)
+
 1. Create an IAM user for ODF operations
 2. Attach the ODF storage policy to the user
 3. Generate access keys
@@ -175,6 +177,7 @@ aws iam create-access-key --user-name odf-storage-user
 ```
 
 ### Option 2: IAM Role (Production Recommended)
+
 1. Create an IAM role with the ODF storage policy
 2. Attach the role to OpenShift cluster nodes using instance profiles
 
@@ -197,6 +200,7 @@ aws iam add-role-to-instance-profile \
 ```
 
 ### Option 3: IRSA (OpenShift Service Account)
+
 For OpenShift clusters with IAM Roles for Service Accounts (IRSA):
 
 ```bash
@@ -242,14 +246,17 @@ aws ec2 attach-volume \
 ### Common Error Messages
 
 #### "UnauthorizedOperation: You are not authorized to perform this operation"
+
 - **Cause**: Missing IAM permissions
 - **Solution**: Attach the required IAM policy to your user/role
 
 #### "InvalidVolume.NotFound"
+
 - **Cause**: Normal during dry-run testing
 - **Solution**: No action needed - this is expected behavior
 
 #### "InvalidInstanceID.NotFound"
+
 - **Cause**: Testing with non-existent instance IDs
 - **Solution**: No action needed during testing
 
@@ -263,6 +270,7 @@ The tool performs the following permission checks:
 4. **IAM Read**: Tests identity retrieval (optional)
 
 If any permission check fails, the tool will:
+
 - Display the specific permission error
 - Generate the complete required IAM policy
 - Exit without making changes
@@ -272,11 +280,13 @@ If any permission check fails, the tool will:
 The tool differentiates between:
 
 **Input Errors** (User Configuration):
+
 - Invalid storage sizes
 - Unsupported volume types
 - Missing required flags
 
 **Permission Errors** (AWS IAM):
+
 - Missing EC2 permissions
 - Insufficient KMS access
 - Invalid AWS credentials
@@ -288,7 +298,7 @@ Permission errors include the complete IAM policy needed to resolve the issue.
 ### Volume Types and IOPS
 
 | Volume Type | Default IOPS | Max IOPS | Use Case |
-|-------------|--------------|----------|----------|
+| ----------- | ------------ | -------- | -------- |
 | gp3 (default) | 3,000 | 16,000 | Balanced performance |
 | gp2 | 100-3,000 | 3,000 | General purpose |
 | io1 | User-defined | 64,000 | High IOPS requirements |
@@ -297,11 +307,13 @@ Permission errors include the complete IAM policy needed to resolve the issue.
 ### Storage Sizing
 
 The tool calculates required storage per node:
+
 - Total storage size ÷ replica count
 - Adds 20% overhead for metadata
 - Minimum 100GB per node
 
 Example for 2Ti cluster with 3 replicas:
+
 - Per node: 2048GB ÷ 3 = 682GB
 - With overhead: 682GB × 1.2 = 819GB
 - Rounded to 820GB per node
@@ -309,16 +321,19 @@ Example for 2Ti cluster with 3 replicas:
 ## Security Best Practices
 
 ### Principle of Least Privilege
+
 - Use the restrictive policy for production
 - Limit permissions to specific clusters
 - Use resource-based conditions
 
 ### Encryption
+
 - Enable EBS encryption: `--enable-encryption`
 - Use customer-managed KMS keys: `--aws-kms-key=alias/my-key`
 - Rotate access keys regularly
 
 ### Monitoring
+
 - Enable CloudTrail for API auditing
 - Monitor volume creation/attachment events
 - Set up alerts for unusual activity
@@ -326,17 +341,21 @@ Example for 2Ti cluster with 3 replicas:
 ## Integration with ODF
 
 ### Storage Class Configuration
+
 The tool creates EBS volumes that ODF uses for:
+
 - Ceph OSD storage
 - Metadata storage
 - WAL (Write-Ahead Log) storage
 
 ### Volume Management
+
 - Volumes are tagged for identification
 - Automatic cleanup on cluster deletion
 - Supports volume expansion
 
 ### High Availability
+
 - Distributes storage across multiple AZs
 - Replication handled by Ceph
 - Automatic failover capabilities
@@ -344,14 +363,17 @@ The tool creates EBS volumes that ODF uses for:
 ## Troubleshooting Common Issues
 
 ### "Insufficient storage on nodes"
+
 - **Solution**: Tool will automatically provision additional volumes
 - **Manual**: Add `--storage-size` parameter to increase allocation
 
 ### "Volume attachment failed"
+
 - **Cause**: Instance may not support additional volumes
 - **Solution**: Check instance type limits and available device names
 
 ### "KMS key access denied"
+
 - **Cause**: Missing KMS permissions or invalid key
 - **Solution**: Verify KMS policy and key availability
 
@@ -360,4 +382,4 @@ The tool creates EBS volumes that ODF uses for:
 - [SBD Operator User Guide](../docs/sbdconfig-user-guide.md)
 - [OpenShift Data Foundation Documentation](https://access.redhat.com/documentation/en-us/red_hat_openshift_data_foundation)
 - [AWS EBS Volume Types](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-volume-types.html)
-- [AWS IAM Best Practices](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html) 
+- [AWS IAM Best Practices](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html)

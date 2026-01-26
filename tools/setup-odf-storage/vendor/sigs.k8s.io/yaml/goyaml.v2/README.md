@@ -6,7 +6,7 @@ kubernetes, such as small bug fixes and regressions. Larger, general-purpose fea
 should be made in the upstream go-yaml library, and we will reject such changes in this fork
 unless we are pulling them from upstream.
 
-This fork is based on v2.4.0: https://github.com/go-yaml/yaml/releases/tag/v2.4.0
+This fork is based on v2.4.0: <https://github.com/go-yaml/yaml/releases/tag/v2.4.0>
 
 # YAML support for the Go language
 
@@ -41,19 +41,17 @@ API documentation
 
 If opened in a browser, the import path itself leads to the API documentation:
 
-  * [https://gopkg.in/yaml.v2](https://gopkg.in/yaml.v2)
+* [https://gopkg.in/yaml.v2](https://gopkg.in/yaml.v2)
 
 API stability
 -------------
 
 The package API for yaml v2 will remain stable as described in [gopkg.in](https://gopkg.in).
 
-
 License
 -------
 
 The yaml package is licensed under the Apache License 2.0. Please see the LICENSE file for details.
-
 
 Example
 -------
@@ -140,4 +138,3 @@ b:
   - 3
   - 4
 ```
-

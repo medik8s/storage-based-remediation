@@ -15,12 +15,14 @@ This directory contains standalone tests that validate node self-fencing mechani
 ## Test Overview
 
 ### 1. Panic Reboot Test (`panic-reboot-test.go`)
+
 - **Purpose**: Validates that Go panic() can trigger node reboot
 - **Method**: Calls `panic()` after a configurable delay
 - **Expected Result**: Node reboots immediately when panic occurs
 - **Use Case**: Tests panic-based self-fencing mechanism
 
 ### 2. Watchdog Reboot Test (`watchdog-reboot-test.go`)
+
 - **Purpose**: Validates that watchdog timeout can trigger node reboot
 - **Method**: Opens `/dev/watchdog`, pets it several times, then stops
 - **Expected Result**: Node reboots when watchdog timeout expires
@@ -41,6 +43,7 @@ This directory contains standalone tests that validate node self-fencing mechani
 ## Prerequisites
 
 ### Environment Requirements
+
 - **Isolated test environment** (not production!)
 - OpenShift/Kubernetes cluster
 - Cluster admin permissions
@@ -48,6 +51,7 @@ This directory contains standalone tests that validate node self-fencing mechani
 - Podman installed for building and pushing container images
 
 ### Node Requirements
+
 - `/dev/watchdog` device available (for watchdog test)
 - Kernel watchdog functionality enabled
 - Privileged containers allowed
@@ -71,6 +75,7 @@ podman push your-registry.com/sbd-destructive-tests:latest
 ### 2. Update Manifests
 
 Edit the YAML files and update:
+
 - `TARGET_NODE_NAME_HERE` → actual node name to test
 - Image references to point to your registry
 
@@ -143,14 +148,16 @@ kubectl get events --sort-by='.lastTimestamp' -w
 
 ### Expected Behavior
 
-#### Panic Test Timeline:
+#### Panic Test Timeline
+
 1. **T+0s**: Pod starts, shows 30-second countdown
 2. **T+30s**: Triggers `panic()`
 3. **T+30s**: Node begins reboot process
 4. **T+30-90s**: Node becomes `NotReady`
 5. **T+2-5min**: Node reboots and becomes `Ready` again
 
-#### Watchdog Test Timeline:
+#### Watchdog Test Timeline
+
 1. **T+0s**: Pod starts, shows 30-second countdown
 2. **T+30s**: Opens `/dev/watchdog` (activates watchdog)
 3. **T+30-60s**: Pets watchdog 10 times over 30 seconds
@@ -176,22 +183,26 @@ oc debug node/TARGET_NODE_NAME -- chroot /host dmesg | grep -i "reboot\|panic\|w
 ### Common Issues
 
 #### "Pod stays in Pending state"
+
 - Check node selector matches actual node name
 - Verify node is schedulable: `kubectl get nodes`
 - Check tolerations if node has taints
 
 #### "Permission denied accessing /dev/watchdog"
+
 - Ensure `privileged: true` in securityContext
 - Verify `hostPath` volume mounts are correct
 - Check if watchdog device exists on host
 
 #### "Node doesn't reboot"
+
 - For panic test: Check if container has proper capabilities
 - For watchdog test: Verify `/dev/watchdog` exists and is functional
 - Check system logs: `dmesg | grep watchdog`
 - Some virtualized environments may not support hardware watchdog
 
 #### "Test binary not found"
+
 - If using custom image, ensure build completed successfully
 - Check image pull policy and registry access
 - Verify Dockerfile builds binaries correctly
@@ -252,4 +263,4 @@ When modifying these tests:
 
 These are **destructive tests** intended for validation only. For production SBD operator issues, see the main project documentation.
 
-**Remember: These tests WILL reboot nodes. Use with extreme caution!** 
+**Remember: These tests WILL reboot nodes. Use with extreme caution!**
