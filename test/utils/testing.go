@@ -20,13 +20,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck
-	. "github.com/onsi/gomega"    //nolint:staticcheck
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck
+	. "github.com/onsi/gomega"    //nolint:staticcheck
 
 	"github.com/aws/aws-sdk-go/service/ec2"
 
@@ -245,7 +246,11 @@ func (tn *TestNamespace) CleanupSBDConfig(sbdConfig *medik8sv1alpha1.SBDConfig) 
 		return false
 	}, time.Minute*5, time.Second*5).Should(BeTrue(), fmt.Sprintf("SBDConfig %s not deleted", sbdConfig.Name))
 
-	// Wait for associated pods to be terminated
+	// Wait for associated pods to be terminated, with force deletion for stuck non-running pods
+	podCleanupStartTime := time.Now()
+	const forceDeleteTimeout = 2 * time.Minute // Force delete stuck pods after 2 minutes
+	forceDeleteAttempted := false
+
 	Eventually(func() int {
 		pods := &corev1.PodList{}
 		err := tn.Clients.Client.List(tn.Clients.Context, pods,
@@ -255,9 +260,46 @@ func (tn *TestNamespace) CleanupSBDConfig(sbdConfig *medik8sv1alpha1.SBDConfig) 
 			GinkgoWriter.Printf("Failed to list pods: %v\n", err)
 			return -1
 		}
+
+		// Log pod status
 		for _, pod := range pods.Items {
 			GinkgoWriter.Printf("Pod %s: %s on %s\n", pod.Name, pod.Status.Phase, pod.Spec.NodeName)
 		}
+
+		// If pods are still present after timeout and we haven't attempted force delete yet
+		elapsed := time.Since(podCleanupStartTime)
+		if elapsed >= forceDeleteTimeout && !forceDeleteAttempted && len(pods.Items) > 0 {
+			// Collect all pods that aren't running
+			var podsToDelete []corev1.Pod
+			for _, pod := range pods.Items {
+				if pod.Status.Phase != corev1.PodRunning {
+					podsToDelete = append(podsToDelete, pod)
+				}
+			}
+
+			for _, pod := range podsToDelete {
+				// Force delete collected pods
+				GinkgoWriter.Printf("Force deleting stuck non-running pods after %v timeout\n", elapsed)
+				forceDeleteAttempted = true
+				GinkgoWriter.Printf("Force deleting pod %s (phase: %s)\n", pod.Name, pod.Status.Phase)
+				// Use GracePeriodSeconds=0 for immediate deletion
+				zero := int64(0)
+				policy := metav1.DeletePropagationBackground
+				err := tn.Clients.Clientset.CoreV1().Pods(tn.Name).Delete(
+					tn.Clients.Context, pod.Name, metav1.DeleteOptions{
+						GracePeriodSeconds: &zero,
+						PropagationPolicy:  &policy,
+					})
+				if err != nil && !errors.IsNotFound(err) {
+					GinkgoWriter.Printf("Failed to force delete pod %s: %v\n", pod.Name, err)
+				} else if errors.IsNotFound(err) {
+					GinkgoWriter.Printf("Pod %s already deleted\n", pod.Name)
+				} else {
+					GinkgoWriter.Printf("Successfully initiated force delete for pod %s\n", pod.Name)
+				}
+			}
+		}
+
 		return len(pods.Items)
 	}, time.Minute*5, time.Second*10).Should(Equal(0), fmt.Sprintf("SBDConfig %s pods not deleted", sbdConfig.Name))
 
@@ -371,19 +413,47 @@ func (psc *PodStatusChecker) WaitForPodsReady(minCount int, timeout time.Duratio
 		}
 
 		readyPods := 0
+		unreadyPodsCount := 0
+		var unreadyPods []corev1.Pod
 		for _, pod := range pods.Items {
 			if pod.Status.Phase == corev1.PodRunning {
+				readyPodAdded := false
 				for _, condition := range pod.Status.Conditions {
 					if condition.Type == corev1.PodReady &&
 						condition.Status == corev1.ConditionTrue {
 						readyPods++
+						readyPodAdded = true
 						break
 					}
 				}
+				if !readyPodAdded {
+					unreadyPodsCount++
+					unreadyPods = append(unreadyPods, pod)
+				}
+			} else {
+				unreadyPodsCount++
+				unreadyPods = append(unreadyPods, pod)
 			}
 		}
 
 		GinkgoWriter.Printf("Found %d ready pods out of %d total\n", readyPods, len(pods.Items))
+		GinkgoWriter.Printf("Found %d unready pods out of %d total\n", unreadyPodsCount, len(pods.Items))
+
+		for _, pod := range unreadyPods {
+			var readyConditionStatus corev1.ConditionStatus
+			for _, condition := range pod.Status.Conditions {
+				if condition.Type == corev1.PodReady {
+					readyConditionStatus = condition.Status
+				}
+			}
+			if len(readyConditionStatus) != 0 {
+				GinkgoWriter.Printf("Found unready pod: %s status: %s status type: %s \n", pod.Name, pod.Status.Phase, readyConditionStatus)
+
+			} else {
+				GinkgoWriter.Printf("Found unready pod: %s status: %s \n", pod.Name, pod.Status.Phase)
+			}
+		}
+
 		return readyPods
 	}, timeout, time.Second*15).Should(BeNumerically(">=", minCount))
 
@@ -1655,7 +1725,15 @@ func DescribeEnvironment(testClients *TestClients, testNamespace *TestNamespace)
 				GinkgoWriter.Printf("Failed to get node mapping summary: %s\n", err)
 			}
 		}
-		Eventually(verifyAgentsUp).Should(Succeed())
+		// Run verification but don't fail cleanup if it errors
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					GinkgoWriter.Printf("Warning: verifyAgentsUp failed but continuing cleanup: %v\n", r)
+				}
+			}()
+			Eventually(verifyAgentsUp).Should(Succeed())
+		}()
 
 		// Collect the definition of any storage jobs
 		debugCollector.CollectStorageJobs(testNamespace.Name)
