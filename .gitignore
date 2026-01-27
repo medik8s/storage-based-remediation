@@ -60,9 +60,6 @@ sbd-device-debug.txt
 sbd-device.txt
 sbd-node-mapping.txt
 node-mapping-debug.txt
-<<<<<<< HEAD
 
 # cSpell configuration (personal word list)
 cspell.json
-=======
->>>>>>> 796954c (Fix markdown linting issues and update documentation)
