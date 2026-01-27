@@ -15,6 +15,7 @@ The `blockdevice` package provides utilities for interacting with raw block devi
 ### Types
 
 #### `Device`
+
 Represents a raw block device that can be read from and written to.
 
 ```go
@@ -26,56 +27,72 @@ type Device struct {
 ### Functions
 
 #### `Open(path string) (*Device, error)`
+
 Opens a raw block device at the specified path for read/write operations.
 
 **Parameters:**
+
 - `path`: The filesystem path to the block device (e.g., "/dev/sdb1")
 
 **Returns:**
+
 - `*Device`: A new Device instance if successful
 - `error`: An error if the device cannot be opened
 
 #### `(*Device) ReadAt(p []byte, off int64) (n int, err error)`
+
 Reads len(p) bytes from the device starting at byte offset off. Implements `io.ReaderAt`.
 
 **Parameters:**
+
 - `p`: The buffer to read data into
 - `off`: The byte offset from the beginning of the device to start reading
 
 **Returns:**
+
 - `n`: The number of bytes actually read
 - `err`: An error if the read operation fails
 
 #### `(*Device) WriteAt(p []byte, off int64) (n int, err error)`
+
 Writes len(p) bytes to the device starting at byte offset off. Implements `io.WriterAt`.
 
 **Parameters:**
+
 - `p`: The data to write to the device
 - `off`: The byte offset from the beginning of the device to start writing
 
 **Returns:**
+
 - `n`: The number of bytes actually written
 - `err`: An error if the write operation fails
 
 #### `(*Device) Sync() error`
+
 Flushes any buffered writes to the underlying storage device.
 
 **Returns:**
+
 - `error`: An error if the sync operation fails
 
 #### `(*Device) Close() error`
+
 Closes the block device and releases any associated resources.
 
 **Returns:**
+
 - `error`: An error if the close operation fails
 
 #### `(*Device) Path() string`
+
 Returns the filesystem path of the block device.
 
 #### `(*Device) IsClosed() bool`
+
 Returns true if the device has been closed.
 
 #### `(*Device) String() string`
+
 Returns a string representation of the Device for debugging purposes.
 
 ## Usage Examples
@@ -189,7 +206,7 @@ func concurrentSBDOperations(devicePath string) error {
                 log.Printf("Write failed for goroutine %d: %v", id, err)
                 return
             }
-            
+
             // Read operation
             buf := make([]byte, len(data))
             if _, err := device.ReadAt(buf, offset); err != nil {
@@ -207,17 +224,20 @@ func concurrentSBDOperations(devicePath string) error {
 ## Important Considerations
 
 ### SBD Operations
+
 - **Synchronous I/O**: The package opens devices with `O_SYNC` flag, ensuring writes are immediately committed to storage
 - **Data Integrity**: Always call `Sync()` after critical writes to guarantee data persistence
 - **Error Handling**: Check all return values; partial writes are treated as errors
 - **Device Permissions**: Ensure proper permissions to access block devices (typically requires root or specific group membership)
 
 ### Performance
+
 - **Direct Access**: Operations bypass filesystem caches for maximum reliability
 - **Positioned I/O**: `ReadAt` and `WriteAt` don't affect file position, enabling concurrent access
 - **Synchronous Writes**: Write performance is slower due to `O_SYNC`, but provides data integrity guarantees
 
 ### Security
+
 - **Privileged Access**: Block device operations typically require elevated privileges
 - **Data Safety**: Always validate offsets and data sizes to prevent corruption
 - **Resource Management**: Always close devices to prevent resource leaks
@@ -239,11 +259,13 @@ go test ./pkg/blockdevice -bench=. -benchmem
 ## Error Handling
 
 All operations return detailed errors that include:
+
 - The device path for context
 - The specific operation that failed
 - The underlying system error
 
 Example error messages:
+
 - `failed to open block device "/dev/sdb1": permission denied`
 - `failed to write to device "/dev/sdb1" at offset 1024: input/output error`
 - `device "/dev/sdb1" is closed`
@@ -251,14 +273,16 @@ Example error messages:
 ## Thread Safety
 
 The `Device` type is safe for concurrent use:
+
 - `ReadAt` and `WriteAt` operations are thread-safe
 - Multiple goroutines can perform positioned I/O concurrently
 - `Sync()` and `Close()` operations are also thread-safe
 
 However, be cautious about:
+
 - Closing a device while other operations are in progress
 - Coordinating writes to overlapping regions between goroutines
 
 ## License
 
-This package is part of the SBD Operator project and is licensed under the Apache License 2.0. 
+This package is part of the SBD Operator project and is licensed under the Apache License 2.0.

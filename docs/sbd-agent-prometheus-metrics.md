@@ -5,9 +5,11 @@ The SBD Agent now exposes Prometheus metrics to provide observability into its h
 ## Metrics Configuration
 
 ### Command Line Flag
+
 - `--metrics-port`: Port for Prometheus metrics endpoint (default: 8080)
 
 ### Environment Variables
+
 The metrics port can also be configured through environment variables if needed in the deployment configuration.
 
 ## Available Metrics
@@ -15,29 +17,34 @@ The metrics port can also be configured through environment variables if needed 
 ### Agent Health Metrics
 
 #### `sbd_agent_status_healthy` (Gauge)
+
 - **Description**: Overall SBD Agent health status
-- **Values**: 
+- **Values**:
   - `1` = Agent is healthy (watchdog accessible, SBD device working)
   - `0` = Agent is unhealthy (watchdog failures, SBD device issues)
 - **Usage**: Monitor overall agent health for alerting
 
 #### `sbd_watchdog_pets_total` (Counter)
+
 - **Description**: Total number of successful watchdog pets
 - **Usage**: Track watchdog activity and detect pet failures
 
 #### `sbd_self_fenced_total` (Counter)
+
 - **Description**: Total number of self-fence operations initiated by this agent
 - **Usage**: Monitor critical self-fencing events
 
 ### SBD Device Metrics
 
 #### `sbd_device_io_errors_total` (Counter)
+
 - **Description**: Total I/O errors when interacting with the shared SBD device
 - **Usage**: Monitor SBD device health and detect storage issues
 
 ### Cluster Status Metrics
 
 #### `sbd_peer_status` (GaugeVec)
+
 - **Description**: Current liveness status of peer nodes in the cluster
 - **Labels**:
   - `node_id`: Numeric ID of the peer node (1-255)
@@ -51,12 +58,14 @@ The metrics port can also be configured through environment variables if needed 
 ## Metrics Endpoint
 
 The metrics are exposed via HTTP at:
-```
+
+```text
 http://localhost:8080/metrics
 ```
 
 ### Example Output
-```
+
+```yaml
 # HELP sbd_agent_status_healthy SBD Agent health status (1 = healthy, 0 = unhealthy)
 # TYPE sbd_agent_status_healthy gauge
 sbd_agent_status_healthy 1
@@ -140,6 +149,7 @@ kubectl get servicemonitor -n sbd-system
 ## Prometheus Configuration
 
 ### Manual Scrape Configuration
+
 Add this to your Prometheus configuration to scrape SBD Agent metrics:
 
 ```yaml
@@ -152,6 +162,7 @@ scrape_configs:
 ```
 
 ### Kubernetes ServiceMonitor
+
 For Kubernetes deployments with the Prometheus Operator, the ServiceMonitor in `deploy/sbd-agent-metrics.yaml` provides:
 
 - **Automatic Discovery**: Prometheus automatically discovers SBD Agent pods
@@ -205,6 +216,7 @@ groups:
 ## Troubleshooting
 
 ### Check Metrics Availability
+
 ```bash
 # Test metrics endpoint from within the cluster
 kubectl exec -n sbd-system <sbd-agent-pod> -- curl -s http://localhost:8080/metrics
@@ -215,6 +227,7 @@ curl http://localhost:8080/metrics
 ```
 
 ### Verify ServiceMonitor Discovery
+
 ```bash
 # Check if Prometheus discovered the ServiceMonitor
 kubectl get servicemonitor -n sbd-system sbd-agent -o yaml
@@ -232,6 +245,7 @@ kubectl get servicemonitor -n sbd-system sbd-agent -o yaml
 ## Implementation Details
 
 ### Metrics Updates
+
 - **Agent Health**: Updated when watchdog pet succeeds/fails and SBD device operations succeed/fail
 - **Watchdog Pets**: Incremented on each successful watchdog pet
 - **I/O Errors**: Incremented on any SBD device read/write failure
@@ -239,7 +253,9 @@ kubectl get servicemonitor -n sbd-system sbd-agent -o yaml
 - **Self-Fence**: Incremented when self-fencing is initiated
 
 ### Thread Safety
+
 All metrics are thread-safe and can be updated from multiple goroutines (watchdog loop, SBD device loop, heartbeat loop, peer monitor loop).
 
 ### Graceful Shutdown
-The metrics HTTP server is gracefully shut down when the SBD Agent stops, with a 5-second timeout. 
+
+The metrics HTTP server is gracefully shut down when the SBD Agent stops, with a 5-second timeout.

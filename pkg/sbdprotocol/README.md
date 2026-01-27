@@ -5,6 +5,7 @@ The `sbdprotocol` package implements the SBD (Storage-Based Death) protocol mess
 ## Overview
 
 The SBD protocol is used for cluster node fencing and health monitoring. It supports two main message types:
+
 - **Heartbeat Messages**: Indicate that a node is alive and functioning
 - **Fence Messages**: Request that a specific node be fenced (shut down)
 
@@ -20,6 +21,7 @@ The SBD protocol is used for cluster node fencing and health monitoring. It supp
 ## Message Format
 
 ### SBD Message Header (33 bytes)
+
 ```
 +--------+--------+------+--------+-----------+----------+----------+
 | Magic  | Version| Type | NodeID | Timestamp | Sequence | Checksum |
@@ -28,6 +30,7 @@ The SBD protocol is used for cluster node fencing and health monitoring. It supp
 ```
 
 ### Fence Message (36 bytes total)
+
 ```
 +--------+--------+------+--------+-----------+----------+----------+--------+--------+
 | Header (33 bytes)                                                  | Target | Reason |
@@ -156,16 +159,19 @@ func main() {
 ## Constants
 
 ### Message Types
+
 - `SBD_MSG_TYPE_HEARTBEAT` (0x01): Heartbeat message
 - `SBD_MSG_TYPE_FENCE` (0x02): Fence message
 
 ### Fence Reasons
+
 - `FENCE_REASON_HEARTBEAT_TIMEOUT` (0x01): Fencing due to missed heartbeats
 - `FENCE_REASON_MANUAL` (0x02): Manual fencing request
 - `FENCE_REASON_SPLIT_BRAIN` (0x03): Fencing due to split-brain detection
 - `FENCE_REASON_RESOURCE_CONFLICT` (0x04): Fencing due to resource conflicts
 
 ### Protocol Constants
+
 - `SBD_MAGIC`: Magic string "SBDMSG01" for message identification
 - `SBD_HEADER_SIZE`: Size of message header (33 bytes)
 - `SBD_SLOT_SIZE`: Size of a single SBD slot on device (512 bytes)
@@ -194,6 +200,7 @@ reasonName := sbdprotocol.GetFenceReasonName(reason)
 ## Performance
 
 Based on benchmark results on Apple M1 Pro:
+
 - **Marshal**: ~269 ns/op, 152 B/op, 9 allocs/op
 - **Unmarshal**: ~296 ns/op, 136 B/op, 9 allocs/op
 - **Checksum**: ~122 ns/op, 0 B/op, 0 allocs/op
@@ -202,6 +209,7 @@ Based on benchmark results on Apple M1 Pro:
 ## Error Handling
 
 The package provides detailed error messages for various failure conditions:
+
 - Invalid magic string
 - Checksum validation failures
 - Data too short for message type
@@ -217,12 +225,14 @@ All functions in this package are thread-safe and can be called concurrently fro
 ## Integration with SBD Agent
 
 This package is designed to be used by the SBD Agent for:
+
 1. Creating heartbeat messages to write to shared storage
 2. Reading and validating messages from other nodes
 3. Creating fence requests when node failures are detected
 4. Parsing fence requests directed at the local node
 
 Example integration:
+
 ```go
 // In SBD Agent - sending heartbeat
 nodeID := getCurrentNodeID()
@@ -239,4 +249,4 @@ message, err := sbdprotocol.UnmarshalHeartbeat(data)
 if err == nil {
     updateNodeStatus(otherNodeID, message.Header.Timestamp)
 }
-``` 
+```

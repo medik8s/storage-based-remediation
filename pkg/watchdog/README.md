@@ -82,6 +82,7 @@ if wd.IsSoftdog() {
 ```
 
 Test mode is useful for:
+
 - **Development**: Testing watchdog logic without system resets
 - **CI/CD**: Running tests that involve watchdog functionality
 - **Debugging**: Observing watchdog behavior without consequences
@@ -99,6 +100,7 @@ The `NewWithSoftdogFallback` function implements intelligent fallback logic:
 5. **Device Creation**: Wait for `/dev/watchdog` to appear and open it
 
 The `NewWithSoftdogFallbackAndTestMode` function extends this behavior with test mode support:
+
 - **Test Mode Disabled** (default): `nsenter --target 1 --mount --uts --ipc --net --pid -- modprobe softdog soft_margin=60`
 - **Test Mode Enabled**: `nsenter --target 1 --mount --uts --ipc --net --pid -- modprobe softdog soft_margin=60 soft_noboot=1`
 
@@ -199,7 +201,7 @@ sudo go test ./pkg/watchdog -v -run TestLoadSoftdogModule_Integration
 
 - **Default Softdog Timeout**: 60 seconds
 - **Retry Configuration**: 2 retries with exponential backoff (50ms to 500ms)
-- **Module Load Command**: 
+- **Module Load Command**:
   - Normal mode: `nsenter --target 1 --mount --uts --ipc --net --pid -- modprobe softdog soft_margin=60`
   - Test mode: `nsenter --target 1 --mount --uts --ipc --net --pid -- modprobe softdog soft_margin=60 soft_noboot=1`
 
@@ -250,4 +252,4 @@ The package uses standard Linux watchdog ioctl commands:
 
 ## License
 
-Copyright 2025 - Licensed under the Apache License, Version 2.0 
+Copyright 2025 - Licensed under the Apache License, Version 2.0

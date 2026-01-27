@@ -1,4 +1,4 @@
-# IMAGE_REGISTRY used to indicate the registery/group for the operator, bundle and catalog
+# IMAGE_REGISTRY used to indicate the registry/group for the operator, bundle and catalog
 IMAGE_REGISTRY ?= quay.io/medik8s
 export IMAGE_REGISTRY
 

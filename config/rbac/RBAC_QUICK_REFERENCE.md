@@ -3,11 +3,13 @@
 ## Files Overview
 
 ### SBD Agent RBAC (Minimal Permissions)
+
 - `sbd_agent_service_account.yaml` - ServiceAccount for SBD Agent pods
 - `sbd_agent_role.yaml` - ClusterRole with read-only permissions
 - `sbd_agent_role_binding.yaml` - Binds ServiceAccount to ClusterRole
 
 ### SBD Operator RBAC (Orchestration Permissions)
+
 - `sbd_operator_service_account.yaml` - ServiceAccount for SBD Operator
 - `sbd_operator_role.yaml` - ClusterRole with management permissions
 - `sbd_operator_role_binding.yaml` - Binds ServiceAccount to ClusterRole
@@ -32,15 +34,17 @@ kubectl apply -f config/rbac/sbd_operator_role_binding.yaml
 ## Permission Summary
 
 ### SBD Agent Permissions (Read-Only)
+
 | Resource | Permissions | Purpose |
-|----------|-------------|---------|
+| -------- | ----------- | ------- |
 | `pods` | `get`, `list` | Read own pod metadata |
 | `nodes` | `get`, `list`, `watch` | Node name to ID mapping |
 | `events` | `create`, `patch` | Observability events |
 
 ### SBD Operator Permissions (Management)
+
 | Resource | Permissions | Purpose |
-|----------|-------------|---------|
+| -------- | ----------- | ------- |
 | `namespaces` | `create`, `get`, `list`, `patch`, `update`, `watch` | Namespace management |
 | `daemonsets` | `create`, `delete`, `get`, `list`, `patch`, `update`, `watch` | Agent deployment |
 | `nodes` | `get`, `list`, `watch` | Node information (read-only) |
@@ -67,11 +71,13 @@ kubectl auth can-i delete nodes --as=system:serviceaccount:sbd-system:sbd-operat
 ## Troubleshooting
 
 ### Common Issues
+
 1. **Permission Denied**: Verify ClusterRole and ClusterRoleBinding are applied
 2. **Wrong Namespace**: Ensure ServiceAccounts are in correct namespace (`sbd-system`)
 3. **Missing Resources**: Check if CRDs are installed before applying RBAC
 
 ### Debug Commands
+
 ```bash
 # List all SBD-related RBAC
 kubectl get clusterroles | grep sbd
@@ -93,4 +99,4 @@ kubectl describe clusterrolebinding sbd-operator-manager-rolebinding
 - ✅ **No Direct Node Fencing**: Neither component can delete/modify nodes via Kubernetes API
 - ✅ **Read-Only Node Access**: Both components only read node information
 - ✅ **Isolated Scope**: Permissions limited to SBD system resources
-- ✅ **Hardware-Based Fencing**: Actual fencing occurs via SBD block device, not API calls 
+- ✅ **Hardware-Based Fencing**: Actual fencing occurs via SBD block device, not API calls
