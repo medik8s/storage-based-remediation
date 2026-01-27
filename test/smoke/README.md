@@ -19,6 +19,7 @@ make test-smoke
 ```
 
 This will:
+
 1. Build and push operator and agent images
 2. Deploy the operator to the cluster
 3. Run all smoke tests
@@ -54,7 +55,7 @@ The smoke tests validate:
    - SBDRemediation resource handling
    - Integration with SBD protocol
 
-## Finalizer Considerations
+## Finalize Considerations
 
 The SBD Operator uses finalizers for proper cleanup of shared resources. This affects test behavior:
 
@@ -101,4 +102,4 @@ kubectl delete namespace sbd-operator-system
 - `CERT_MANAGER_INSTALL_SKIP`: Skip CertManager installation if already present
 - `QUAY_REGISTRY`: Container registry (default: localhost:5000)
 - `QUAY_ORG`: Registry organization (default: sbd-operator)
-- `TAG`: Image tag (default: smoke-test) 
+- `TAG`: Image tag (default: smoke-test)

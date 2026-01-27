@@ -14,6 +14,7 @@ The SBD Agent requires privileged access to hardware watchdog devices and block 
 ## Required Permissions
 
 The SCC grants the following permissions:
+
 - `allowPrivilegedContainer: true` - Required for hardware watchdog access
 - `allowHostDirVolumePlugin: true` - Required to mount host directories like `/dev`
 - `allowHostNetwork: true` - Required for network access
@@ -23,17 +24,20 @@ The SCC grants the following permissions:
 ## Installation
 
 ### Option 1: Using the OpenShift Installer
+
 ```bash
 make build-openshift-installer
 kubectl apply -f dist/install-openshift.yaml
 ```
 
 ### Option 2: Manual Installation
+
 ```bash
 kubectl apply -f config/openshift/
 ```
 
 ### Option 3: Using Kustomize
+
 ```bash
 kubectl apply -k config/openshift-default/
 ```
@@ -41,6 +45,7 @@ kubectl apply -k config/openshift-default/
 ## Service Account Binding
 
 The SCC is automatically bound to the `sbd-agent` service account in the `sbd-system` namespace through:
+
 1. A ClusterRole (`sbd-agent-scc-user`) that grants permission to use the SCC
 2. A ClusterRoleBinding that binds the service account to the ClusterRole
 3. Direct user reference in the SCC (`system:serviceaccount:sbd-system:sbd-agent`)
@@ -48,6 +53,7 @@ The SCC is automatically bound to the `sbd-agent` service account in the `sbd-sy
 ## Security Considerations
 
 The SBD Agent requires these elevated privileges because it needs to:
+
 - Access hardware watchdog devices (`/dev/watchdog*`)
 - Read/write SBD (STONITH Block Device) devices
 - Monitor system health and perform emergency reboots
@@ -60,21 +66,25 @@ These permissions are necessary for the SBD Agent to function as a cluster fenci
 If SBD Agent pods fail to start with permission errors:
 
 1. Verify the SCC is created:
+
    ```bash
    oc get scc sbd-agent-privileged
    ```
 
 2. Check if the service account can use the SCC:
+
    ```bash
    oc adm policy who-can use scc sbd-agent-privileged
    ```
 
 3. Verify the service account has the SCC assigned:
+
    ```bash
    oc describe scc sbd-agent-privileged
    ```
 
 4. Check pod security context:
+
    ```bash
    kubectl describe pod <sbd-agent-pod-name> -n sbd-system
-   ``` 
+   ```

@@ -24,22 +24,22 @@ The SBD Operator system consists of two main components with distinct security r
 **ServiceAccount**: `sbd-agent`
 **Role**: `sbd-agent-role` (ClusterRole)
 
-### Permissions Granted
+### Agent Permissions Granted
 
 | Resource | Verbs | Justification |
-|----------|-------|---------------|
+| -------- | ----- | ------------- |
 | `pods` | `get`, `list` | Read own pod information to determine node name and metadata |
 | `nodes` | `get`, `list`, `watch` | Read-only access to resolve node names to node IDs for SBD operations |
 | `events` | `create`, `patch` | Emit observability events for monitoring and debugging |
 
-### Permissions Explicitly NOT Granted
+### Agent Permissions Explicitly NOT Granted
 
 - ❌ **No pod/node deletion or modification**: Fencing is done via SBD device + local panic
 - ❌ **No secret/configmap access**: No sensitive data access required
 - ❌ **No cluster resource modification**: Cannot alter cluster state through Kubernetes API
 - ❌ **No cross-namespace access**: Limited to necessary cluster-wide read operations
 
-### Security Rationale
+### Agent Security Rationale
 
 The SBD Agent operates with minimal Kubernetes permissions because its primary fencing mechanism works outside the Kubernetes API:
 
@@ -52,10 +52,10 @@ The SBD Agent operates with minimal Kubernetes permissions because its primary f
 **ServiceAccount**: `sbd-operator-controller-manager`
 **Role**: `sbd-operator-manager-role` (ClusterRole)
 
-### Permissions Granted
+### Operator Permissions Granted
 
 | Resource | Verbs | Justification |
-|----------|-------|---------------|
+| -------- | ----- | ------------- |
 | `namespaces` | `create`, `get`, `list`, `patch`, `update`, `watch` | Create and manage sbd-system namespace |
 | `daemonsets` | `create`, `delete`, `get`, `list`, `patch`, `update`, `watch` | Deploy and manage SBD Agent across cluster nodes |
 | `nodes` | `get`, `list`, `watch` | Read-only access for node name to ID mapping |
@@ -69,14 +69,14 @@ The SBD Agent operates with minimal Kubernetes permissions because its primary f
 | `sbdremediations/finalizers` | `update` | Handle proper cleanup of fencing operations |
 | `sbdremediations/status` | `get`, `patch`, `update` | Track fencing operation progress |
 
-### Permissions Explicitly NOT Granted
+### Operator Permissions Explicitly NOT Granted
 
 - ❌ **No direct node deletion/modification**: Cannot directly fence nodes via Kubernetes API
 - ❌ **No secret access**: No access to sensitive cluster data
 - ❌ **No modification of other operators**: Limited to SBD system scope
 - ❌ **No privileged resource access**: Cannot modify cluster-critical resources
 
-### Security Rationale
+### Operator Security Rationale
 
 The SBD Operator requires broader permissions than the Agent because it serves as the orchestration layer:
 
@@ -114,6 +114,7 @@ The SBD Operator requires broader permissions than the Agent because it serves a
 ### Host Access Requirements
 
 The SBD Agent requires privileged access for:
+
 - **Block Device Access**: Direct access to SBD block device
 - **Watchdog Device**: Access to `/dev/watchdog` for system monitoring
 - **System Calls**: Ability to trigger system panic/reboot
@@ -129,6 +130,7 @@ The SBD Agent requires privileged access for:
 ### Event Emission
 
 Both components emit Kubernetes events for:
+
 - Operational status updates
 - Error conditions
 - Fencing operation progress
@@ -137,6 +139,7 @@ Both components emit Kubernetes events for:
 ### Audit Trail
 
 RBAC permissions ensure all actions are:
+
 - Logged through Kubernetes audit logs
 - Traceable to specific service accounts
 - Limited to authorized operations
@@ -185,4 +188,4 @@ kubectl get serviceaccounts -n sbd-system
 
 ## Conclusion
 
-The SBD Operator RBAC configuration provides a secure, minimal-privilege foundation for cluster node fencing operations. By separating orchestration (Operator) from execution (Agent) and utilizing hardware-level fencing mechanisms, the system maintains security while providing reliable node fencing capabilities. 
+The SBD Operator RBAC configuration provides a secure, minimal-privilege foundation for cluster node fencing operations. By separating orchestration (Operator) from execution (Agent) and utilizing hardware-level fencing mechanisms, the system maintains security while providing reliable node fencing capabilities.

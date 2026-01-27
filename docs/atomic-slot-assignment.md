@@ -5,7 +5,7 @@
 The original slot assignment mechanism had race conditions when multiple nodes started simultaneously:
 
 1. **Node A** and **Node B** both read the same mapping table from SBD device
-2. Both see the same available slots 
+2. Both see the same available slots
 3. Both assign themselves to the same slot (e.g., slot 5)
 4. The last writer wins, causing slot conflicts
 
@@ -49,13 +49,15 @@ for attempt := 0; attempt < MaxAtomicRetries; attempt++ {
 ### Race Condition Prevention
 
 **Before (Race Condition)**:
+
 - Node A reads mapping (version 5)
-- Node B reads mapping (version 5)  
+- Node B reads mapping (version 5)
 - Node A assigns slot 10, writes to device (version 6)
 - Node B assigns slot 10, overwrites A's mapping (version 7)
 - **Result**: Both nodes think they have slot 10
 
 **After (Atomic Operations)**:
+
 - Node A reads mapping (version 5)
 - Node B reads mapping (version 5)
 - Node A assigns slot 10, writes with version check (5→6) ✅
@@ -89,9 +91,10 @@ const (
 ## Testing
 
 The implementation includes comprehensive tests:
+
 - Atomic operation version tracking
 - Version persistence across marshal/unmarshal
 - Concurrent access scenarios
 - Real-world node name patterns
 
-This ensures the system remains reliable even under high contention scenarios like cluster initialization with many nodes starting simultaneously. 
+This ensures the system remains reliable even under high contention scenarios like cluster initialization with many nodes starting simultaneously.

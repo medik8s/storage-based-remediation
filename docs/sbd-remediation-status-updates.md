@@ -42,6 +42,7 @@ func (r *SBDRemediationReconciler) updateStatusWithConditions(ctx context.Contex
 ```
 
 **Features:**
+
 - **Idempotency**: Skips update if conditions already match the desired state
 - **Automatic Timestamping**: Updates `LastTransitionTime` on condition changes
 - **Operator Instance Tracking**: Records which operator instance made the update
@@ -58,6 +59,7 @@ func (r *SBDRemediationReconciler) updateStatusWithRetry(ctx context.Context,
 ```
 
 **Features:**
+
 - **Exponential Backoff**: Configurable retry delays with jitter
 - **Conflict Detection**: Automatically retries on `IsConflict` errors
 - **Fresh Resource Retrieval**: Gets latest version before each retry
@@ -79,6 +81,7 @@ type FencingError struct {
 ```
 
 **Error Categories:**
+
 - **Retryable**: Device I/O errors, sync failures, network issues
 - **Non-retryable**: Marshaling errors, invalid configuration, permanent failures
 
@@ -93,6 +96,7 @@ func (r *SBDRemediationReconciler) performFencingWithRetry(ctx context.Context,
 ```
 
 **Configuration:**
+
 - **Max Attempts**: 3 (configurable via `maxRetryAttempts`)
 - **Base Delay**: 5 seconds (configurable via `baseRetryDelay`)
 - **Max Delay**: 30 seconds (configurable via `maxRetryDelay`)
@@ -149,7 +153,7 @@ const (
 ## Error Scenarios and Responses
 
 | Error Type | Retryable | Max Attempts | Final Conditions | Requeue Behavior |
-|------------|-----------|--------------|------------------|------------------|
+| ---------- | --------- | ------------ | ---------------- | ---------------- |
 | Node ID mapping | No | 1 | FencingSucceeded=False, Ready=True | No requeue |
 | SBD device open | Yes | 5 | FencingSucceeded=False, Ready=True | No requeue after final failure |
 | Write/sync error | Yes | 5 | FencingSucceeded=False, Ready=True | No requeue after final failure |
@@ -162,20 +166,24 @@ const (
 The enhanced controller includes comprehensive integration tests covering:
 
 ### Success Scenarios
+
 - **Complete fencing workflow**: All conditions properly set through success path
 - **Status field verification**: All status fields properly populated
 - **SBD device verification**: Fence message actually written to device
 
 ### Error Scenarios
+
 - **Invalid node names**: Proper error handling and condition updates
 - **Device access failures**: Retry logic and final failure handling
 - **Status update idempotency**: Multiple updates with same values
 
 ### Leadership Scenarios
+
 - **Leadership availability**: Processing when leader
 - **Non-leader behavior**: Proper handling when not leader
 
 ### Retry Logic Tests
+
 - **Transient error retry**: Multiple attempts for recoverable errors
 - **Non-retryable errors**: Immediate failure for permanent errors
 - **Status update conflicts**: Conflict resolution mechanisms
@@ -271,6 +279,7 @@ The enhanced controller provides comprehensive logging:
 - **Error Level**: Permanent failures, retry exhaustion
 
 Key log messages to monitor:
+
 - `Status updated successfully`: Successful status transitions
 - `Status already up to date, skipping update`: Idempotent behavior
 - `Conflict during status update, retrying`: Conflict resolution
@@ -280,4 +289,4 @@ Key log messages to monitor:
 
 Existing SBDRemediation resources will automatically benefit from the enhanced status update logic. No manual migration is required.
 
-The enhanced controller is backward compatible with existing API structures while providing improved reliability and observability. 
+The enhanced controller is backward compatible with existing API structures while providing improved reliability and observability.

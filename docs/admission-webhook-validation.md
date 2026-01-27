@@ -28,6 +28,7 @@ The webhook considers two node selectors as overlapping if they could potentiall
 #### Examples
 
 **✅ Non-overlapping (allowed):**
+
 ```yaml
 # SBDConfig 1
 nodeSelector:
@@ -39,6 +40,7 @@ nodeSelector:
 ```
 
 **❌ Overlapping (rejected):**
+
 ```yaml
 # SBDConfig 1
 nodeSelector:
@@ -50,6 +52,7 @@ nodeSelector:
 ```
 
 **❌ Overlapping with empty selector (rejected):**
+
 ```yaml
 # SBDConfig 1
 nodeSelector: {}  # Empty = matches all nodes
@@ -62,6 +65,7 @@ nodeSelector:
 ### Spec Validation
 
 The webhook also validates the SBDConfig spec fields, ensuring:
+
 - Required fields are present (e.g., `sbdWatchdogPath`)
 - Field values are within valid ranges
 - Configuration consistency
@@ -109,16 +113,19 @@ See the [cert-manager documentation](https://cert-manager.io/) for production ce
 ### Webhook Not Working
 
 1. Check webhook pod is running:
+
    ```bash
    kubectl get pods -n sbd-operator-system
    ```
 
 2. Check webhook configuration:
+
    ```bash
    kubectl get validatingwebhookconfiguration
    ```
 
 3. Check webhook logs:
+
    ```bash
    kubectl logs -n sbd-operator-system deployment/sbd-operator-controller-manager
    ```
@@ -126,11 +133,13 @@ See the [cert-manager documentation](https://cert-manager.io/) for production ce
 ### Certificate Issues
 
 1. Verify webhook service exists:
+
    ```bash
    kubectl get service -n sbd-operator-system webhook-service
    ```
 
 2. Check certificate secret:
+
    ```bash
    kubectl get secret -n sbd-operator-system webhook-server-certs
    ```
@@ -148,8 +157,9 @@ kubectl delete validatingwebhookconfiguration vsbdconfig.kb.io
 ## Implementation Details
 
 The webhook is implemented in:
+
 - `api/v1alpha1/sbdconfig_webhook.go` - Webhook validation logic
 - `config/webhook/` - Kubernetes webhook configuration
 - `cmd/main.go` - Webhook registration with manager
 
-The validation uses the same business logic as the SBD agent for consistent slot assignment behavior. 
+The validation uses the same business logic as the SBD agent for consistent slot assignment behavior.
