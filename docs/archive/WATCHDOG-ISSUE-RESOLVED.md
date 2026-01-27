@@ -13,7 +13,8 @@
 ## Investigation Results
 
 ### AMD64 Test Results (Amazon Linux 2)
-```
+
+```text
 --- Testing WDIOC_KEEPALIVE ---
 ❌ WDIOC_KEEPALIVE failed: inappropriate ioctl for device (errno 25)
   → Error type: ENOTTY (Inappropriate ioctl for device)
@@ -33,11 +34,13 @@
 ## Technical Analysis
 
 ### Why WDIOC_KEEPALIVE Fails
+
 - The `softdog` kernel module implementation varies across distributions
 - Amazon Linux 2's `softdog` driver doesn't implement the `WDIOC_KEEPALIVE` ioctl
 - This affects **both AMD64 and ARM64** architectures equally
 
 ### Working Alternative: Write-Based Keep-Alive
+
 ```c
 // Instead of ioctl(fd, WDIOC_KEEPALIVE, 0)
 // Use simple write operations:
@@ -79,12 +82,14 @@ func keepWatchdogAlive(fd int) error {
 ## Impact Assessment
 
 ### Before Fix
+
 - ✅ Works on systems with full `softdog` ioctl support
 - ❌ **Fails on BOTH AMD64 and ARM64** systems with limited `softdog` support
 - ❌ Causes infinite reboot loops
 - ❌ Affects entire cluster availability
 
-### After Fix  
+### After Fix
+
 - ✅ Works on systems with full `softdog` ioctl support
 - ✅ **Works on BOTH AMD64 and ARM64** systems with limited `softdog` support
 - ✅ Provides automatic fallback mechanism
@@ -93,10 +98,12 @@ func keepWatchdogAlive(fd int) error {
 ## Validation Results
 
 ### Test Environment
+
 - **AMD64**: Amazon Linux 2 on t3.micro (4.14.355-277.647.amzn2.x86_64)
 - **ARM64**: Amazon Linux 2 on t4g.micro (connection timeout, but same kernel/distro)
 
 ### Test Results
+
 - **WDIOC_KEEPALIVE**: ❌ ENOTTY on both architectures
 - **Write-based keep-alive**: ✅ Works perfectly on AMD64
 - **Softdog module**: ✅ Loads successfully on both architectures
@@ -119,4 +126,4 @@ func keepWatchdogAlive(fd int) error {
 
 This investigation revealed that the "ARM64 watchdog issue" was actually a **distribution-specific softdog driver limitation** affecting both architectures. The solution is a simple fallback mechanism that uses write-based keep-alive when ioctl-based keep-alive is not supported.
 
-**Status**: ✅ **RESOLVED** - Root cause identified, solution validated, implementation ready. 
+**Status**: ✅ **RESOLVED** - Root cause identified, solution validated, implementation ready.

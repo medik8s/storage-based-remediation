@@ -1,3 +1,5 @@
+# Cloud-Native SBD Implementation Blueprint
+
 This document outlines a detailed blueprint and a series of iterative prompts for building a cloud-native Storage-Based Death (SBD) solution for Kubernetes, integrated with Medik8s' Node Healthcheck Operator. The project is broken down into small, manageable steps to ensure incremental progress, robust testing, and adherence to best practices.
 
 Here is the step-by-step blueprint:
@@ -9,143 +11,144 @@ Here is the step-by-step blueprint:
 **Objective:** Establish the custom resource definitions (CRDs) and set up the basic Kubernetes Operator framework.
 
 * **Chunk 1.1: `SBDConfig` CRD Definition**
-    * Define the `SBDConfig` custom resource with fields for `sbdDevicePVCName`, `sbdTimeoutSeconds`, `sbdWatchdogPath`, `nodeExclusionList`, and `rebootMethod`.
-    * Include schema validation.
+  * Define the `SBDConfig` custom resource with fields for `sbdDevicePVCName`, `sbdTimeoutSeconds`, `sbdWatchdogPath`, `nodeExclusionList`, and `rebootMethod`.
+  * Include schema validation.
 
 * **Chunk 1.2: `SBDRemediation` CRD Definition**
-    * Define the `SBDRemediation` custom resource with fields for `nodeName`, `remediationRequestTime`, and a `status` block (`Phase`, `Message`).
-    * Include schema validation.
+  * Define the `SBDRemediation` custom resource with fields for `nodeName`, `remediationRequestTime`, and a `status` block (`Phase`, `Message`).
+  * Include schema validation.
 
 * **Chunk 1.3: Operator Project Initialization**
-    * Initialize a new Kubebuilder (or Operator SDK) project.
-    * Generate the API and controller for `SBDConfig` and `SBDRemediation`.
+
+  * Initialize a new Kubebuilder (or Operator SDK) project.
+  * Generate the API and controller for `SBDConfig` and `SBDRemediation`.
 
 * **Chunk 1.4: Basic `SBDConfig` Controller Reconciliation**
-    * Implement a minimal reconciler for `SBDConfig` that logs received events but performs no actions yet.
-    * Add basic unit tests for the reconciler.
+  * Implement a minimal reconciler for `SBDConfig` that logs received events but performs no actions yet.
+  * Add basic unit tests for the reconciler.
 
 ### **Phase 2: SBD Agent - Local Watchdog Integration**
 
 **Objective:** Develop the SBD Agent's ability to interact with the local kernel watchdog and deploy it as a DaemonSet managed by the Operator.
 
 * **Chunk 2.1: Local Kernel Watchdog Implementation**
-    * Develop Go code for opening, petting, and closing the `/dev/watchdog` device.
-    * Include error handling for watchdog device access.
+  * Develop Go code for opening, petting, and closing the `/dev/watchdog` device.
+  * Include error handling for watchdog device access.
 
 * **Chunk 2.2: SBD Agent Containerization**
-    * Create a Dockerfile for the SBD Agent, based on a minimal Go runtime image.
-    * Ensure necessary permissions/capabilities for `/dev/watchdog`.
+  * Create a Dockerfile for the SBD Agent, based on a minimal Go runtime image.
+  * Ensure necessary permissions/capabilities for `/dev/watchdog`.
 
 * **Chunk 2.3: Basic SBD Agent DaemonSet Manifest**
-    * Draft a Kubernetes `DaemonSet` manifest for the SBD Agent, including a `privileged` security context and host path mount for `/dev/watchdog`.
+  * Draft a Kubernetes `DaemonSet` manifest for the SBD Agent, including a `privileged` security context and host path mount for `/dev/watchdog`.
 
 * **Chunk 2.4: Operator Deployment of SBD Agent DaemonSet**
-    * Enhance the `SBDConfig` reconciler to create and manage the SBD Agent `DaemonSet` based on parameters from the `SBDConfig` CR.
-    * Add integration tests to verify DaemonSet deployment.
+  * Enhance the `SBDConfig` reconciler to create and manage the SBD Agent `DaemonSet` based on parameters from the `SBDConfig` CR.
+  * Add integration tests to verify DaemonSet deployment.
 
 ### **Phase 3: SBD Agent - Shared Block PV Interaction**
 
 **Objective:** Enable the SBD Agent to access and perform raw I/O operations on the shared block PersistentVolume.
 
 * **Chunk 3.1: Raw Block Device I/O in Go**
-    * Develop Go functions for opening a raw block device path (e.g., `/dev/sbd-watchdog`), seeking to offsets, and performing direct read/write operations.
-    * Include robust error handling for I/O operations.
+  * Develop Go functions for opening a raw block device path (e.g., `/dev/sbd-watchdog`), seeking to offsets, and performing direct read/write operations.
+  * Include robust error handling for I/O operations.
 
 * **Chunk 3.2: SBD Agent Integration with Shared PV**
-    * Integrate the raw block device I/O functions into the SBD Agent.
-    * Implement logic to write a unique node identifier to a pre-defined offset on the shared PV.
+  * Integrate the raw block device I/O functions into the SBD Agent.
+  * Implement logic to write a unique node identifier to a pre-defined offset on the shared PV.
 
 * **Chunk 3.3: DaemonSet Shared PV Mounting**
-    * Update the SBD Agent `DaemonSet` manifest to include `volumeMode: Block` and mount the specified PersistentVolumeClaim as a raw block device.
-    * Ensure appropriate `volumeDevices` and `volumeMounts` are configured.
+  * Update the SBD Agent `DaemonSet` manifest to include `volumeMode: Block` and mount the specified PersistentVolumeClaim as a raw block device.
+  * Ensure appropriate `volumeDevices` and `volumeMounts` are configured.
 
 * **Chunk 3.4: `SBDConfig` PV Parameter Extension**
-    * Add fields to the `SBDConfig` CR for specifying the shared block PV's PVC name and the path where it will be mounted within the SBD Agent pod.
-    * Update the `SBDConfig` reconciler to use these new fields when generating the DaemonSet.
+  * Add fields to the `SBDConfig` CR for specifying the shared block PV's PVC name and the path where it will be mounted within the SBD Agent pod.
+  * Update the `SBDConfig` reconciler to use these new fields when generating the DaemonSet.
 
 ### **Phase 4: SBD Protocol Implementation (Heartbeating)**
 
 **Objective:** Implement the core SBD protocol for heartbeating and peer liveness detection on the shared block device within the SBD Agent.
 
 * **Chunk 4.1: SBD Message Structure Definition**
-    * Define Go structs representing the SBD protocol's message format, including header, node ID, timestamp, sequence number, and checksum fields.
+  * Define Go structs representing the SBD protocol's message format, including header, node ID, timestamp, sequence number, and checksum fields.
 
 * **Chunk 4.2: Agent Heartbeat Writing**
-    * Implement a goroutine within the SBD Agent that periodically constructs and writes the agent's own heartbeat message to its designated slot on the shared SBD PV.
-    * Include checksum calculation.
+  * Implement a goroutine within the SBD Agent that periodically constructs and writes the agent's own heartbeat message to its designated slot on the shared SBD PV.
+  * Include checksum calculation.
 
 * **Chunk 4.3: Peer Heartbeat Reading and Liveness Detection**
-    * Implement a goroutine within the SBD Agent that continuously reads heartbeats from all expected peer node slots on the shared SBD PV.
-    * Develop logic to determine peer liveness based on heartbeat freshness and sequence numbers.
+  * Implement a goroutine within the SBD Agent that continuously reads heartbeats from all expected peer node slots on the shared SBD PV.
+  * Develop logic to determine peer liveness based on heartbeat freshness and sequence numbers.
 
 * **Chunk 4.4: Local Watchdog Integration with Shared PV Status**
-    * Modify the local kernel watchdog petting logic to stop petting if the SBD Agent loses the ability to write to or read from the shared SBD PV (indicating an issue with shared storage connectivity).
+  * Modify the local kernel watchdog petting logic to stop petting if the SBD Agent loses the ability to write to or read from the shared SBD PV (indicating an issue with shared storage connectivity).
 
 ### **Phase 5: SBD Agent - Self-Fencing**
 
 **Objective:** Implement the SBD Agent's ability to self-fence (panic and reboot) if it detects a fence message directed at itself on the shared SBD device.
 
 * **Chunk 5.1: Self-Fence Message Detection**
-    * Enhance the SBD Agent's shared PV reading logic to specifically check its own slot for a "fence" message.
+  * Enhance the SBD Agent's shared PV reading logic to specifically check its own slot for a "fence" message.
 
 * **Chunk 5.2: Self-Fencing Action**
-    * If a self-fence message is detected, implement logic to immediately cease petting the local kernel watchdog, leading to a node panic and reboot.
-    * Add logging for self-fencing events.
+  * If a self-fence message is detected, implement logic to immediately cease petting the local kernel watchdog, leading to a node panic and reboot.
+  * Add logging for self-fencing events.
 
 ### **Phase 6: SBD Operator - External Fencing Orchestration**
 
 **Objective:** Implement the SBD Operator's role in orchestrating external fencing actions based on `SBDRemediation` CRs, including leader election for coordination.
 
 * **Chunk 6.1: Leader Election for Fencing**
-    * Implement leader election within the SBD Operator's controller responsible for writing external fence messages to the shared PV. This ensures only one instance attempts to fence at a time.
+  * Implement leader election within the SBD Operator's controller responsible for writing external fence messages to the shared PV. This ensures only one instance attempts to fence at a time.
 
 * **Chunk 6.2: `SBDRemediation` Reconciler**
-    * Implement the `SBDRemediation` reconciler to watch for newly created `SBDRemediation` CRs.
-    * Only the leader instance proceeds with fencing logic.
+  * Implement the `SBDRemediation` reconciler to watch for newly created `SBDRemediation` CRs.
+  * Only the leader instance proceeds with fencing logic.
 
 * **Chunk 6.3: Peer Fence Message Writing**
-    * If the leader and an `SBDRemediation` CR targets a specific node, implement logic to write the appropriate "fence" message to that target node's slot on the shared SBD PV.
-    * Include retry mechanisms for write operations.
+  * If the leader and an `SBDRemediation` CR targets a specific node, implement logic to write the appropriate "fence" message to that target node's slot on the shared SBD PV.
+  * Include retry mechanisms for write operations.
 
 * **Chunk 6.4: `SBDRemediation` Status Updates**
-    * Update the `SBDRemediation` CR's `status` field to reflect the progress and outcome of the fencing attempt (e.g., `FencingInProgress`, `FencedSuccessfully`, `FailedToFence`).
+  * Update the `SBDRemediation` CR's `status` field to reflect the progress and outcome of the fencing attempt (e.g., `FencingInProgress`, `FencedSuccessfully`, `FailedToFence`).
 
 ### **Phase 7: Monitoring and Observability**
 
 **Objective:** Integrate comprehensive monitoring and logging into both the SBD Agent and Operator for better troubleshooting and operational visibility.
 
 * **Chunk 7.1: SBD Agent Prometheus Metrics**
-    * Add Prometheus metrics endpoints to the SBD Agent, exposing metrics such as `sbd_agent_status_healthy`, `sbd_device_io_errors_total`, `sbd_watchdog_pets_total`, `sbd_peer_status` (per node), and `sbd_self_fenced_total`.
+  * Add Prometheus metrics endpoints to the SBD Agent, exposing metrics such as `sbd_agent_status_healthy`, `sbd_device_io_errors_total`, `sbd_watchdog_pets_total`, `sbd_peer_status` (per node), and `sbd_self_fenced_total`.
 
 * **Chunk 7.2: ServiceMonitor Definition**
-    * Generate a `ServiceMonitor` (for Prometheus Operator) manifest to scrape metrics from the SBD Agent DaemonSet.
+  * Generate a `ServiceMonitor` (for Prometheus Operator) manifest to scrape metrics from the SBD Agent DaemonSet.
 
 * **Chunk 7.3: Kubernetes Event Emission**
-    * Modify the SBD Operator to emit Kubernetes Events for key lifecycle actions (e.g., `SBDConfig` reconciled, `DaemonSet` deployed/updated, `SBDRemediation` initiated, `NodeFenced`).
+  * Modify the SBD Operator to emit Kubernetes Events for key lifecycle actions (e.g., `SBDConfig` reconciled, `DaemonSet` deployed/updated, `SBDRemediation` initiated, `NodeFenced`).
 
 * **Chunk 7.4: Structured Logging**
-    * Implement structured logging (e.g., using `logr` or `zap`) for both the SBD Agent and Operator, with configurable log levels.
-    * Ensure logs provide sufficient context for debugging.
+  * Implement structured logging (e.g., using `logr` or `zap`) for both the SBD Agent and Operator, with configurable log levels.
+  * Ensure logs provide sufficient context for debugging.
 
 ### **Phase 8: Security and Robustness**
 
 **Objective:** Enhance the solution with critical security measures and robust error handling to ensure reliability in production environments.
 
 * **Chunk 8.1: Granular RBAC Refinement**
-    * Review and refine the RBAC roles for both the SBD Operator and the SBD Agent ServiceAccounts to adhere to the Principle of Least Privilege.
-    * Ensure the Agent does not have direct node deletion/update permissions.
+  * Review and refine the RBAC roles for both the SBD Operator and the SBD Agent ServiceAccounts to adhere to the Principle of Least Privilege.
+  * Ensure the Agent does not have direct node deletion/update permissions.
 
 * **Chunk 8.2: Pod Security Standards**
-    * Apply appropriate Pod Security Context configurations to the SBD Agent DaemonSet, acknowledging the necessity for `privileged` mode due to raw device access, but limiting other capabilities where possible.
-    * Document the security implications.
+  * Apply appropriate Pod Security Context configurations to the SBD Agent DaemonSet, acknowledging the necessity for `privileged` mode due to raw device access, but limiting other capabilities where possible.
+  * Document the security implications.
 
 * **Chunk 8.3: Agent Pre-Flight Checks**
-    * Add robust pre-flight checks to the SBD Agent startup logic to verify availability of `/dev/watchdog` and initial access to the shared SBD PV.
-    * Agent should refuse to participate or enter a degraded state if critical dependencies are unavailable.
+  * Add robust pre-flight checks to the SBD Agent startup logic to verify availability of `/dev/watchdog` and initial access to the shared SBD PV.
+  * Agent should refuse to participate or enter a degraded state if critical dependencies are unavailable.
 
 * **Chunk 8.4: Advanced Error Handling and Retries**
-    * Implement comprehensive error handling, exponential backoff, and retry mechanisms for all critical operations (e.g., shared PV I/O, K8s API calls, watchdog petting).
-    * Ensure graceful degradation and informative error messages.
+  * Implement comprehensive error handling, exponential backoff, and retry mechanisms for all critical operations (e.g., shared PV I/O, K8s API calls, watchdog petting).
+  * Ensure graceful degradation and informative error messages.
 
 ---
 
@@ -4043,4 +4046,4 @@ Please generate the Kubernetes CustomResourceDefinition (CRD) YAML for `SBDConfi
 - `sbdTimeoutSeconds` (integer, required): The SBD timeout in seconds.
 - `sbdWatchdogPath` (string, required): The path to the local kernel watchdog device (e.g., `/dev/watchdog`).
 - `nodeExclusionList` (array of strings, optional): A list of node names to exclude from SBD management.
-- `rebootMethod` (string, optional, default: "panic"): The method to use for self-
+- `rebootMethod` (string, optional, default: "panic"): The method to use for self-reboot

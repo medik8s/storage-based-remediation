@@ -37,6 +37,7 @@ Local testing script that:
 - Provides AWS deployment instructions
 
 Usage:
+
 ```bash
 ./scripts/test-watchdog-local.sh
 ```
@@ -52,6 +53,7 @@ Comprehensive AWS-based comparison script that:
 - Automatically cleans up resources
 
 Usage:
+
 ```bash
 # Full comparison test
 ./scripts/debug-watchdog-comparison.sh
@@ -76,6 +78,7 @@ Usage:
    - VPC operations
 
 4. **Environment Variables** (optional):
+
    ```bash
    export AWS_REGION="us-west-2"
    export AWS_KEY_NAME="your-key-name"
