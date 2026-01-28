@@ -260,6 +260,13 @@ For standard Kubernetes clusters, you can install the operator using kubectl:
 
 **Note**: The namespace for the SBD agent DaemonSet is determined by the `metadata.namespace` field of the SBDConfig resource, not a spec field. The DaemonSet will be deployed in the same namespace as the SBDConfig.
 
+#### `imagePullPolicy` (string, optional)
+
+- **Default**: `IfNotPresent`
+- **Description**: Pull policy for the SBD agent container image
+- **Valid values**: `Always`, `Never`, `IfNotPresent`
+- **Recommended**: Use `IfNotPresent` for production stability; use `Always` when testing rolling image updates
+
 #### `staleNodeTimeout` (duration, optional)
 
 - **Default**: `1h`
@@ -267,6 +274,78 @@ For standard Kubernetes clusters, you can install the operator using kubectl:
 - **Description**: Time before inactive nodes are cleaned up from slot mapping
 - **Purpose**: Determines when node slots in shared storage are freed for reuse
 - **Format**: Go duration format (e.g., `30m`, `2h`, `90s`)
+
+#### `watchdogTimeout` (duration, optional)
+
+- **Default**: `60s`
+- **Range**: `10s` to `300s` (5 minutes)
+- **Description**: Timeout for the hardware or software watchdog device
+- **Purpose**: How long the system waits before triggering a reboot if the watchdog is not "pet" (refreshed). The agent pets the watchdog at an interval derived from this value and `petIntervalMultiple`.
+- **Format**: Go duration format (e.g., `60s`, `2m`)
+
+#### `petIntervalMultiple` (integer, optional)
+
+- **Default**: `4`
+- **Range**: `3` to `20`
+- **Description**: Multiple used to compute the pet interval from the watchdog timeout
+- **Formula**: Pet interval = `watchdogTimeout` / `petIntervalMultiple`
+- **Purpose**: Ensures the agent pets the watchdog more often than the timeout, with a safety margin. A value of 4 is a typical balance of safety and efficiency.
+
+#### `logLevel` (string, optional)
+
+- **Default**: `info`
+- **Description**: Logging level for the SBD agent pods
+- **Valid values**: `debug`, `info`, `warn`, `error`
+- **Use**: `debug` for troubleshooting; `info` or `warn` for production
+
+#### `iotimeout` (duration, optional)
+
+- **Default**: `2s`
+- **Range**: `100ms` to `5m`
+- **Description**: Timeout for SBD I/O operations on shared storage
+- **Purpose**: How long the agent waits for reads/writes to the shared SBD device before considering the operation failed
+- **Format**: Go duration format (e.g., `2s`, `500ms`)
+
+#### `rebootMethod` (string, optional)
+
+- **Default**: `panic`
+- **Description**: Method used for self-fencing when the node must be rebooted
+- **Valid values**:
+  - `panic`: Immediate kernel panic (fastest failover, no graceful shutdown)
+  - `systemctl-reboot`: Graceful `systemctl reboot` (allows services to shut down; may be slower)
+  - `none`: Disable agent-initiated reboot; rely only on hardware watchdog timeout
+- **Use**: Prefer `panic` for fast recovery; use `systemctl-reboot` when graceful shutdown is required.
+
+#### `sbdTimeoutSeconds` (integer, optional)
+
+- **Default**: `30`
+- **Range**: `10` to `300`
+- **Description**: SBD timeout in seconds; influences heartbeat and failure detection
+- **Purpose**: Heartbeat interval is derived from this (e.g., timeout/2). Lower values detect failures faster but increase I/O on shared storage.
+
+#### `sbdUpdateInterval` (duration, optional)
+
+- **Default**: `5s`
+- **Range**: `1s` to `60s`
+- **Description**: Interval at which the node writes its status to the shared SBD device
+- **Purpose**: More frequent updates improve failure detection and increase I/O load
+- **Format**: Go duration format (e.g., `5s`, `10s`)
+
+#### `peerCheckInterval` (duration, optional)
+
+- **Default**: `5s`
+- **Range**: `1s` to `60s`
+- **Description**: Interval at which the node reads and evaluates peer heartbeats from the SBD device
+- **Purpose**: More frequent checks improve peer failure detection and increase I/O load
+- **Format**: Go duration format (e.g., `5s`, `10s`)
+
+#### `nodeSelector` (map[string]string, optional)
+
+- **Default**: Worker nodes only (`node-role.kubernetes.io/worker: ""`) when unset
+- **Description**: Node label selector that must match for the SBD agent pod to be scheduled
+- **Purpose**: Restrict which nodes run the SBD agent (e.g., specific roles, zones, or canary nodes)
+- **Note**: Merged with the default requirement `kubernetes.io/os=linux`
+- **Example**: `nodeSelector: { "node-role.kubernetes.io/worker": "" }` or `{ "canary": "true" }`
 
 #### `sharedStorageClass` (string, optional)
 
@@ -282,32 +361,57 @@ The controller automatically chooses a sensible mount path (`/dev/sbd`) for shar
 
 ### SBDConfig Status Fields
 
-The SBDConfig status uses Kubernetes Conditions to track the state of the operator components:
+The SBDConfig status is updated by the operator and reflects the observed state of the SBD agent DaemonSet and shared storage. Status is read-only; do not edit it manually.
 
 #### `conditions` (array)
 
-- **Description**: Array of condition objects representing the latest observations of the SBDConfig state
-- **Condition Types**:
-  - **DaemonSetReady**: Indicates if the SBD agent DaemonSet is ready and running
-  - **SharedStorageReady**: Indicates if shared storage is properly configured (when using sharedStorageClass)
-  - **Ready**: Overall readiness condition - true when all components are operational
+- **Description**: Latest observations of the SBDConfig state, as standard [Kubernetes Condition](https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties) objects
+- **Merge semantics**: Conditions are merged by `type` (patch merge key). The controller updates conditions on each reconciliation
 
-Each condition contains:
+**Condition types:**
 
-- `type`: The condition type (e.g., "DaemonSetReady")
-- `status`: "True", "False", or "Unknown"
-- `reason`: Machine-readable reason for the condition status
-- `message`: Human-readable message describing the condition
-- `lastTransitionTime`: When the condition last changed
-- `observedGeneration`: The generation of the SBDConfig that this condition is based on
+| Type | When `status: "True"` | When `status: "False"` | Purpose |
+| ---- | --------------------- | ---------------------- | ------- |
+| **DaemonSetReady** | All desired SBD agent pods are ready on their nodes | No nodes scheduled, or some pods not ready | DaemonSet rollout and pod health |
+| **SharedStorageReady** | Shared storage PVC is configured, or shared storage is not used | Not set (always True in practice) | Shared storage availability when `sharedStorageClass` is set |
+| **Ready** | DaemonSetReady and SharedStorageReady are both True | Any dependency not ready | Overall SBDConfig readiness for use |
+
+**Typical reason and message values:**
+
+- **DaemonSetReady**
+  - True: `reason: "DaemonSetReady"`, `message: "All N SBD agent pods are ready"`
+  - False: `reason: "NoNodesScheduled"`, `message: "No nodes are scheduled to run SBD agent pods"` when no pods are scheduled
+  - False: `reason: "PodsNotReady"`, `message: "X of Y SBD agent pods are ready"` when some pods are not ready
+- **SharedStorageReady**
+  - True: `reason: "SharedStorageConfigured"`, `message: "Shared storage PVC '...' is configured"` when shared storage is in use
+  - True: `reason: "SharedStorageNotRequired"`, `message: "Shared storage is not configured and not required"` when `sharedStorageClass` is not set
+- **Ready**
+  - True: `reason: "Ready"`, `message: "SBDConfig is ready and all components are operational"`
+  - False: `reason: "NotReady"`, `message: "SBDConfig is not ready: DaemonSet not ready, Shared storage not ready"` (or a subset of those reasons)
+
+**Each condition object contains:**
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `type` | string | Condition type: `DaemonSetReady`, `SharedStorageReady`, or `Ready` |
+| `status` | string | `"True"`, `"False"`, or `"Unknown"` |
+| `reason` | string | Short, CamelCase reason for the last transition (e.g. `PodsNotReady`) |
+| `message` | string | Human-readable description of the condition state |
+| `lastTransitionTime` | string (RFC3339) | Time of the last change to this condition |
+| `observedGeneration` | int64 | `.metadata.generation` of the SBDConfig when this condition was set; used to detect stale status |
 
 #### `readyNodes` (int32)
 
-- **Description**: Number of nodes where the SBD agent is ready and operational
+- **Description**: Number of nodes where the SBD agent pod is ready and running
+- **Source**: Set from the DaemonSet’s `status.numberReady`
+- **Range**: `0` to `totalNodes`
+- **Use**: Compare with `totalNodes` to see rollout progress or detect partial failure (e.g. `readyNodes < totalNodes`)
 
 #### `totalNodes` (int32)
 
-- **Description**: Total number of nodes where the SBD agent should be deployed
+- **Description**: Number of nodes where the SBD agent DaemonSet is supposed to run (desired pod count)
+- **Source**: Set from the DaemonSet’s `status.desiredNumberScheduled`
+- **Use**: Denominator for readiness (e.g. “X of Y nodes ready”). Zero when no nodes match the DaemonSet’s node selector.
 
 **Example status:**
 
