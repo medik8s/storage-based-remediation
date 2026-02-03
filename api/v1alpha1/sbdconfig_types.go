@@ -22,8 +22,9 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/medik8s/sbd-operator/pkg/agent"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/medik8s/sbd-operator/pkg/agent"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!

@@ -19,8 +19,10 @@ package sbdprotocol
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"math/rand"
 	"os"
@@ -28,10 +30,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"encoding/binary"
-
-	"hash/crc32"
 
 	"github.com/go-logr/logr"
 )

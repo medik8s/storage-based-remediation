@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+
 	"github.com/medik8s/sbd-operator/pkg/retry"
 )
 

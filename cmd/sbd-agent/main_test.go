@@ -27,10 +27,12 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+
+	"k8s.io/client-go/rest"
+
 	mocks "github.com/medik8s/sbd-operator/pkg/mocks"
 	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
 	testutils "github.com/medik8s/sbd-operator/test/utils"
-	"k8s.io/client-go/rest"
 )
 
 const (
