@@ -45,7 +45,7 @@ rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdremediations
+  - storagebasedremediations
   verbs:
   - create
   - delete
@@ -57,7 +57,7 @@ rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdremediations/status
+  - storagebasedremediations/status
   verbs:
   - get
   - patch

@@ -23,12 +23,12 @@ Current Kubernetes node remediation solutions often rely on IPMI/iDRAC for fenci
     * **External Watchdog (Shared SBD Block Device):** The agent continuously writes its own heartbeat to its designated slot on the shared SBD PV. It also continuously reads heartbeats from other cluster nodes to detect peer failures.
     * **Internal Watchdog (Local Kernel Watchdog):** The agent will interface with the node's local kernel watchdog device (e.g., `/dev/watchdog`). It will "pet" this watchdog regularly. If the agent itself becomes unresponsive, hangs, or loses access to the shared SBD device (and thus cannot determine its liveness/peer status), it will *stop petting* the local watchdog, causing the node to panic and reboot.
 * **Self-Termination Logic:** If the SBD Agent detects a "fence" message directed at itself on the shared SBD device, it will immediately cease petting its local kernel watchdog, leading to self-panic and reboot.
-* **Kubernetes API Watcher:** The agent (or a leader-elected component within the agent's project) will watch for `SBDRemediation` Custom Resources (CRs). If an `SBDRemediation` CR targets a *peer* node, a healthy agent instance will write the appropriate "fence" message for the target node onto the shared SBD device.
+* **Kubernetes API Watcher:** The agent (or a leader-elected component within the agent's project) will watch for `StorageBasedRemediation` Custom Resources (CRs). If an `StorageBasedRemediation` CR targets a *peer* node, a healthy agent instance will write the appropriate "fence" message for the target node onto the shared SBD device.
 
 **5. Split-Brain Prevention & Consistency**
 * **Shared Storage Arbitration:** The shared SBD Block PV serves as the single source of truth for node liveness. Any node losing connectivity to this PV will self-fence via its local kernel watchdog.
 * **SBD Protocol Semantics:** Utilizes unique node IDs, timestamps, and sequence numbers on the shared device for robust liveness detection and preventing stale data issues.
-* **Kubernetes API Server Quorum:** The creation of `SBDRemediation` CRs by Medik8s' Node Healthcheck Operator relies on a healthy, quorum-based Kubernetes API server. Loss of API server quorum will prevent new external fencing actions from being initiated.
+* **Kubernetes API Server Quorum:** The creation of `StorageBasedRemediation` CRs by Medik8s' Node Healthcheck Operator relies on a healthy, quorum-based Kubernetes API server. Loss of API server quorum will prevent new external fencing actions from being initiated.
 * **Leader Election for Fencing Orchestration:** The component of the SBD Agent responsible for writing external fence messages (to fence *other* nodes) will be leader-elected. This ensures only a single, coordinated fencing action occurs, preventing race conditions and ensuring consistency even during control plane partitions.
 
 **6. Deployment & Management (Kubernetes Operator Pattern)**
@@ -36,7 +36,7 @@ Current Kubernetes node remediation solutions often rely on IPMI/iDRAC for fenci
 * **Installation:** Via Helm Chart (recommended) or Kustomize.
 * **Custom Resources:**
     * `SBDConfig` (Cluster-scoped): Defines cluster-wide SBD parameters (e.g., `sharedStorageClass`, `watchdogTimeout`, `sbdWatchdogPath`, `staleNodeTimeout`).
-    * `SBDRemediation` (Namespaced): A new CRD created by Node Healthcheck Operator to request SBD-based fencing for a specific node. Contains `nodeName`, `remediationRequestTime`, `status` (Phase, Message).
+    * `StorageBasedRemediation` (Namespaced): A new CRD created by Node Healthcheck Operator to request SBD-based fencing for a specific node. Contains `nodeName`, `remediationRequestTime`, `status` (Phase, Message).
 * **Monitoring:**
     * **Prometheus Metrics:** SBD Agent will expose comprehensive metrics (e.g., `sbd_agent_status_healthy`, `sbd_device_io_errors_total`, `sbd_watchdog_pets_total`, `sbd_peer_status`, `sbd_self_fenced_total`). `ServiceMonitor` provided for Prometheus Operator.
     * **Logging:** All components log to `stdout`/`stderr` with configurable levels.
@@ -50,7 +50,7 @@ Current Kubernetes node remediation solutions often rely on IPMI/iDRAC for fenci
 * **Communication Security:** All K8s API communication via TLS/RBAC. Internal agent communication (if any beyond SBD device) via mTLS. Metrics endpoint secured via network policies or mTLS.
 * **Shared SBD Block Device Security:** Relies on CSI driver's strict volume attachment, SBD protocol's checksums, and the fact that no sensitive data is stored on the device.
 * **Prevention of Unauthorized Fencing:**
-    * Only Node Healthcheck Operator can `create` `SBDRemediation` CRs (via RBAC).
+    * Only Node Healthcheck Operator can `create` `StorageBasedRemediation` CRs (via RBAC).
     * Leader election prevents multiple agents from initiating external fences.
     * SBD protocol requires explicit, targeted fence messages.
     * Comprehensive alerting on unexpected fencing events.

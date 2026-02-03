@@ -14,7 +14,7 @@ The SBD remediation controller cannot directly access the shared storage that SB
 
 ### Option 1: Agent-Based Fencing
 
-**Concept**: SBD agents detect and process fencing requests themselves, while the controller only manages SBDRemediation CRs.
+**Concept**: SBD agents detect and process fencing requests themselves, while the controller only manages StorageBasedRemediation CRs.
 
 ```
 ┌─────────────────┐    ┌─────────────────┐
@@ -210,13 +210,13 @@ The SBD remediation controller cannot directly access the shared storage that SB
 - **File locking coordination**: Agents already implement file locking for SBD device access
 - **Node-local operations**: Each agent can handle fencing for its own node or others
 - **Existing infrastructure**: Leverages established agent-to-SBD-device communication
-- **Status feedback**: Agents can directly update SBDRemediation status
+- **Status feedback**: Agents can directly update StorageBasedRemediation status
 - **Event correlation**: Fencing events naturally correlate with agent activities
 
 **Challenges:**
 - **Cross-node coordination**: Agents need to coordinate who handles which fencing request
 - **Leader election**: May need leader election among agents for fencing operations
-- **Status race conditions**: Multiple agents updating same SBDRemediation CR
+- **Status race conditions**: Multiple agents updating same StorageBasedRemediation CR
 
 ### Dedicated Fencing Pods Implementation Details
 
@@ -260,7 +260,7 @@ The SBD remediation controller cannot directly access the shared storage that SB
 6. **Security**: Maintains existing security model
 
 ### Implementation Strategy:
-1. **Phase 1**: Extend agents to watch SBDRemediation CRs
+1. **Phase 1**: Extend agents to watch StorageBasedRemediation CRs
 2. **Phase 2**: Implement agent-side fencing logic with coordination
 3. **Phase 3**: Remove problematic device access from controller
 4. **Phase 4**: Add enhanced status reporting and event emission
