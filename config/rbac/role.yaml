@@ -84,8 +84,7 @@ rules:
   - medik8s.medik8s.io
   resources:
   - sbdconfigs
-  - sbdremediations
-  - sbdremediationtemplates
+  - storagebasedremediations
   verbs:
   - create
   - delete
@@ -98,16 +97,14 @@ rules:
   - medik8s.medik8s.io
   resources:
   - sbdconfigs/finalizers
-  - sbdremediations/finalizers
-  - sbdremediationtemplates/finalizers
+  - storagebasedremediations/finalizers
   verbs:
   - update
 - apiGroups:
   - medik8s.medik8s.io
   resources:
   - sbdconfigs/status
-  - sbdremediations/status
-  - sbdremediationtemplates/status
+  - storagebasedremediations/status
   verbs:
   - get
   - patch

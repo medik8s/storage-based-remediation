@@ -23,10 +23,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// createTestSBDRemediation creates a SBDRemediation with standard test conditions
-func createTestSBDRemediation() *SBDRemediation {
-	return &SBDRemediation{
-		Status: SBDRemediationStatus{
+// createTestSBDRemediation creates a StorageBasedRemediation with standard test conditions
+func createTestSBDRemediation() *StorageBasedRemediation {
+	return &StorageBasedRemediation{
+		Status: StorageBasedRemediationStatus{
 			Conditions: []metav1.Condition{
 				{
 					Type:   string(SBDRemediationConditionReady),
@@ -75,8 +75,7 @@ func TestSBDRemediationSpec_TimeoutSecondsValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec := SBDRemediationSpec{
-				NodeName:       "test-node",
+			spec := StorageBasedRemediationSpec{
 				TimeoutSeconds: tt.timeoutSeconds,
 			}
 
@@ -88,8 +87,8 @@ func TestSBDRemediationSpec_TimeoutSecondsValidation(t *testing.T) {
 }
 
 func TestSBDRemediation_GetCondition(t *testing.T) {
-	remediation := &SBDRemediation{
-		Status: SBDRemediationStatus{
+	remediation := &StorageBasedRemediation{
+		Status: StorageBasedRemediationStatus{
 			Conditions: []metav1.Condition{
 				{
 					Type:   string(SBDRemediationConditionReady),
@@ -211,11 +210,11 @@ func TestSBDRemediation_SetCondition(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			remediation := &SBDRemediation{
+			remediation := &StorageBasedRemediation{
 				ObjectMeta: metav1.ObjectMeta{
 					Generation: 2,
 				},
-				Status: SBDRemediationStatus{
+				Status: StorageBasedRemediationStatus{
 					Conditions: tt.initialConditions,
 				},
 			}
@@ -323,8 +322,8 @@ func TestSBDRemediation_IsConditionTrue(t *testing.T) {
 }
 
 func TestSBDRemediation_IsConditionFalse(t *testing.T) {
-	remediation := &SBDRemediation{
-		Status: SBDRemediationStatus{
+	remediation := &StorageBasedRemediation{
+		Status: StorageBasedRemediationStatus{
 			Conditions: []metav1.Condition{
 				{
 					Type:   string(SBDRemediationConditionReady),
@@ -422,7 +421,7 @@ func TestSBDRemediation_IsConditionUnknown(t *testing.T) {
 func TestSBDRemediation_HelperMethods(t *testing.T) {
 	// Test IsFencingSucceeded
 	t.Run("IsFencingSucceeded", func(t *testing.T) {
-		remediation := &SBDRemediation{}
+		remediation := &StorageBasedRemediation{}
 
 		// Initially should be false
 		if remediation.IsFencingSucceeded() {
@@ -449,7 +448,7 @@ func TestSBDRemediation_HelperMethods(t *testing.T) {
 
 	// Test IsFencingInProgress
 	t.Run("IsFencingInProgress", func(t *testing.T) {
-		remediation := &SBDRemediation{}
+		remediation := &StorageBasedRemediation{}
 
 		// Initially should be false
 		if remediation.IsFencingInProgress() {
@@ -470,7 +469,7 @@ func TestSBDRemediation_HelperMethods(t *testing.T) {
 
 	// Test IsReady
 	t.Run("IsReady", func(t *testing.T) {
-		remediation := &SBDRemediation{}
+		remediation := &StorageBasedRemediation{}
 
 		// Initially should be false
 		if remediation.IsReady() {
@@ -486,7 +485,7 @@ func TestSBDRemediation_HelperMethods(t *testing.T) {
 
 	// Test HasLeadership
 	t.Run("HasLeadership", func(t *testing.T) {
-		remediation := &SBDRemediation{}
+		remediation := &StorageBasedRemediation{}
 
 		// Initially should be false
 		if remediation.HasLeadership() {
@@ -507,7 +506,7 @@ func TestSBDRemediation_HelperMethods(t *testing.T) {
 }
 
 func TestSBDRemediation_MultipleConditions(t *testing.T) {
-	remediation := &SBDRemediation{
+	remediation := &StorageBasedRemediation{
 		ObjectMeta: metav1.ObjectMeta{
 			Generation: 1,
 		},

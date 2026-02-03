@@ -20,14 +20,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck
+	. "github.com/onsi/gomega"    //nolint:staticcheck
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck
-	. "github.com/onsi/gomega"    //nolint:staticcheck
 
 	"github.com/aws/aws-sdk-go/service/ec2"
 
@@ -797,12 +796,12 @@ func (dc *DebugCollector) collectJobPodLogs(namespace, jobName string) {
 	}
 }
 
-// CollectSBDRemediations collects SBDRemediation CRs
+// CollectSBDRemediations collects StorageBasedRemediation CRs
 //
 //nolint:dupl // similar to CollectSBDConfigs; kept distinct for clarity
 func (dc *DebugCollector) CollectSBDRemediations(namespace string) {
 	By(fmt.Sprintf("Fetching SBDRemediations in namespace %s", namespace))
-	remediations := &medik8sv1alpha1.SBDRemediationList{}
+	remediations := &medik8sv1alpha1.StorageBasedRemediationList{}
 	err := dc.Clients.Client.List(dc.Clients.Context, remediations, client.InNamespace(namespace))
 	if err == nil {
 		for _, remediation := range remediations.Items {
@@ -812,10 +811,10 @@ func (dc *DebugCollector) CollectSBDRemediations(namespace string) {
 				if f, fileErr := os.Create(logFileName); fileErr == nil {
 					defer func() { _ = f.Close() }()
 					_, _ = f.Write(data)
-					GinkgoWriter.Printf("SBDRemediation %s saved to %s\n", remediation.Name, logFileName)
+					GinkgoWriter.Printf("StorageBasedRemediation %s saved to %s\n", remediation.Name, logFileName)
 				} else {
-					GinkgoWriter.Printf("Failed to write SBDRemediation to file %s: %s\n", logFileName, fileErr)
-					GinkgoWriter.Printf("SBDRemediation %s:\n%s\n", remediation.Name, string(data))
+					GinkgoWriter.Printf("Failed to write StorageBasedRemediation to file %s: %s\n", logFileName, fileErr)
+					GinkgoWriter.Printf("StorageBasedRemediation %s:\n%s\n", remediation.Name, string(data))
 				}
 			}
 		}
@@ -1383,7 +1382,7 @@ func (sav *SBDAgentValidator) ValidateAgentDeployment(opts ValidateAgentDeployme
 		"Starting SBD heartbeat loop",
 		"Successfully acquired file lock on node mapping file",
 		"All pre-flight checks passed successfully",
-		"SBDRemediation controller added to manager successfully",
+		"StorageBasedRemediation controller added to manager successfully",
 	}
 	for _, successString := range successStrings {
 		if !strings.Contains(fullLogStr, successString) {
@@ -1455,9 +1454,9 @@ func CleanupSBDConfigs(testNamespace *TestNamespace) {
 		}
 	}
 
-	By("Cleaning up SBDRemediation CRs to prevent namespace deletion issues")
+	By("Cleaning up StorageBasedRemediation CRs to prevent namespace deletion issues")
 	// Clean up all SBDRemediations in the test namespace
-	sbdRemediations := &medik8sv1alpha1.SBDRemediationList{}
+	sbdRemediations := &medik8sv1alpha1.StorageBasedRemediationList{}
 	err = testNamespace.Clients.Client.List(
 		testNamespace.Clients.Context, sbdRemediations, client.InNamespace(testNamespace.Name))
 	if err == nil {
@@ -1468,7 +1467,7 @@ func CleanupSBDConfigs(testNamespace *TestNamespace) {
 				_ = testNamespace.Clients.Client.Update(testNamespace.Clients.Context, &remediation)
 			}
 			_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, &remediation)
-			GinkgoWriter.Printf("Cleaned up SBDRemediation CR: %s\n", remediation.Name)
+			GinkgoWriter.Printf("Cleaned up StorageBasedRemediation CR: %s\n", remediation.Name)
 		}
 	}
 }
@@ -1541,13 +1540,13 @@ func SuiteSetup(prefix string) (*TestNamespace, error) {
 		if resource.Kind == "SBDConfig" {
 			foundSBDConfig = true
 		}
-		if resource.Kind == "SBDRemediation" {
+		if resource.Kind == "StorageBasedRemediation" {
 			foundSBDRemediation = true
 		}
 	}
 	Expect(foundSBDConfig).To(BeTrue(), "Expected SBDConfig CRD to be installed (should be done by Makefile setup)")
 	Expect(foundSBDRemediation).To(BeTrue(),
-		"Expected SBDRemediation CRD to be installed (should be done by Makefile setup)")
+		"Expected StorageBasedRemediation CRD to be installed (should be done by Makefile setup)")
 
 	By("verifying the controller-manager is deployed")
 	deployment := &appsv1.Deployment{}

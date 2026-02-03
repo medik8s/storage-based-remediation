@@ -14,7 +14,7 @@ TECH STACK:
 
 ARCHITECTURE:
 - Kubernetes Operator pattern with custom controllers
-- Custom Resource Definitions: SBDConfig and SBDRemediation
+- Custom Resource Definitions: SBDConfig and StorageBasedRemediation
 - Controller reconciliation loops with exponential backoff
 - Separate sbd-agent DaemonSet for node-level operations
 - Event-driven architecture with Kubernetes events

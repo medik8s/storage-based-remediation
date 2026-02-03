@@ -4,7 +4,7 @@ metadata:
   annotations:
     alm-examples: '[]'
     capabilities: Basic Install
-    createdAt: "2025-11-19T08:42:53Z"
+    createdAt: "2026-02-03T12:00:14Z"
     operators.operatorframework.io/builder: operator-sdk-v1.33.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     containerImage: quay.io/medik8s/sbd-operator:latest
@@ -19,15 +19,13 @@ spec:
         kind: SBDConfig
         name: sbdconfigs.medik8s.medik8s.io
         version: v1alpha1
-      - description: SBDRemediation is the Schema for the sbdremediations API.
-        displayName: SBDRemediation
-        kind: SBDRemediation
-        name: sbdremediations.medik8s.medik8s.io
+      - kind: StorageBasedRemediation
+        name: storagebasedremediations.medik8s.medik8s.io
         version: v1alpha1
-      - description: SBDRemediationTemplate is the Schema for the sbdremediationtemplates API.
-        displayName: SBDRemediation Template
-        kind: SBDRemediationTemplate
-        name: sbdremediationtemplates.medik8s.medik8s.io
+      - description: StorageBasedRemediationTemplate is the Schema for the storagebasedremediationtemplates API.
+        displayName: StorageBasedRemediation Template
+        kind: StorageBasedRemediationTemplate
+        name: storagebasedremediationtemplates.medik8s.medik8s.io
         version: v1alpha1
   description: TBD
   displayName: SBD
@@ -130,8 +128,7 @@ spec:
                 - medik8s.medik8s.io
               resources:
                 - sbdconfigs
-                - sbdremediations
-                - sbdremediationtemplates
+                - storagebasedremediations
               verbs:
                 - create
                 - delete
@@ -144,16 +141,14 @@ spec:
                 - medik8s.medik8s.io
               resources:
                 - sbdconfigs/finalizers
-                - sbdremediations/finalizers
-                - sbdremediationtemplates/finalizers
+                - storagebasedremediations/finalizers
               verbs:
                 - update
             - apiGroups:
                 - medik8s.medik8s.io
               resources:
                 - sbdconfigs/status
-                - sbdremediations/status
-                - sbdremediationtemplates/status
+                - storagebasedremediations/status
               verbs:
                 - get
                 - patch

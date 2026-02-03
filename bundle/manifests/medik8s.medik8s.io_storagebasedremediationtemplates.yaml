@@ -1,0 +1,88 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  creationTimestamp: null
+  name: storagebasedremediationtemplates.medik8s.medik8s.io
+spec:
+  group: medik8s.medik8s.io
+  names:
+    kind: StorageBasedRemediationTemplate
+    listKind: StorageBasedRemediationTemplateList
+    plural: storagebasedremediationtemplates
+    singular: storagebasedremediationtemplate
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: StorageBasedRemediationTemplate is the Schema for the sbdremediationtemplates
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: StorageBasedRemediationTemplateSpec defines the desired state
+              of StorageBasedRemediationTemplate.
+            properties:
+              template:
+                description: Template defines the desired state of StorageBasedRemediationTemplate
+                properties:
+                  spec:
+                    description: StorageBasedRemediationSpec defines the desired state
+                      of StorageBasedRemediation.
+                    properties:
+                      reason:
+                        default: NodeUnresponsive
+                        description: Reason specifies why this node needs to be fenced
+                        enum:
+                        - HeartbeatTimeout
+                        - NodeUnresponsive
+                        - ManualFencing
+                        type: string
+                      timeoutSeconds:
+                        default: 60
+                        description: TimeoutSeconds specifies how long to wait before
+                          considering the fencing failed
+                        format: int32
+                        maximum: 300
+                        minimum: 30
+                        type: integer
+                    type: object
+                required:
+                - spec
+                type: object
+            required:
+            - template
+            type: object
+          status:
+            description: StorageBasedRemediationTemplateStatus defines the observed
+              state of StorageBasedRemediationTemplate.
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: null
+  storedVersions: null

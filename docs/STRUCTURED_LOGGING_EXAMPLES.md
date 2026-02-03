@@ -179,13 +179,13 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 ```
 
-### SBDRemediation Controller Enhanced Logging
+### StorageBasedRemediation Controller Enhanced Logging
 
 ```go
 func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx).WithName("sbdremediation-controller").WithValues(
 		"request", req.NamespacedName,
-		"controller", "SBDRemediation",
+		"controller", "StorageBasedRemediation",
 	)
 
 	// Add resource-specific context to logger
@@ -199,7 +199,7 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"status.fencingSucceeded", sbdRemediation.IsFencingSucceeded(),
 	)
 
-	logger.V(1).Info("Starting SBDRemediation reconciliation",
+	logger.V(1).Info("Starting StorageBasedRemediation reconciliation",
 		"spec.nodeName", sbdRemediation.Spec.NodeName,
 		"status.nodeID", sbdRemediation.Status.NodeID,
 		"status.operatorInstance", sbdRemediation.Status.OperatorInstance)
@@ -310,7 +310,7 @@ The SBD Operator uses the standard controller-runtime logging configuration thro
   "timestamp": "2025-01-27T10:30:45.789Z",
   "level": "info",
   "message": "Leader confirmed - proceeding with fencing operations",
-  "controller": "SBDRemediation",
+  "controller": "StorageBasedRemediation",
   "request": "default/fence-worker-2",
   "sbdremediation.name": "fence-worker-2",
   "sbdremediation.namespace": "default",

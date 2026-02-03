@@ -1,10 +1,10 @@
-# SBDRemediation Controller Usage
+# StorageBasedRemediation Controller Usage
 
-The SBDRemediation controller provides automated fencing capabilities for Kubernetes nodes through SBD (Storage-Based Death) mechanisms.
+The StorageBasedRemediation controller provides automated fencing capabilities for Kubernetes nodes through SBD (Storage-Based Death) mechanisms.
 
 ## Overview
 
-When a node becomes unresponsive or requires manual fencing, create an `SBDRemediation` resource to initiate the fencing process. The controller will:
+When a node becomes unresponsive or requires manual fencing, create an `StorageBasedRemediation` resource to initiate the fencing process. The controller will:
 
 1. Validate that it's the leader (if leader election is enabled)
 2. Map the node name to a numeric node ID
@@ -21,7 +21,7 @@ When a node becomes unresponsive or requires manual fencing, create an `SBDRemed
 
 ```yaml
 apiVersion: medik8s.medik8s.io/v1alpha1
-kind: SBDRemediation
+kind: StorageBasedRemediation
 metadata:
   name: fence-worker-1
   namespace: default
@@ -106,7 +106,7 @@ kubectl describe sbdremediation fence-worker-1
 
 ## Integration with SBD Agents
 
-The SBDRemediation controller works in conjunction with SBD Agents:
+The StorageBasedRemediation controller works in conjunction with SBD Agents:
 
 1. **Controller**: Writes fence messages to target node slots
 2. **Target Node Agent**: Detects fence message in its slot and initiates self-fencing

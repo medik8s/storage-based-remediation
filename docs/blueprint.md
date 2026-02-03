@@ -743,7 +743,7 @@ Implement advanced error handling, exponential backoff, and retry mechanisms for
     - If a critical operation (like petting watchdog or writing heartbeat) consistently fails after retries, trigger a self-fence or a graceful shutdown.
 
 **Part 2: SBD Operator (`controllers/sbdconfig_controller.go`, `controllers/sbdremediation_controller.go`)**
-- For Kubernetes API calls (creating/updating DaemonSets, updating SBDRemediation status):
+- For Kubernetes API calls (creating/updating DaemonSets, updating StorageBasedRemediation status):
     - Use `reconcile.Result{RequeueAfter: ...}` for transient errors to trigger a requeue with backoff.
     - Log detailed errors, distinguishing between transient and permanent issues.
     - For `SBDRemediation` fencing writes, implement retries to the shared SBD device as a leader.
