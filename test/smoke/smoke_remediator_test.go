@@ -23,6 +23,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -30,7 +32,6 @@ import (
 
 	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
 	"github.com/medik8s/sbd-operator/test/utils"
-	corev1 "k8s.io/api/core/v1"
 )
 
 // metricsServiceName is the name of the metrics service of the project
@@ -79,45 +80,45 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 		})
 
 		AfterEach(func() {
-			// Clean up SBDRemediation
-			By("cleaning up SBDRemediation resource")
-			sbdRemediation := &medik8sv1alpha1.SBDRemediation{}
+			// Clean up StorageBasedRemediation
+			By("cleaning up StorageBasedRemediation resource")
+			sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{}
 			err := testClients.Client.Get(testClients.Context,
 				client.ObjectKey{Name: sbdRemediationName, Namespace: testNamespace.Name}, sbdRemediation)
 			if err == nil {
 				_ = testClients.Client.Delete(testClients.Context, sbdRemediation)
 			}
 
-			// Wait for SBDRemediation deletion to complete
-			By("waiting for SBDRemediation deletion to complete")
+			// Wait for StorageBasedRemediation deletion to complete
+			By("waiting for StorageBasedRemediation deletion to complete")
 			Eventually(func() bool {
-				sbdRemediation := &medik8sv1alpha1.SBDRemediation{}
+				sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{}
 				err := testClients.Client.Get(testClients.Context,
 					client.ObjectKey{Name: sbdRemediationName, Namespace: testNamespace.Name}, sbdRemediation)
 				return errors.IsNotFound(err) // Error means resource not found (deleted)
 			}, 30*time.Second, 2*time.Second).Should(BeTrue())
 		})
 
-		It("should create and manage SBDRemediation resource", func() {
-			By("creating an SBDRemediation resource")
-			sbdRemediation := &medik8sv1alpha1.SBDRemediation{
+		It("should create and manage StorageBasedRemediation resource", func() {
+			By("creating an StorageBasedRemediation resource")
+			testNodeName := "test-node"
+			sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      sbdRemediationName,
+					Name:      testNodeName,
 					Namespace: testNamespace.Name,
 				},
-				Spec: medik8sv1alpha1.SBDRemediationSpec{
-					NodeName:       "test-node",
+				Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
 					Reason:         medik8sv1alpha1.SBDRemediationReasonManualFencing,
 					TimeoutSeconds: 60,
 				},
 			}
 
 			err := testClients.Client.Create(testClients.Context, sbdRemediation)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDRemediation")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create StorageBasedRemediation")
 
-			By("verifying the SBDRemediation resource exists")
+			By("verifying the StorageBasedRemediation resource exists")
 			verifySBDRemediationExists := func(g Gomega) {
-				foundSBDRemediation := &medik8sv1alpha1.SBDRemediation{}
+				foundSBDRemediation := &medik8sv1alpha1.StorageBasedRemediation{}
 				err := testClients.Client.Get(testClients.Context, types.NamespacedName{
 					Name:      sbdRemediationName,
 					Namespace: testNamespace.Name,
@@ -127,29 +128,29 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 			}
 			Eventually(verifySBDRemediationExists, 30*time.Second).Should(Succeed())
 
-			By("verifying the SBDRemediation has conditions")
+			By("verifying the StorageBasedRemediation has conditions")
 			verifySBDRemediationConditions := func(g Gomega) {
-				foundSBDRemediation := &medik8sv1alpha1.SBDRemediation{}
+				foundSBDRemediation := &medik8sv1alpha1.StorageBasedRemediation{}
 				err := testClients.Client.Get(testClients.Context, types.NamespacedName{
 					Name:      sbdRemediationName,
 					Namespace: testNamespace.Name,
 				}, foundSBDRemediation)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(foundSBDRemediation.Status.Conditions).ToNot(BeEmpty(), "SBDRemediation should have status conditions")
+				g.Expect(foundSBDRemediation.Status.Conditions).ToNot(BeEmpty(), "StorageBasedRemediation should have status conditions")
 			}
 			Eventually(verifySBDRemediationConditions, 60*time.Second).Should(Succeed())
 
-			By("verifying the SBDRemediation status fields are set")
+			By("verifying the StorageBasedRemediation status fields are set")
 			verifySBDRemediationStatus := func(g Gomega) {
-				foundSBDRemediation := &medik8sv1alpha1.SBDRemediation{}
+				foundSBDRemediation := &medik8sv1alpha1.StorageBasedRemediation{}
 				err := testClients.Client.Get(testClients.Context, types.NamespacedName{
 					Name:      sbdRemediationName,
 					Namespace: testNamespace.Name,
 				}, foundSBDRemediation)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(foundSBDRemediation.Status.OperatorInstance).ToNot(BeEmpty(),
-					"SBDRemediation should have operatorInstance set")
-				g.Expect(foundSBDRemediation.Status.LastUpdateTime).ToNot(BeNil(), "SBDRemediation should have lastUpdateTime set")
+					"StorageBasedRemediation should have operatorInstance set")
+				g.Expect(foundSBDRemediation.Status.LastUpdateTime).ToNot(BeNil(), "StorageBasedRemediation should have lastUpdateTime set")
 			}
 			Eventually(verifySBDRemediationStatus, 60*time.Second).Should(Succeed())
 		})
@@ -201,28 +202,28 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should handle SBDRemediation resources with timeout validation", func() {
-			By("creating a test SBDRemediation with custom timeout")
-			sbdRemediation := &medik8sv1alpha1.SBDRemediation{
+		It("should handle StorageBasedRemediation resources with timeout validation", func() {
+			By("creating a test StorageBasedRemediation with custom timeout")
+			testTimeoutNodeName := "test-timeout-node"
+			sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-sbdremediation-timeout",
+					Name:      testTimeoutNodeName,
 					Namespace: testNamespace.Name,
 				},
-				Spec: medik8sv1alpha1.SBDRemediationSpec{
-					NodeName:       "test-worker-node",
+				Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
 					Reason:         medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
 					TimeoutSeconds: 120,
 				},
 			}
 
 			err := testClients.Client.Create(testClients.Context, sbdRemediation)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDRemediation")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create StorageBasedRemediation")
 
-			By("verifying the SBDRemediation timeout is preserved")
+			By("verifying the StorageBasedRemediation timeout is preserved")
 			Eventually(func() int32 {
-				foundSBDRemediation := &medik8sv1alpha1.SBDRemediation{}
+				foundSBDRemediation := &medik8sv1alpha1.StorageBasedRemediation{}
 				err := testClients.Client.Get(testClients.Context, types.NamespacedName{
-					Name:      "test-sbdremediation-timeout",
+					Name:      testTimeoutNodeName,
 					Namespace: testNamespace.Name,
 				}, foundSBDRemediation)
 				if err != nil {
@@ -231,11 +232,11 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 				return foundSBDRemediation.Spec.TimeoutSeconds
 			}).Should(Equal(int32(120)))
 
-			By("verifying the SBDRemediation is processed")
+			By("verifying the StorageBasedRemediation is processed")
 			Eventually(func() bool {
-				foundSBDRemediation := &medik8sv1alpha1.SBDRemediation{}
+				foundSBDRemediation := &medik8sv1alpha1.StorageBasedRemediation{}
 				err := testClients.Client.Get(testClients.Context, types.NamespacedName{
-					Name:      "test-sbdremediation-timeout",
+					Name:      testTimeoutNodeName,
 					Namespace: testNamespace.Name,
 				}, foundSBDRemediation)
 				if err != nil {
@@ -252,12 +253,12 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 				return false
 			}).Should(BeTrue())
 
-			By("cleaning up the test SBDRemediation")
+			By("cleaning up the test StorageBasedRemediation")
 			err = testClients.Client.Delete(testClients.Context, sbdRemediation)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should handle multiple SBDRemediation resources concurrently", func() {
+		It("should handle multiple StorageBasedRemediation resources concurrently", func() {
 
 			By("getting real worker node names from the cluster")
 			nodes := &corev1.NodeList{}
@@ -286,40 +287,40 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 
 			remediationNames := make([]string, numRemediations)
 
-			By(fmt.Sprintf("creating %d SBDRemediation resources with real node names", numRemediations))
+			By(fmt.Sprintf("creating %d StorageBasedRemediation resources with real node names", numRemediations))
 			for i := 0; i < numRemediations; i++ {
-				remediationNames[i] = fmt.Sprintf("test-concurrent-remediation-%d", i)
-				sbdRemediation := &medik8sv1alpha1.SBDRemediation{
+				// Use node name directly as remediation name
+				remediationNames[i] = workerNodes[i]
+				sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      remediationNames[i],
 						Namespace: testNamespace.Name,
 					},
-					Spec: medik8sv1alpha1.SBDRemediationSpec{
-						NodeName:       workerNodes[i], // Use real node names
+					Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
 						Reason:         medik8sv1alpha1.SBDRemediationReasonNodeUnresponsive,
 						TimeoutSeconds: 60,
 					},
 				}
 				err := testClients.Client.Create(testClients.Context, sbdRemediation)
-				Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Failed to create SBDRemediation %d", i))
+				Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Failed to create StorageBasedRemediation %d", i))
 			}
 
 			By("verifying all SBDRemediations are processed by agents")
 			for i, name := range remediationNames {
 				Eventually(func() bool {
-					foundSBDRemediation := &medik8sv1alpha1.SBDRemediation{}
+					foundSBDRemediation := &medik8sv1alpha1.StorageBasedRemediation{}
 					err := testClients.Client.Get(testClients.Context, types.NamespacedName{
 						Name:      name,
 						Namespace: testNamespace.Name,
 					}, foundSBDRemediation)
 					if err != nil {
-						fmt.Printf("Error getting SBDRemediation %s: %v\n", name, err)
+						fmt.Printf("Error getting StorageBasedRemediation %s: %v\n", name, err)
 						return false
 					}
 
 					// Log status for debugging
 					if foundSBDRemediation.Status.Conditions != nil {
-						fmt.Printf("SBDRemediation %s conditions: %+v\n", name, foundSBDRemediation.Status.Conditions)
+						fmt.Printf("StorageBasedRemediation %s conditions: %+v\n", name, foundSBDRemediation.Status.Conditions)
 					}
 
 					// For smoke tests without SBD devices, we expect:
@@ -351,12 +352,12 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 					}
 					return false
 				}, time.Minute*2, time.Second*10).Should(BeTrue(),
-					fmt.Sprintf("SBDRemediation %d should be processed by agent (expect safe fencing failure)", i))
+					fmt.Sprintf("StorageBasedRemediation %d should be processed by agent (expect safe fencing failure)", i))
 			}
 
 			By("cleaning up all test SBDRemediations")
 			for _, name := range remediationNames {
-				sbdRemediation := &medik8sv1alpha1.SBDRemediation{}
+				sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{}
 				err := testClients.Client.Get(testClients.Context,
 					client.ObjectKey{Name: name, Namespace: testNamespace.Name}, sbdRemediation)
 				if err == nil {
@@ -365,29 +366,29 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 			}
 		})
 
-		It("should handle SBDRemediation resources with invalid node names", func() {
-			By("creating a test SBDRemediation with intentionally invalid node name (tests error handling)")
+		It("should handle StorageBasedRemediation resources with invalid node names", func() {
+			By("creating a test StorageBasedRemediation with intentionally invalid node name (tests error handling)")
 			// Note: This test specifically uses a clearly fake node name to test
 			// error handling for truly non-existent nodes, unlike other tests
 			// that use real cluster node names for realistic pipeline testing
-			sbdRemediation := &medik8sv1alpha1.SBDRemediation{
+			invalidNodeName := "definitely-non-existent-node-12345" // Clearly fake for error testing
+			sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-invalid-node-remediation",
+					Name:      invalidNodeName,
 					Namespace: testNamespace.Name,
 				},
-				Spec: medik8sv1alpha1.SBDRemediationSpec{
-					NodeName:       "definitely-non-existent-node-12345", // Clearly fake for error testing
+				Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
 					Reason:         medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
 					TimeoutSeconds: 30,
 				},
 			}
 
 			err := testClients.Client.Create(testClients.Context, sbdRemediation)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDRemediation")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create StorageBasedRemediation")
 
-			By("verifying the SBDRemediation becomes ready with failed fencing due to invalid node")
+			By("verifying the StorageBasedRemediation becomes ready with failed fencing due to invalid node")
 			Eventually(func() bool {
-				foundSBDRemediation := &medik8sv1alpha1.SBDRemediation{}
+				foundSBDRemediation := &medik8sv1alpha1.StorageBasedRemediation{}
 				err := testClients.Client.Get(testClients.Context, types.NamespacedName{
 					Name:      "test-invalid-node-remediation",
 					Namespace: testNamespace.Name,
@@ -428,12 +429,12 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 				return hasReady && hasFencingFailed && hasNodeMappingError
 			}, time.Minute*1, time.Second*10).Should(BeTrue())
 
-			By("cleaning up the test SBDRemediation")
+			By("cleaning up the test StorageBasedRemediation")
 			err = testClients.Client.Delete(testClients.Context, sbdRemediation)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should validate timeout ranges in SBDRemediation CRD", func() {
+		It("should validate timeout ranges in StorageBasedRemediation CRD", func() {
 			By("getting a real worker node name for validation tests")
 			nodes := &corev1.NodeList{}
 			err := testClients.Client.List(testClients.Context, nodes)
@@ -459,14 +460,13 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 				Skip("No worker nodes found for timeout validation test")
 			}
 
-			By("attempting to create SBDRemediation with timeout below minimum")
-			invalidSBDRemediation := &medik8sv1alpha1.SBDRemediation{
+			By("attempting to create StorageBasedRemediation with timeout below minimum")
+			invalidSBDRemediation := &medik8sv1alpha1.StorageBasedRemediation{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-invalid-timeout-low",
+					Name:      testNodeName,
 					Namespace: testNamespace.Name,
 				},
-				Spec: medik8sv1alpha1.SBDRemediationSpec{
-					NodeName:       testNodeName, // Use real node name
+				Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
 					Reason:         medik8sv1alpha1.SBDRemediationReasonManualFencing,
 					TimeoutSeconds: 29, // Below minimum (30)
 				},
@@ -475,14 +475,13 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 			err = testClients.Client.Create(testClients.Context, invalidSBDRemediation)
 			Expect(err).To(HaveOccurred(), "Should reject timeout below minimum (30)")
 
-			By("attempting to create SBDRemediation with timeout above maximum")
-			invalidSBDRemediation = &medik8sv1alpha1.SBDRemediation{
+			By("attempting to create StorageBasedRemediation with timeout above maximum")
+			invalidSBDRemediation = &medik8sv1alpha1.StorageBasedRemediation{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-invalid-timeout-high",
+					Name:      testNodeName,
 					Namespace: testNamespace.Name,
 				},
-				Spec: medik8sv1alpha1.SBDRemediationSpec{
-					NodeName:       testNodeName, // Use real node name
+				Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
 					Reason:         medik8sv1alpha1.SBDRemediationReasonManualFencing,
 					TimeoutSeconds: 301, // Above maximum (300)
 				},
@@ -491,14 +490,13 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 			err = testClients.Client.Create(testClients.Context, invalidSBDRemediation)
 			Expect(err).To(HaveOccurred(), "Should reject timeout above maximum (300)")
 
-			By("creating SBDRemediation with valid timeout at boundaries")
-			validSBDRemediation := &medik8sv1alpha1.SBDRemediation{
+			By("creating StorageBasedRemediation with valid timeout at boundaries")
+			validSBDRemediation := &medik8sv1alpha1.StorageBasedRemediation{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-valid-timeout-boundary",
+					Name:      testNodeName,
 					Namespace: testNamespace.Name,
 				},
-				Spec: medik8sv1alpha1.SBDRemediationSpec{
-					NodeName:       testNodeName, // Use real node name
+				Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
 					Reason:         medik8sv1alpha1.SBDRemediationReasonManualFencing,
 					TimeoutSeconds: 30, // Minimum valid timeout
 				},
@@ -507,13 +505,12 @@ var _ = Describe("SBD Remediation Smoke Tests", Label("Smoke", "Remediation"), f
 			err = testClients.Client.Create(testClients.Context, validSBDRemediation)
 			Expect(err).NotTo(HaveOccurred(), "Should accept minimum valid timeout (30)")
 
-			validSBDRemediationMax := &medik8sv1alpha1.SBDRemediation{
+			validSBDRemediationMax := &medik8sv1alpha1.StorageBasedRemediation{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-valid-timeout-boundary-max",
+					Name:      testNodeName,
 					Namespace: testNamespace.Name,
 				},
-				Spec: medik8sv1alpha1.SBDRemediationSpec{
-					NodeName:       testNodeName, // Use real node name
+				Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
 					Reason:         medik8sv1alpha1.SBDRemediationReasonManualFencing,
 					TimeoutSeconds: 300, // Maximum valid timeout
 				},

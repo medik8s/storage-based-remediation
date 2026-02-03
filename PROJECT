@@ -2,7 +2,6 @@
 # This file is used to track the info used to scaffold your project
 # and allow the plugins properly work.
 # More info: https://book.kubebuilder.io/reference/project-config.html
-cliVersion: 4.6.0
 domain: medik8s.io
 layout:
 - go.kubebuilder.io/v4
@@ -23,7 +22,7 @@ resources:
   controller: true
   domain: medik8s.io
   group: medik8s
-  kind: SBDRemediation
+  kind: StorageBasedRemediation
   path: github.com/medik8s/sbd-operator/api/v1alpha1
   version: v1alpha1
 - api:
@@ -32,7 +31,7 @@ resources:
   controller: true
   domain: medik8s.io
   group: medik8s
-  kind: SBDRemediationTemplate
+  kind: StorageBasedRemediationTemplate
   path: github.com/medik8s/sbd-operator/api/v1alpha1
   version: v1alpha1
 version: "3"

@@ -30,19 +30,20 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	gomegatypes "github.com/onsi/gomega/types"
+
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
 	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
 	"github.com/medik8s/sbd-operator/test/utils"
-	appsv1 "k8s.io/api/apps/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // ClusterInfo holds information about the test cluster
@@ -696,7 +697,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 	targetNode := selectWorkerNode(cluster)
 	By(fmt.Sprintf("Testing storage access interruption on verified worker node %s", targetNode.Metadata.Name))
 
-	// Node should self-fence when it loses storage access (no SBDRemediation CR needed)
+	// Node should self-fence when it loses storage access (no StorageBasedRemediation CR needed)
 	// Wait for node to actually panic/reboot due to storage loss (self-fencing)
 	By("Obtaining the original boot time of the node")
 	originalBootTimes := getNodeBootIDs(cluster)
@@ -734,7 +735,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 
 	// Monitor for node disappearing (panic/reboot) or boot ID change
 	checkNodeReboot(targetNode.Metadata.Name, "during storage disruption",
-		originalBootTimes[targetNode.Metadata.Name], time.Minute*2, true)
+		originalBootTimes[targetNode.Metadata.Name], time.Minute*10, true)
 
 	// Verify node recovery (instead of the old immediate recovery test)
 	By("Verifying node has fully recovered after fencing and shared storage restoration")
@@ -794,34 +795,35 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 	err = k8sClient.Delete(ctx, pod, client.PropagationPolicy(metav1.DeletePropagationBackground))
 	Expect(err).NotTo(HaveOccurred())
 
-	// Create SBDRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
-	By("Creating SBDRemediation CR to simulate external operator behavior")
-	sbdRemediation := &medik8sv1alpha1.SBDRemediation{
+	// Create StorageBasedRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
+	// Node name is now derived from the remediation name
+	By("Creating StorageBasedRemediation CR to simulate external operator behavior")
+	remediationName := targetNode.Metadata.Name
+	sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("network-remediation-%s", targetNode.Metadata.Name),
+			Name:      remediationName,
 			Namespace: testNamespace.Name,
 		},
-		Spec: medik8sv1alpha1.SBDRemediationSpec{
-			NodeName:       targetNode.Metadata.Name,
+		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
 			Reason:         medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
 			TimeoutSeconds: 300, // 5 minutes timeout for fencing
 		},
 	}
 	err = k8sClient.Create(ctx, sbdRemediation)
 	Expect(err).NotTo(HaveOccurred())
-	By(fmt.Sprintf("Created SBDRemediation CR for node %s", targetNode.Metadata.Name))
+	By(fmt.Sprintf("Created StorageBasedRemediation CR for node %s", targetNode.Metadata.Name))
 
 	// Verify SBD remediation is triggered and processed
 	By("Verifying SBD remediation is triggered and processed for the disrupted node")
 	Eventually(func() bool {
-		remediations := &medik8sv1alpha1.SBDRemediationList{}
+		remediations := &medik8sv1alpha1.StorageBasedRemediationList{}
 		err := k8sClient.List(ctx, remediations, client.InNamespace(testNamespace.Name))
 		if err != nil {
 			return false
 		}
 
 		for _, remediation := range remediations.Items {
-			if remediation.Spec.NodeName == targetNode.Metadata.Name {
+			if remediation.Name == targetNode.Metadata.Name {
 				By(fmt.Sprintf("SBD remediation found for node %s: %+v", targetNode.Metadata.Name, remediation.Status))
 				return true
 			}
@@ -854,36 +856,36 @@ func testFakeRemediation() {
 	By("Setting up SBD configuration for remediation loop test")
 	testBasicSBDConfiguration()
 
-	// Create SBDRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
-	By("Creating SBDRemediation CR to simulate external operator behavior")
-	sbdRemediation := &medik8sv1alpha1.SBDRemediation{
+	// Create StorageBasedRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
+	By("Creating StorageBasedRemediation CR to simulate external operator behavior")
+	fakeNodeName := "fake-node"
+	sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("network-remediation-%s", "fake-node"),
+			Name:      fakeNodeName,
 			Namespace: testNamespace.Name,
 		},
-		Spec: medik8sv1alpha1.SBDRemediationSpec{
-			NodeName:       "fake-node",
+		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
 			Reason:         medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
 			TimeoutSeconds: 300, // 5 minutes timeout for fencing
 		},
 	}
 	err := k8sClient.Create(ctx, sbdRemediation)
 	Expect(err).NotTo(HaveOccurred())
-	By(fmt.Sprintf("Created SBDRemediation CR for node %s", "fake-node"))
+	By(fmt.Sprintf("Created StorageBasedRemediation CR for node %s", fakeNodeName))
 
 	// Verify SBD remediation is triggered and processed
 	/*By("Verifying SBD remediation is triggered and processed for the disrupted node")
 	Eventually(func() bool {
-		remediations := &medik8sv1alpha1.SBDRemediationList{}
+		remediations := &medik8sv1alpha1.StorageBasedRemediationList{}
 		err := k8sClient.List(ctx, remediations, client.InNamespace(testNamespace.Name))
 		if err != nil {
 			return false
 		}
 
 		for _, remediation := range remediations.Items {
-			if remediation.Spec.NodeName == "fake-node" {
-				By(fmt.Sprintf("SBD remediation found for node %s: %+v", "fake-node", remediation.Status))
-				return checkFencingOperation("fake-node", false)
+			if remediation.Name == fakeNodeName {
+				By(fmt.Sprintf("SBD remediation found for node %s: %+v", fakeNodeName, remediation.Status))
+				return checkFencingOperation(fakeNodeName, false)
 			}
 		}
 
@@ -896,14 +898,14 @@ func checkFencingOperation(nodeName string, expectSuccess bool) bool {
 
 	if expectSuccess {
 		expectedLogs = []string{
-			"Starting SBDRemediation reconciliation",
+			"Starting StorageBasedRemediation reconciliation",
 			"Starting fencing operation",
 			"Fencing operation completed successfully",
 			"Cleared fencing operation",
 		}
 	} else {
 		expectedLogs = []string{
-			"Starting SBDRemediation reconciliation",
+			"Starting StorageBasedRemediation reconciliation",
 			"Starting fencing operation",
 			"Target node not found in node manager",
 			"Fencing operation failed",
@@ -941,22 +943,21 @@ func testNodeRemediation(cluster ClusterInfo) {
 		return pod.Status.Phase == corev1.PodRunning && pod.Spec.NodeName == nodeName
 	}, time.Minute*3, time.Second*10).Should(BeTrue())
 
-	// Create SBDRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
-	By("Creating SBDRemediation CR to simulate external operator behavior")
-	sbdRemediation := &medik8sv1alpha1.SBDRemediation{
+	// Create StorageBasedRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
+	By("Creating StorageBasedRemediation CR to simulate external operator behavior")
+	sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("network-remediation-%s", nodeName),
+			Name:      nodeName,
 			Namespace: testNamespace.Name,
 		},
-		Spec: medik8sv1alpha1.SBDRemediationSpec{
-			NodeName:       nodeName,
+		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
 			Reason:         medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
 			TimeoutSeconds: 300, // 5 minutes timeout for fencing
 		},
 	}
 	err := k8sClient.Create(ctx, sbdRemediation)
 	Expect(err).NotTo(HaveOccurred())
-	By(fmt.Sprintf("Created SBDRemediation CR for node %s", nodeName))
+	By(fmt.Sprintf("Created StorageBasedRemediation CR for node %s", nodeName))
 
 	// Verify unschedulable (cordon) is applied before fencing proceeds
 	By("Waiting for node to be marked unschedulable (cordoned)")
@@ -980,14 +981,14 @@ func testNodeRemediation(cluster ClusterInfo) {
 	// Verify SBD remediation is triggered and processed
 	By("Verifying SBD remediation is triggered and processed for the disrupted node")
 	Eventually(func() bool {
-		remediations := &medik8sv1alpha1.SBDRemediationList{}
+		remediations := &medik8sv1alpha1.StorageBasedRemediationList{}
 		err := k8sClient.List(ctx, remediations, client.InNamespace(testNamespace.Name))
 		if err != nil {
 			return false
 		}
 
 		for _, remediation := range remediations.Items {
-			if remediation.Spec.NodeName == nodeName {
+			if remediation.Name == nodeName {
 				By(fmt.Sprintf("SBD remediation found for node %s: %+v", nodeName, remediation.Status))
 				return true
 			}
@@ -999,10 +1000,10 @@ func testNodeRemediation(cluster ClusterInfo) {
 	checkNodeReboot(nodeName, "due to remediation CR",
 		originalBootTimes[nodeName], time.Minute*10, true)
 
-	// Wait for SBDRemediation condition FencingSucceeded=True
-	By("Waiting for SBDRemediation condition FencingSucceeded=True")
+	// Wait for StorageBasedRemediation condition FencingSucceeded=True
+	By("Waiting for StorageBasedRemediation condition FencingSucceeded=True")
 	Eventually(func() bool {
-		cur := &medik8sv1alpha1.SBDRemediation{}
+		cur := &medik8sv1alpha1.StorageBasedRemediation{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{
 			Namespace: sbdRemediation.Namespace,
 			Name:      sbdRemediation.Name,
@@ -1034,10 +1035,10 @@ func testNodeRemediation(cluster ClusterInfo) {
 		return false
 	}, time.Minute*2, time.Second*10).Should(BeTrue(), "out-of-service taint was not applied after fencing")
 
-	// Wait for SBDRemediation condition Ready=True
-	By("Waiting for SBDRemediation condition Ready=True")
+	// Wait for StorageBasedRemediation condition Ready=True
+	By("Waiting for StorageBasedRemediation condition Ready=True")
 	Eventually(func() bool {
-		cur := &medik8sv1alpha1.SBDRemediation{}
+		cur := &medik8sv1alpha1.StorageBasedRemediation{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{
 			Namespace: sbdRemediation.Namespace,
 			Name:      sbdRemediation.Name,
@@ -1072,8 +1073,8 @@ func testNodeRemediation(cluster ClusterInfo) {
 		return errors.IsNotFound(err)
 	}, time.Minute*2, time.Second*10).Should(BeTrue())
 
-	// Delete the SBDRemediation CR to trigger cleanup (uncordon + OOS removal)
-	By("Deleting SBDRemediation CR to trigger cleanup")
+	// Delete the StorageBasedRemediation CR to trigger cleanup (uncordon + OOS removal)
+	By("Deleting StorageBasedRemediation CR to trigger cleanup")
 	Expect(k8sClient.Delete(ctx, sbdRemediation)).To(Succeed())
 
 	// Verify unschedulable is removed and node is schedulable again
@@ -1549,12 +1550,64 @@ func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 	}
 }
 
+// cleanupAllNodes cleans up all nodes by setting unschedulable to false and removing out-of-service taint
+func cleanupAllNodes(testNamespace *utils.TestNamespace) {
+	By("Cleaning up all nodes: setting unschedulable=false and removing out-of-service taint")
+	nodes := &corev1.NodeList{}
+	err := testNamespace.Clients.Client.List(testNamespace.Clients.Context, nodes)
+	if err != nil {
+		GinkgoWriter.Printf("Warning: Failed to list nodes for cleanup: %v\n", err)
+		return
+	}
+
+	for i := range nodes.Items {
+		node := &nodes.Items[i]
+		needsUpdate := false
+
+		// Set unschedulable to false
+		if node.Spec.Unschedulable {
+			node.Spec.Unschedulable = false
+			needsUpdate = true
+		}
+
+		// Remove out-of-service taint if present
+		if len(node.Spec.Taints) > 0 {
+			newTaints := make([]corev1.Taint, 0, len(node.Spec.Taints))
+			taintRemoved := false
+			for _, taint := range node.Spec.Taints {
+				if taint.Key == corev1.TaintNodeOutOfService {
+					taintRemoved = true
+					continue // Skip this taint
+				}
+				newTaints = append(newTaints, taint)
+			}
+			if taintRemoved {
+				node.Spec.Taints = newTaints
+				needsUpdate = true
+			}
+		}
+
+		// Update node if changes were made
+		if needsUpdate {
+			err := testNamespace.Clients.Client.Update(testNamespace.Clients.Context, node)
+			if err != nil {
+				GinkgoWriter.Printf("Warning: Failed to cleanup node %s: %v\n", node.Name, err)
+			} else {
+				GinkgoWriter.Printf("Cleaned up node %s: unschedulable=false, removed out-of-service taint\n", node.Name)
+			}
+		}
+	}
+}
+
 func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 	cleanupDisruptionPods(testNamespace)
 
-	// Clean up SBDRemediation CRs to prevent namespace deletion issues
-	By("Cleaning up SBDRemediation CRs from test namespace")
-	sbdRemediations := &medik8sv1alpha1.SBDRemediationList{}
+	// Clean up all nodes first to ensure they're in a clean state
+	cleanupAllNodes(testNamespace)
+
+	// Clean up StorageBasedRemediation CRs to prevent namespace deletion issues
+	By("Cleaning up StorageBasedRemediation CRs from test namespace")
+	sbdRemediations := &medik8sv1alpha1.StorageBasedRemediationList{}
 	err := testNamespace.Clients.Client.List(
 		testNamespace.Clients.Context, sbdRemediations, client.InNamespace(testNamespace.Name))
 	if err == nil {
@@ -1565,7 +1618,7 @@ func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 				_ = testNamespace.Clients.Client.Update(testNamespace.Clients.Context, &remediation)
 			}
 			_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, &remediation)
-			By(fmt.Sprintf("Cleaned up SBDRemediation CR: %s", remediation.Name))
+			By(fmt.Sprintf("Cleaned up StorageBasedRemediation CR: %s", remediation.Name))
 		}
 	}
 

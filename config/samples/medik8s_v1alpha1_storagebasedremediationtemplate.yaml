@@ -1,9 +1,9 @@
 apiVersion: medik8s.medik8s.io/v1alpha1
-kind: SBDRemediationTemplate
+kind: StorageBasedRemediationTemplate
 metadata:
   labels:
     app.kubernetes.io/name: sbd-operator
     app.kubernetes.io/managed-by: kustomize
-  name: sbdremediationtemplate-sample
+  name: storagebasedremediationtemplate-sample
 spec:
   # TODO(user): Add fields here

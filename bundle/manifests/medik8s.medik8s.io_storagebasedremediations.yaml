@@ -4,18 +4,18 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
   creationTimestamp: null
-  name: sbdremediations.medik8s.medik8s.io
+  name: storagebasedremediations.medik8s.medik8s.io
 spec:
   group: medik8s.medik8s.io
   names:
-    kind: SBDRemediation
-    listKind: SBDRemediationList
-    plural: sbdremediations
-    singular: sbdremediation
+    kind: StorageBasedRemediation
+    listKind: StorageBasedRemediationList
+    plural: storagebasedremediations
+    singular: storagebasedremediation
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.nodeName
+    - jsonPath: .metadata.name
       name: Node
       type: string
     - jsonPath: .status.conditions[?(@.type=='Ready')].status
@@ -33,7 +33,8 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: SBDRemediation is the Schema for the sbdremediations API.
+        description: StorageBasedRemediation is the Schema for the sbdremediations
+          API.
         properties:
           apiVersion:
             description: |-
@@ -53,11 +54,9 @@ spec:
           metadata:
             type: object
           spec:
-            description: SBDRemediationSpec defines the desired state of SBDRemediation.
+            description: StorageBasedRemediationSpec defines the desired state of
+              StorageBasedRemediation.
             properties:
-              nodeName:
-                description: NodeName is the name of the Kubernetes node to be fenced
-                type: string
               reason:
                 default: NodeUnresponsive
                 description: Reason specifies why this node needs to be fenced
@@ -74,11 +73,10 @@ spec:
                 maximum: 300
                 minimum: 30
                 type: integer
-            required:
-            - nodeName
             type: object
           status:
-            description: SBDRemediationStatus defines the observed state of SBDRemediation.
+            description: StorageBasedRemediationStatus defines the observed state
+              of StorageBasedRemediation.
             properties:
               conditions:
                 description: Conditions represent the latest available observations

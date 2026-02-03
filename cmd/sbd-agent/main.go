@@ -35,8 +35,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-
-	// Kubernetes imports for SBDRemediation CR watching
+	// Kubernetes imports for StorageBasedRemediation CR watching
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -46,7 +45,6 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
-
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -64,11 +62,11 @@ import (
 )
 
 // RBAC permissions for SBD Agent
-// The agent needs to read SBDConfig for configuration and process SBDRemediation CRs for fencing operations
+// The agent needs to read SBDConfig for configuration and process StorageBasedRemediation CRs for fencing operations
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdconfigs/status,verbs=get
-// +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdremediations,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdremediations/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=storagebasedremediations,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=storagebasedremediations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
@@ -480,11 +478,11 @@ type SBDAgent struct {
 	failureCountMutex     sync.RWMutex
 	retryConfig           retry.Config
 
-	// Kubernetes client for SBDRemediation CR watching and fencing coordination
+	// Kubernetes client for StorageBasedRemediation CR watching and fencing coordination
 	k8sClient  client.Client
 	restConfig *rest.Config
 
-	// Controller manager for SBDRemediation reconciliation
+	// Controller manager for StorageBasedRemediation reconciliation
 	controllerManager manager.Manager
 
 	// Namespace for controller reconciliation (configurable for testing)
@@ -1322,9 +1320,9 @@ func (s *SBDAgent) peerMonitorLoop() {
 					}
 					// Ensure remediation exists
 					if err := s.ensureRemediationExists(s.ctx, peerNodeName, logger); err != nil {
-						logger.Error(err, "Failed to ensure SBDRemediation for unhealthy peer", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
+						logger.Error(err, "Failed to ensure StorageBasedRemediation for unhealthy peer", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
 					} else {
-						logger.Info("Ensured SBDRemediation for unhealthy peer", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
+						logger.Info("Ensured StorageBasedRemediation for unhealthy peer", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
 					}
 				} else {
 					// Best-effort delete of SBD-agent remediation for this node (idempotent)
@@ -1354,11 +1352,11 @@ func (s *SBDAgent) resolveNodeName(nodeID uint16) (string, bool) {
 	return "", false
 }
 
-// ensureRemediationExists creates a SBDRemediation for the node if one does not already exist.
+// ensureRemediationExists creates a StorageBasedRemediation for the node if one does not already exist.
 func (s *SBDAgent) ensureRemediationExists(ctx context.Context, nodeName string, logger logr.Logger) error {
 	ns := os.Getenv("POD_NAMESPACE")
 	if ns == "" {
-		return fmt.Errorf("POD_NAMESPACE is empty; cannot create SBDRemediation")
+		return fmt.Errorf("POD_NAMESPACE is empty; cannot create StorageBasedRemediation")
 	}
 
 	// Grace window: if the node grace annotation exists and is fresh, skip create
@@ -1373,33 +1371,33 @@ func (s *SBDAgent) ensureRemediationExists(ctx context.Context, nodeName string,
 		return nil
 	}
 
-	name := fmt.Sprintf("sbdremediation-%s", nodeName)
+	name := nodeName
 
-	var existing v1alpha1.SBDRemediation
+	var existing v1alpha1.StorageBasedRemediation
 	if err := s.k8sClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &existing); err == nil {
 		// Already exists
 		return nil
 	} else if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to check existing SBDRemediation %s/%s: %w", ns, name, err)
+		return fmt.Errorf("failed to check existing StorageBasedRemediation %s/%s: %w", ns, name, err)
 	}
 
 	// Enforce global singleton for SBD-agent remediations (across ALL nodes)
-	var all v1alpha1.SBDRemediationList
+	var all v1alpha1.StorageBasedRemediationList
 	if err := s.k8sClient.List(ctx, &all, client.InNamespace(ns)); err != nil {
-		return fmt.Errorf("failed to list SBDRemediations: %w", err)
+		return fmt.Errorf("failed to list StorageBasedRemediations: %w", err)
 	}
 	for i := range all.Items {
 		if all.Items[i].Annotations != nil {
 			if _, ok := all.Items[i].Annotations[controller.SBDAgentAnnotationKey]; ok {
 				// Some SBD-agent remediation already exists → do not create another
 				existingRemediation := all.Items[i]
-				logger.Info("Skipping creating a remediation as an agent remediation already exist for another node", "node skipped", nodeName, "Node with existing remediation", existingRemediation.Spec.NodeName)
+				logger.Info("Skipping creating a remediation as an agent remediation already exist for another node", "node skipped", nodeName, "Node with existing remediation", existingRemediation.Name)
 				return nil
 			}
 		}
 	}
 
-	newRem := &v1alpha1.SBDRemediation{
+	newRem := &v1alpha1.StorageBasedRemediation{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: ns,
 			Name:      name,
@@ -1407,9 +1405,9 @@ func (s *SBDAgent) ensureRemediationExists(ctx context.Context, nodeName string,
 				controller.SBDAgentAnnotationKey: fmt.Sprintf("%s-%d-%d", s.nodeName, s.nodeID, time.Now().UnixNano()),
 			},
 		},
-		Spec: v1alpha1.SBDRemediationSpec{
-			NodeName: nodeName,
-			Reason:   v1alpha1.SBDRemediationReasonHeartbeatTimeout,
+		Spec: v1alpha1.StorageBasedRemediationSpec{
+			// NodeName is now derived from the remediation name (metadata.name)
+			Reason: v1alpha1.SBDRemediationReasonHeartbeatTimeout,
 		},
 	}
 	controllerutil.AddFinalizer(newRem, controller.SBDRemediationFinalizer)
@@ -1418,7 +1416,7 @@ func (s *SBDAgent) ensureRemediationExists(ctx context.Context, nodeName string,
 		if apierrors.IsAlreadyExists(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to create SBDRemediation for node %s: %w", nodeName, err)
+		return fmt.Errorf("failed to create StorageBasedRemediation for node %s: %w", nodeName, err)
 	}
 	logger.Info("SBD Agent Remediation created", "remediation name", newRem.Name)
 	// Clear node grace annotation after successful create (best-effort)
@@ -1433,17 +1431,17 @@ func (s *SBDAgent) ensureRemediationExists(ctx context.Context, nodeName string,
 func (s *SBDAgent) deleteSBDAgentRemediationIfStale(ctx context.Context, nodeName string, now time.Time, logger logr.Logger) error {
 	ns := os.Getenv("POD_NAMESPACE")
 	if ns == "" {
-		return fmt.Errorf("POD_NAMESPACE is empty; cannot check SBDRemediation staleness")
+		return fmt.Errorf("POD_NAMESPACE is empty; cannot check StorageBasedRemediation staleness")
 	}
 
-	name := fmt.Sprintf("sbdremediation-%s", nodeName)
+	name := nodeName
 
-	var rem v1alpha1.SBDRemediation
+	var rem v1alpha1.StorageBasedRemediation
 	if err := s.k8sClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &rem); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to get SBDRemediation %s/%s: %w", ns, name, err)
+		return fmt.Errorf("failed to get StorageBasedRemediation %s/%s: %w", ns, name, err)
 	}
 
 	// Only SBD-agent-created remediations are subject to this logic
@@ -1480,7 +1478,7 @@ func (s *SBDAgent) deleteSBDAgentRemediationIfStale(ctx context.Context, nodeNam
 
 	// Best-effort delete; tolerate NotFound
 	if err := s.k8sClient.Delete(ctx, &rem); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete stale SBDRemediation %s/%s: %w", rem.Namespace, rem.Name, err)
+		return fmt.Errorf("failed to delete stale StorageBasedRemediation %s/%s: %w", rem.Namespace, rem.Name, err)
 	}
 	logger.Info("Deleted stale SBD-agent remediation",
 		"remediation", rem.Name,
@@ -1494,18 +1492,18 @@ func (s *SBDAgent) deleteSBDAgentRemediationIfStale(ctx context.Context, nodeNam
 func (s *SBDAgent) deleteSBDAgentRemediationIfExists(ctx context.Context, nodeName string) (bool, error) {
 	ns := os.Getenv("POD_NAMESPACE")
 	if ns == "" {
-		return false, fmt.Errorf("POD_NAMESPACE is empty; cannot delete SBDRemediation")
+		return false, fmt.Errorf("POD_NAMESPACE is empty; cannot delete StorageBasedRemediation")
 	}
 
 	// Remediation name remains derived from node
-	name := fmt.Sprintf("sbdremediation-%s", nodeName)
+	name := nodeName
 
-	var rem v1alpha1.SBDRemediation
+	var rem v1alpha1.StorageBasedRemediation
 	if err := s.k8sClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &rem); err != nil {
 		if apierrors.IsNotFound(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to get SBDRemediation %s/%s: %w", ns, name, err)
+		return false, fmt.Errorf("failed to get StorageBasedRemediation %s/%s: %w", ns, name, err)
 	}
 
 	// Only delete remediations created by SBD agent (by annotation)
@@ -1524,7 +1522,7 @@ func (s *SBDAgent) deleteSBDAgentRemediationIfExists(ctx context.Context, nodeNa
 
 	// Best-effort delete; tolerate NotFound
 	if err := s.k8sClient.Delete(ctx, &rem); err != nil && !apierrors.IsNotFound(err) {
-		return false, fmt.Errorf("failed to delete SBDRemediation %s/%s: %w", rem.Namespace, rem.Name, err)
+		return false, fmt.Errorf("failed to delete StorageBasedRemediation %s/%s: %w", rem.Namespace, rem.Name, err)
 	}
 	return true, nil
 }
@@ -2138,7 +2136,7 @@ func validateWatchdogTiming(petInterval, watchdogTimeout time.Duration) (bool, s
 	return true, ""
 }
 
-// initializeKubernetesClients creates Kubernetes clients for SBDRemediation CR watching
+// initializeKubernetesClients creates Kubernetes clients for StorageBasedRemediation CR watching
 func initializeKubernetesClients(kubeconfigPath string) (client.Client, kubernetes.Interface, error) {
 	var config *rest.Config
 	var err error
@@ -2159,10 +2157,10 @@ func initializeKubernetesClients(kubeconfigPath string) (client.Client, kubernet
 		logger.Info("Using in-cluster configuration for Kubernetes client")
 	}
 
-	// Create runtime scheme with SBDRemediation types
+	// Create runtime scheme with StorageBasedRemediation types
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		return nil, nil, fmt.Errorf("failed to add SBDRemediation types to scheme: %w", err)
+		return nil, nil, fmt.Errorf("failed to add StorageBasedRemediation types to scheme: %w", err)
 	}
 	if err := corev1.AddToScheme(scheme); err != nil {
 		return nil, nil, fmt.Errorf("failed to add v1 types to scheme: %w", err)
@@ -2183,7 +2181,7 @@ func initializeKubernetesClients(kubeconfigPath string) (client.Client, kubernet
 	return k8sClient, clientset, nil
 }
 
-// initializeControllerManager initializes the controller manager for SBDRemediation reconciliation
+// initializeControllerManager initializes the controller manager for StorageBasedRemediation reconciliation
 func (s *SBDAgent) initializeControllerManager() error {
 	// Get Kubernetes config
 
@@ -2213,16 +2211,16 @@ func (s *SBDAgent) initializeControllerManager() error {
 
 	s.controllerManager = mgr
 
-	// Add SBDRemediation controller to the manager
+	// Add StorageBasedRemediation controller to the manager
 	if err := s.addSBDRemediationController(); err != nil {
-		return fmt.Errorf("failed to add SBDRemediation controller: %w", err)
+		return fmt.Errorf("failed to add StorageBasedRemediation controller: %w", err)
 	}
 
-	logger.Info("SBDRemediation controller added to manager successfully")
+	logger.Info("StorageBasedRemediation controller added to manager successfully")
 	return nil
 }
 
-// getScheme returns the runtime scheme with SBDRemediation types registered
+// getScheme returns the runtime scheme with StorageBasedRemediation types registered
 func (s *SBDAgent) getScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
@@ -2234,9 +2232,9 @@ func (s *SBDAgent) getScheme() *runtime.Scheme {
 	return scheme
 }
 
-// addSBDRemediationController adds the SBDRemediation controller to the controller manager
+// addSBDRemediationController adds the StorageBasedRemediation controller to the controller manager
 func (s *SBDAgent) addSBDRemediationController() error {
-	// Create SBDRemediation reconciler
+	// Create StorageBasedRemediation reconciler
 	reconciler := &controller.SBDRemediationReconciler{
 		Client:   s.controllerManager.GetClient(),
 		Scheme:   s.controllerManager.GetScheme(),
@@ -2251,10 +2249,10 @@ func (s *SBDAgent) addSBDRemediationController() error {
 
 	// Set up the controller with the manager
 	if err := reconciler.SetupWithManager(s.controllerManager, s.controllerNamespace); err != nil {
-		return fmt.Errorf("failed to setup SBDRemediation controller with manager: %w", err)
+		return fmt.Errorf("failed to setup StorageBasedRemediation controller with manager: %w", err)
 	}
 
-	logger.Info("SBDRemediation controller added to manager successfully")
+	logger.Info("StorageBasedRemediation controller added to manager successfully")
 	return nil
 }
 
