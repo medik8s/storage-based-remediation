@@ -20,12 +20,11 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck
+	. "github.com/onsi/gomega"    //nolint:staticcheck
 	"os"
 	"os/exec"
 	"strings"
-
-	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck
-	. "github.com/onsi/gomega"    //nolint:staticcheck
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"

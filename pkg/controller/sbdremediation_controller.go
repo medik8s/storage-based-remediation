@@ -21,22 +21,23 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-logr/logr"
+
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/go-logr/logr"
 	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
 	"github.com/medik8s/sbd-operator/pkg/mocks"
 	"github.com/medik8s/sbd-operator/pkg/retry"
 	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 const (

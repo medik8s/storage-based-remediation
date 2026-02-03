@@ -23,6 +23,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -30,7 +32,6 @@ import (
 
 	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
 	"github.com/medik8s/sbd-operator/test/utils"
-	corev1 "k8s.io/api/core/v1"
 )
 
 // metricsServiceName is the name of the metrics service of the project
