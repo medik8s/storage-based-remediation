@@ -27,10 +27,12 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+
+	"k8s.io/client-go/rest"
+
 	mocks "github.com/medik8s/sbd-operator/pkg/mocks"
 	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
 	testutils "github.com/medik8s/sbd-operator/test/utils"
-	"k8s.io/client-go/rest"
 )
 
 const (
@@ -321,6 +323,9 @@ func TestSBDAgent_PeerMonitorLoop_Integration(t *testing.T) {
 	agent, _, mockDevice, cleanup := createTestSBDAgent(t, 8081)
 	defer cleanup()
 
+	// reduce default setting in order to speed the test
+	agent.peerMonitor.sbdTimeoutSeconds = 2
+
 	// Write heartbeats for multiple peers
 	err := mockDevice.WritePeerHeartbeat(2, 12345, 1)
 	if err != nil {
@@ -364,7 +369,9 @@ func TestSBDAgent_PeerMonitorLoop_Integration(t *testing.T) {
 	}
 
 	// Wait for peers to become unhealthy (1 second timeout + check interval)
-	time.Sleep(time.Duration(agent.peerMonitor.sbdTimeoutSeconds+1) * time.Second)
+	heartbeatInterval := time.Duration(agent.peerMonitor.sbdTimeoutSeconds) / 2 * time.Second
+	timeout := heartbeatInterval * MaxConsecutiveFailures
+	time.Sleep(timeout + time.Second)
 
 	// Should now have 0 healthy peers
 	if count := agent.peerMonitor.GetHealthyPeerCount(); count != 0 {

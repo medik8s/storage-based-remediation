@@ -1,10 +1,10 @@
-# SBDRemediation Controller Status Updates Enhancement
+# StorageBasedRemediation Controller Status Updates Enhancement
 
-This document describes the enhanced status update functionality implemented in the SBDRemediation controller to provide robust, idempotent, and conflict-resistant status management using Kubernetes conditions.
+This document describes the enhanced status update functionality implemented in the StorageBasedRemediation controller to provide robust, idempotent, and conflict-resistant status management using Kubernetes conditions.
 
 ## Overview
 
-The SBDRemediation controller has been enhanced with comprehensive status update capabilities that include:
+The StorageBasedRemediation controller has been enhanced with comprehensive status update capabilities that include:
 
 - **Conditions-based Status**: Uses Kubernetes-standard conditions instead of phases
 - **Robust Error Handling**: Proper distinction between retryable and non-retryable errors
@@ -17,7 +17,7 @@ The SBDRemediation controller has been enhanced with comprehensive status update
 
 ### 1. Conditions-based Status Management
 
-The SBDRemediation now uses standard Kubernetes conditions for status tracking:
+The StorageBasedRemediation now uses standard Kubernetes conditions for status tracking:
 
 ```go
 type SBDRemediationConditionType string
@@ -236,7 +236,7 @@ if err := r.performFencingWithRetry(ctx, sbdRemediation, targetNodeID); err != n
 
 ## Condition Helper Methods
 
-The SBDRemediation type includes several helper methods for working with conditions:
+The StorageBasedRemediation type includes several helper methods for working with conditions:
 
 ```go
 // Check condition states
@@ -278,6 +278,6 @@ Key log messages to monitor:
 
 ## Migration Notes
 
-Existing SBDRemediation resources will automatically benefit from the enhanced status update logic. No manual migration is required.
+Existing StorageBasedRemediation resources will automatically benefit from the enhanced status update logic. No manual migration is required.
 
 The enhanced controller is backward compatible with existing API structures while providing improved reliability and observability. 

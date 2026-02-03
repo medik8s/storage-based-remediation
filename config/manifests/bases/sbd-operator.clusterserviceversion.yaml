@@ -20,11 +20,11 @@ spec:
       kind: SBDRemediation
       name: sbdremediations.medik8s.medik8s.io
       version: v1alpha1
-    - description: SBDRemediationTemplate is the Schema for the sbdremediationtemplates
+    - description: StorageBasedRemediationTemplate is the Schema for the storagebasedremediationtemplates
         API.
-      displayName: SBDRemediation Template
-      kind: SBDRemediationTemplate
-      name: sbdremediationtemplates.medik8s.medik8s.io
+      displayName: StorageBasedRemediation Template
+      kind: StorageBasedRemediationTemplate
+      name: storagebasedremediationtemplates.medik8s.medik8s.io
       version: v1alpha1
   description: TBD
   displayName: SBD

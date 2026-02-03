@@ -9,6 +9,9 @@ resources:
 - sbd_agent_generated_role.yaml
 - sbd_agent_role_binding.yaml
 
+# Required permissions for NHC
+- external_remediation_clusterrole.yaml
+
 # Legacy operator RBAC (kept for backward compatibility)
 # All RBAC will be applied under this service account in
 # the deployment namespace. You may comment out this resource

@@ -51,7 +51,7 @@ The smoke tests validate:
    - Status updates
 
 3. **SBD Remediation**
-   - SBDRemediation resource handling
+   - StorageBasedRemediation resource handling
    - Integration with SBD protocol
 
 ## Finalizer Considerations
