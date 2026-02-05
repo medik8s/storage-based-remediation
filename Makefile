@@ -534,8 +534,9 @@ $(LOCALBIN):
 ## Tool Binaries
 KUBECTL ?= kubectl
 KIND ?= kind
-KUSTOMIZE ?= $(LOCALBIN)/kustomize
+KUSTOMIZE = $(KUSTOMIZE_DIR)/$(KUSTOMIZE_VERSION)/kustomize
 CONTROLLER_GEN = $(CONTROLLER_GEN_DIR)/$(CONTROLLER_GEN_VERSION)/controller-gen
+KUSTOMIZE_DIR ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN_DIR ?= $(LOCALBIN)/controller-gen
 ENVTEST = $(ENVTEST_DIR)/$(ENVTEST_VERSION)/setup-envtest
 ENVTEST_DIR ?= $(LOCALBIN)/setup-envtest
@@ -544,9 +545,10 @@ GINKGO ?= $(LOCALBIN)/ginkgo
 SORT_IMPORTS_DIR ?= $(LOCALBIN)/sort-imports
 OPERATOR_SDK ?= $(LOCALBIN)/operator-sdk
 OPM ?= $(LOCALBIN)/opm
+YQ_DIR ?= $(LOCALBIN)/yq
 
 ## Tool Versions
-KUSTOMIZE_VERSION ?= v5.6.0
+KUSTOMIZE_VERSION ?= v5@v5.8.0
 CONTROLLER_GEN_VERSION ?= v0.18.0
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
 ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
@@ -569,7 +571,8 @@ CHANNELS ?= stable
 DEFAULT_CHANNEL ?= stable
 
 # CSV patch helpers
-YQ ?= $(LOCALBIN)/yq
+YQ = $(YQ_DIR)/$(YQ_API_VERSION)-$(YQ_VERSION)/yq
+YQ_API_VERSION = v4
 YQ_VERSION ?= v4.44.1
 # 1x1 transparent PNG
 ICON_BASE64 ?= iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/wwAAgMBgS+0L8sAAAAASUVORK5CYII=
@@ -584,9 +587,8 @@ endif
 BUNDLE_METADATA_OPTS ?= $(BUNDLE_CHANNELS) $(BUNDLE_DEFAULT_CHANNEL)
 
 .PHONY: kustomize
-kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
-$(KUSTOMIZE): $(LOCALBIN)
-	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
+kustomize: ## Download kustomize locally if necessary.
+	$(call go-install-tool,$(KUSTOMIZE),$(KUSTOMIZE_DIR),sigs.k8s.io/kustomize/kustomize/$(KUSTOMIZE_VERSION))
 
 .PHONY: controller-gen
 controller-gen: ## Download controller-gen locally if necessary.
@@ -702,9 +704,8 @@ $(OPM): $(LOCALBIN)
 	}
 
 .PHONY: yq
-yq: $(YQ) ## Download yq locally if necessary.
-$(YQ): $(LOCALBIN)
-	$(call go-install-tool,$(YQ),github.com/mikefarah/yq/v4,$(YQ_VERSION))
+yq: ## Download yq locally if necessary.
+	$(call go-install-tool,$(YQ),$(YQ_DIR), github.com/mikefarah/yq/$(YQ_API_VERSION)@$(YQ_VERSION))
 
 .PHONY: bundle-update
 bundle-update: yq ## Patch CSV with image, icon and minKubeVersion
