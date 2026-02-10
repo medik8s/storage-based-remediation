@@ -124,6 +124,12 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 				},
 			}
 		})
+		It("should not trigger fencing when kubelet communication is interrupted", func() {
+			if len(clusterInfo.WorkerNodes) < 3 {
+				Skip("Test requires at least 3 worker nodes for safe communication disruption testing")
+			}
+			testKubeletCommunicationFailure(clusterInfo)
+		})
 
 		It("should handle basic SBD configuration and agent deployment", func() {
 			if len(clusterInfo.WorkerNodes) < 3 {
@@ -161,25 +167,18 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 			testSBDAgentCrash(clusterInfo)
 		})
 
-		It("should trigger fencing when SBD agent loses storage access", func() {
-			if len(clusterInfo.WorkerNodes) < 3 {
-				Skip("Test requires at least 3 worker nodes for safe storage disruption testing")
-			}
-			testStorageAccessInterruption(clusterInfo)
-		})
-
-		It("should not trigger fencing when kubelet communication is interrupted", func() {
-			if len(clusterInfo.WorkerNodes) < 3 {
-				Skip("Test requires at least 3 worker nodes for safe communication disruption testing")
-			}
-			testKubeletCommunicationFailure(clusterInfo)
-		})
-
 		It("should handle non-fencing failures gracefully", func() {
 			if len(clusterInfo.WorkerNodes) < 3 {
 				Skip("Test requires at least 3 worker nodes")
 			}
 			testNonFencingFailure(clusterInfo)
+		})
+
+		It("should trigger fencing when SBD agent loses storage access", func() {
+			if len(clusterInfo.WorkerNodes) < 3 {
+				Skip("Test requires at least 3 worker nodes for safe storage disruption testing")
+			}
+			testStorageAccessInterruption(clusterInfo)
 		})
 
 		It("should handle large cluster coordination", func() {
