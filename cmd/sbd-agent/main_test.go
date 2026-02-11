@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -87,6 +88,63 @@ func createTestSBDAgentWithFileLocking(t *testing.T, nodeName string, metricsPor
 	t.Cleanup(cleanup)
 
 	return agent, mockWatchdog, mockHeartbeatDevice, cleanup
+}
+
+// TestWatchdogClosedWhenShutdownSignalReceived verifies that when a shutdown signal
+// (SIGTERM) is received, the agent closes the watchdog so the node does not reboot
+// on uninstall. See docs/RCA-watchdog-reboot-on-uninstall.md.
+//
+// This test is expected to FAIL until the bug is fixed: today the main loop blocks
+// in Start() and never reads the signal, so Stop() is never called and the watchdog
+// is never closed.
+//
+// This test uses its own agent setup (no t.Cleanup) so the run loop goroutine can
+// stay blocked without triggering double Stop() or panics; only this test is affected.
+func TestWatchdogClosedWhenShutdownSignalReceived(t *testing.T) {
+	// Inline agent creation for this test only: same as createTestSBDAgentWithFileLocking
+	// but without t.Cleanup(cleanup), so we do not call Stop() on test exit.
+	tmpDir := t.TempDir()
+	sbdPath := tmpDir + "/test-sbd"
+	fencePath := sbdPath + "-fence"
+	mockWatchdog := mocks.NewMockWatchdog(tmpDir + "/watchdog")
+	mockHeartbeatDevice := mocks.NewMockBlockDevice(sbdPath, 1024*1024)
+	mockFenceDevice := mocks.NewMockBlockDevice(fencePath, 1024*1024)
+	if err := os.WriteFile(sbdPath, make([]byte, 1024*1024), 0644); err != nil {
+		t.Fatalf("Failed to create test SBD heartbeat device: %v", err)
+	}
+	if err := os.WriteFile(fencePath, make([]byte, 1024*1024), 0644); err != nil {
+		t.Fatalf("Failed to create test SBD fence device: %v", err)
+	}
+	agent, err := NewSBDAgentWithWatchdog(mockWatchdog, sbdPath, "test-node", "test-cluster", 1,
+		1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second, 30, "panic", 555,
+		10*time.Minute, true, 2*time.Second,
+		testutils.NewFakeClient(t), &rest.Config{}, createManagerPrefix())
+	if err != nil {
+		t.Fatalf("Failed to create SBD agent: %v", err)
+	}
+	agent.setSBDDevices(mockHeartbeatDevice, mockFenceDevice)
+
+	sigChan := make(chan os.Signal, 1)
+	runLoopStarted := make(chan struct{})
+	// Same run loop as main(): Start() then <-sigChan then Stop().
+	// With current code, Start() blocks forever (context not cancelled on signal),
+	// so the signal is never read and Stop() is never called.
+	go func() {
+		close(runLoopStarted)
+		_ = agent.RunUntilShutdown(sigChan)
+		<-sigChan
+		_ = agent.Stop()
+	}()
+
+	<-runLoopStarted
+	time.Sleep(500 * time.Millisecond)
+
+	sigChan <- syscall.SIGTERM
+	time.Sleep(2 * time.Second)
+
+	if !mockWatchdog.IsClosed() {
+		t.Error("watchdog was not closed after shutdown signal; node would reboot on uninstall (see docs/RCA-watchdog-reboot-on-uninstall.md)")
+	}
 }
 
 // TestPeerMonitor tests the peer monitoring functionality

@@ -1052,6 +1052,12 @@ func (s *SBDAgent) readPeerHeartbeat(peerNodeID uint16) error {
 
 // Start begins the SBD agent operations
 func (s *SBDAgent) Start() error {
+	return s.StartWithContext(s.ctx)
+}
+
+// StartWithContext begins the SBD agent operations and blocks until ctx is cancelled.
+// When ctx is cancelled (e.g. on SIGTERM), the caller should then call Stop() to close the watchdog.
+func (s *SBDAgent) StartWithContext(ctx context.Context) error {
 	logger.Info("Starting SBD Agent",
 		"watchdogDevice", s.watchdog.Path(),
 		"heartbeatDevice", s.heartbeatDevicePath,
@@ -1079,8 +1085,24 @@ func (s *SBDAgent) Start() error {
 
 	// Start fencing loop if enabled
 	logger.Info("Starting SBD Agent controller manager")
-	return s.controllerManager.Start(s.ctx)
+	return s.controllerManager.Start(ctx)
+}
 
+// RunUntilShutdown is the contract for "run until a shutdown signal is received".
+// Callers (e.g. main, tests) depend only on this contract, not on internal method names.
+// It blocks until a signal is received on sigChan, then shuts down and closes the watchdog.
+func (s *SBDAgent) RunUntilShutdown(sigChan <-chan os.Signal) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		sig := <-sigChan
+		logger.Info("Received shutdown signal", "signal", sig.String())
+		cancel()
+	}()
+	err := s.StartWithContext(ctx)
+	if stopErr := s.Stop(); stopErr != nil && err == nil {
+		err = stopErr
+	}
+	return err
 }
 
 // Stop gracefully shuts down the SBD agent
@@ -2392,24 +2414,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Start the agent
-	if err := sbdAgent.Start(); err != nil {
-		logger.Error(err, "Failed to start SBD agent")
+	if err := sbdAgent.RunUntilShutdown(sigChan); err != nil {
+		logger.Error(err, "Failed to run SBD agent or error during shutdown")
 		os.Exit(1)
 	}
-
-	// Wait for shutdown signal
-	sig := <-sigChan
-	logger.Info("Received shutdown signal", "signal", sig.String())
-
-	// Stop the agent
-	if err := sbdAgent.Stop(); err != nil {
-		logger.Error(err, "Error during shutdown")
-	}
-
 	logger.Info("SBD Agent shutdown complete")
 }
