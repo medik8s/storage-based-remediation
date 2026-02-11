@@ -16,6 +16,7 @@ setup-shared-storage
 
 # Test binary, built with `go test -c`
 *.test
+test-*/
 
 # Code coverage profiles and other test artifacts
 *.out
@@ -41,7 +42,7 @@ go.work.sum
 cluster/
 
 # Editor/IDE
-# .idea/
+.idea/
 # .vscode/
 
 # Generated manifests and test-specific configurations
