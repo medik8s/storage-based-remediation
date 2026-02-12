@@ -33,7 +33,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -76,9 +75,6 @@ const (
 
 	// Finalizer for cleanup operations
 	SBDConfigFinalizerName = "sbd-operator.medik8s.io/cleanup"
-
-	// OpenShift SCC constants
-	SBDOperatorSCCName = "sbd-operator-sbd-agent-privileged"
 
 	// Default image constants
 	DefaultSBDAgentImage = "sbd-agent:latest"
@@ -255,8 +251,10 @@ func (r *SBDConfigReconciler) isRunningOnOpenShift(logger logr.Logger) bool {
 	return result
 }
 
-// ensureSCCPermissions ensures that the service account has the required SCC permissions
-// This function updates the existing SCC to include the service account from the target namespace
+// ensureSCCPermissions ensures that the service account can use the required SCC on OpenShift.
+// We use the built-in "privileged" SCC (Option A / SNR-style): sbd-agent gets "use" via the
+// ClusterRole sbd-operator-sbd-agent-privileged-scc and a ClusterRoleBinding created in ensureServiceAccount.
+// No custom SCC is required; this function is a no-op on OpenShift.
 func (r *SBDConfigReconciler) ensureSCCPermissions(
 	ctx context.Context,
 	sbdConfig *medik8sv1alpha1.SBDConfig,
@@ -267,66 +265,9 @@ func (r *SBDConfigReconciler) ensureSCCPermissions(
 		logger.V(1).Info("Not running on OpenShift, skipping SCC management")
 		return controllerutil.OperationResultNone, nil
 	}
-
-	sccLogger := logger.WithValues("scc.name", SBDOperatorSCCName, "namespace", namespaceName)
-	serviceAccountUser := fmt.Sprintf("system:serviceaccount:%s:sbd-agent", namespaceName)
-
-	// Get the existing SCC
-	scc := &unstructured.Unstructured{}
-	scc.SetAPIVersion("security.openshift.io/v1")
-	scc.SetKind("SecurityContextConstraints")
-
-	err := r.Get(ctx, types.NamespacedName{Name: SBDOperatorSCCName}, scc)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			sccLogger.Error(err, "Required SCC not found - ensure OpenShift installer was used",
-				"scc", SBDOperatorSCCName,
-				"requiredServiceAccount", serviceAccountUser)
-			return controllerutil.OperationResultNone, fmt.Errorf(
-				"required SCC '%s' not found - ensure the operator was installed using the OpenShift installer: %w",
-				SBDOperatorSCCName, err)
-		}
-		sccLogger.Error(err, "Failed to get SCC")
-		return controllerutil.OperationResultNone, fmt.Errorf("failed to get SCC '%s': %w", SBDOperatorSCCName, err)
-	}
-
-	// Perform the update with retry logic and ensure the users list contains our SA
-	result, err := controllerutil.CreateOrUpdate(ctx, r.Client, scc, func() error {
-		users, found, err := unstructured.NestedStringSlice(scc.Object, "users")
-		if err != nil {
-			return fmt.Errorf("failed to get users from SCC: %w", err)
-		}
-		if !found {
-			users = []string{}
-		}
-		for _, user := range users {
-			if user == serviceAccountUser {
-				// Already present, nothing to change
-				return nil
-			}
-		}
-		users = append(users, serviceAccountUser)
-		if err := unstructured.SetNestedStringSlice(scc.Object, users, "users"); err != nil {
-			return fmt.Errorf("failed to set users in SCC: %w", err)
-		}
-		return nil
-	})
-	if err != nil {
-		sccLogger.Error(err, "Failed to update SCC after retries", "serviceAccount", serviceAccountUser)
-		r.emitEventf(sbdConfig, EventTypeWarning, ReasonSCCError,
-			"Failed to update SCC '%s' to grant permissions to service account '%s': %v",
-			SBDOperatorSCCName, serviceAccountUser, err)
-		return controllerutil.OperationResultNone, fmt.Errorf("failed to update SCC '%s': %w", SBDOperatorSCCName, err)
-	}
-
-	sccLogger.Info("Successfully updated SCC to grant permissions to service account",
-		"serviceAccount", serviceAccountUser,
-		"scc", SBDOperatorSCCName)
-
-	r.emitEventf(sbdConfig, EventTypeNormal, ReasonSCCManaged,
-		"SCC '%s' updated to grant permissions to service account '%s'", SBDOperatorSCCName, serviceAccountUser)
-
-	return result, nil
+	// Option A: use built-in privileged SCC; permission is granted by ClusterRoleBinding in ensureServiceAccount.
+	logger.V(1).Info("OpenShift detected; sbd-agent uses built-in privileged SCC via ClusterRoleBinding")
+	return controllerutil.OperationResultNone, nil
 }
 
 // validateStorageClass validates that the specified storage class supports ReadWriteMany access mode
@@ -1008,6 +949,7 @@ echo "SBD devices initialization completed successfully"
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,verbs=use,resourceNames=privileged
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -1391,6 +1333,37 @@ func (r *SBDConfigReconciler) ensureServiceAccount(
 			"clusterRoleBinding", fmt.Sprintf("sbd-agent-%s-%s", namespaceName, sbdConfig.Name))
 		r.emitEventf(sbdConfig, EventTypeNormal, ReasonClusterRoleBindingCreated,
 			"ClusterRoleBinding 'sbd-agent-%s-%s' created", namespaceName, sbdConfig.Name)
+	}
+
+	// Bind sbd-agent SA to privileged SCC (OpenShift) so pods can run without a custom SCC.
+	privilegedSCCBindingName := fmt.Sprintf("sbd-operator-sbd-agent-privileged-scc-%s", namespaceName)
+	privilegedSCCBinding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: privilegedSCCBindingName,
+			Labels: map[string]string{
+				"app":                          "sbd-agent",
+				"app.kubernetes.io/name":       "sbd-agent",
+				"app.kubernetes.io/component":  "agent",
+				"app.kubernetes.io/part-of":    "sbd-operator",
+				"app.kubernetes.io/managed-by": "sbd-operator",
+			},
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "sbd-agent",
+				Namespace: namespaceName,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     "sbd-operator-sbd-agent-privileged-scc",
+		},
+	}
+	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, privilegedSCCBinding, func() error { return nil })
+	if err != nil {
+		return result, fmt.Errorf("failed to create or update privileged SCC cluster role binding: %w", err)
 	}
 
 	return result, nil
