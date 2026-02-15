@@ -1,0 +1,18 @@
+# ClusterRole granting "use" on OpenShift's built-in privileged SCC so sbd-agent
+# pods can run with required privileges (watchdog, block devices) without a custom SCC.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sbd-operator-sbd-agent-privileged-scc
+  labels:
+    app.kubernetes.io/name: sbd-operator
+    app.kubernetes.io/component: sbd-agent
+rules:
+- apiGroups:
+  - security.openshift.io
+  resources:
+  - securitycontextconstraints
+  resourceNames:
+  - privileged
+  verbs:
+  - use

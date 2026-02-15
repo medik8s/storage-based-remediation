@@ -20,13 +20,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck
-	. "github.com/onsi/gomega"    //nolint:staticcheck
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck
+	. "github.com/onsi/gomega"    //nolint:staticcheck
 
 	"github.com/aws/aws-sdk-go/service/ec2"
 
@@ -439,18 +440,7 @@ func (psc *PodStatusChecker) WaitForPodsReady(minCount int, timeout time.Duratio
 		GinkgoWriter.Printf("Found %d unready pods out of %d total\n", unreadyPodsCount, len(pods.Items))
 
 		for _, pod := range unreadyPods {
-			var readyConditionStatus corev1.ConditionStatus
-			for _, condition := range pod.Status.Conditions {
-				if condition.Type == corev1.PodReady {
-					readyConditionStatus = condition.Status
-				}
-			}
-			if len(readyConditionStatus) != 0 {
-				GinkgoWriter.Printf("Found unready pod: %s status: %s status type: %s \n", pod.Name, pod.Status.Phase, readyConditionStatus)
-
-			} else {
-				GinkgoWriter.Printf("Found unready pod: %s status: %s \n", pod.Name, pod.Status.Phase)
-			}
+			GinkgoWriter.Printf("Found unready pod: %s Status Phase: %s Status Conditions: %s \n", pod.Name, pod.Status.Phase, pod.Status.Conditions)
 		}
 
 		return readyPods
