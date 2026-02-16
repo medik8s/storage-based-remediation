@@ -229,9 +229,9 @@ func (s *SBDConfigSpec) GetSbdWatchdogPath() string {
 
 // GetImageWithOperatorImage returns the agent image with default fallback
 // The default is constructed from the operator's image by replacing the image name with sbd-agent
-func (s *SBDConfigSpec) GetImageWithOperatorImage(operatorImage string) string {
+func (s *SBDConfigSpec) GetImageWithOperatorImage(operatorImage string) (string, error) {
 	if s.Image != "" {
-		return s.Image
+		return s.Image, nil
 	}
 	return deriveAgentImageFromOperator(operatorImage)
 }
@@ -620,39 +620,42 @@ func (s *SBDConfigSpec) ValidateAll() error {
 }
 
 // deriveAgentImageFromOperator derives the sbd-agent image from the operator image
-func deriveAgentImageFromOperator(operatorImage string) string {
+func deriveAgentImageFromOperator(operatorImage string) (string, error) {
 	// Handle empty operator image
 	if operatorImage == "" {
-		return "sbd-agent:latest"
+		return "", fmt.Errorf("invalid empty operator image")
 	}
 
-	// Replace the image name with sbd-agent while preserving registry/org/tag
-	// Example: registry.io/org/sbd-operator:v1.0.0 -> registry.io/org/sbd-agent:v1.0.0
 	lastSlash := strings.LastIndex(operatorImage, "/")
+	var prefix, suffix string
 	if lastSlash == -1 {
-		// No slash found, handle simple image names like "sbd-operator:v1.0.0" or "sbd-operator"
-		agentImage := strings.Replace(operatorImage, "sbd-operator", "sbd-agent", 1)
-		if agentImage == operatorImage {
-			// If no replacement happened, default to sbd-agent
-			agentImage = "sbd-agent"
-		}
-
-		// Add :latest tag if no tag is present
-		if !strings.Contains(agentImage, ":") {
-			agentImage += ":latest"
-		}
-
-		return agentImage
+		prefix = ""
+		suffix = operatorImage
+	} else {
+		prefix = operatorImage[:lastSlash+1]
+		suffix = operatorImage[lastSlash+1:]
 	}
 
-	prefix := operatorImage[:lastSlash+1]
-	suffix := operatorImage[lastSlash+1:]
+	// If already an agent image (e.g. controller fallback in tests), return as-is
+	if suffix == "sbd-agent" || strings.HasPrefix(suffix, "sbd-agent:") {
+		agentSuffix := suffix
+		if !strings.Contains(agentSuffix, ":") {
+			agentSuffix += ":latest"
+		}
+		return prefix + agentSuffix, nil
+	}
 
-	// Replace operator with agent in the image name
-	agentSuffix := strings.Replace(suffix, "sbd-operator", "sbd-agent", 1)
+	// Replace operator with agent in the image name. Two naming schemes are supported:
+	// 1) storage-based-remediation-*-operator -> storage-based-remediation-agent-* (then strip "-operator")
+	// 2) sbd-operator -> sbd-agent
+	agentSuffix := strings.Replace(suffix, "storage-based-remediation", "storage-based-remediation-agent", 1)
+	if agentSuffix != suffix {
+		agentSuffix = strings.Replace(agentSuffix, "-operator", "", 1)
+	} else {
+		agentSuffix = strings.Replace(suffix, "sbd-operator", "sbd-agent", 1)
+	}
 	if agentSuffix == suffix {
-		// If no replacement happened, default to sbd-agent
-		agentSuffix = "sbd-agent"
+		return "", fmt.Errorf("invalid operator image %q", operatorImage)
 	}
 
 	// Add :latest tag if no tag is present
@@ -660,7 +663,7 @@ func deriveAgentImageFromOperator(operatorImage string) string {
 		agentSuffix += ":latest"
 	}
 
-	return prefix + agentSuffix
+	return prefix + agentSuffix, nil
 }
 
 // SBDConfigStatus defines the observed state of SBDConfig.

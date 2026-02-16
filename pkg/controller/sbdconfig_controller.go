@@ -1015,8 +1015,12 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Get the operator image first for logging and DaemonSet creation
 	operatorImage := r.getOperatorImage(ctx, logger)
 
+	agentImage, err := sbdConfig.Spec.GetImageWithOperatorImage(operatorImage)
+	if err != nil {
+		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+	}
 	logger.V(1).Info("Starting SBDConfig reconciliation",
-		"spec.image", sbdConfig.Spec.GetImageWithOperatorImage(operatorImage),
+		"spec.image", agentImage,
 		"namespace", sbdConfig.Namespace,
 		"spec.sbdWatchdogPath", sbdConfig.Spec.GetSbdWatchdogPath(),
 		"spec.staleNodeTimeout", sbdConfig.Spec.GetStaleNodeTimeout(),
@@ -1115,7 +1119,7 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Define the desired DaemonSet
-	desiredDaemonSet := r.buildDaemonSet(&sbdConfig, operatorImage)
+	desiredDaemonSet := r.buildDaemonSet(&sbdConfig, agentImage)
 	daemonSetLogger := logger.WithValues(
 		"daemonset.name", desiredDaemonSet.Name,
 		"daemonset.namespace", desiredDaemonSet.Namespace,
@@ -1370,8 +1374,7 @@ func (r *SBDConfigReconciler) ensureServiceAccount(
 }
 
 // buildDaemonSet constructs the desired DaemonSet based on the SBDConfig
-func (r *SBDConfigReconciler) buildDaemonSet(
-	sbdConfig *medik8sv1alpha1.SBDConfig, operatorImage string) *appsv1.DaemonSet {
+func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfig, agentImage string) *appsv1.DaemonSet {
 	daemonSetName := fmt.Sprintf("sbd-agent-%s", sbdConfig.Name)
 	labels := map[string]string{
 		"app":        "sbd-agent",
@@ -1436,7 +1439,7 @@ func (r *SBDConfigReconciler) buildDaemonSet(
 					Containers: []corev1.Container{
 						{
 							Name:            "sbd-agent",
-							Image:           sbdConfig.Spec.GetImageWithOperatorImage(operatorImage),
+							Image:           agentImage,
 							ImagePullPolicy: corev1.PullPolicy(sbdConfig.Spec.GetImagePullPolicy()),
 							SecurityContext: &corev1.SecurityContext{
 								Privileged:               &[]bool{true}[0],

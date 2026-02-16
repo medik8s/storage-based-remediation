@@ -1117,6 +1117,7 @@ func TestGetImageWithOperatorImage(t *testing.T) {
 		spec          SBDConfigSpec
 		operatorImage string
 		expected      string
+		wantErr       bool
 	}{
 		{
 			name:          "explicit image specified",
@@ -1152,7 +1153,7 @@ func TestGetImageWithOperatorImage(t *testing.T) {
 			name:          "no image specified - empty operator image",
 			spec:          SBDConfigSpec{},
 			operatorImage: "",
-			expected:      "sbd-agent:latest",
+			wantErr:       true,
 		},
 		{
 			name:          "no image specified - complex registry path",
@@ -1160,11 +1161,33 @@ func TestGetImageWithOperatorImage(t *testing.T) {
 			operatorImage: "registry.example.com:5000/my-org/my-project/sbd-operator:dev-123",
 			expected:      "registry.example.com:5000/my-org/my-project/sbd-agent:dev-123",
 		},
+		{
+			name:          "no image specified - storage-based-remediation operator image (RH naming)",
+			spec:          SBDConfigSpec{},
+			operatorImage: "registry.redhat.io/workload-availability/storage-based-remediation-rhel9-operator:v0.1.0",
+			expected:      "registry.redhat.io/workload-availability/storage-based-remediation-agent-rhel9:v0.1.0",
+		},
+		{
+			name:          "no image specified - already agent image (e.g. controller fallback)",
+			spec:          SBDConfigSpec{},
+			operatorImage: "sbd-agent:latest",
+			expected:      "sbd-agent:latest",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetImageWithOperatorImage(tt.operatorImage)
+			result, err := tt.spec.GetImageWithOperatorImage(tt.operatorImage)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("GetImageWithOperatorImage() expected error for operator image %q", tt.operatorImage)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("GetImageWithOperatorImage() unexpected error: %v", err)
+				return
+			}
 			if result != tt.expected {
 				t.Errorf("GetImageWithOperatorImage() = %v, expected %v", result, tt.expected)
 			}
