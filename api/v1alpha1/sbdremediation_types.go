@@ -34,6 +34,10 @@ const (
 	SBDRemediationConditionReady SBDRemediationConditionType = "Ready"
 )
 
+// Node condition type set by SBR when it detects a node as unhealthy (e.g. heartbeat timeout).
+// NHC or other remediators watch this condition and create StorageBasedRemediation when True.
+const NodeConditionSBRStorageUnhealthy = "SBRStorageUnhealthy"
+
 // SBDRemediationReason represents the reason for the current remediation state
 type SBDRemediationReason string
 
