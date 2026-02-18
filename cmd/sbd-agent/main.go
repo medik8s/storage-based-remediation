@@ -38,7 +38,6 @@ import (
 	// Kubernetes imports for StorageBasedRemediation CR watching
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -47,7 +46,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/medik8s/sbd-operator/api/v1alpha1"
@@ -62,14 +60,15 @@ import (
 )
 
 // RBAC permissions for SBD Agent
-// The agent needs to read SBDConfig for configuration and process StorageBasedRemediation CRs for fencing operations
+// The agent reads SBDConfig, sets SBRStorageUnhealthy node condition for unhealthy peers, and reconciles StorageBasedRemediation CRs (created by NHC) for fencing.
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=sbdconfigs/status,verbs=get
-// +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=storagebasedremediations,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=storagebasedremediations,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=medik8s.medik8s.io,resources=storagebasedremediations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups="",resources=nodes/status,verbs=get;patch;update
 
 var (
 	watchdogPath    = flag.String(agent.FlagWatchdogPath, agent.DefaultWatchdogPath, "Path to the watchdog device")
@@ -1309,7 +1308,7 @@ func (s *SBDAgent) peerMonitorLoop() {
 			healthyPeers := s.peerMonitor.GetHealthyPeerCount()
 			logger.Info("Cluster status", "healthyPeers", healthyPeers)
 
-			// First, delete SBD-agent remediation for peers that are now healthy (recovered)
+			// Set or clear SBRStorageUnhealthy node condition so NHC can create remediation when needed
 			for _, peer := range s.peerMonitor.GetPeerStatus() {
 				// Skip ourselves
 				if peer.NodeID == s.nodeID {
@@ -1323,15 +1322,8 @@ func (s *SBDAgent) peerMonitorLoop() {
 					continue
 				}
 
-				// Always delete stale SBD-agent remediations (age >= 1m + SBDAgentRemediationFreshAge)
-				if err := s.deleteSBDAgentRemediationIfStale(s.ctx, peerNodeName, time.Now(), logger); err != nil {
-					logger.Error(err, "Failed to delete stale SBD-agent remediation",
-						"peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
-				}
-
-				// Only act on recovered peers
 				if !peer.IsHealthy {
-					// Require a minimum number of missed heartbeats before creating a remediation
+					// Require a minimum number of missed heartbeats before setting unhealthy condition
 					missed := int(time.Since(peer.LastSeen) / s.heartbeatInterval)
 					if missed < DefaultMinMissedHeartbeatsForRemediation {
 						logger.V(1).Info("Peer unhealthy but below remediation threshold",
@@ -1340,19 +1332,17 @@ func (s *SBDAgent) peerMonitorLoop() {
 							"threshold", DefaultMinMissedHeartbeatsForRemediation)
 						continue
 					}
-					// Ensure remediation exists
-					if err := s.ensureRemediationExists(s.ctx, peerNodeName, logger); err != nil {
-						logger.Error(err, "Failed to ensure StorageBasedRemediation for unhealthy peer", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
+					if err := s.setNodeConditionSBRStorageUnhealthy(peerNodeName, true, string(v1alpha1.SBDRemediationReasonHeartbeatTimeout), "SBD peer heartbeat timeout"); err != nil {
+						logger.Error(err, "Failed to set SBRStorageUnhealthy condition for unhealthy peer", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
 					} else {
-						logger.Info("Ensured StorageBasedRemediation for unhealthy peer", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
+						logger.Info("Set SBRStorageUnhealthy condition for unhealthy peer", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
 					}
 				} else {
-					// Best-effort delete of SBD-agent remediation for this node (idempotent)
-					if isDeleted, err := s.deleteSBDAgentRemediationIfExists(s.ctx, peerNodeName); err != nil {
-						logger.Error(err, "Failed to delete SBD-agent remediation for recovered peer",
+					if err := s.setNodeConditionSBRStorageUnhealthy(peerNodeName, false, "Recovered", "SBD peer heartbeats resumed"); err != nil {
+						logger.Error(err, "Failed to clear SBRStorageUnhealthy condition for recovered peer",
 							"peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
-					} else if isDeleted {
-						logger.Info("Deleted SBD-agent remediation for recovered peer",
+					} else {
+						logger.V(1).Info("Cleared SBRStorageUnhealthy condition for recovered peer",
 							"peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
 					}
 				}
@@ -1374,179 +1364,44 @@ func (s *SBDAgent) resolveNodeName(nodeID uint16) (string, bool) {
 	return "", false
 }
 
-// ensureRemediationExists creates a StorageBasedRemediation for the node if one does not already exist.
-func (s *SBDAgent) ensureRemediationExists(ctx context.Context, nodeName string, logger logr.Logger) error {
-	ns := os.Getenv("POD_NAMESPACE")
-	if ns == "" {
-		return fmt.Errorf("POD_NAMESPACE is empty; cannot create StorageBasedRemediation")
+// setNodeConditionSBRStorageUnhealthy sets or clears the SBRStorageUnhealthy condition on the node's status.
+// When unhealthy is true, NHC can watch this condition and create a StorageBasedRemediation.
+func (s *SBDAgent) setNodeConditionSBRStorageUnhealthy(nodeName string, unhealthy bool, reason, message string) error {
+	node := &corev1.Node{}
+	if err := s.k8sClient.Get(s.ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
+		return fmt.Errorf("get node %s: %w", nodeName, err)
 	}
-
-	// Grace window: if the node grace annotation exists and is fresh, skip create
-	if ts, ok, err := s.getNodeGraceAnnotation(ctx, nodeName); err != nil {
-		logger.V(1).Info("Failed to read node grace annotation", "nodeName", nodeName, "error", err)
-		return nil
-	} else if ok && time.Since(ts) < SBDAgentRemediationGracePeriod {
-		logger.Info("Skipping SBD-agent remediation create due to grace window",
-			"nodeName", nodeName,
-			"graceAge", time.Since(ts),
-			"gracePeriod", SBDAgentRemediationGracePeriod)
+	now := metav1.NewTime(time.Now().UTC())
+	desiredStatus := corev1.ConditionFalse
+	if unhealthy {
+		desiredStatus = corev1.ConditionTrue
+	}
+	cond := s.findOrAppendSBRStorageUnhealthyCondition(node)
+	if cond.Status == desiredStatus {
 		return nil
 	}
-
-	name := nodeName
-
-	var existing v1alpha1.StorageBasedRemediation
-	if err := s.k8sClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &existing); err == nil {
-		// Already exists
-		return nil
-	} else if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to check existing StorageBasedRemediation %s/%s: %w", ns, name, err)
-	}
-
-	// Enforce global singleton for SBD-agent remediations (across ALL nodes)
-	var all v1alpha1.StorageBasedRemediationList
-	if err := s.k8sClient.List(ctx, &all, client.InNamespace(ns)); err != nil {
-		return fmt.Errorf("failed to list StorageBasedRemediations: %w", err)
-	}
-	for i := range all.Items {
-		if all.Items[i].Annotations != nil {
-			if _, ok := all.Items[i].Annotations[controller.SBDAgentAnnotationKey]; ok {
-				// Some SBD-agent remediation already exists → do not create another
-				existingRemediation := all.Items[i]
-				logger.Info("Skipping creating a remediation as an agent remediation already exist for another node", "node skipped", nodeName, "Node with existing remediation", existingRemediation.Name)
-				return nil
-			}
-		}
-	}
-
-	newRem := &v1alpha1.StorageBasedRemediation{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: ns,
-			Name:      name,
-			Annotations: map[string]string{
-				controller.SBDAgentAnnotationKey: fmt.Sprintf("%s-%d-%d", s.nodeName, s.nodeID, time.Now().UnixNano()),
-			},
-		},
-		Spec: v1alpha1.StorageBasedRemediationSpec{
-			// NodeName is now derived from the remediation name (metadata.name)
-			Reason: v1alpha1.SBDRemediationReasonHeartbeatTimeout,
-		},
-	}
-	controllerutil.AddFinalizer(newRem, controller.SBDRemediationFinalizer)
-
-	if err := s.k8sClient.Create(ctx, newRem); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to create StorageBasedRemediation for node %s: %w", nodeName, err)
-	}
-	logger.Info("SBD Agent Remediation created", "remediation name", newRem.Name)
-	// Clear node grace annotation after successful create (best-effort)
-	if err := s.clearNodeGraceAnnotation(ctx, nodeName); err != nil {
-		logger.V(1).Info("Failed to clear node grace annotation after create", "nodeName", nodeName, "error", err)
+	cond.Status = desiredStatus
+	cond.Reason = reason
+	cond.Message = message
+	cond.LastTransitionTime = now
+	cond.LastHeartbeatTime = now
+	if err := s.k8sClient.Status().Update(s.ctx, node); err != nil {
+		return fmt.Errorf("update node %s status (SBRStorageUnhealthy): %w", nodeName, err)
 	}
 	return nil
 }
 
-// deleteSBDAgentRemediationIfStale deletes the SBD-agent-created remediation for a node
-// if its OOS placement annotation exists and its age >= controller.SBDAgentOOSTaintStaleAge.
-func (s *SBDAgent) deleteSBDAgentRemediationIfStale(ctx context.Context, nodeName string, now time.Time, logger logr.Logger) error {
-	ns := os.Getenv("POD_NAMESPACE")
-	if ns == "" {
-		return fmt.Errorf("POD_NAMESPACE is empty; cannot check StorageBasedRemediation staleness")
-	}
-
-	name := nodeName
-
-	var rem v1alpha1.StorageBasedRemediation
-	if err := s.k8sClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &rem); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
+// findOrAppendSBRStorageUnhealthyCondition returns the existing condition or appends a new one and returns it.
+func (s *SBDAgent) findOrAppendSBRStorageUnhealthyCondition(node *corev1.Node) *corev1.NodeCondition {
+	for i := range node.Status.Conditions {
+		if node.Status.Conditions[i].Type == v1alpha1.NodeConditionSBRStorageUnhealthy {
+			return &node.Status.Conditions[i]
 		}
-		return fmt.Errorf("failed to get StorageBasedRemediation %s/%s: %w", ns, name, err)
 	}
-
-	// Only SBD-agent-created remediations are subject to this logic
-	if rem.Annotations == nil {
-		return nil
-	}
-	if _, ok := rem.Annotations[controller.SBDAgentAnnotationKey]; !ok {
-		return nil
-	}
-	// Require valid OOS placement timestamp annotation
-	tsStr, ok := rem.Annotations[controller.SBDAgentOOSTaintTimestampAnnotation]
-	if !ok || tsStr == "" {
-		return nil
-	}
-	placedAt, err := time.Parse(time.RFC3339Nano, tsStr)
-	if err != nil {
-		logger.V(1).Info("Invalid OOS placement timestamp annotation, skipping stale delete",
-			"annotation", controller.SBDAgentOOSTaintTimestampAnnotation, "value", tsStr, "error", err)
-		return nil
-	}
-
-	// Consider stale if older than controller.SBDAgentOOSTaintStaleAge since OOS placement
-	threshold := controller.SBDAgentOOSTaintStaleAge
-	age := now.Sub(placedAt)
-	if age < threshold {
-		return nil
-	}
-
-	// Stamp grace window now to give the agent a chance to come up on the node
-	if err := s.annotateNodeGraceNow(ctx, nodeName); err != nil {
-		logger.V(1).Info("Failed to annotate node grace time before stale remediation delete",
-			"nodeName", nodeName, "error", err)
-	}
-
-	// Best-effort delete; tolerate NotFound
-	if err := s.k8sClient.Delete(ctx, &rem); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete stale StorageBasedRemediation %s/%s: %w", rem.Namespace, rem.Name, err)
-	}
-	logger.Info("Deleted stale SBD-agent remediation",
-		"remediation", rem.Name,
-		"node", nodeName,
-		"age", age,
-		"threshold", threshold)
-	return nil
-}
-
-// deleteSBDAgentRemediationIfExists deletes the SBD-agent-created remediation for a node, if present.
-func (s *SBDAgent) deleteSBDAgentRemediationIfExists(ctx context.Context, nodeName string) (bool, error) {
-	ns := os.Getenv("POD_NAMESPACE")
-	if ns == "" {
-		return false, fmt.Errorf("POD_NAMESPACE is empty; cannot delete StorageBasedRemediation")
-	}
-
-	// Remediation name remains derived from node
-	name := nodeName
-
-	var rem v1alpha1.StorageBasedRemediation
-	if err := s.k8sClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &rem); err != nil {
-		if apierrors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("failed to get StorageBasedRemediation %s/%s: %w", ns, name, err)
-	}
-
-	// Only delete remediations created by SBD agent (by annotation)
-	if rem.Annotations == nil {
-		return false, nil
-	}
-	if _, ok := rem.Annotations[controller.SBDAgentAnnotationKey]; !ok {
-		return false, nil
-	}
-
-	// Stamp grace window now to give the agent a chance to come up on the node
-	if err := s.annotateNodeGraceNow(ctx, nodeName); err != nil {
-		logger.V(1).Info("Failed to annotate node grace time before remediation delete",
-			"nodeName", nodeName, "error", err)
-	}
-
-	// Best-effort delete; tolerate NotFound
-	if err := s.k8sClient.Delete(ctx, &rem); err != nil && !apierrors.IsNotFound(err) {
-		return false, fmt.Errorf("failed to delete StorageBasedRemediation %s/%s: %w", rem.Namespace, rem.Name, err)
-	}
-	return true, nil
+	node.Status.Conditions = append(node.Status.Conditions, corev1.NodeCondition{
+		Type: v1alpha1.NodeConditionSBRStorageUnhealthy,
+	})
+	return &node.Status.Conditions[len(node.Status.Conditions)-1]
 }
 
 // cleanOwnFenceSlotIfPresent checks the agent's own slot for a fence message and clears it if present.

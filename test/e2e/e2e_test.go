@@ -696,8 +696,6 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 	targetNode := selectWorkerNode(cluster)
 	By(fmt.Sprintf("Testing storage access interruption on verified worker node %s", targetNode.Metadata.Name))
 
-	// Node should self-fence when it loses storage access (no StorageBasedRemediation CR needed)
-	// Wait for node to actually panic/reboot due to storage loss (self-fencing)
 	By("Obtaining the original boot time of the node")
 	originalBootTimes := getNodeBootIDs(cluster)
 
@@ -705,7 +703,6 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 	By("Creating AWS storage disruption by blocking network access to shared storage")
 	disruptorPods, err := createStorageDisruption(targetNode.Metadata.Name)
 	if err != nil {
-		// If storage disruption cannot be created, skip this test
 		Skip(fmt.Sprintf("Skipping storage disruption test: %v", err))
 	}
 	GinkgoWriter.Printf("Created %d storage disruptor pods for node %s\n", len(disruptorPods), targetNode.Metadata.Name)
@@ -717,14 +714,44 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 	// Monitor for node becoming NotReady due to loss of shared storage access
 	checkNodeNotReady(targetNode.Metadata.Name, "becomes NotReady due to loss of shared storage access",
 		time.Minute*8, nil)
-	// BeTrue()
 
-	for _, pod := range disruptorPods {
-		By(fmt.Sprintf("Initiating deletion of disruptor pod %v...", pod))
-		// Try to delete the disruptor pod so that it isn't restarted when the node becomes Ready
+	// Before triggering reboot: verify condition, no reboot yet, no remediation, then simulate NHC
+	By("Verifying SBRStorageUnhealthy condition is applied on the node")
+	checkNodeHasSBRStorageUnhealthyCondition(targetNode.Metadata.Name, time.Minute*3)
+
+	By("Verifying node has not rebooted yet")
+	checkNodeReboot(targetNode.Metadata.Name, "before remediation is created",
+		originalBootTimes[targetNode.Metadata.Name], time.Second*30, false)
+
+	By("Verifying no StorageBasedRemediation exists for the node yet")
+	remediations := &medik8sv1alpha1.StorageBasedRemediationList{}
+	Expect(k8sClient.List(ctx, remediations, client.InNamespace(testNamespace.Name))).To(Succeed())
+	for _, r := range remediations.Items {
+		Expect(r.Name).NotTo(Equal(targetNode.Metadata.Name), "StorageBasedRemediation should not exist before NHC creates it")
+	}
+
+	By("Simulating NHC: creating StorageBasedRemediation for the node")
+	remediationName := targetNode.Metadata.Name
+	sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      remediationName,
+			Namespace: testNamespace.Name,
+		},
+		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
+			Reason:         medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
+			TimeoutSeconds: 300,
+		},
+	}
+	err = k8sClient.Create(ctx, sbdRemediation)
+	Expect(err).NotTo(HaveOccurred())
+	By(fmt.Sprintf("Created StorageBasedRemediation CR for node %s", targetNode.Metadata.Name))
+
+	// Delete disruptor pods so storage is restored after the node is fenced and reboots
+	for _, podName := range disruptorPods {
+		By(fmt.Sprintf("Initiating deletion of disruptor pod %v...", podName))
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      pod,
+				Name:      podName,
 				Namespace: "default",
 			},
 		}
@@ -732,19 +759,34 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 		Expect(err).NotTo(HaveOccurred())
 	}
 
-	// Monitor for node disappearing (panic/reboot) or boot ID change
-	checkNodeReboot(targetNode.Metadata.Name, "during storage disruption",
+	// Wait for node to reboot (controller fences the node via SBD)
+	checkNodeReboot(targetNode.Metadata.Name, "due to remediation CR",
 		originalBootTimes[targetNode.Metadata.Name], time.Minute*10, true)
 
-	// Verify node recovery (instead of the old immediate recovery test)
+	// After reboot: node ready is already asserted inside checkNodeReboot; simulate NHC deleting the remediation
+	By("Verifying node is ready after reboot")
+	node := &corev1.Node{}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: targetNode.Metadata.Name}, node)).To(Succeed())
+	ready := false
+	for _, c := range node.Status.Conditions {
+		if c.Type == corev1.NodeReady && c.Status == corev1.ConditionTrue {
+			ready = true
+			break
+		}
+	}
+	Expect(ready).To(BeTrue(), "Node %s should be Ready after reboot", targetNode.Metadata.Name)
+
+	By("Simulating NHC: deleting StorageBasedRemediation to trigger cleanup")
+	Expect(k8sClient.Delete(ctx, sbdRemediation)).To(Succeed())
+
 	By("Verifying node has fully recovered after fencing and shared storage restoration")
-	time.Sleep(30 * time.Second) // Give additional time for full recovery
+	time.Sleep(30 * time.Second)
 
 	// Verify other nodes remained stable during network-level storage disruption
 	By("Verifying other nodes remained stable during network-level storage disruption")
 	for _, node := range cluster.WorkerNodes {
 		if node.Metadata.Name == targetNode.Metadata.Name {
-			continue // Skip the target node
+			continue
 		}
 		checkNodeReboot(node.Metadata.Name, "during storage disruption",
 			originalBootTimes[node.Metadata.Name], time.Second, false)
@@ -1547,6 +1589,24 @@ func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 		}
 		_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, pod)
 	}
+}
+
+// checkNodeHasSBRStorageUnhealthyCondition verifies the node has SBRStorageUnhealthy condition with Status True.
+func checkNodeHasSBRStorageUnhealthyCondition(nodeName string, timeout time.Duration) {
+	By(fmt.Sprintf("Verifying node %s has SBRStorageUnhealthy condition", nodeName))
+	Eventually(func() bool {
+		node := &corev1.Node{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, node); err != nil {
+			return false
+		}
+		for _, c := range node.Status.Conditions {
+			if c.Type == medik8sv1alpha1.NodeConditionSBRStorageUnhealthy && c.Status == corev1.ConditionTrue {
+				GinkgoWriter.Printf("Node %s has SBRStorageUnhealthy condition\n", nodeName)
+				return true
+			}
+		}
+		return false
+	}, timeout, time.Second*10).Should(BeTrue(), "Node %s should have SBRStorageUnhealthy condition", nodeName)
 }
 
 // cleanupAllNodes cleans up all nodes by setting unschedulable to false and removing out-of-service taint

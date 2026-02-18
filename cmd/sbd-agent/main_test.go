@@ -28,9 +28,16 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 
+	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
+	"github.com/medik8s/sbd-operator/pkg/blockdevice"
 	mocks "github.com/medik8s/sbd-operator/pkg/mocks"
 	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
 	testutils "github.com/medik8s/sbd-operator/test/utils"
@@ -1362,4 +1369,141 @@ func TestPreflightChecks_BothFailing(t *testing.T) {
 	if !strings.Contains(err.Error(), "both watchdog device and SBD device are inaccessible") {
 		t.Errorf("Expected error about both devices being inaccessible, but got: %v", err)
 	}
+}
+
+// Fence flow with real SBD agent (RunUntilShutdown). Uses the envtest and k8sClient
+// from the Agent Suite (suite_test.go). Temp files + blockdevice populate the node table
+// so the agent's node manager resolves slot IDs; setSBDDevices then uses mocks for I/O.
+var _ = Describe("Fence flow with real SBD agent", func() {
+	Context("when agent sets SBRStorageUnhealthy and controller reconciles", func() {
+		It("should write fence message to device", func() {
+			targetNodeName := "worker-2"
+
+			By("Creating target node worker-2")
+			workerNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: targetNodeName}}
+			Expect(k8sClient.Create(ctx, workerNode)).To(Succeed())
+			DeferCleanup(func() {
+				_ = k8sClient.Delete(ctx, workerNode)
+			})
+
+			By("Creating temp files for agent node manager slot table and populating worker-1/worker-2")
+			tmpDir, err := os.MkdirTemp("", "fence-flow-")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+			sbdPath := filepath.Join(tmpDir, "sbd")
+			fencePath := filepath.Join(tmpDir, "sbd-fence")
+			Expect(os.WriteFile(sbdPath, make([]byte, 1024*1024), 0644)).To(Succeed())
+			Expect(os.WriteFile(fencePath, make([]byte, 1024*1024), 0644)).To(Succeed())
+
+			heartbeatDevice, err := blockdevice.OpenWithTimeout(sbdPath, 2*time.Second, logr.Discard())
+			Expect(err).NotTo(HaveOccurred())
+			nmConfig := sbdprotocol.NodeManagerConfig{
+				ClusterName:        "test-cluster",
+				SyncInterval:       30 * time.Second,
+				StaleNodeTimeout:   10 * time.Minute,
+				Logger:             logr.Discard(),
+				FileLockingEnabled: true,
+			}
+			nm, err := sbdprotocol.NewNodeManager(heartbeatDevice, nmConfig)
+			Expect(err).NotTo(HaveOccurred())
+			worker1ID, err := nm.GetNodeIDForNode("worker-1")
+			Expect(err).NotTo(HaveOccurred())
+			worker2ID, err := nm.GetNodeIDForNode("worker-2")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(heartbeatDevice.Close()).To(Succeed())
+
+			By("Writing initial heartbeats for worker-1 and worker-2 on mock devices")
+			mockHeartbeatDevice := mocks.NewMockBlockDevice("/tmp/fence-test-heartbeat", 1024*1024)
+			mockFenceDevice := mocks.NewMockBlockDevice("/tmp/fence-test-fence", 1024*1024)
+			ts := uint64(time.Now().UnixNano())
+			for round := 0; round < 3; round++ {
+				Expect(mockHeartbeatDevice.WritePeerHeartbeat(worker1ID, ts+uint64(round), uint64(round+1))).To(Succeed())
+				Expect(mockHeartbeatDevice.WritePeerHeartbeat(worker2ID, ts+uint64(round), uint64(round+1))).To(Succeed())
+			}
+
+			By("Creating real SBD agent and starting RunUntilShutdown")
+			mockWatchdog := mocks.NewMockWatchdog(filepath.Join(tmpDir, "watchdog"))
+			sbdTimeoutSeconds := uint(2)
+			agent, err := NewSBDAgentWithWatchdog(mockWatchdog, sbdPath, "worker-1", "test-cluster", worker1ID,
+				1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second, sbdTimeoutSeconds, "panic", 9655,
+				10*time.Minute, true, 2*time.Second,
+				k8sClient, cfg, createManagerPrefix())
+			Expect(err).NotTo(HaveOccurred())
+			agent.setSBDDevices(mockHeartbeatDevice, mockFenceDevice)
+
+			sigChan := make(chan os.Signal, 1)
+			agentErr := make(chan error, 1)
+			go func() { agentErr <- agent.RunUntilShutdown(sigChan) }()
+			DeferCleanup(func() {
+				sigChan <- syscall.SIGTERM
+				select {
+				case <-agentErr:
+				case <-time.After(15 * time.Second):
+				}
+			})
+
+			By("Letting agent run a few peer loops so it sees both workers")
+			Consistently(func(g Gomega) bool {
+				node := &corev1.Node{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: targetNodeName}, node)).To(Succeed())
+				return isConditionExist(node.Status.Conditions, medik8sv1alpha1.NodeConditionSBRStorageUnhealthy, corev1.ConditionTrue)
+			}, 3*time.Second, 500*time.Millisecond).Should(BeFalse(), "agent should not set SBRStorageUnhealthy on worker-2")
+
+			By("Simulating worker-2 agent stopping (zero out its slot)")
+			slotOffset := int64(worker2ID) * sbdprotocol.SBD_SLOT_SIZE
+			_, err = mockHeartbeatDevice.WriteAt(make([]byte, sbdprotocol.SBD_SLOT_SIZE), slotOffset)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Waiting for real agent to set SBRStorageUnhealthy on worker-2 (peer timeout ~7s)")
+			Eventually(func(g Gomega) bool {
+				node := &corev1.Node{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: targetNodeName}, node)).To(Succeed())
+				return isConditionExist(node.Status.Conditions, medik8sv1alpha1.NodeConditionSBRStorageUnhealthy, corev1.ConditionTrue)
+
+			}, 20*time.Second, 500*time.Millisecond).Should(BeTrue(), "agent should set SBRStorageUnhealthy on worker-2")
+
+			By("Simulating NHC creating StorageBasedRemediation after observing the condition")
+			sbr := &medik8sv1alpha1.StorageBasedRemediation{
+				ObjectMeta: metav1.ObjectMeta{Name: targetNodeName, Namespace: "default"},
+				Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
+					Reason:         medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
+					TimeoutSeconds: 300,
+				},
+			}
+			Expect(k8sClient.Create(ctx, sbr)).To(Succeed())
+
+			By("Verifying controller wrote fence message (controller uses temp devices, so read from fencePath)")
+			fenceFile, err := os.Open(fencePath)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { _ = fenceFile.Close() })
+
+			Eventually(func() bool {
+				for slotID := uint16(1); slotID <= sbdprotocol.SBD_MAX_NODES; slotID++ {
+					slotData := make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+					n, err := fenceFile.ReadAt(slotData, int64(slotID)*sbdprotocol.SBD_SLOT_SIZE)
+					if err != nil || n < sbdprotocol.SBD_HEADER_SIZE+3 {
+						continue
+					}
+					fenceMsg, err := sbdprotocol.UnmarshalFence(slotData[:n])
+					if err != nil {
+						continue
+					}
+					if fenceMsg.Reason == sbdprotocol.FENCE_REASON_HEARTBEAT_TIMEOUT {
+						return true
+					}
+				}
+				return false
+			}, 15*time.Second, 500*time.Millisecond).Should(BeTrue(), "controller should write fence message with FENCE_REASON_HEARTBEAT_TIMEOUT")
+		})
+	})
+})
+
+func isConditionExist(conditions []corev1.NodeCondition, condType corev1.NodeConditionType, condStatus corev1.ConditionStatus) bool {
+	for _, cond := range conditions {
+		if cond.Type == condType {
+			return cond.Status == condStatus
+		}
+	}
+	return false
 }
