@@ -99,12 +99,6 @@ var _ = Describe("SBD Agent Smoke Tests", Ordered, Label("Smoke", "Agent"), func
 			err = os.WriteFile(tmpFile, []byte(sbdConfigYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Display the contents of the tmp file for debugging
-			// By("displaying the SBDConfig YAML contents")
-			// tmpFileContents, err := os.ReadFile(tmpFile)
-			// Expect(err).NotTo(HaveOccurred(), "Failed to read temporary SBDConfig file")
-			// fmt.Printf("SBDConfig YAML contents:\n%s\n", string(tmpFileContents))
-
 			// Apply the SBDConfig to the test namespace
 			var sbdConfig medik8sv1alpha1.SBDConfig
 			err = yaml.Unmarshal([]byte(sbdConfigYAML), &sbdConfig)

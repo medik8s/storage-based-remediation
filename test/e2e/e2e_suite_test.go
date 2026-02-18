@@ -144,6 +144,3 @@ func createReportAndCleanUp() {
 		utils.DescribeEnvironment(testClients, testNamespace)
 	}
 }
-
-// var _ = AfterAll(func() {
-// })

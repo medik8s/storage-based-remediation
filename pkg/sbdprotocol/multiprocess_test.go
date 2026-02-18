@@ -32,8 +32,7 @@ import (
 	"github.com/go-logr/logr"
 )
 
-// isTrueEnv returns true if the environment variable is set to a true value (case-insensitive)
-// isTrueEnv returns true if the environment variable is set to a true value (case-insensitive)
+// isMultiProcessTestSubprocess returns true when running as a test subprocess (SBD_MULTIPROCESS_TEST=true).
 func isMultiProcessTestSubprocess() bool {
 	return strings.EqualFold(os.Getenv("SBD_MULTIPROCESS_TEST"), "true")
 }

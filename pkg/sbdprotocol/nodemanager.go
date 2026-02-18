@@ -673,7 +673,7 @@ func (nm *NodeManager) syncToDevice() error {
 	return nil
 }
 
-// isEmptySlot checks if a slot contains only zeros or is uninitialized
+// IsEmptySlot reports whether the slot data is all zeros or uninitialized.
 func IsEmptySlot(data []byte) bool {
 	for _, b := range data {
 		if b != 0 {
