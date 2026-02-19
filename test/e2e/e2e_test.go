@@ -913,49 +913,6 @@ func testFakeRemediation() {
 	err := k8sClient.Create(ctx, sbdRemediation)
 	Expect(err).NotTo(HaveOccurred())
 	By(fmt.Sprintf("Created StorageBasedRemediation CR for node %s", fakeNodeName))
-
-	// Verify SBD remediation is triggered and processed
-	/*By("Verifying SBD remediation is triggered and processed for the disrupted node")
-	Eventually(func() bool {
-		remediations := &medik8sv1alpha1.StorageBasedRemediationList{}
-		err := k8sClient.List(ctx, remediations, client.InNamespace(testNamespace.Name))
-		if err != nil {
-			return false
-		}
-
-		for _, remediation := range remediations.Items {
-			if remediation.Name == fakeNodeName {
-				By(fmt.Sprintf("SBD remediation found for node %s: %+v", fakeNodeName, remediation.Status))
-				return checkFencingOperation(fakeNodeName, false)
-			}
-		}
-
-		return false
-	}, time.Minute*3, time.Second*30).Should(BeTrue())*/
-}
-
-func checkFencingOperation(nodeName string, expectSuccess bool) bool {
-	var expectedLogs []string
-
-	if expectSuccess {
-		expectedLogs = []string{
-			"Starting StorageBasedRemediation reconciliation",
-			"Starting fencing operation",
-			"Fencing operation completed successfully",
-			"Cleared fencing operation",
-		}
-	} else {
-		expectedLogs = []string{
-			"Starting StorageBasedRemediation reconciliation",
-			"Starting fencing operation",
-			"Target node not found in node manager",
-			"Fencing operation failed",
-		}
-	}
-
-	GinkgoWriter.Printf("Checking for %d logs related to remediation of %s\n", len(expectedLogs), nodeName)
-	found, _ := testNamespace.PodLogsContain(expectedLogs)
-	return found
 }
 
 func testNodeRemediation(cluster ClusterInfo) {

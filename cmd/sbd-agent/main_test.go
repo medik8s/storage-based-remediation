@@ -157,23 +157,23 @@ func TestWatchdogClosedWhenShutdownSignalReceived(t *testing.T) {
 // TestPeerMonitor tests the peer monitoring functionality
 func TestPeerMonitor(t *testing.T) {
 	logger := logr.Discard()
-	monitor := NewPeerMonitor(30, 1, nil, logger)
+	monitor := newPeerMonitor(30, 1, nil, logger)
 
 	// Initially no peers
-	if count := monitor.GetHealthyPeerCount(); count != 0 {
+	if count := monitor.getHealthyPeerCount(); count != 0 {
 		t.Errorf("Expected 0 healthy peers initially, got %d", count)
 	}
 
 	// Update a peer
-	monitor.UpdatePeer(2, 1000, 1)
+	monitor.updatePeer(2, 1000, 1)
 
 	// Should have one healthy peer
-	if count := monitor.GetHealthyPeerCount(); count != 1 {
+	if count := monitor.getHealthyPeerCount(); count != 1 {
 		t.Errorf("Expected 1 healthy peer, got %d", count)
 	}
 
 	// Get peer status
-	peers := monitor.GetPeerStatus()
+	peers := monitor.getPeerStatus()
 	if len(peers) != 1 {
 		t.Errorf("Expected 1 peer in status map, got %d", len(peers))
 	}
@@ -202,13 +202,13 @@ func TestPeerMonitor(t *testing.T) {
 
 func TestPeerMonitor_Liveness(t *testing.T) {
 	logger := logr.Discard()
-	monitor := NewPeerMonitor(1, 1, nil, logger) // 1 second timeout
+	monitor := newPeerMonitor(1, 1, nil, logger) // 1 second timeout
 
 	// Update a peer
-	monitor.UpdatePeer(2, 1000, 1)
+	monitor.updatePeer(2, 1000, 1)
 
 	// Should be healthy initially
-	if count := monitor.GetHealthyPeerCount(); count != 1 {
+	if count := monitor.getHealthyPeerCount(); count != 1 {
 		t.Errorf("Expected 1 healthy peer initially, got %d", count)
 	}
 
@@ -216,48 +216,48 @@ func TestPeerMonitor_Liveness(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 
 	// Check liveness
-	monitor.CheckPeerLiveness()
+	monitor.checkPeerLiveness()
 
 	// Should now be unhealthy
-	if count := monitor.GetHealthyPeerCount(); count != 0 {
+	if count := monitor.getHealthyPeerCount(); count != 0 {
 		t.Errorf("Expected 0 healthy peers after timeout, got %d", count)
 	}
 
 	// Update peer again
-	monitor.UpdatePeer(2, 2000, 2)
+	monitor.updatePeer(2, 2000, 2)
 
 	// Should be healthy again
-	if count := monitor.GetHealthyPeerCount(); count != 1 {
+	if count := monitor.getHealthyPeerCount(); count != 1 {
 		t.Errorf("Expected 1 healthy peer after update, got %d", count)
 	}
 }
 
 func TestPeerMonitor_SequenceValidation(t *testing.T) {
 	logger := logr.Discard()
-	monitor := NewPeerMonitor(30, 1, nil, logger)
+	monitor := newPeerMonitor(30, 1, nil, logger)
 
 	// Update a peer with sequence 5
-	monitor.UpdatePeer(2, 1000, 5)
+	monitor.updatePeer(2, 1000, 5)
 
-	peers := monitor.GetPeerStatus()
+	peers := monitor.getPeerStatus()
 	peer := peers[2]
 	if peer.LastSequence != 5 {
 		t.Errorf("Expected sequence 5, got %d", peer.LastSequence)
 	}
 
 	// Update with older sequence (should be ignored)
-	monitor.UpdatePeer(2, 1000, 3)
+	monitor.updatePeer(2, 1000, 3)
 
-	peers = monitor.GetPeerStatus()
+	peers = monitor.getPeerStatus()
 	peer = peers[2]
 	if peer.LastSequence != 5 {
 		t.Errorf("Expected sequence to remain 5, got %d", peer.LastSequence)
 	}
 
 	// Update with newer sequence (should be accepted)
-	monitor.UpdatePeer(2, 1000, 7)
+	monitor.updatePeer(2, 1000, 7)
 
-	peers = monitor.GetPeerStatus()
+	peers = monitor.getPeerStatus()
 	peer = peers[2]
 	if peer.LastSequence != 7 {
 		t.Errorf("Expected sequence 7, got %d", peer.LastSequence)
@@ -290,7 +290,7 @@ func TestSBDAgent_ReadPeerHeartbeat(t *testing.T) {
 	}
 
 	// Check that peer was updated
-	peers := agent.peerMonitor.GetPeerStatus()
+	peers := agent.peerMonitor.getPeerStatus()
 	if len(peers) != 1 {
 		t.Errorf("Expected 1 peer, got %d", len(peers))
 	}
@@ -327,7 +327,7 @@ func TestSBDAgent_ReadPeerHeartbeat_InvalidMessage(t *testing.T) {
 	}
 
 	// Should not have created a peer entry
-	peers := agent.peerMonitor.GetPeerStatus()
+	peers := agent.peerMonitor.getPeerStatus()
 	if len(peers) != 0 {
 		t.Errorf("Expected 0 peers, got %d", len(peers))
 	}
@@ -378,7 +378,7 @@ func TestSBDAgent_ReadPeerHeartbeat_NodeIDMismatch(t *testing.T) {
 	}
 
 	// Should not have created a peer entry due to mismatch
-	peers := agent.peerMonitor.GetPeerStatus()
+	peers := agent.peerMonitor.getPeerStatus()
 	if len(peers) != 0 {
 		t.Errorf("Expected 0 peers due to node ID mismatch, got %d", len(peers))
 	}
@@ -409,7 +409,7 @@ func TestSBDAgent_PeerMonitorLoop_Integration(t *testing.T) {
 	time.Sleep(agent.peerCheckInterval * 2)
 
 	// Check that peers were discovered
-	peers := agent.peerMonitor.GetPeerStatus()
+	peers := agent.peerMonitor.getPeerStatus()
 	if len(peers) != 2 {
 		t.Errorf("Expected 2 peers, got %d", len(peers))
 	}
@@ -426,7 +426,7 @@ func TestSBDAgent_PeerMonitorLoop_Integration(t *testing.T) {
 	}
 
 	// Check healthy peer count
-	if count := agent.peerMonitor.GetHealthyPeerCount(); count != 2 {
+	if count := agent.peerMonitor.getHealthyPeerCount(); count != 2 {
 		for peerID, peer := range peers {
 			t.Errorf("Peer %d: %+v", peerID, peer)
 		}
@@ -439,7 +439,7 @@ func TestSBDAgent_PeerMonitorLoop_Integration(t *testing.T) {
 	time.Sleep(timeout + time.Second)
 
 	// Should now have 0 healthy peers
-	if count := agent.peerMonitor.GetHealthyPeerCount(); count != 0 {
+	if count := agent.peerMonitor.getHealthyPeerCount(); count != 0 {
 		t.Errorf("Expected 0 healthy peers after %vs timeout, got %d", agent.peerMonitor.sbdTimeoutSeconds, count)
 		for peerID, peer := range peers {
 			t.Errorf("Peer %d: %+v", peerID, peer)
@@ -698,13 +698,13 @@ func BenchmarkSBDAgent_ReadPeerHeartbeat(b *testing.B) {
 	}
 }
 
-func BenchmarkPeerMonitor_UpdatePeer(b *testing.B) {
+func BenchmarkPeerMonitor_updatePeer(b *testing.B) {
 	logger := logr.Discard()
-	monitor := NewPeerMonitor(30, 1, nil, logger)
+	monitor := newPeerMonitor(30, 1, nil, logger)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		monitor.UpdatePeer(2, uint64(i), uint64(i))
+		monitor.updatePeer(2, uint64(i), uint64(i))
 	}
 }
 

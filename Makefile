@@ -4,6 +4,7 @@ export IMAGE_REGISTRY
 
 # Quay registry configuration - primary image naming system
 OPERATOR_NAME ?= sbd-operator
+OPERATOR_NAMESPACE ?= openshift-workload-availability
 AGENT_NAME ?= sbd-agent
 QUAY_OPERATOR_NAME ?= $(IMAGE_REGISTRY)/$(OPERATOR_NAME)
 QUAY_AGENT_IMG ?= $(IMAGE_REGISTRY)/$(AGENT_NAME)
@@ -255,6 +256,20 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	$(GOLANGCI_LINT) config verify
 
+.PHONY: bundle-run
+bundle-run: operator-sdk create-ns ## Run bundle image. Default NS is "openshift-workload-availability", redefine OPERATOR_NAMESPACE to override it.
+	$(OPERATOR_SDK) -n $(OPERATOR_NAMESPACE) run bundle $(BUNDLE_IMG)
+
+.PHONY: bundle-run-update
+bundle-run-update: operator-sdk ## Update bundle image.
+# An older bundle image CSV should exist in the cluster, and in the same namespace,
+# Default NS is "openshift-workload-availability", redefine OPERATOR_NAMESPACE to override it.
+	$(OPERATOR_SDK) -n $(OPERATOR_NAMESPACE) run bundle-upgrade $(BUNDLE_IMG)
+
+.PHONY: create-ns
+create-ns: ## Create namespace
+	$(KUBECTL) get ns $(OPERATOR_NAMESPACE) 2>&1> /dev/null || $(KUBECTL) create ns $(OPERATOR_NAMESPACE)
+
 ##@ Build
 
 .PHONY: build
@@ -277,6 +292,32 @@ build-agent: manifests generate fmt vet ## Build SBD agent binary.
 setup-odf-storage: ## Build the OpenShift Data Foundation setup tool.
 	@echo "🔨 Building setup-odf-storage tool..."
 	@$(MAKE) -C tools/setup-odf-storage build
+
+SETUP_ODF_STORAGE_BIN := bin/setup-odf-storage
+
+.PHONY: verify-setup-odf-storage
+verify-setup-odf-storage: ## Verify setup-odf-storage binary was created under bin/setup-odf-storage.
+	@test -f $(SETUP_ODF_STORAGE_BIN) || (echo "Binary $(SETUP_ODF_STORAGE_BIN) not found"; exit 1)
+	@echo "✅ $(SETUP_ODF_STORAGE_BIN) exists"
+
+.PHONY: run-setup-odf-storage
+run-setup-odf-storage: verify-setup-odf-storage ## Run setup-odf-storage binary to set up storage (requires verify-setup-odf-storage).
+	@echo "🚀 Running setup-odf-storage to set up storage..."
+	@./$(SETUP_ODF_STORAGE_BIN)
+
+.PHONY: run-setup-odf-storage-retry
+run-setup-odf-storage-retry: verify-setup-odf-storage ## Run setup-odf-storage with up to 3 attempts, 1 min wait between retries.
+	@attempt=1; max=3; while [ $$attempt -le $$max ]; do \
+		echo "🚀 Running setup-odf-storage (attempt $$attempt of $$max)..."; \
+		./$(SETUP_ODF_STORAGE_BIN) && { echo "✅ setup-odf-storage succeeded"; exit 0; }; \
+		echo "❌ Attempt $$attempt failed"; \
+		if [ $$attempt -lt $$max ]; then \
+			echo "⏳ Waiting 60s before retry..."; \
+			sleep 60; \
+		fi; \
+		attempt=$$((attempt + 1)); \
+	done; \
+	echo "❌ All $$max attempts failed"; exit 1
 
 .PHONY: setup-shared-storage  
 setup-shared-storage: ## Build the shared storage setup tool.
@@ -531,21 +572,26 @@ LOCALBIN ?= $(shell pwd)/bin
 $(LOCALBIN):
 	mkdir -p $(LOCALBIN)
 
-## Tool Binaries
 KUBECTL ?= kubectl
 KIND ?= kind
-KUSTOMIZE = $(KUSTOMIZE_DIR)/$(KUSTOMIZE_VERSION)/kustomize
-CONTROLLER_GEN = $(CONTROLLER_GEN_DIR)/$(CONTROLLER_GEN_VERSION)/controller-gen
+
+## Default Tool Binaries
+ENVTEST_DIR ?= $(LOCALBIN)/setup-envtest
+GINKGO_DIR ?= $(LOCALBIN)/ginkgo
+YQ_DIR ?= $(LOCALBIN)/yq
 KUSTOMIZE_DIR ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN_DIR ?= $(LOCALBIN)/controller-gen
-ENVTEST = $(ENVTEST_DIR)/$(ENVTEST_VERSION)/setup-envtest
-ENVTEST_DIR ?= $(LOCALBIN)/setup-envtest
-GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
-GINKGO ?= $(LOCALBIN)/ginkgo
 SORT_IMPORTS_DIR ?= $(LOCALBIN)/sort-imports
 OPERATOR_SDK ?= $(LOCALBIN)/operator-sdk
 OPM ?= $(LOCALBIN)/opm
-YQ_DIR ?= $(LOCALBIN)/yq
+GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+
+## Specific Tool Binaries
+ENVTEST = $(ENVTEST_DIR)/$(ENVTEST_VERSION)/setup-envtest
+GINKGO = $(GINKGO_DIR)/$(GINKGO_VERSION)/ginkgo
+KUSTOMIZE = $(KUSTOMIZE_DIR)/$(KUSTOMIZE_VERSION)/kustomize
+CONTROLLER_GEN = $(CONTROLLER_GEN_DIR)/$(CONTROLLER_GEN_VERSION)/controller-gen
+SORT_IMPORTS = $(SORT_IMPORTS_DIR)/$(SORT_IMPORTS_VERSION)/sort-imports
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5@v5.8.0
@@ -555,12 +601,9 @@ ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
 GOLANGCI_LINT_VERSION ?= v2.1.0
-GINKGO_VERSION ?= v2.22.2
+GINKGO_VERSION ?= v2.27.5
 # See https://github.com/slintes/sort-imports/releases for the last version
 SORT_IMPORTS_VERSION = v0.3.0
-
-## Specific Tool Binaries
-SORT_IMPORTS = $(SORT_IMPORTS_DIR)/$(SORT_IMPORTS_VERSION)/sort-imports
 
 # OLM tooling versions (aligned with other operators)
 OPERATOR_SDK_VERSION ?= v1.33.0
@@ -608,9 +651,8 @@ $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
 .PHONY: ginkgo
-ginkgo: $(GINKGO) ## Download ginkgo locally if necessary.
-$(GINKGO): $(LOCALBIN)
-	$(call go-install-tool,$(GINKGO),github.com/onsi/ginkgo/v2/ginkgo,$(GINKGO_VERSION))
+ginkgo: ## Download ginkgo locally if necessary.
+	$(call go-install-tool,$(GINKGO),$(GINKGO_DIR),github.com/onsi/ginkgo/v2/ginkgo@${GINKGO_VERSION})
 
 .PHONY: sort-imports
 sort-imports: ## Download sort-imports locally if necessary.

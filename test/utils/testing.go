@@ -342,63 +342,6 @@ func (tn *TestNamespace) OperatorNamespace() *TestNamespace {
 	}
 }
 
-// removeLog removes the first occurrence of a value from a slice of strings.
-func removeLog(logs []string, target string) []string {
-	result := []string{}
-	for _, v := range logs {
-		if v != target {
-			result = append(result, v)
-		}
-	}
-	return result
-}
-
-func (tn *TestNamespace) PodLogsContain(expectedLogs []string) (bool, error) {
-	var podChecker *PodStatusChecker
-	if tn.Name == "sbd-operator-system" {
-		podChecker = tn.NewPodStatusChecker(map[string]string{"app.kubernetes.io/name": "sbd-operator"})
-	} else {
-		podChecker = tn.NewPodStatusChecker(map[string]string{"app": "sbd-agent"})
-	}
-
-	pods := &corev1.PodList{}
-	err := podChecker.Clients.Client.List(podChecker.Clients.Context, pods,
-		client.InNamespace(podChecker.Namespace),
-		client.MatchingLabels(podChecker.Labels))
-	if err != nil {
-		return false, fmt.Errorf("failed to list pods: %w", err)
-	}
-
-	for _, pod := range pods.Items {
-		logStr, err := podChecker.GetPodLogs(pod.Name, nil)
-		if err != nil {
-			return false, fmt.Errorf("failed to get logs from pod %s: %w", pod.Name, err)
-		}
-		// Split the log into lines
-		lines := strings.Split(logStr, "\n")
-		for _, line := range lines {
-			for _, expectedLog := range expectedLogs {
-				if strings.Contains(line, expectedLog) {
-					expectedLogs = removeLog(expectedLogs, expectedLog)
-					GinkgoWriter.Printf(
-						"Agent pod %s has log: %s (%d remaining): %s\n",
-						pod.Name,
-						expectedLog,
-						len(expectedLogs),
-						line,
-					)
-					break
-				}
-			}
-		}
-		if len(expectedLogs) == 0 {
-			return true, nil
-		}
-	}
-	GinkgoWriter.Printf("expected logs not found: %v\n", expectedLogs)
-	return false, fmt.Errorf("expected logs not found")
-}
-
 // WaitForPodsReady waits for pods matching the labels to become ready
 func (psc *PodStatusChecker) WaitForPodsReady(minCount int, timeout time.Duration) error {
 	Eventually(func() int {
@@ -1287,13 +1230,6 @@ func (sav *SBDAgentValidator) ValidateAgentDeployment(opts ValidateAgentDeployme
 	if err != nil {
 		return fmt.Errorf("pods failed to become ready: %w", err)
 	}
-
-	// By("verifying nodes remain stable and don't experience reboots")
-	// nodeChecker := sav.Clients.NewNodeStabilityChecker()
-	// err = nodeChecker.WaitForNodesStable(opts.NodeStableTime)
-	// if err != nil {
-	// 	return fmt.Errorf("node stability check failed: %w", err)
-	// }
 
 	By("checking if SBD agent pods exist and examining their status")
 	pods := &corev1.PodList{}

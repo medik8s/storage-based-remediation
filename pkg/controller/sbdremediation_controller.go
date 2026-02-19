@@ -142,7 +142,7 @@ func (r *SBDRemediationReconciler) SetOwnNodeInfo(nodeID uint16, nodeName string
 }
 
 // getNextSequence returns the next sequence number for messages
-func (r *SBDRemediationReconciler) getNextSequence() uint64 { // Changed return type to uint64
+func (r *SBDRemediationReconciler) getNextSequence() uint64 {
 	r.sequence++
 	return r.sequence
 }

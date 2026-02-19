@@ -241,8 +241,8 @@ var (
 	})
 )
 
-// PeerStatus represents the status of a peer node
-type PeerStatus struct {
+// peerStatus represents the status of a peer node
+type peerStatus struct {
 	NodeID        uint16    `json:"nodeId"`
 	LastTimestamp uint64    `json:"lastTimestamp"`
 	LastSequence  uint64    `json:"lastSequence"`
@@ -250,9 +250,9 @@ type PeerStatus struct {
 	IsHealthy     bool      `json:"isHealthy"`
 }
 
-// PeerMonitor manages tracking of peer node states
-type PeerMonitor struct {
-	peers             map[uint16]*PeerStatus
+// peerMonitor manages tracking of peer node states
+type peerMonitor struct {
+	peers             map[uint16]*peerStatus
 	peersMutex        sync.RWMutex
 	sbdTimeoutSeconds uint
 	ownNodeID         uint16
@@ -260,11 +260,11 @@ type PeerMonitor struct {
 	logger            logr.Logger
 }
 
-// NewPeerMonitor creates a new peer monitor instance
-func NewPeerMonitor(sbdTimeoutSeconds uint, ownNodeID uint16,
-	nodeManager *sbdprotocol.NodeManager, logger logr.Logger) *PeerMonitor {
-	return &PeerMonitor{
-		peers:             make(map[uint16]*PeerStatus),
+// newPeerMonitor creates a new peer monitor instance
+func newPeerMonitor(sbdTimeoutSeconds uint, ownNodeID uint16,
+	nodeManager *sbdprotocol.NodeManager, logger logr.Logger) *peerMonitor {
+	return &peerMonitor{
+		peers:             make(map[uint16]*peerStatus),
 		sbdTimeoutSeconds: sbdTimeoutSeconds,
 		ownNodeID:         ownNodeID,
 		nodeManager:       nodeManager,
@@ -272,8 +272,8 @@ func NewPeerMonitor(sbdTimeoutSeconds uint, ownNodeID uint16,
 	}
 }
 
-// UpdatePeer updates the status of a peer node
-func (pm *PeerMonitor) UpdatePeer(nodeID uint16, timestamp, sequence uint64) {
+// updatePeer updates the status of a peer node
+func (pm *peerMonitor) updatePeer(nodeID uint16, timestamp, sequence uint64) {
 	pm.peersMutex.Lock()
 	defer pm.peersMutex.Unlock()
 
@@ -282,7 +282,7 @@ func (pm *PeerMonitor) UpdatePeer(nodeID uint16, timestamp, sequence uint64) {
 	// Get or create peer status
 	peer, exists := pm.peers[nodeID]
 	if !exists {
-		peer = &PeerStatus{
+		peer = &peerStatus{
 			NodeID:    nodeID,
 			IsHealthy: true,
 		}
@@ -343,8 +343,8 @@ func (pm *PeerMonitor) UpdatePeer(nodeID uint16, timestamp, sequence uint64) {
 	}
 }
 
-// CheckPeerLiveness checks which peers are still alive based on timeout
-func (pm *PeerMonitor) CheckPeerLiveness() {
+// checkPeerLiveness checks which peers are still alive based on timeout
+func (pm *peerMonitor) checkPeerLiveness() {
 	pm.peersMutex.Lock()
 	defer pm.peersMutex.Unlock()
 
@@ -381,15 +381,15 @@ func (pm *PeerMonitor) CheckPeerLiveness() {
 	}
 }
 
-// GetPeerStatus returns a copy of the current peer status map
-func (pm *PeerMonitor) GetPeerStatus() map[uint16]*PeerStatus {
+// getPeerStatus returns a copy of the current peer status map
+func (pm *peerMonitor) getPeerStatus() map[uint16]*peerStatus {
 	pm.peersMutex.RLock()
 	defer pm.peersMutex.RUnlock()
 
 	// Return a deep copy to avoid race conditions
-	result := make(map[uint16]*PeerStatus)
+	result := make(map[uint16]*peerStatus)
 	for nodeID, peer := range pm.peers {
-		result[nodeID] = &PeerStatus{
+		result[nodeID] = &peerStatus{
 			NodeID:        peer.NodeID,
 			LastTimestamp: peer.LastTimestamp,
 			LastSequence:  peer.LastSequence,
@@ -400,8 +400,8 @@ func (pm *PeerMonitor) GetPeerStatus() map[uint16]*PeerStatus {
 	return result
 }
 
-// GetHealthyPeerCount returns the number of healthy peers
-func (pm *PeerMonitor) GetHealthyPeerCount() int {
+// getHealthyPeerCount returns the number of healthy peers
+func (pm *peerMonitor) getHealthyPeerCount() int {
 	pm.peersMutex.RLock()
 	defer pm.peersMutex.RUnlock()
 
@@ -415,7 +415,7 @@ func (pm *PeerMonitor) GetHealthyPeerCount() int {
 }
 
 // updatePeerMetrics updates Prometheus metrics for peer status
-func (pm *PeerMonitor) updatePeerMetrics(nodeID uint16, isHealthy bool) {
+func (pm *peerMonitor) updatePeerMetrics(nodeID uint16, isHealthy bool) {
 	nodeIDStr := fmt.Sprintf("%d", nodeID)
 	nodeName := fmt.Sprintf("node-%d", nodeID) // Simple node name mapping
 
@@ -458,7 +458,7 @@ type SBDAgent struct {
 	sbdHealthyMutex     sync.RWMutex
 	heartbeatSequence   uint64
 	heartbeatSeqMutex   sync.Mutex
-	peerMonitor         *PeerMonitor
+	peerMonitor         *peerMonitor
 	selfFenceDetected   bool
 	selfFenceMutex      sync.RWMutex
 	metricsPort         int
@@ -658,7 +658,7 @@ func NewSBDAgentWithWatchdog(
 	}
 
 	// Initialize the PeerMonitor
-	sbdAgent.peerMonitor = NewPeerMonitor(sbdTimeoutSeconds, nodeID, sbdAgent.nodeManager, logger)
+	sbdAgent.peerMonitor = newPeerMonitor(sbdTimeoutSeconds, nodeID, sbdAgent.nodeManager, logger)
 
 	// Initialize metrics
 	sbdAgent.initMetrics()
@@ -1045,7 +1045,7 @@ func (s *SBDAgent) readPeerHeartbeat(peerNodeID uint16) error {
 	}
 
 	// Update peer status
-	s.peerMonitor.UpdatePeer(peerNodeID, header.Timestamp, header.Sequence)
+	s.peerMonitor.updatePeer(peerNodeID, header.Timestamp, header.Sequence)
 	return nil
 }
 
@@ -1302,14 +1302,14 @@ func (s *SBDAgent) peerMonitorLoop() {
 			}
 
 			// Check liveness of all tracked peers
-			s.peerMonitor.CheckPeerLiveness()
+			s.peerMonitor.checkPeerLiveness()
 
 			// Log cluster status periodically
-			healthyPeers := s.peerMonitor.GetHealthyPeerCount()
+			healthyPeers := s.peerMonitor.getHealthyPeerCount()
 			logger.Info("Cluster status", "healthyPeers", healthyPeers)
 
 			// Set or clear SBRStorageUnhealthy node condition so NHC can create remediation when needed
-			for _, peer := range s.peerMonitor.GetPeerStatus() {
+			for _, peer := range s.peerMonitor.getPeerStatus() {
 				// Skip ourselves
 				if peer.NodeID == s.nodeID {
 					continue
