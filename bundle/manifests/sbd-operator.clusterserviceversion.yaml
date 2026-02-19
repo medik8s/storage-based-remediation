@@ -4,7 +4,7 @@ metadata:
   annotations:
     alm-examples: '[]'
     capabilities: Basic Install
-    createdAt: "2026-02-18T19:42:06Z"
+    createdAt: "2026-02-19T09:04:51Z"
     operators.operatorframework.io/builder: operator-sdk-v1.33.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     containerImage: quay.io/medik8s/sbd-operator:latest
