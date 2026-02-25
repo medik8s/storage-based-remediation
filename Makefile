@@ -572,7 +572,12 @@ LOCALBIN ?= $(shell pwd)/bin
 $(LOCALBIN):
 	mkdir -p $(LOCALBIN)
 
+# Use kubectl, fallback to oc
 KUBECTL ?= kubectl
+ifeq (,$(shell which kubectl))
+KUBECTL=oc
+endif
+
 KIND ?= kind
 
 ## Default Tool Binaries
