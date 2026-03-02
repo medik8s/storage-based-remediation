@@ -58,9 +58,6 @@ const (
 	// Fresh window and requeue delay for SBD agent remediations before placing OOS taint
 	SBDAgentRemediationFreshAge     = 15 * time.Second * (5 + 2) //TODO mshitrit should work around dependecies to update the calculation to be: main.SBDDefaultTimeoutSec/2 * (main.MaxConsecutiveFailures+2)  if SBD_TIMEOUT_SECONDS defined, use instead of main.SBDDefaultTimeoutSec
 	SBDAgentRemediationRequeueDelay = 10 * time.Second
-	// SBDAgentOOSTaintStaleAge is the benchmark duration after which a remediation
-	// is considered stale since OOS taint placement (annotation-based)
-	SBDAgentOOSTaintStaleAge = 120 * time.Second
 
 	// Status update retry configuration
 	MaxStatusUpdateRetries    = 10

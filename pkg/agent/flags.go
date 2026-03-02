@@ -65,6 +65,9 @@ const (
 
 	// FlagStaleNodeTimeout specifies the timeout for considering nodes stale
 	FlagStaleNodeTimeout = "stale-node-timeout"
+
+	// FlagDetectOnlyMode disables remediation: watchdog is disarmed, no self-fence
+	FlagDetectOnlyMode = "detect-only-mode"
 )
 
 // Default values for SBD Agent flags

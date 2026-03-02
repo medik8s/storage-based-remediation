@@ -80,6 +80,16 @@ const (
 	MaxPeerCheckInterval = 60 * time.Second
 )
 
+// DetectOnlyModeType specifies whether SBR runs in detect-only mode (no remediation).
+type DetectOnlyModeType string
+
+const (
+	// DetectOnlyModeDisabled is the default: SBR performs remediation (watchdog armed, fencing).
+	DetectOnlyModeDisabled DetectOnlyModeType = "Disabled"
+	// DetectOnlyModeEnabled disables all remediation: watchdog disarmed, no self-fence, no fence messages.
+	DetectOnlyModeEnabled DetectOnlyModeType = "Enabled"
+)
+
 // SBDConfigConditionType represents the type of condition for SBDConfig
 type SBDConfigConditionType string
 
@@ -217,6 +227,21 @@ type SBDConfigSpec struct {
 	// +kubebuilder:default="5s"
 	// +optional
 	PeerCheckInterval *metav1.Duration `json:"peerCheckInterval,omitempty"`
+
+	// DetectOnlyMode when set to Enabled disables all remediation: the agent disarms the watchdog (no reboot)
+	// and the controller does not write fence messages. SBR still sets node conditions (e.g. SBRStorageUnhealthy)
+	// so NHC or other remediators can observe unhealthy nodes without SBR triggering a reboot.
+	// +kubebuilder:validation:Enum=Disabled;Enabled
+	// +optional
+	DetectOnlyMode *DetectOnlyModeType `json:"detectOnlyMode,omitempty"`
+}
+
+// GetDetectOnlyMode returns whether detect-only mode is enabled (default false).
+func (s *SBDConfigSpec) GetDetectOnlyMode() bool {
+	if s.DetectOnlyMode != nil {
+		return *s.DetectOnlyMode == DetectOnlyModeEnabled
+	}
+	return false
 }
 
 // GetSbdWatchdogPath returns the watchdog path with default fallback

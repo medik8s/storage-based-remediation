@@ -96,6 +96,8 @@ var (
 		"Port for Prometheus metrics endpoint")
 	staleNodeTimeout = flag.Duration(agent.FlagStaleNodeTimeout, 1*time.Hour,
 		"Timeout for considering nodes stale and removing them from slot mapping")
+	detectOnlyMode = flag.Bool(agent.FlagDetectOnlyMode, false,
+		"When true, disarm watchdog and do not remediate (detect and set node conditions only)")
 
 	// I/O timeout configuration
 	ioTimeout = flag.Duration("io-timeout", 2*time.Second,
@@ -146,6 +148,13 @@ const (
 	// SBDAgentRemediationGracePeriod is the minimum time to wait between deletion and re-creation.
 	SBDAgentRemediationGracePeriod = 3 * time.Minute
 )
+
+// sbrUnhealthyConditionStaleAge is the duration after which SBRStorageUnhealthy=True is
+// considered stale and we set it to Unknown so NHC removes its remediation and the node agent
+// can run and report healthy. It is set at startup to (MaxConsecutiveFailures+1)*heartbeatInterval:
+// we wait long enough for the unhealthy node to have had time to self-fence (e.g. after
+// MaxConsecutiveFailures missed heartbeats) plus one extra heartbeat as buffer.
+var sbrUnhealthyConditionStaleAge time.Duration
 
 // Global logger instance
 var logger logr.Logger
@@ -486,51 +495,13 @@ type SBDAgent struct {
 
 	// Namespace for controller reconciliation (configurable for testing)
 	controllerNamespace string
+
+	// detectOnlyMode when true disables remediation: watchdog is not armed, self-fence is never executed
+	detectOnlyMode bool
 }
 
-// NewSBDAgent creates a new SBD agent with the specified configuration
-func NewSBDAgent(
-	watchdogPath, heartbeatDevicePath, nodeName, clusterName string,
-	nodeID uint16,
-	petInterval, sbdUpdateInterval, heartbeatInterval, peerCheckInterval time.Duration,
-	sbdTimeoutSeconds uint,
-	rebootMethod string,
-	metricsPort int,
-	staleNodeTimeout time.Duration,
-	fileLockingEnabled bool,
-	ioTimeout time.Duration,
-	k8sClient client.Client,
-	controllerNamespace string,
-) (*SBDAgent, error) {
-	// Initialize watchdog first (always required) with softdog fallback for systems without hardware watchdog
-	wd, err := watchdog.NewWithSoftdogFallback(watchdogPath, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize watchdog %s: %w", watchdogPath, err)
-	}
-
-	return NewSBDAgentWithWatchdog(
-		wd,
-		heartbeatDevicePath,
-		nodeName,
-		clusterName,
-		nodeID,
-		petInterval,
-		sbdUpdateInterval,
-		heartbeatInterval,
-		peerCheckInterval,
-		sbdTimeoutSeconds,
-		rebootMethod,
-		metricsPort,
-		staleNodeTimeout,
-		fileLockingEnabled,
-		ioTimeout,
-		k8sClient,
-		nil,
-		controllerNamespace,
-	)
-}
-
-// NewSBDAgentWithWatchdog creates a new SBD agent with a provided watchdog interface
+// NewSBDAgentWithWatchdog creates a new SBD agent with a provided watchdog interface.
+// When detectOnlyMode is true, the watchdog is not used for remediation (e.g. pass a no-op mock to disarm).
 func NewSBDAgentWithWatchdog(
 	wd mocks.WatchdogInterface,
 	heartbeatDevicePath, nodeName, clusterName string,
@@ -545,12 +516,13 @@ func NewSBDAgentWithWatchdog(
 	k8sClient client.Client,
 	restConfig *rest.Config,
 	controllerNamespace string,
+	detectOnlyMode bool,
 ) (*SBDAgent, error) {
 	// Input validation
 	if wd == nil {
 		return nil, fmt.Errorf("watchdog interface cannot be nil")
 	}
-	if wd.Path() == "" {
+	if !detectOnlyMode && wd.Path() == "" {
 		return nil, fmt.Errorf("watchdog path cannot be empty")
 	}
 
@@ -624,6 +596,7 @@ func NewSBDAgentWithWatchdog(
 		selfFenceDetected:   false,
 		metricsPort:         metricsPort,
 		nodeManagerStop:     make(chan struct{}),
+		detectOnlyMode:      detectOnlyMode,
 		staleNodeTimeout:    staleNodeTimeout,
 		lastFailureReset:    time.Now(),
 		retryConfig:         retryConfig,
@@ -1182,7 +1155,7 @@ func (s *SBDAgent) watchdogLoop() {
 				return
 			}
 
-			// Only pet the watchdog if SBD device is healthy
+			// Only pet the watchdog if SBD device is healthy (or always in detect-only to keep watchdog disarmed)
 			if s.isSBDHealthy() {
 				// Use retry mechanism for watchdog petting
 				err := retry.Do(s.ctx, s.retryConfig, "pet watchdog", func() error {
@@ -1206,13 +1179,23 @@ func (s *SBDAgent) watchdogLoop() {
 					}
 				}
 			} else {
-				logger.Error(nil, "Skipping watchdog pet - SBD device is unhealthy",
-					"sbdDevicePath", s.heartbeatDevicePath,
-					"sbdHealthy", s.isSBDHealthy())
-				// Mark agent as unhealthy when SBD device is unhealthy
+				// SBD device is unhealthy
 				agentHealthyGauge.Set(0)
-				// This will cause the system to reboot via watchdog timeout
-				// This is the desired behavior for self-fencing when SBD fails
+				if s.detectOnlyMode {
+					s.recorder.Event(s.recorderObject, "Warning", "SBDUnhealthyDetectOnly",
+						fmt.Sprintf("SBD device unhealthy on (%s, %d); detect-only mode, watchdog disarmed, no reboot", s.nodeName, s.nodeID))
+
+					logger.Info("SBD unhealthy in detect-only mode (watchdog disarmed, no reboot)",
+						"sbdDevicePath", s.heartbeatDevicePath)
+				} else {
+					s.recorder.Event(s.recorderObject, "Warning", "SBDUnhealthyWatchdogTimeout",
+						fmt.Sprintf("SBD device unhealthy on (%s, %d); skipping watchdog pet, reboot imminent", s.nodeName, s.nodeID))
+					logger.Error(nil, "Skipping watchdog pet - SBD device is unhealthy",
+						"sbdDevicePath", s.heartbeatDevicePath,
+						"sbdHealthy", s.isSBDHealthy())
+					// This will cause the system to reboot via watchdog timeout
+					// This is the desired behavior for self-fencing when SBD fails
+				}
 			}
 		}
 	}
@@ -1308,7 +1291,9 @@ func (s *SBDAgent) peerMonitorLoop() {
 			healthyPeers := s.peerMonitor.getHealthyPeerCount()
 			logger.Info("Cluster status", "healthyPeers", healthyPeers)
 
-			// Set or clear SBRStorageUnhealthy node condition so NHC can create remediation when needed
+			// Set or clear SBRStorageUnhealthy node condition so NHC can create remediation when needed.
+			// State machine (mirrors old remediation create/delete): True -> after SBDAgentOOSTaintStaleAge -> Unknown (like deleting stale remediation);
+			// Unknown -> if peer healthy set False; else after grace period set True again.
 			for _, peer := range s.peerMonitor.getPeerStatus() {
 				// Skip ourselves
 				if peer.NodeID == s.nodeID {
@@ -1322,28 +1307,61 @@ func (s *SBDAgent) peerMonitorLoop() {
 					continue
 				}
 
-				if !peer.IsHealthy {
-					// Require a minimum number of missed heartbeats before setting unhealthy condition
-					missed := int(time.Since(peer.LastSeen) / s.heartbeatInterval)
-					if missed < DefaultMinMissedHeartbeatsForRemediation {
-						logger.V(1).Info("Peer unhealthy but below remediation threshold",
-							"peerNodeID", peer.NodeID,
-							"missedHeartbeats", missed,
-							"threshold", DefaultMinMissedHeartbeatsForRemediation)
-						continue
+				currentStatus, lastTransition, hasCond := s.getSBRStorageUnhealthyCondition(peerNodeName)
+				now := time.Now()
+
+				if peer.IsHealthy {
+					// Node regained health: remove condition (set False) if it was True or Unknown
+					if currentStatus == corev1.ConditionTrue || currentStatus == corev1.ConditionUnknown {
+						if err := s.setNodeConditionSBRStorageUnhealthyStatus(peerNodeName, corev1.ConditionFalse, "Recovered", "SBD peer heartbeats resumed"); err != nil {
+							logger.Error(err, "Failed to clear SBRStorageUnhealthy condition for recovered peer",
+								"peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
+						} else {
+							logger.V(1).Info("Cleared SBRStorageUnhealthy condition for recovered peer",
+								"peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
+						}
 					}
+					continue
+				}
+
+				// Peer unhealthy: require minimum missed heartbeats before setting condition
+				missed := int(time.Since(peer.LastSeen) / s.heartbeatInterval)
+				if missed < DefaultMinMissedHeartbeatsForRemediation {
+					logger.V(1).Info("Peer unhealthy but below remediation threshold",
+						"peerNodeID", peer.NodeID,
+						"missedHeartbeats", missed,
+						"threshold", DefaultMinMissedHeartbeatsForRemediation)
+					continue
+				}
+
+				// Condition has been True too long: set Unknown (same as old "delete stale remediation") so NHC removes remediation and agent can report healthy
+				if currentStatus == corev1.ConditionTrue && now.Sub(lastTransition) > sbrUnhealthyConditionStaleAge {
+					if err := s.setNodeConditionSBRStorageUnhealthyStatus(peerNodeName, corev1.ConditionUnknown, "GivingAgentChance", "Condition stale; set Unknown so NHC removes remediation and agent can report healthy"); err != nil {
+						logger.Error(err, "Failed to set SBRStorageUnhealthy to Unknown for stale condition", "peerNodeName", peerNodeName)
+					} else {
+						logger.Info("Set SBRStorageUnhealthy to Unknown (stale); NHC will remove remediation", "peerNodeName", peerNodeName)
+					}
+					continue
+				}
+
+				// Condition is Unknown: after grace period set True again if still unhealthy
+				if currentStatus == corev1.ConditionUnknown {
+					if now.Sub(lastTransition) > SBDAgentRemediationGracePeriod {
+						if err := s.setNodeConditionSBRStorageUnhealthyStatus(peerNodeName, corev1.ConditionTrue, string(v1alpha1.SBDRemediationReasonHeartbeatTimeout), "SBD peer heartbeat timeout"); err != nil {
+							logger.Error(err, "Failed to set SBRStorageUnhealthy condition after grace period", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
+						} else {
+							logger.Info("Set SBRStorageUnhealthy condition after grace period (node still unhealthy)", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
+						}
+					}
+					continue
+				}
+
+				// Condition False or absent: set True so NHC can create remediation
+				if currentStatus == corev1.ConditionFalse || !hasCond {
 					if err := s.setNodeConditionSBRStorageUnhealthy(peerNodeName, true, string(v1alpha1.SBDRemediationReasonHeartbeatTimeout), "SBD peer heartbeat timeout"); err != nil {
 						logger.Error(err, "Failed to set SBRStorageUnhealthy condition for unhealthy peer", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
 					} else {
 						logger.Info("Set SBRStorageUnhealthy condition for unhealthy peer", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
-					}
-				} else {
-					if err := s.setNodeConditionSBRStorageUnhealthy(peerNodeName, false, "Recovered", "SBD peer heartbeats resumed"); err != nil {
-						logger.Error(err, "Failed to clear SBRStorageUnhealthy condition for recovered peer",
-							"peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
-					} else {
-						logger.V(1).Info("Cleared SBRStorageUnhealthy condition for recovered peer",
-							"peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
 					}
 				}
 			}
@@ -1367,20 +1385,26 @@ func (s *SBDAgent) resolveNodeName(nodeID uint16) (string, bool) {
 // setNodeConditionSBRStorageUnhealthy sets or clears the SBRStorageUnhealthy condition on the node's status.
 // When unhealthy is true, NHC can watch this condition and create a StorageBasedRemediation.
 func (s *SBDAgent) setNodeConditionSBRStorageUnhealthy(nodeName string, unhealthy bool, reason, message string) error {
+	status := corev1.ConditionFalse
+	if unhealthy {
+		status = corev1.ConditionTrue
+	}
+	return s.setNodeConditionSBRStorageUnhealthyStatus(nodeName, status, reason, message)
+}
+
+// setNodeConditionSBRStorageUnhealthyStatus sets the SBRStorageUnhealthy condition to the given status (True, False, or Unknown).
+// Unknown is used to signal NHC to remove its remediation so the node agent can run and report healthy; after a grace period we set True again if still unhealthy.
+func (s *SBDAgent) setNodeConditionSBRStorageUnhealthyStatus(nodeName string, status corev1.ConditionStatus, reason, message string) error {
 	node := &corev1.Node{}
 	if err := s.k8sClient.Get(s.ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
 		return fmt.Errorf("get node %s: %w", nodeName, err)
 	}
 	now := metav1.NewTime(time.Now().UTC())
-	desiredStatus := corev1.ConditionFalse
-	if unhealthy {
-		desiredStatus = corev1.ConditionTrue
-	}
 	cond := s.findOrAppendSBRStorageUnhealthyCondition(node)
-	if cond.Status == desiredStatus {
+	if cond.Status == status {
 		return nil
 	}
-	cond.Status = desiredStatus
+	cond.Status = status
 	cond.Reason = reason
 	cond.Message = message
 	cond.LastTransitionTime = now
@@ -1389,6 +1413,22 @@ func (s *SBDAgent) setNodeConditionSBRStorageUnhealthy(nodeName string, unhealth
 		return fmt.Errorf("update node %s status (SBRStorageUnhealthy): %w", nodeName, err)
 	}
 	return nil
+}
+
+// getSBRStorageUnhealthyCondition returns the current SBRStorageUnhealthy condition status and last transition time for the node.
+// If the condition is not present, returns (ConditionFalse, zero time, false).
+func (s *SBDAgent) getSBRStorageUnhealthyCondition(nodeName string) (corev1.ConditionStatus, time.Time, bool) {
+	node := &corev1.Node{}
+	if err := s.k8sClient.Get(s.ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
+		return corev1.ConditionFalse, time.Time{}, false
+	}
+	for i := range node.Status.Conditions {
+		c := &node.Status.Conditions[i]
+		if c.Type == v1alpha1.NodeConditionSBRStorageUnhealthy {
+			return c.Status, c.LastTransitionTime.Time, true
+		}
+	}
+	return corev1.ConditionFalse, time.Time{}, false
 }
 
 // findOrAppendSBRStorageUnhealthyCondition returns the existing condition or appends a new one and returns it.
@@ -1619,6 +1659,12 @@ func (s *SBDAgent) setSelfFenceDetected(detected bool) {
 // The systemctl-reboot method uses multiple aggressive techniques based on destructive testing
 // that showed direct reboot commands are more effective than panic() in containerized environments
 func (s *SBDAgent) executeSelfFencing(reason string) {
+	if s.detectOnlyMode {
+		logger.Info("Detect-only mode: skipping self-fence", "reason", reason, "nodeName", s.nodeName)
+		return
+	}
+	s.recorder.Event(s.recorderObject, "Warning", "SelfFenceInitiated",
+		fmt.Sprintf("Self-fencing initiated on (%s, %d): %s", s.nodeName, s.nodeID, reason))
 	logger.Error(nil, "Self-fencing initiated",
 		"reason", reason,
 		"rebootMethod", s.rebootMethod,
@@ -2219,6 +2265,9 @@ func main() {
 	if heartbeatInterval < time.Second {
 		heartbeatInterval = time.Second // Minimum 1 second interval
 	}
+	// Stale age for SBRStorageUnhealthy=True: (MaxConsecutiveFailures+1)*heartbeatInterval so we wait
+	// for the unhealthy node to have had time to self-fence plus one heartbeat buffer before setting condition to Unknown.
+	sbrUnhealthyConditionStaleAge = time.Duration(MaxConsecutiveFailures+1) * heartbeatInterval
 
 	// Validate required parameters
 	if *sbdDevice == "" {
@@ -2256,10 +2305,40 @@ func main() {
 	}
 
 	// Create SBD agent (hash mapping is always enabled)
-	sbdAgent, err := NewSBDAgent(*watchdogPath, *sbdDevice, nodeNameValue, *clusterName, nodeIDValue,
-		*petInterval, *sbdUpdateInterval, heartbeatInterval, *peerCheckInterval, sbdTimeoutValue,
-		rebootMethodValue, *metricsPort, *staleNodeTimeout, *sbdFileLocking, *ioTimeout,
-		k8sClient, "")
+	var wd mocks.WatchdogInterface
+	if *detectOnlyMode {
+		logger.Info("Detect-only mode: using no-op watchdog (watchdog disarmed, no remediation)")
+		wd = mocks.NewMockWatchdog(*watchdogPath)
+	} else {
+		realWd, err := watchdog.NewWithSoftdogFallback(*watchdogPath, logger)
+		if err != nil {
+			logger.Error(err, "Failed to initialize watchdog",
+				"watchdogPath", *watchdogPath)
+			os.Exit(1)
+		}
+		wd = realWd
+	}
+	sbdAgent, err := NewSBDAgentWithWatchdog(
+		wd,
+		*sbdDevice,
+		nodeNameValue,
+		*clusterName,
+		nodeIDValue,
+		*petInterval,
+		*sbdUpdateInterval,
+		heartbeatInterval,
+		*peerCheckInterval,
+		sbdTimeoutValue,
+		rebootMethodValue,
+		*metricsPort,
+		*staleNodeTimeout,
+		*sbdFileLocking,
+		*ioTimeout,
+		k8sClient,
+		nil,
+		"",
+		*detectOnlyMode,
+	)
 	if err != nil {
 		logger.Error(err, "Failed to create SBD agent",
 			"watchdogPath", *watchdogPath,

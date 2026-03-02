@@ -1583,6 +1583,10 @@ func (r *SBDConfigReconciler) buildSBDAgentArgs(sbdConfig *medik8sv1alpha1.SBDCo
 		args = append(args, fmt.Sprintf("--%s=true", agent.FlagSBDFileLocking))
 	}
 
+	if sbdConfig.Spec.GetDetectOnlyMode() {
+		args = append(args, fmt.Sprintf("--%s=true", agent.FlagDetectOnlyMode))
+	}
+
 	return args
 }
 
