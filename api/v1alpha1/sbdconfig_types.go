@@ -680,7 +680,8 @@ func deriveAgentImageFromOperator(operatorImage string) (string, error) {
 		agentSuffix = strings.Replace(suffix, "sbd-operator", "sbd-agent", 1)
 	}
 	if agentSuffix == suffix {
-		return "", fmt.Errorf("invalid operator image %q", operatorImage)
+		// Image doesn't follow expected naming convention (e.g. CI image named "pipeline") — use as-is
+		return operatorImage, nil
 	}
 
 	// Add :latest tag if no tag is present
