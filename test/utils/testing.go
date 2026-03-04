@@ -382,7 +382,7 @@ func (psc *PodStatusChecker) WaitForPodsReady(minCount int, timeout time.Duratio
 		GinkgoWriter.Printf("Found %d unready pods out of %d total\n", unreadyPodsCount, len(pods.Items))
 
 		for _, pod := range unreadyPods {
-			GinkgoWriter.Printf("Found unready pod: %s Status Phase: %s Status Conditions: %s \n", pod.Name, pod.Status.Phase, pod.Status.Conditions)
+			GinkgoWriter.Printf("Unready pod:\n%s\n", formatUnreadyPodStatus(pod))
 		}
 
 		return readyPods
@@ -655,6 +655,46 @@ func (dc *DebugCollector) CollectStorageJobs(namespace string) {
 		// Collect logs from job pods
 		dc.collectJobPodLogs(namespace, job.Name)
 	}
+}
+
+// formatUnreadyPodStatus returns a human-readable summary of a pod's status for logging.
+func formatUnreadyPodStatus(pod corev1.Pod) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Pod: %s  Phase: %s\n", pod.Name, pod.Status.Phase))
+	b.WriteString("  Conditions:\n")
+	for _, c := range pod.Status.Conditions {
+		b.WriteString(fmt.Sprintf("    - %s: %s", c.Type, c.Status))
+		if c.Reason != "" {
+			b.WriteString(fmt.Sprintf(" (Reason: %s)", c.Reason))
+		}
+		if c.Message != "" {
+			b.WriteString(fmt.Sprintf(" %s", c.Message))
+		}
+		b.WriteString("\n")
+	}
+	if len(pod.Status.ContainerStatuses) > 0 {
+		b.WriteString("  Container statuses:\n")
+		for _, cs := range pod.Status.ContainerStatuses {
+			ready := "not ready"
+			if cs.Ready {
+				ready = "ready"
+			}
+			b.WriteString(fmt.Sprintf("    - %s: %s, restarts=%d", cs.Name, ready, cs.RestartCount))
+			if cs.State.Running != nil {
+				b.WriteString(", state=Running")
+			} else if cs.State.Waiting != nil {
+				b.WriteString(fmt.Sprintf(", state=Waiting (Reason: %s", cs.State.Waiting.Reason))
+				if cs.State.Waiting.Message != "" {
+					b.WriteString(fmt.Sprintf(", %s", cs.State.Waiting.Message))
+				}
+				b.WriteString(")")
+			} else if cs.State.Terminated != nil {
+				b.WriteString(fmt.Sprintf(", state=Terminated exitCode=%d Reason: %s", cs.State.Terminated.ExitCode, cs.State.Terminated.Reason))
+			}
+			b.WriteString("\n")
+		}
+	}
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // collectJobPodLogs collects logs from pods belonging to a specific job

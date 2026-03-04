@@ -1136,6 +1136,9 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	daemonSetLogger.Info("Creating or updating DaemonSet",
 		"operation", "daemonset-create-or-update",
 		"desired.image", desiredDaemonSet.Spec.Template.Spec.Containers[0].Image)
+	daemonSetLogger.Info("SBD agent DaemonSet watchdog configuration",
+		"watchdogPath", sbdConfig.Spec.GetSbdWatchdogPath(),
+		"watchdogTimeout", sbdConfig.Spec.GetWatchdogTimeout().String())
 
 	action, err = controllerutil.CreateOrUpdate(ctx, r.Client, actualDaemonSet, func() error {
 		// Update the DaemonSet spec with the desired configuration
@@ -1517,10 +1520,10 @@ func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfi
 												sbdConfig.Spec.GetSbdWatchdogPath())},
 									},
 								},
-								InitialDelaySeconds: 10,
+								InitialDelaySeconds: 60,
 								PeriodSeconds:       10,
 								TimeoutSeconds:      5,
-								FailureThreshold:    3,
+								FailureThreshold:    6,
 								SuccessThreshold:    1,
 							},
 							StartupProbe: &corev1.Probe{
