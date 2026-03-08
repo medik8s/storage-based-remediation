@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,9 +33,13 @@ import (
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
 	"github.com/medik8s/sbd-operator/pkg/blockdevice"
@@ -47,6 +52,73 @@ const (
 	// Test constants
 	nonExistentWatchdogPath = "/non/existent/watchdog"
 )
+
+// failingRemediationGetClient wraps a client.Client and returns a fixed error for Get
+// when the object is StorageBasedRemediation and the key matches the given namespace/name.
+// Used to simulate API unreachable in tests.
+type failingRemediationGetClient struct {
+	delegate      client.Client
+	failNamespace string
+	failName      string
+	err           error
+}
+
+func (c *failingRemediationGetClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*medik8sv1alpha1.StorageBasedRemediation); ok && key.Namespace == c.failNamespace && key.Name == c.failName {
+		return c.err
+	}
+	return c.delegate.Get(ctx, key, obj, opts...)
+}
+
+func (c *failingRemediationGetClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	return c.delegate.List(ctx, list, opts...)
+}
+
+func (c *failingRemediationGetClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	return c.delegate.Create(ctx, obj, opts...)
+}
+
+func (c *failingRemediationGetClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	return c.delegate.Delete(ctx, obj, opts...)
+}
+
+func (c *failingRemediationGetClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	return c.delegate.Update(ctx, obj, opts...)
+}
+
+func (c *failingRemediationGetClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	return c.delegate.Patch(ctx, obj, patch, opts...)
+}
+
+func (c *failingRemediationGetClient) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
+	return c.delegate.DeleteAllOf(ctx, obj, opts...)
+}
+
+func (c *failingRemediationGetClient) Status() client.SubResourceWriter {
+	return c.delegate.Status()
+}
+
+func (c *failingRemediationGetClient) SubResource(subResource string) client.SubResourceClient {
+	return c.delegate.SubResource(subResource)
+}
+
+func (c *failingRemediationGetClient) Scheme() *runtime.Scheme {
+	return c.delegate.Scheme()
+}
+
+func (c *failingRemediationGetClient) RESTMapper() meta.RESTMapper {
+	return c.delegate.RESTMapper()
+}
+
+func (c *failingRemediationGetClient) GroupVersionKindFor(obj runtime.Object) (schema.GroupVersionKind, error) {
+	return c.delegate.GroupVersionKindFor(obj)
+}
+
+func (c *failingRemediationGetClient) IsObjectNamespaced(obj runtime.Object) (bool, error) {
+	return c.delegate.IsObjectNamespaced(obj)
+}
+
+var _ client.Client = &failingRemediationGetClient{}
 
 // createTestSBDAgent creates a test SBD agent with mock devices and temporary SBD files
 func createTestSBDAgent(t *testing.T, metricsPort int) (
@@ -1377,7 +1449,8 @@ var _ = Describe("Fence flow with real SBD agent", func() {
 
 	// setupFenceFlowBase creates worker-2 node, temp dir with sbd/fence files, and node manager;
 	// returns tmpDir, sbdPath, fencePath, worker1ID, worker2ID. Registers DeferCleanup for node and dir.
-	setupFenceFlowBase := func(tempPrefix string) (tmpDir, sbdPath, fencePath string, worker1ID, worker2ID uint16) {
+	const fenceFlowBasePrefix = "fence-flow-"
+	setupFenceFlowBase := func() (tmpDir, sbdPath, fencePath string, worker1ID, worker2ID uint16) {
 		By("Creating target node worker-2")
 		workerNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: fenceFlowTargetNode}}
 		Expect(k8sClient.Create(ctx, workerNode)).To(Succeed())
@@ -1385,7 +1458,7 @@ var _ = Describe("Fence flow with real SBD agent", func() {
 
 		By("Creating temp files for agent node manager slot table")
 		var err error
-		tmpDir, err = os.MkdirTemp("", tempPrefix)
+		tmpDir, err = os.MkdirTemp("", fenceFlowBasePrefix)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { _ = os.RemoveAll(tmpDir) })
 
@@ -1429,7 +1502,7 @@ var _ = Describe("Fence flow with real SBD agent", func() {
 
 	Context("when agent sets SBRStorageUnhealthy and controller reconciles", func() {
 		It("should write fence message to device", func() {
-			tmpDir, sbdPath, fencePath, worker1ID, worker2ID := setupFenceFlowBase("fence-flow-")
+			tmpDir, sbdPath, fencePath, worker1ID, worker2ID := setupFenceFlowBase()
 
 			// Stale age for this test: (MaxConsecutiveFailures+1)*heartbeatInterval; heartbeatInterval is 1s
 			oldStale := sbrUnhealthyConditionStaleAge
@@ -1531,7 +1604,7 @@ var _ = Describe("Fence flow with real SBD agent", func() {
 
 	Context("detect-only mode", func() {
 		It("should emit SBDUnhealthyDetectOnly and not SelfFenceInitiated or SBDUnhealthyWatchdogTimeout when SBD is unhealthy", func() {
-			tmpDir, sbdPath, _, worker1ID, _ := setupFenceFlowBase("detect-only-")
+			tmpDir, sbdPath, _, worker1ID, _ := setupFenceFlowBase()
 
 			By("Creating mock devices and making heartbeat writes fail so SBD becomes unhealthy")
 			mockHeartbeatDevice := mocks.NewMockBlockDevice("/tmp/detect-only-heartbeat", 1024*1024)
@@ -1563,22 +1636,173 @@ var _ = Describe("Fence flow with real SBD agent", func() {
 			events := mockRecorder.GetEvents()
 
 			By("Verifying no remediation events: SelfFenceInitiated and SBDUnhealthyWatchdogTimeout must not be emitted")
-			for _, e := range events {
-				Expect(e.Reason).NotTo(Equal("SelfFenceInitiated"),
-					"detect-only mode must not emit SelfFenceInitiated")
-				Expect(e.Reason).NotTo(Equal("SBDUnhealthyWatchdogTimeout"),
-					"detect-only mode must not emit SBDUnhealthyWatchdogTimeout (watchdog disarmed)")
-			}
+			Expect(events).NotTo(ContainElement(HaveField(EventFieldReason, Equal(EventReasonSelfFenceInitiated))),
+				"detect-only mode must not emit SelfFenceInitiated")
+			Expect(events).NotTo(ContainElement(HaveField(EventFieldReason, Equal(EventReasonSBDUnhealthyWatchdogTimeout))),
+				"detect-only mode must not emit SBDUnhealthyWatchdogTimeout (watchdog disarmed)")
 
 			By("Verifying SBDUnhealthyDetectOnly was emitted when SBD became unhealthy")
-			var foundDetectOnly bool
-			for _, e := range events {
-				if e.Reason == "SBDUnhealthyDetectOnly" {
-					foundDetectOnly = true
-					break
-				}
+			Expect(events).To(
+				ContainElement(HaveField(EventFieldReason, Equal(EventReasonSBDUnhealthyDetectOnly))),
+				"expected at least one SBDUnhealthyDetectOnly event when SBD unhealthy in detect-only mode")
+		})
+	})
+
+	Context("SBD is unhealthy and not in detect-only mode", func() {
+		const (
+			fenceFlowUnhealthyMetricsPort = 9657
+			fenceFlowUnhealthyPrefix      = "fence-flow-unhealthy-"
+		)
+
+		var (
+			tmpDir                string
+			sbdPath               string
+			worker1ID, worker2ID  uint16
+			mockHeartbeatDevice   *mocks.MockBlockDevice
+			mockFenceDevice       *mocks.MockBlockDevice
+			mockRecorder          *mocks.MockEventRecorder
+			recorderObject        *medik8sv1alpha1.SBDConfig
+			agent                 *SBDAgent
+			mockWatchdog          *mocks.MockWatchdog
+			petCountWhenUnhealthy int
+			controllerNamespace   string
+		)
+
+		// setupUnhealthyFenceFlow runs common setup: base env, devices, heartbeats, recorder, agent (with given client and reboot method), start, wait for healthy.
+		setupUnhealthyFenceFlow := func(c client.Client, rebootMethod string) {
+			tmpDir, sbdPath, _, worker1ID, worker2ID = setupFenceFlowBase()
+			By("Writing initial heartbeats for worker-1 and worker-2 on mock devices")
+			mockHeartbeatDevice = mocks.NewMockBlockDevice("/tmp/"+fenceFlowUnhealthyPrefix+"heartbeat", 1024*1024)
+			mockFenceDevice = mocks.NewMockBlockDevice("/tmp/"+fenceFlowUnhealthyPrefix+"fence", 1024*1024)
+			ts := uint64(time.Now().UnixNano())
+			for round := 0; round < 3; round++ {
+				Expect(mockHeartbeatDevice.WritePeerHeartbeat(worker1ID, ts+uint64(round), uint64(round+1))).To(Succeed())
+				Expect(mockHeartbeatDevice.WritePeerHeartbeat(worker2ID, ts+uint64(round), uint64(round+1))).To(Succeed())
 			}
-			Expect(foundDetectOnly).To(BeTrue(), "expected at least one SBDUnhealthyDetectOnly event when SBD unhealthy in detect-only mode")
+			By("Creating mock event recorder and SBDConfig for event verification")
+			mockRecorder = mocks.NewMockEventRecorder()
+			recorderObject = &medik8sv1alpha1.SBDConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: fenceFlowUnhealthyPrefix + "config", Namespace: "default"},
+			}
+			By("Creating real SBD agent (not detect-only) and overriding recorder")
+			mockWatchdog = mocks.NewMockWatchdog(filepath.Join(tmpDir, "watchdog"))
+			var err error
+			agent, err = NewSBDAgentWithWatchdog(mockWatchdog, sbdPath, "worker-1", "test-cluster", worker1ID,
+				1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second, fenceFlowSBDTimeout, rebootMethod, fenceFlowUnhealthyMetricsPort,
+				10*time.Minute, true, 2*time.Second,
+				c, cfg, controllerNamespace, false)
+			Expect(err).NotTo(HaveOccurred())
+			agent.recorder = mockRecorder
+			agent.recorderObject = recorderObject
+			agent.setSBDDevices(mockHeartbeatDevice, mockFenceDevice)
+			startFenceFlowAgent(agent)
+			By("Waiting for agent to pet and SBD to be healthy (writes succeeding)")
+			Eventually(func(g Gomega) {
+				g.Expect(mockWatchdog.GetPetCount()).To(BeNumerically(">=", 1), "expected at least one pet when SBD healthy")
+				g.Expect(agent.isSBDHealthy()).To(BeTrue(), "expected SBD to be healthy after successful writes")
+			}, 15*time.Second, 500*time.Millisecond).Should(Succeed())
+		}
+
+		makeSBDUnhealthy := func() {
+			By("Making heartbeat writes fail so SBD becomes unhealthy after MaxConsecutiveFailures")
+			mockHeartbeatDevice.SetFailWrite(true)
+			By("Waiting for SBD to become unhealthy (~7s at 1s heartbeat interval)")
+			Eventually(func(g Gomega) {
+				g.Expect(agent.isSBDHealthy()).To(BeFalse(), "expected SBD to be unhealthy after heartbeat write failures")
+				petCountWhenUnhealthy = mockWatchdog.GetPetCount()
+			}, 15*time.Second, 500*time.Millisecond).Should(Succeed())
+		}
+
+		When("no StorageBasedRemediation CR exists for this node", func() {
+			BeforeEach(func() {
+				controllerNamespace = createManagerPrefix()
+				setupUnhealthyFenceFlow(k8sClient, "panic")
+				makeSBDUnhealthy()
+			})
+			It("should pet watchdog and not trigger self-fence", func() {
+				By("Verifying pet continues after SBD is unhealthy (no remediation CR -> agent still pets)")
+				Eventually(func(g Gomega) {
+					g.Expect(mockWatchdog.GetPetCount()).To(BeNumerically(">", petCountWhenUnhealthy),
+						"expected at least one more pet after SBD became unhealthy (no CR path)")
+				}, 5*time.Second, 500*time.Millisecond).Should(Succeed())
+				By("Verifying fencing did not happen (no SelfFenceInitiated, no SBDUnhealthyWatchdogTimeout)")
+				events := mockRecorder.GetEvents()
+				Expect(events).NotTo(ContainElement(HaveField(EventFieldReason, Equal(EventReasonSelfFenceInitiated))),
+					"fencing must not happen when no CR and agent pets watchdog")
+				Expect(events).NotTo(ContainElement(HaveField(EventFieldReason, Equal(EventReasonSBDUnhealthyWatchdogTimeout))),
+					"should not emit SBDUnhealthyWatchdogTimeout when we pet to avoid reboot")
+			})
+		})
+
+		When("StorageBasedRemediation CR exists for this node", func() {
+			BeforeEach(func() {
+				controllerNamespace = createManagerPrefix()
+				By("Creating namespace for remediation CR (CR created before agent, CR created after SBD is healthy)")
+				ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: controllerNamespace}}
+				Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+				DeferCleanup(func() { _ = k8sClient.Delete(ctx, ns) })
+				setupUnhealthyFenceFlow(k8sClient, RebootMethodNone)
+				By("Creating StorageBasedRemediation CR for this node now that SBD is healthy (so agent will trigger self-fence when unhealthy)")
+				sbr := &medik8sv1alpha1.StorageBasedRemediation{
+					ObjectMeta: metav1.ObjectMeta{Name: "worker-1", Namespace: controllerNamespace},
+					Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
+						Reason:         medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
+						TimeoutSeconds: 300,
+					},
+				}
+				Expect(k8sClient.Create(ctx, sbr)).To(Succeed())
+				DeferCleanup(func() { _ = k8sClient.Delete(ctx, sbr) })
+				makeSBDUnhealthy()
+			})
+			It("should trigger self-fence and not pet after unhealthy", func() {
+				By("Verifying agent does not pet after SBD unhealthy when remediation CR exists (self-fence path)")
+				Consistently(func(g Gomega) {
+					g.Expect(mockWatchdog.GetPetCount()).To(Equal(petCountWhenUnhealthy),
+						"expected no additional pets when SBD unhealthy and agent triggers self-fence")
+				}, 5*time.Second, 500*time.Millisecond).Should(Succeed())
+				By("Verifying SelfFenceInitiated was emitted (CR exists, trigger self-fence)")
+				Expect(mockRecorder.GetEvents()).To(
+					ContainElement(HaveField(EventFieldReason, Equal(EventReasonSelfFenceInitiated))),
+					"expected SelfFenceInitiated when remediation CR exists and SBD unhealthy")
+				By("Verifying SBDUnhealthyWatchdogTimeout was not emitted (self-fence path, not skip-pet path)")
+				Expect(mockRecorder.GetEvents()).NotTo(
+					ContainElement(HaveField(EventFieldReason, Equal(EventReasonSBDUnhealthyWatchdogTimeout))),
+					"should not emit SBDUnhealthyWatchdogTimeout when triggering self-fence for existing CR")
+			})
+		})
+
+		When("remediation CR check fails (API error)", func() {
+			BeforeEach(func() {
+				controllerNamespace = createManagerPrefix()
+				By("Wrapping k8s client to fail Get(StorageBasedRemediation) for this node (simulate API unreachable)")
+				failingClient := &failingRemediationGetClient{
+					delegate:      k8sClient,
+					failNamespace: controllerNamespace,
+					failName:      "worker-1",
+					err:           fmt.Errorf("simulated API unreachable"),
+				}
+				setupUnhealthyFenceFlow(failingClient, RebootMethodNone)
+				makeSBDUnhealthy()
+			})
+			It("should trigger self-fence and emit SBDUnhealthySkipPetAPIError", func() {
+				By("Verifying agent does not pet after SBD unhealthy when API check fails (self-fence path)")
+				Consistently(func(g Gomega) {
+					g.Expect(mockWatchdog.GetPetCount()).To(Equal(petCountWhenUnhealthy),
+						"expected no additional pets when SBD unhealthy and we trigger self-fence")
+				}, 5*time.Second, 500*time.Millisecond).Should(Succeed())
+				By("Verifying SelfFenceInitiated was emitted (fail-safe: when API check fails we trigger self-fence)")
+				Expect(mockRecorder.GetEvents()).To(
+					ContainElement(HaveField(EventFieldReason, Equal(EventReasonSelfFenceInitiated))),
+					"expected SelfFenceInitiated when remediation CR check fails (fail-safe behavior)")
+				By("Verifying SBDUnhealthySkipPetAPIError was emitted (on a tick we hit handleWatchdogTickSBDUnhealthy with API error before self-fence)")
+				Expect(mockRecorder.GetEvents()).To(
+					ContainElement(HaveField(EventFieldReason, Equal(EventReasonSBDUnhealthySkipPetAPIError))),
+					"expected SBDUnhealthySkipPetAPIError when remediation CR check fails")
+				By("Verifying SBDUnhealthyWatchdogTimeout was not emitted (we use SBDUnhealthySkipPetAPIError for API failure path)")
+				Expect(mockRecorder.GetEvents()).NotTo(
+					ContainElement(HaveField(EventFieldReason, Equal(EventReasonSBDUnhealthyWatchdogTimeout))),
+					"should not emit SBDUnhealthyWatchdogTimeout when we trigger self-fence on API error")
+			})
 		})
 	})
 })

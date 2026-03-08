@@ -119,13 +119,14 @@ DEPENDENCIES:
 - Always use UBI base images
 
 When suggesting code changes:
-1. Ensure Kubernetes best practices are followed
-2. Consider the impact on cluster stability
-3. Implement proper error handling and recovery
-4. Include appropriate tests
-5. Follow Go conventions and idioms
-6. Consider the operational aspects of the change
-7. Ensure backwards compatibility when possible
-8. Document any breaking changes 
-9. Commit all changes with a concise summary
-10. Prefer modifying existing make targets instead of creating new ones
+safer unhealthy side remediation1. Do not apply or write changes to files unless the user explicitly asks to apply (e.g. "apply", "apply it", "go ahead", "make the change"). Suggestions, snippets, or "can we do X?" are for review only until the user says to apply.
+2. Ensure Kubernetes best practices are followed
+3. Consider the impact on cluster stability
+4. Implement proper error handling and recovery
+5. Include appropriate tests
+6. Follow Go conventions and idioms
+7. Consider the operational aspects of the change
+8. Ensure backwards compatibility when possible
+9. Document any breaking changes 
+10. Commit all changes with a concise summary
+11. Prefer modifying existing make targets instead of creating new ones

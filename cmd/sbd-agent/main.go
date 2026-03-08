@@ -38,6 +38,7 @@ import (
 	// Kubernetes imports for StorageBasedRemediation CR watching
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -147,13 +148,17 @@ const (
 	SBDAgentRemediationGraceAnnotationKey = "medik8s.io/sbd-remediation-grace-at"
 	// SBDAgentRemediationGracePeriod is the minimum time to wait between deletion and re-creation.
 	SBDAgentRemediationGracePeriod = 3 * time.Minute
+
+	// RemediationCheckTimeout is the timeout for checking if a StorageBasedRemediation CR exists
+	// when SBD is unhealthy; used to avoid blocking the watchdog loop.
+	RemediationCheckTimeout = 5 * time.Second
 )
 
 // sbrUnhealthyConditionStaleAge is the duration after which SBRStorageUnhealthy=True is
 // considered stale and we set it to Unknown so NHC removes its remediation and the node agent
-// can run and report healthy. It is set at startup to (MaxConsecutiveFailures+1)*heartbeatInterval:
-// we wait long enough for the unhealthy node to have had time to self-fence (e.g. after
-// MaxConsecutiveFailures missed heartbeats) plus one extra heartbeat as buffer.
+// can run and report healthy. Set at startup to (MaxConsecutiveFailures+1)*heartbeatInterval + RemediationCheckTimeout:
+// we wait long enough for the unhealthy node to self-fence (e.g. after MaxConsecutiveFailures missed heartbeats),
+// plus one heartbeat buffer, plus time for the remediation CR API check.
 var sbrUnhealthyConditionStaleAge time.Duration
 
 // Global logger instance
@@ -164,6 +169,21 @@ const (
 	RebootMethodPanic           = "panic"
 	RebootMethodSystemctlReboot = "systemctl-reboot"
 	RebootMethodNone            = "none"
+)
+
+// Event reasons for agent recorder (used in agent and tests)
+const (
+	EventFieldReason = "Reason" // Event field name for use in tests with HaveField
+
+	EventReasonSelfFenceInitiated            = "SelfFenceInitiated"            // Emitted when the agent triggers self-fence (reboot/panic)
+	EventReasonSBDUnhealthyWatchdogTimeout   = "SBDUnhealthyWatchdogTimeout"   // Emitted when SBD unhealthy and remediation CR exists, skipping pet
+	EventReasonSBDUnhealthySkipPetAPIError   = "SBDUnhealthySkipPetAPIError"   // Emitted when SBD unhealthy and remediation CR check failed (API error), skipping pet
+	EventReasonSBDUnhealthyDetectOnly        = "SBDUnhealthyDetectOnly"        // Emitted in detect-only mode when SBD becomes unhealthy (watchdog disarmed)
+	EventReasonSelfFenceAbortedNoRemediation = "SelfFenceAbortedNoRemediation" // Emitted when self-fence aborted because no StorageBasedRemediation CR exists
+	EventReasonWatchdogPetFailed             = "WatchdogPetFailed"             // Emitted when watchdog pet failures exceed threshold
+	EventReasonSBDWriteFailed                = "SBDWriteFailed"                // Emitted when SBD device write failures exceed threshold
+	EventReasonHeartbeatWriteFailed          = "HeartbeatWriteFailed"          // Emitted when heartbeat write failures exceed threshold
+	EventReasonFenceMessageDetected          = "FenceMessageDetected"          // Emitted when a fence message is read from the agent's own slot
 )
 
 // metricsOnce ensures metrics are only registered once
@@ -782,7 +802,25 @@ func (s *SBDAgent) isSBDHealthy() bool {
 	return s.sbdHealthy
 }
 
-// getNextHeartbeatSequence safely increments and returns the next sequence number
+// remediationExistsForThisNode checks if a StorageBasedRemediation CR exists for this node.
+// Uses a short timeout to avoid blocking the watchdog loop. Returns (true, nil) if the CR
+// exists, (false, nil) if it does not (IsNotFound), and (false, err) on API errors or timeout.
+// Used when SBD is unhealthy: if we have API access and no CR exists, we pet the watchdog
+// and let NHC decide (e.g. too many nodes down); only skip petting when CR exists or no API access.
+func (s *SBDAgent) remediationExistsForThisNode() (bool, error) {
+	checkCtx, cancel := context.WithTimeout(s.ctx, RemediationCheckTimeout)
+	defer cancel()
+	remediation := &v1alpha1.StorageBasedRemediation{}
+	err := s.k8sClient.Get(checkCtx, client.ObjectKey{Namespace: s.controllerNamespace, Name: s.nodeName}, remediation)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *SBDAgent) getNextHeartbeatSequence() uint64 {
 	s.heartbeatSeqMutex.Lock()
 	defer s.heartbeatSeqMutex.Unlock()
@@ -878,24 +916,35 @@ func (s *SBDAgent) resetFailureCount(operationType string) {
 func (s *SBDAgent) shouldTriggerSelfFence() (bool, string) {
 	s.failureCountMutex.RLock()
 	defer s.failureCountMutex.RUnlock()
-
+	shouldSelfFence := false
+	msg := ""
 	if s.watchdogFailureCount >= MaxConsecutiveFailures {
-		s.recorder.Event(s.recorderObject, "Warning", "WatchdogPetFailed",
+		s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonWatchdogPetFailed,
 			fmt.Sprintf("Watchdog pet failures on (%s, %d) exceeded threshold", s.nodeName, s.nodeID))
-		return true, fmt.Sprintf("watchdog pet failures exceeded threshold (%d)", MaxConsecutiveFailures)
-	}
-	if s.sbdFailureCount >= MaxConsecutiveFailures {
-		s.recorder.Event(s.recorderObject, "Warning", "SBDWriteFailed",
+		shouldSelfFence = true
+		msg = fmt.Sprintf("watchdog pet failures exceeded threshold (%d)", MaxConsecutiveFailures)
+	} else if s.sbdFailureCount >= MaxConsecutiveFailures {
+		s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonSBDWriteFailed,
 			fmt.Sprintf("SBD device write failures on (%s, %d) exceeded threshold", s.nodeName, s.nodeID))
-		return true, fmt.Sprintf("SBD device failures exceeded threshold (%d)", MaxConsecutiveFailures)
-	}
-	if s.heartbeatFailureCount >= MaxConsecutiveFailures {
-		s.recorder.Event(s.recorderObject, "Warning", "HeartbeatWriteFailed",
+		shouldSelfFence = true
+		msg = fmt.Sprintf("SBD device failures exceeded threshold (%d)", MaxConsecutiveFailures)
+	} else if s.heartbeatFailureCount >= MaxConsecutiveFailures {
+		s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonHeartbeatWriteFailed,
 			fmt.Sprintf("Heartbeat write failures on (%s, %d) exceeded threshold", s.nodeName, s.nodeID))
-		return true, fmt.Sprintf("heartbeat write failures exceeded threshold (%d)", MaxConsecutiveFailures)
+		shouldSelfFence = true
+		msg = fmt.Sprintf("heartbeat write failures exceeded threshold (%d)", MaxConsecutiveFailures)
 	}
-
-	return false, ""
+	if shouldSelfFence {
+		if remediationExist, err := s.remediationExistsForThisNode(); err == nil && !remediationExist {
+			s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonSelfFenceAbortedNoRemediation,
+				fmt.Sprintf("Aborting self-fence on (%s, %d); no StorageBasedRemediation CR for this node, petting watchdog to allow NHC to decide", s.nodeName, s.nodeID))
+			logger.Info("Aborting self-fence - no StorageBasedRemediation CR for this node; petting watchdog to allow NHC to decide",
+				"reason", msg, "sbdDevicePath", s.heartbeatDevicePath, "nodeName", s.nodeName)
+			shouldSelfFence = false
+			msg = fmt.Sprintf("self-fence aborted (no remediation CR): %s", msg)
+		}
+	}
+	return shouldSelfFence, msg
 }
 
 // writeHeartbeatToSBD writes a heartbeat message to the node's designated slot
@@ -1155,50 +1204,66 @@ func (s *SBDAgent) watchdogLoop() {
 				return
 			}
 
-			// Only pet the watchdog if SBD device is healthy (or always in detect-only to keep watchdog disarmed)
 			if s.isSBDHealthy() {
-				// Use retry mechanism for watchdog petting
-				err := retry.Do(s.ctx, s.retryConfig, "pet watchdog", func() error {
-					return s.watchdog.Pet()
-				})
-
-				if err != nil {
-					s.incrementFailureCount("watchdog")
-					// Continue trying - don't exit on pet failure, let the failure count mechanism handle it
-				} else {
-					// Success - reset failure count and update metrics
-					s.resetFailureCount("watchdog")
-					logger.V(1).Info("Watchdog pet successful", "watchdogPath", s.watchdog.Path())
-
-					// Increment successful watchdog pets counter
-					watchdogPetsCounter.Inc()
-
-					// Update agent health status based on SBD health
-					if s.isSBDHealthy() {
-						agentHealthyGauge.Set(1)
-					}
-				}
+				s.petWatchdogWhenHealthy()
 			} else {
-				// SBD device is unhealthy
-				agentHealthyGauge.Set(0)
-				if s.detectOnlyMode {
-					s.recorder.Event(s.recorderObject, "Warning", "SBDUnhealthyDetectOnly",
-						fmt.Sprintf("SBD device unhealthy on (%s, %d); detect-only mode, watchdog disarmed, no reboot", s.nodeName, s.nodeID))
-
-					logger.Info("SBD unhealthy in detect-only mode (watchdog disarmed, no reboot)",
-						"sbdDevicePath", s.heartbeatDevicePath)
-				} else {
-					s.recorder.Event(s.recorderObject, "Warning", "SBDUnhealthyWatchdogTimeout",
-						fmt.Sprintf("SBD device unhealthy on (%s, %d); skipping watchdog pet, reboot imminent", s.nodeName, s.nodeID))
-					logger.Error(nil, "Skipping watchdog pet - SBD device is unhealthy",
-						"sbdDevicePath", s.heartbeatDevicePath,
-						"sbdHealthy", s.isSBDHealthy())
-					// This will cause the system to reboot via watchdog timeout
-					// This is the desired behavior for self-fencing when SBD fails
-				}
+				s.handleWatchdogTickSBDUnhealthy()
 			}
 		}
 	}
+}
+
+// petWatchdogWhenHealthy pets the watchdog when SBD is healthy, with retry and failure count handling.
+func (s *SBDAgent) petWatchdogWhenHealthy() {
+	err := retry.Do(s.ctx, s.retryConfig, "pet watchdog", func() error {
+		return s.watchdog.Pet()
+	})
+	if err != nil {
+		s.incrementFailureCount("watchdog")
+		return
+	}
+	s.resetFailureCount("watchdog")
+	logger.V(1).Info("Watchdog pet successful", "watchdogPath", s.watchdog.Path())
+	watchdogPetsCounter.Inc()
+	if s.isSBDHealthy() {
+		agentHealthyGauge.Set(1)
+	}
+}
+
+// handleWatchdogTickSBDUnhealthy handles one watchdog tick when SBD is unhealthy: detect-only event,
+// or remediation CR check and either skip pet (reboot) or pet (let NHC decide).
+func (s *SBDAgent) handleWatchdogTickSBDUnhealthy() {
+	agentHealthyGauge.Set(0)
+	if s.detectOnlyMode {
+		s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonSBDUnhealthyDetectOnly,
+			fmt.Sprintf("SBD device unhealthy on (%s, %d); detect-only mode, watchdog disarmed, no reboot", s.nodeName, s.nodeID))
+		logger.Info("SBD unhealthy in detect-only mode (watchdog disarmed, no reboot)",
+			"sbdDevicePath", s.heartbeatDevicePath)
+		return
+	}
+	remediationExists, checkErr := s.remediationExistsForThisNode()
+	if checkErr != nil {
+		s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonSBDUnhealthySkipPetAPIError,
+			fmt.Sprintf("SBD device unhealthy on (%s, %d); API check failed, skipping watchdog pet, reboot imminent", s.nodeName, s.nodeID))
+		logger.Error(checkErr, "Skipping watchdog pet - SBD unhealthy and could not verify remediation CR",
+			"sbdDevicePath", s.heartbeatDevicePath)
+		return
+	}
+	if remediationExists {
+		s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonSBDUnhealthyWatchdogTimeout,
+			fmt.Sprintf("SBD device unhealthy on (%s, %d); remediation CR exists, skipping watchdog pet, reboot imminent", s.nodeName, s.nodeID))
+		logger.Error(nil, "Skipping watchdog pet - SBD device is unhealthy and remediation CR exists",
+			"sbdDevicePath", s.heartbeatDevicePath, "sbdHealthy", s.isSBDHealthy())
+		return
+	}
+	if err := s.watchdog.Pet(); err != nil {
+		logger.Error(err, "Failed to pet watchdog while SBD unhealthy (no remediation CR); retry next tick",
+			"watchdogPath", s.watchdog.Path())
+		return
+	}
+	watchdogPetsCounter.Inc()
+	logger.Info("SBD unhealthy but no remediation CR for this node; petting watchdog to allow NHC to decide",
+		"sbdDevicePath", s.heartbeatDevicePath, "nodeName", s.nodeName)
 }
 
 // heartbeatLoop continuously writes heartbeat messages to the SBD device
@@ -1259,7 +1324,7 @@ func (s *SBDAgent) peerMonitorLoop() {
 			logger.Info("Peer monitor loop stopping")
 			return
 		case <-ticker.C:
-			// First, check our own slot for fence messages directed at us
+			// First, check our own slot for fence messages directed at us, will trigger fencing in case found
 			if err := s.readOwnSlotForFenceMessage(); err != nil {
 				logger.Info("Error reading own slot for fence messages", "error", err)
 				s.incrementFailureCount("sbd")
@@ -1663,7 +1728,7 @@ func (s *SBDAgent) executeSelfFencing(reason string) {
 		logger.Info("Detect-only mode: skipping self-fence", "reason", reason, "nodeName", s.nodeName)
 		return
 	}
-	s.recorder.Event(s.recorderObject, "Warning", "SelfFenceInitiated",
+	s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonSelfFenceInitiated,
 		fmt.Sprintf("Self-fencing initiated on (%s, %d): %s", s.nodeName, s.nodeID, reason))
 	logger.Error(nil, "Self-fencing initiated",
 		"reason", reason,
@@ -1784,7 +1849,7 @@ func (s *SBDAgent) readOwnSlotForFenceMessage() error {
 				"sourceNodeID", fenceMsg.Header.NodeID,
 				"targetNodeID", fenceMsg.TargetNodeID,
 				"fenceReason", sbdprotocol.GetFenceReasonName(fenceMsg.Reason))
-			s.recorder.Event(s.recorderObject, "Warning", "FenceMessageDetected",
+			s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonFenceMessageDetected,
 				fmt.Sprintf("Fence message detected in own slot (%s, %d) from %d, reason: %s",
 					s.nodeName, s.nodeID, fenceMsg.Header.NodeID, sbdprotocol.GetFenceReasonName(fenceMsg.Reason)))
 
@@ -2265,9 +2330,10 @@ func main() {
 	if heartbeatInterval < time.Second {
 		heartbeatInterval = time.Second // Minimum 1 second interval
 	}
-	// Stale age for SBRStorageUnhealthy=True: (MaxConsecutiveFailures+1)*heartbeatInterval so we wait
-	// for the unhealthy node to have had time to self-fence plus one heartbeat buffer before setting condition to Unknown.
-	sbrUnhealthyConditionStaleAge = time.Duration(MaxConsecutiveFailures+1) * heartbeatInterval
+	// Stale age for SBRStorageUnhealthy=True: (MaxConsecutiveFailures+1)*heartbeatInterval + RemediationCheckTimeout
+	// so we wait for the unhealthy node to have had time to self-fence plus one heartbeat buffer, plus time for
+	// the remediation CR check (Get with RemediationCheckTimeout) before setting condition to Unknown.
+	sbrUnhealthyConditionStaleAge = time.Duration(MaxConsecutiveFailures+1)*heartbeatInterval + RemediationCheckTimeout
 
 	// Validate required parameters
 	if *sbdDevice == "" {
