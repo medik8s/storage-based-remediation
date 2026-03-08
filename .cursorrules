@@ -119,7 +119,7 @@ DEPENDENCIES:
 - Always use UBI base images
 
 When suggesting code changes:
-safer unhealthy side remediation1. Do not apply or write changes to files unless the user explicitly asks to apply (e.g. "apply", "apply it", "go ahead", "make the change"). Suggestions, snippets, or "can we do X?" are for review only until the user says to apply.
+1. Do not apply or write changes to files unless the user explicitly asks to apply (e.g. "apply", "apply it", "go ahead", "make the change"). Suggestions, snippets, or "can we do X?" are for review only until the user says to apply.
 2. Ensure Kubernetes best practices are followed
 3. Consider the impact on cluster stability
 4. Implement proper error handling and recovery

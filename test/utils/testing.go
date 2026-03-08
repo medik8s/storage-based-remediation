@@ -514,6 +514,11 @@ func (dc *DebugCollector) CollectControllerLogs(namespace, podName string) {
 
 // CollectAgentLogs collects logs from all SBD agent pods
 func (dc *DebugCollector) CollectAgentLogs(namespace string) {
+	defer func() {
+		if r := recover(); r != nil {
+			GinkgoWriter.Printf("CollectAgentLogs recovered from panic: %v\n", r)
+		}
+	}()
 	By("Fetching SBD agent pod logs")
 
 	// Get all SBD agent pods

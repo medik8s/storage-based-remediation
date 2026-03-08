@@ -127,6 +127,8 @@ var _ = BeforeEach(func() {
 var _ = AfterEach(func() {
 	createReportAndCleanUp()
 	utils.WaitForNodesReady(testNamespace, "10m", "30s", false)
+	debugCollector := testClients.NewDebugCollector(testNamespace.ArtifactsDir)
+	debugCollector.CollectAgentLogs(testNamespace.Name)
 	utils.CleanupSBDConfigs(testNamespace)
 })
 
