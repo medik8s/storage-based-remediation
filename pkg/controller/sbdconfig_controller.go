@@ -186,6 +186,14 @@ func (r *SBDConfigReconciler) emitEventf(
 // It uses environment variables (POD_NAME, POD_NAMESPACE) to find the current pod
 // and extracts the image from the pod spec
 func (r *SBDConfigReconciler) getOperatorImage(ctx context.Context, logger logr.Logger) string {
+	// In CI, RELATED_IMAGE_SBD_AGENT is injected via `oc set env` after bundle installation,
+	// pointing to the CI-built agent image. In non-CI runs this env var is not set,
+	// so we fall through to pod image discovery and derivation.
+	if img := os.Getenv("RELATED_IMAGE_SBD_AGENT"); img != "" {
+		logger.Info("Using RELATED_IMAGE_SBD_AGENT for agent image", "image", img)
+		return img
+	}
+
 	// Try to get pod information from environment variables (set by Downward API)
 	podName := os.Getenv("POD_NAME")
 	podNamespace := os.Getenv("POD_NAMESPACE")
@@ -1019,6 +1027,7 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err != nil {
 		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
 	}
+	logger.Info("Resolved agent image", "agentImage", agentImage)
 	logger.V(1).Info("Starting SBDConfig reconciliation",
 		"spec.image", agentImage,
 		"namespace", sbdConfig.Namespace,

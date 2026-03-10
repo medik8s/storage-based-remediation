@@ -18,14 +18,18 @@ package v1alpha1
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 	"unicode"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/medik8s/sbd-operator/pkg/agent"
 )
+
+var typesLog = logf.Log.WithName("sbdconfig-types")
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
@@ -78,6 +82,8 @@ const (
 	MinPeerCheckInterval = 1 * time.Second
 	// MaxPeerCheckInterval is the maximum allowed peer check interval
 	MaxPeerCheckInterval = 60 * time.Second
+	// RelatedImageSbrAgent when this env is set it contains the image of SBR agent
+	RelatedImageSbrAgent = "RELATED_IMAGE_SBR_AGENT"
 )
 
 // DetectOnlyModeType specifies whether SBR runs in detect-only mode (no remediation).
@@ -651,6 +657,14 @@ func deriveAgentImageFromOperator(operatorImage string) (string, error) {
 		return "", fmt.Errorf("invalid empty operator image")
 	}
 
+	// In CI, RELATED_IMAGE_SBR_AGENT is injected via `oc set env` after bundle installation,
+	// pointing to the CI-built agent image. In non-CI runs this env var is not set,
+	// so we fall through to pod image discovery and derivation.
+	if img, found := os.LookupEnv(RelatedImageSbrAgent); found {
+		typesLog.Info("Using RELATED_IMAGE_SBR_AGENT for agent image", "image", img)
+		return img, nil
+	}
+
 	lastSlash := strings.LastIndex(operatorImage, "/")
 	var prefix, suffix string
 	if lastSlash == -1 {
@@ -680,8 +694,7 @@ func deriveAgentImageFromOperator(operatorImage string) (string, error) {
 		agentSuffix = strings.Replace(suffix, "sbd-operator", "sbd-agent", 1)
 	}
 	if agentSuffix == suffix {
-		// Image doesn't follow expected naming convention (e.g. CI image named "pipeline") — use as-is
-		return operatorImage, nil
+		return "", fmt.Errorf("invalid operator image %q", operatorImage)
 	}
 
 	// Add :latest tag if no tag is present
