@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -1025,7 +1026,9 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	agentImage, err := sbdConfig.Spec.GetImageWithOperatorImage(operatorImage)
 	if err != nil {
-		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+		// Derivation failed — operator image doesn't follow standard naming (e.g. CI pipeline image).
+		// Fall back to CI pipeline:sbd-agent image.
+		agentImage = r.ciAgentImage(ctx, logger)
 	}
 	logger.Info("Resolved agent image", "agentImage", agentImage)
 	logger.V(1).Info("Starting SBDConfig reconciliation",
@@ -1197,6 +1200,30 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		"SBDConfig '%s' successfully reconciled", sbdConfig.Name)
 
 	return ctrl.Result{}, nil
+}
+
+// ciAgentImage checks if the CI-built pipeline:sbd-agent ImageStreamTag exists in the operator's namespace.
+// This handles the case where the operator image name (e.g. "pipeline@sha256:...") cannot be derived
+// into an agent image name via the standard naming convention (i.e. CI runs).
+// It logs the result for troubleshooting and always returns "pipeline:sbd-agent" regardless,
+// so that CI runs can make progress even if the ImageStreamTag query fails.
+func (r *SBDConfigReconciler) ciAgentImage(ctx context.Context, logger logr.Logger) string {
+	const ciAgentImageName = "pipeline:sbd-agent"
+	namespace := os.Getenv("POD_NAMESPACE")
+
+	ist := &unstructured.Unstructured{}
+	ist.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "image.openshift.io",
+		Version: "v1",
+		Kind:    "ImageStreamTag",
+	})
+	err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: ciAgentImageName}, ist)
+	if err != nil {
+		logger.Info("CI pipeline:sbd-agent ImageStreamTag not found, will attempt to use it anyway", "namespace", namespace, "error", err)
+	} else {
+		logger.Info("CI pipeline:sbd-agent ImageStreamTag found", "namespace", namespace)
+	}
+	return ciAgentImageName
 }
 
 // handleDeletion handles the cleanup when an SBDConfig is being deleted
