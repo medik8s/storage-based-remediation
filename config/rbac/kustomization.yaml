@@ -8,6 +8,7 @@ resources:
 - sbd_agent_service_account.yaml
 - sbd_agent_generated_role.yaml
 - sbd_agent_role_binding.yaml
+- sbd_agent_privileged_scc_role.yaml
 
 # Required permissions for NHC
 - external_remediation_clusterrole.yaml
