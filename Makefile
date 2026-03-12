@@ -144,27 +144,28 @@ test-e2e-clean: test-prep test-e2e ## Run e2e tests with complete deployment pip
 
 TEST_ID=$(shell date +'%s')
 TEST_HOME=.tests
+E2E_TEST_DIR = $(TEST_HOME)/$(TEST_ID)
+
+.PHONY: run-e2e
+run-e2e: ## Internal: run ginkgo e2e with junit report and tee (used by test-e2e, test-e2e-with-webhooks, test-smoke).
+	mkdir -p $(E2E_TEST_DIR) && $(GINKGO) -v --junit-report=$(E2E_TEST_DIR)/junit_e2e.xml $(TEST_ARGS) test/e2e -- --test-id $(TEST_ID) --artifacts-dir $(E2E_TEST_DIR) | tee $(E2E_TEST_DIR)/execution.log
 
 .PHONY: test-e2e
-test-e2e: ginkgo ## Run e2e tests again (assumes operator already deployed).
+test-e2e: ginkgo run-e2e ## Run e2e tests again (assumes operator already deployed).
 	@echo "Running e2e tests (operator must be already deployed)..."
-	mkdir -p $(TEST_HOME)/$(TEST_ID)
-	$(GINKGO) $(TEST_ARGS) test/e2e -- --test-id $(TEST_ID) --artifacts-dir $(TEST_HOME)/$(TEST_ID) | tee $(TEST_HOME)/$(TEST_ID)/execution.log
 
-.PHONY: test-e2e-with-webhooks  
-test-e2e-with-webhooks: sync-test-files ## Run e2e tests with webhooks enabled using deployment pipeline.
+.PHONY: prep-e2e-webhooks
+prep-e2e-webhooks: sync-test-files ## Internal: prep e2e with webhooks (run before run-e2e).
 	@echo "Running e2e tests with webhooks enabled via deployment pipeline..."
 	@# The run-tests.sh script handles webhook certificate generation automatically
-	@scripts/prep-tests.sh --type e2e --env cluster -v 
-	mkdir -p $(TEST_HOME)/$(TEST_ID)
-	$(GINKGO) $(TEST_ARGS) test/e2e -- --test-id $(TEST_ID) --artifacts-dir $(TEST_HOME)/$(TEST_ID) | tee $(TEST_HOME)/$(TEST_ID)/execution.log
+	@scripts/prep-tests.sh --type e2e --env cluster -v
+
+.PHONY: test-e2e-with-webhooks
+test-e2e-with-webhooks: prep-e2e-webhooks run-e2e ## Run e2e tests with webhooks enabled using deployment pipeline.
 
 .PHONY: test-smoke
-test-smoke: ginkgo ## Run smoke tests with building images.
+test-smoke: ginkgo run-e2e ## Run smoke tests with building images.
 	@echo "Running smoke tests with image building..."
-	mkdir -p $(TEST_HOME)/$(TEST_ID)
-	$(GINKGO) $(TEST_ARGS) test/e2e -- --test-id $(TEST_ID) --artifacts-dir $(TEST_HOME)/$(TEST_ID) | tee $(TEST_HOME)/$(TEST_ID)/execution.log
-
 
 .PHONY: test-prep
 test-prep: build-openshift-installer sync-test-files ## Run smoke tests with building images.
