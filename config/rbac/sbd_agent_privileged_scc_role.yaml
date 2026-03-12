@@ -1,0 +1,16 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sbd-agent-privileged-scc
+  labels:
+    app.kubernetes.io/name: sbd-operator
+    app.kubernetes.io/component: sbd-agent
+rules:
+- apiGroups:
+  - security.openshift.io
+  resources:
+  - securitycontextconstraints
+  resourceNames:
+  - privileged
+  verbs:
+  - use
