@@ -58,15 +58,8 @@ func TestE2E(t *testing.T) {
 	RunSpecs(t, "e2e suite")
 }
 
-var skipall = false
 var _ = BeforeSuite(func() {
-	// Skip slow tests if requested
-
-	// Check cluster connection first - skip entire suite if not available
-	if err := utils.CheckClusterConnection(); err != nil {
-		skipall = true
-		Skip(fmt.Sprintf("Cluster connection not available: %v", err))
-	}
+	Expect(utils.CheckClusterConnection()).To(Succeed(), "Kubernetes cluster connection required")
 
 	if testFlags.DebugMode {
 		GinkgoWriter.Printf("Using test configuration:\n")
@@ -105,20 +98,15 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = AfterSuite(func() {
-	if skipall {
-		return
-	}
-
 	utils.UninstallCertManager()
 
 	By("cleaning up e2e test namespace")
 	if testNamespace != nil {
 		_ = testNamespace.Cleanup()
+		GinkgoWriter.Printf("\n\n--------------------------------\n")
+		GinkgoWriter.Printf("Artefacts available at: %s\n", testNamespace.ArtifactsDir)
+		GinkgoWriter.Printf("--------------------------------\n\n")
 	}
-
-	GinkgoWriter.Printf("\n\n--------------------------------\n")
-	GinkgoWriter.Printf("Artefacts available at: %s\n", testNamespace.ArtifactsDir)
-	GinkgoWriter.Printf("--------------------------------\n\n")
 })
 
 var _ = BeforeEach(func() {

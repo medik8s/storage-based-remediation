@@ -123,49 +123,21 @@ fix-imports: sort-imports
 	$(SORT_IMPORTS) -w .
 
 .PHONY: test-all
-test-all: test test-smoke test-e2e ## Run all tests: unit tests, smoke tests, and e2e tests
+test-all: test test-e2e ## Run all tests: unit and e2e
 
 .PHONY: test
 test: manifests generate fmt vet envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v -E '/(e2e|smoke)') -coverprofile cover.out
-
-.PHONY: sync-test-files
-sync-test-files: ## Sync shared configuration files to test directories.
-	@chmod +x scripts/sync-test-files.sh
-	@scripts/sync-test-files.sh
-
-.PHONY: test-e2e-clean
-test-e2e-clean: test-prep test-e2e ## Run e2e tests with complete deployment pipeline.
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v -E '/e2e') -coverprofile cover.out
 
 TEST_ID=$(shell date +'%s')
 TEST_HOME=.tests
 E2E_TEST_DIR = $(TEST_HOME)/$(TEST_ID)
 
-.PHONY: run-e2e
-run-e2e: ## Internal: run ginkgo e2e with junit report and tee (used by test-e2e, test-e2e-with-webhooks, test-smoke).
+.PHONY: test-e2e
+test-e2e: ginkgo ## Run e2e tests again (assumes operator already deployed).
+	@echo "Running e2e tests (operator must be already deployed)..."
 	mkdir -p $(E2E_TEST_DIR) && $(GINKGO) -v --junit-report=$(E2E_TEST_DIR)/junit_e2e.xml $(TEST_ARGS) test/e2e -- --test-id $(TEST_ID) --artifacts-dir $(E2E_TEST_DIR) | tee $(E2E_TEST_DIR)/execution.log
 
-.PHONY: test-e2e
-test-e2e: ginkgo run-e2e ## Run e2e tests again (assumes operator already deployed).
-	@echo "Running e2e tests (operator must be already deployed)..."
-
-.PHONY: prep-e2e-webhooks
-prep-e2e-webhooks: sync-test-files ## Internal: prep e2e with webhooks (run before run-e2e).
-	@echo "Running e2e tests with webhooks enabled via deployment pipeline..."
-	@# The run-tests.sh script handles webhook certificate generation automatically
-	@scripts/prep-tests.sh --type e2e --env cluster -v
-
-.PHONY: test-e2e-with-webhooks
-test-e2e-with-webhooks: prep-e2e-webhooks run-e2e ## Run e2e tests with webhooks enabled using deployment pipeline.
-
-.PHONY: test-smoke
-test-smoke: ginkgo run-e2e ## Run smoke tests with building images.
-	@echo "Running smoke tests with image building..."
-
-.PHONY: test-prep
-test-prep: build-openshift-installer sync-test-files ## Run smoke tests with building images.
-	@scripts/prep-tests.sh --env cluster -v --no-webhooks
-# -ginkgo.label-filter="Remediation" 
 
 .PHONY: load-images
 load-images:

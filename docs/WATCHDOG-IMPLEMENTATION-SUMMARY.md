@@ -54,24 +54,6 @@ func (w *Watchdog) Pet() error {
 ✅ All 11 tests passing with 71.7% coverage
 ```
 
-### 3. Comprehensive Smoke Tests (`test/smoke/watchdog_smoke_test.go`)
-
-**New Smoke Test Suite:**
-- **Node Stability Monitoring**: Ensures nodes don't enter reboot loops
-- **Cross-Architecture Testing**: Validates ARM64/AMD64 compatibility
-- **Pod Restart Detection**: Monitors for watchdog-related failures
-- **Configuration Validation**: Verifies SBDConfig YAML correctness
-- **Real-World Scenarios**: Tests actual deployment conditions
-
-**Smoke Test Coverage:**
-```go
-Context("Watchdog Compatibility and Stability", func() {
-    It("should successfully deploy SBD agents without causing node instability")
-    It("should handle watchdog driver compatibility across different architectures") 
-    It("should display SBDConfig YAML correctly and maintain stability")
-})
-```
-
 ## 📊 **Technical Impact**
 
 ### Before (Problematic Behavior)
@@ -125,7 +107,7 @@ Any Node → SBD Agent → WDIOC_KEEPALIVE ioctl → ENOTTY Error
 ✅ SBD agent compilation successful
 ✅ Controller tests passing (59.3% coverage)  
 ✅ End-to-end test framework ready
-✅ Smoke test infrastructure complete
+✅ E2E test framework available
 ```
 
 ### Real-World Testing
@@ -143,7 +125,6 @@ Any Node → SBD Agent → WDIOC_KEEPALIVE ioctl → ENOTTY Error
 - `pkg/watchdog/watchdog_test.go` - Updated tests for new behavior
 
 ### Testing Infrastructure
-- `test/smoke/watchdog_smoke_test.go` - New comprehensive smoke tests
 - Various debugging and testing scripts created
 
 ### Documentation

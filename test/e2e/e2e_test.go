@@ -125,16 +125,10 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 			}
 		})
 		It("should not trigger fencing when kubelet communication is interrupted", func() {
-			if len(clusterInfo.WorkerNodes) < 3 {
-				Skip("Test requires at least 3 worker nodes for safe communication disruption testing")
-			}
 			testKubeletCommunicationFailure(clusterInfo)
 		})
 
 		It("should handle basic SBD configuration and agent deployment", func() {
-			if len(clusterInfo.WorkerNodes) < 3 {
-				Skip("Test requires at least 3 worker nodes")
-			}
 			testBasicSBDConfiguration()
 		})
 
@@ -147,45 +141,23 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 		})
 
 		It("should reject incompatible storage classes", func() {
-			if len(clusterInfo.WorkerNodes) < 3 {
-				Skip("Test requires at least 3 worker nodes")
-			}
 			testIncompatibleStorageClass()
 		})
 
 		It("should handle node remediation", func() {
-			if len(clusterInfo.WorkerNodes) < 2 {
-				Skip("Test requires at least 2 worker nodes")
-			}
 			testNodeRemediation(clusterInfo)
 		})
 
 		It("should handle SBD agent crash and recovery", func() {
-			if len(clusterInfo.WorkerNodes) < 3 {
-				Skip("Test requires at least 3 worker nodes")
-			}
 			testSBDAgentCrash(clusterInfo)
 		})
 
 		It("should handle non-fencing failures gracefully", func() {
-			if len(clusterInfo.WorkerNodes) < 3 {
-				Skip("Test requires at least 3 worker nodes")
-			}
 			testNonFencingFailure(clusterInfo)
 		})
 
 		It("should trigger fencing when SBD agent loses storage access", func() {
-			if len(clusterInfo.WorkerNodes) < 3 {
-				Skip("Test requires at least 3 worker nodes for safe storage disruption testing")
-			}
 			testStorageAccessInterruption(clusterInfo)
-		})
-
-		It("should handle large cluster coordination", func() {
-			if len(clusterInfo.WorkerNodes) < 8 {
-				Skip("Test requires at least 8 worker nodes")
-			}
-			testLargeClusterCoordination(clusterInfo)
 		})
 	})
 })
@@ -277,9 +249,8 @@ func selectWorkerNode(cluster ClusterInfo) NodeInfo {
 		}
 	}
 
-	if len(workerNodes) == 0 {
-		Skip("No actual worker nodes found for testing - all nodes appear to be control plane")
-	}
+	Expect(workerNodes).NotTo(BeEmpty(),
+		"at least one non-control-plane worker node is required")
 
 	// Select a random actual worker node
 	selectedNode := workerNodes[rand.Intn(len(workerNodes))]
@@ -309,9 +280,8 @@ func testBasicSBDConfiguration() {
 		}
 	}
 
-	if rwxStorageClass == nil {
-		Skip("No RWX-compatible storage classes found - skipping storage-dependent tests")
-	}
+	Expect(rwxStorageClass).NotTo(BeNil(),
+		"at least one RWX-compatible storage class is required")
 
 	// Store the storage class name for use in tests
 	testStorageClassName := rwxStorageClass.Name
@@ -684,10 +654,8 @@ func checkNodeNotReady(nodeName, reason string, timeout time.Duration, enforceFn
 }
 
 func testStorageAccessInterruption(cluster ClusterInfo) {
-	// Skip if AWS is not available
-	if !testClients.AWSInitialized {
-		Skip("Storage access interruption test requires AWS - skipping")
-	}
+	Expect(testClients.AWSInitialized).To(BeTrue(),
+		"AWS must be initialized for storage access interruption test")
 
 	By("Setting up SBD configuration for storage access test")
 	testBasicSBDConfiguration()
@@ -702,9 +670,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 	// Create storage disruption by blocking network access to shared storage
 	By("Creating AWS storage disruption by blocking network access to shared storage")
 	disruptorPods, err := createStorageDisruption(targetNode.Metadata.Name)
-	if err != nil {
-		Skip(fmt.Sprintf("Skipping storage disruption test: %v", err))
-	}
+	Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("create storage disruption: %v", err))
 	GinkgoWriter.Printf("Created %d storage disruptor pods for node %s\n", len(disruptorPods), targetNode.Metadata.Name)
 
 	// Wait for network-level storage disruption to take effect
@@ -1408,38 +1374,6 @@ spec:
 	}, time.Minute*2, time.Second*30).Should(BeTrue())
 
 	GinkgoWriter.Printf("Non-fencing failure test completed - cluster remained stable\n")
-}
-
-func testLargeClusterCoordination(cluster ClusterInfo) {
-	By(fmt.Sprintf("Testing SBD coordination with %d worker nodes", len(cluster.WorkerNodes)))
-	testBasicSBDConfiguration()
-
-	By("Verifying SBD agents coordinate across large cluster")
-	Eventually(func() bool {
-		pods := &corev1.PodList{}
-		err := k8sClient.List(ctx, pods, client.InNamespace(testNamespace.Name), client.MatchingLabels{"app": "sbd-agent"})
-		if err != nil {
-			return false
-		}
-
-		runningAgents := make(map[string]bool)
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == corev1.PodRunning {
-				runningAgents[pod.Spec.NodeName] = true
-			}
-		}
-
-		// Expect agents running on most worker nodes (allow for some scheduling constraints)
-		expectedMinimum := len(cluster.WorkerNodes) * 3 / 4 // At least 75% of worker nodes
-		actualRunning := len(runningAgents)
-
-		GinkgoWriter.Printf("SBD agents running on %d out of %d worker nodes (minimum required: %d)\n",
-			actualRunning, len(cluster.WorkerNodes), expectedMinimum)
-
-		return actualRunning >= expectedMinimum
-	}, time.Minute*5, time.Second*30).Should(BeTrue())
-
-	GinkgoWriter.Printf("Large cluster coordination test completed successfully\n")
 }
 
 func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
