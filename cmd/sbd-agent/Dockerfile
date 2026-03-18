@@ -19,6 +19,7 @@ COPY api/ api/
 COPY cmd/ cmd/
 COPY pkg/ pkg/
 COPY vendor/ vendor/
+COPY hack/ hack/
 COPY .git/ .git/
 
 # Copy the entire source code
@@ -29,29 +30,8 @@ USER root
 RUN mkdir -p bin && chown -R default:root bin
 USER default
 
-# Calculate version information from git and build the SBD Agent binary
-# CGO_ENABLED=0: Disable CGO for a static binary
-# GOOS=linux: Target Linux OS
-# GOARCH=amd64: Target x86_64 architecture
-# -a: Force rebuilding of packages
-# -installsuffix cgo: Add suffix for CGO-disabled builds
-# -ldflags: Linker flags to reduce binary size and remove debug info
 RUN git config --global --add safe.directory /workspace
-RUN export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") && \
-    export GIT_DESCRIBE=$(git describe --tags --dirty 2>/dev/null || echo "unknown") && \
-    export BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") && \
-    echo "Building SBD Agent with:" && \
-    echo "  GIT_COMMIT=$GIT_COMMIT" && \
-    echo "  GIT_DESCRIBE=$GIT_DESCRIBE" && \
-    echo "  BUILD_DATE=$BUILD_DATE" && \
-    CGO_ENABLED=${CGO_ENABLED:-0} GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build \
-        -a -installsuffix cgo \
-        -ldflags="-w -s -extldflags '-static' \
-        -X 'github.com/medik8s/sbd-operator/pkg/version.GitCommit=$GIT_COMMIT' \
-        -X 'github.com/medik8s/sbd-operator/pkg/version.GitDescribe=$GIT_DESCRIBE' \
-        -X 'github.com/medik8s/sbd-operator/pkg/version.BuildDate=$BUILD_DATE'" \
-        -o bin/sbd-agent \
-        ./cmd/sbd-agent/main.go
+RUN ./hack/build.sh -o bin/sbd-agent ./cmd/sbd-agent/main.go
 
 # ==============================================================================
 # Runtime Stage - Minimal container for running the SBD Agent

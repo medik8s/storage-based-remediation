@@ -38,11 +38,6 @@ CATALOG_IMG ?= $(IMAGE_REGISTRY)/sbd-operator-catalog:$(IMAGE_TAG)
 
 AGENT_IMG ?= $(IMAGE_REGISTRY)/sbd-agent:$(IMAGE_TAG)
 
-# Build information
-BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-GIT_DESCRIBE ?= $(shell git describe --tags --dirty 2>/dev/null || echo "unknown")
-
 OPERATOR_SHA=$$(podman inspect $(QUAY_OPERATOR_NAME):$(IMAGE_TAG) --format "{{.ID}}" )
 AGENT_SHA=$$(podman inspect $(QUAY_AGENT_IMG):$(IMAGE_TAG) --format "{{.ID}}" )
 TEST_ARGS ?= ""
@@ -275,17 +270,11 @@ create-ns: ## Create namespace
 
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
-	go build -ldflags="-X 'github.com/medik8s/sbd-operator/pkg/version.GitCommit=$(GIT_COMMIT)' \
-		-X 'github.com/medik8s/sbd-operator/pkg/version.GitDescribe=$(GIT_DESCRIBE)' \
-		-X 'github.com/medik8s/sbd-operator/pkg/version.BuildDate=$(BUILD_DATE)'" \
-		-o bin/manager cmd/main.go
+	./hack/build.sh -o bin/manager ./cmd/main.go
 
 .PHONY: build-agent
 build-agent: manifests generate fmt vet ## Build SBD agent binary.
-	go build -ldflags="-X 'github.com/medik8s/sbd-operator/pkg/version.GitCommit=$(GIT_COMMIT)' \
-		-X 'github.com/medik8s/sbd-operator/pkg/version.GitDescribe=$(GIT_DESCRIBE)' \
-		-X 'github.com/medik8s/sbd-operator/pkg/version.BuildDate=$(BUILD_DATE)'" \
-		-o bin/sbd-agent cmd/sbd-agent/main.go
+	./hack/build.sh -o bin/sbd-agent ./cmd/sbd-agent/main.go
 
 ##@ Tools
 
