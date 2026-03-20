@@ -1529,7 +1529,7 @@ func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfi
 												sbdConfig.Spec.GetSbdWatchdogPath())},
 									},
 								},
-								InitialDelaySeconds: 60,
+								InitialDelaySeconds: 10,
 								PeriodSeconds:       10,
 								TimeoutSeconds:      5,
 								FailureThreshold:    6,
