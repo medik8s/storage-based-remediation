@@ -127,7 +127,7 @@ To verify endianness compatibility in a mixed environment:
 
 ```bash
 # Deploy on amd64 control plane
-kubectl apply -f config/samples/medik8s_v1alpha1_sbdconfig.yaml
+kubectl apply -f config/samples/storage-based-remediation_v1alpha1_sbdconfig.yaml
 
 # Deploy agents on different architectures
 kubectl patch daemonset sbd-agent -n sbd-system -p '{

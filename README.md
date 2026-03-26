@@ -53,7 +53,7 @@ make deploy
 
 2. Create an SBDConfig:
 ```bash
-kubectl apply -f config/samples/medik8s_v1alpha1_sbdconfig.yaml
+kubectl apply -f config/samples/storage-based-remediation_v1alpha1_sbdconfig.yaml
 ```
 
 ### Development

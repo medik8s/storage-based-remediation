@@ -1,6 +1,6 @@
 ## Append samples of your project ##
 resources:
-- medik8s_v1alpha1_storagebasedremediation.yaml
-- medik8s_v1alpha1_storagebasedremediationtemplate.yaml
-- medik8s_v1alpha1_sbdconfig.yaml
+- storage-based-remediation_v1alpha1_sbdremediation.yaml
+- storage-based-remediation_v1alpha1_storagebasedremediationtemplate.yaml
+- storage-based-remediation_v1alpha1_sbdconfig.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
