@@ -18,17 +18,20 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
@@ -42,8 +45,6 @@ import (
 var _ = Describe("StorageBasedRemediation Controller", func() {
 	Context("When reconciling a StorageBasedRemediation resource", func() {
 		var (
-			reconciler     *SBDRemediationReconciler
-			ctx            context.Context
 			resourceName   string
 			namespacedName types.NamespacedName
 		)
@@ -287,6 +288,98 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 		})
 	})
 
+	Context("fencing remediation status helpers", func() {
+		var (
+			sbr           *medik8sv1alpha1.StorageBasedRemediation
+			clientBuilder *fake.ClientBuilder
+		)
+
+		BeforeEach(func() {
+			sbr = &medik8sv1alpha1.StorageBasedRemediation{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "worker-2",
+					Namespace: "default",
+				},
+			}
+			clientBuilder = fake.NewClientBuilder().
+				WithObjects(sbr).
+				WithStatusSubresource(&medik8sv1alpha1.StorageBasedRemediation{})
+		})
+
+		JustBeforeEach(func() {
+			reconciler = &SBDRemediationReconciler{Client: clientBuilder.Build()}
+		})
+
+		Context("handleFencingSuccess", func() {
+			When("status update succeeds", func() {
+				It("should persist fencing success conditions in one status update", func() {
+					err := reconciler.handleFencingSuccess(ctx, sbr, logr.Discard())
+					Expect(err).NotTo(HaveOccurred())
+
+					sbrFound := &medik8sv1alpha1.StorageBasedRemediation{}
+					Expect(reconciler.Client.Get(ctx, client.ObjectKeyFromObject(sbr), sbrFound)).To(Succeed())
+
+					fencingInProgressCondition := sbrFound.GetCondition(medik8sv1alpha1.SBDRemediationConditionFencingInProgress)
+					verifyCondition(fencingInProgressCondition, metav1.ConditionFalse, ReasonCompleted, "Fencing completed")
+
+					fencingSucceededCondition := sbrFound.GetCondition(medik8sv1alpha1.SBDRemediationConditionFencingSucceeded)
+					verifyCondition(fencingSucceededCondition, metav1.ConditionTrue, ReasonCompleted, "Node worker-2 fenced successfully")
+
+					remediationReadyCondition := sbrFound.GetCondition(medik8sv1alpha1.SBDRemediationConditionReady)
+					verifyCondition(remediationReadyCondition, metav1.ConditionTrue, ReasonCompleted, "Remediation completed successfully")
+
+				})
+			})
+
+			When("status update fails", func() {
+				BeforeEach(func() {
+					clientBuilder = clientBuilder.WithInterceptorFuncs(interceptorStatusSubresourceUpdateOrDelegate())
+				})
+
+				It("should return a wrapped error", func() {
+					err := reconciler.handleFencingSuccess(ctx, sbr, logr.Discard())
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring(
+						"failed to update StorageBasedRemediation status after fencing succeeded"))
+				})
+			})
+		})
+
+		Context("handleFencingFailure", func() {
+			var fenceErr = errors.New("sbd fencing failed")
+
+			When("status update succeeds", func() {
+				It("should persist fencing failure conditions in one status update", func() {
+					reconciler.handleFencingFailure(ctx, sbr, fenceErr, logr.Discard())
+
+					sbrFound := &medik8sv1alpha1.StorageBasedRemediation{}
+					Expect(reconciler.Client.Get(ctx, client.ObjectKeyFromObject(sbr), sbrFound)).To(Succeed())
+
+					fip := sbrFound.GetCondition(medik8sv1alpha1.SBDRemediationConditionFencingInProgress)
+					verifyCondition(fip, metav1.ConditionFalse, ReasonFailed, fenceErr.Error())
+
+					rdy := sbrFound.GetCondition(medik8sv1alpha1.SBDRemediationConditionReady)
+					verifyCondition(rdy, metav1.ConditionFalse, ReasonFailed, fenceErr.Error())
+				})
+			})
+
+			When("status update fails", func() {
+				BeforeEach(func() {
+					clientBuilder = clientBuilder.WithInterceptorFuncs(interceptorStatusSubresourceUpdateOrDelegate())
+				})
+
+				It("should not persist fencing failure conditions", func() {
+					reconciler.handleFencingFailure(ctx, sbr, fenceErr, logr.Discard())
+
+					sbrFound := &medik8sv1alpha1.StorageBasedRemediation{}
+					Expect(reconciler.Client.Get(ctx, client.ObjectKeyFromObject(sbr), sbrFound)).To(Succeed())
+					Expect(sbrFound.GetCondition(medik8sv1alpha1.SBDRemediationConditionFencingInProgress)).To(BeNil())
+					Expect(sbrFound.GetCondition(medik8sv1alpha1.SBDRemediationConditionReady)).To(BeNil())
+				})
+			})
+		})
+	})
+
 	Context("Controller setup and configuration", func() {
 		It("should initialize properly", func() {
 			By("Creating a controller instance")
@@ -320,3 +413,27 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 		})
 	})
 })
+
+func verifyCondition(conditionType *metav1.Condition, conditionStatus metav1.ConditionStatus, conditionReason, conditionMessage string) {
+	Expect(conditionType).NotTo(BeNil())
+	Expect(conditionType.Status).To(Equal(conditionStatus))
+	Expect(conditionType.Reason).To(Equal(conditionReason))
+	Expect(conditionType.Message).To(Equal(conditionMessage))
+}
+
+func interceptorStatusSubresourceUpdateOrDelegate() interceptor.Funcs {
+	return interceptor.Funcs{
+		SubResourceUpdate: func(
+			ctx context.Context,
+			c client.Client,
+			subResourceName string,
+			obj client.Object,
+			opts ...client.SubResourceUpdateOption,
+		) error {
+			if subResourceName == "status" {
+				return errors.New("apiserver rejected status")
+			}
+			return c.SubResource(subResourceName).Update(ctx, obj, opts...)
+		},
+	}
+}

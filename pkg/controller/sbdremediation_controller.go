@@ -72,14 +72,12 @@ const (
 	KubernetesAPIBackoffFactor = 2.0
 
 	// Event reasons for StorageBasedRemediation operations
-	ReasonFencingInitiated     = "FencingInitiated"
-	ReasonNodeFenced           = "NodeFenced"
-	ReasonFencingFailed        = "FencingFailed"
-	ReasonRemediationCompleted = "RemediationCompleted"
-	ReasonRemediationFailed    = "RemediationFailed"
-	ReasonRemediationInitiated = "RemediationInitiated"
-	ReasonFinalizerProcessed   = "FinalizerProcessed"
-	ReasonAgentCoordination    = "AgentCoordination"
+	ReasonNodeFenced            = "NodeFenced"
+	ReasonFencingFailed         = "FencingFailed"
+	ReasonRemediationInitiated  = "RemediationInitiated"
+	ReasonFinalizerProcessed    = "FinalizerProcessed"
+	ReasonConditionUpdateFailed = "ConditionUpdateFailed"
+	ReasonOOSTaintRemoved       = "OOSTaintRemoved"
 )
 
 // outOfServiceTaint is used to evict workloads from the remediated node after successful fencing
@@ -208,7 +206,7 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Don't fence ourselves
 	if nodeName == r.ownNodeName {
 		logger.Info("Found own node in remediation request, skipping")
-		r.emitEventOnly(&sbdRemediation, "Normal", ReasonCompleted,
+		r.emitEventOnly(&sbdRemediation, EventTypeNormal, ReasonCompleted,
 			"Skipping remediation for own node")
 		return ctrl.Result{}, nil
 	}
@@ -233,7 +231,7 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		logger.Info("StorageBasedRemediation is being deleted, processing finalizers",
 			"deletionTimestamp", sbdRemediation.DeletionTimestamp,
 			"finalizers", sbdRemediation.Finalizers)
-		r.emitEventf(&sbdRemediation, "Normal", ReasonFinalizerProcessed,
+		r.emitEventf(&sbdRemediation, EventTypeNormal, ReasonFinalizerProcessed,
 			"Processing deletion of StorageBasedRemediation for node '%s'", nodeName)
 		return r.handleDeletion(ctx, &sbdRemediation, logger)
 	}
@@ -258,7 +256,7 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Emit initial event for remediation initiation
 	if len(sbdRemediation.Status.Conditions) == 0 {
-		r.emitEventf(&sbdRemediation, "Normal", ReasonRemediationInitiated,
+		r.emitEventf(&sbdRemediation, EventTypeNormal, ReasonRemediationInitiated,
 			"SBD remediation initiated for node '%s'", nodeName)
 	}
 
@@ -320,14 +318,13 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 
 		// Proceed with successful fencing handling
-		r.handleFencingSuccess(ctx, &sbdRemediation, logger)
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, r.handleFencingSuccess(ctx, &sbdRemediation, logger)
 	}
 
 	if r.nodeManager == nil {
 		err := fmt.Errorf("node manager is not available for node ID resolution")
 		logger.Error(err, "Cannot perform fencing")
-		r.emitEventf(&sbdRemediation, "Warning", ReasonFailed,
+		r.emitEventf(&sbdRemediation, EventTypeWarning, ReasonFailed,
 			"Node manager is not available for node ID resolution: %v", err)
 		return ctrl.Result{}, err
 	}
@@ -355,6 +352,7 @@ func (r *SBDRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Update status to indicate fencing is in progress
 	if err := r.updateRemediationCondition(ctx, &sbdRemediation, medik8sv1alpha1.SBDRemediationConditionFencingInProgress, metav1.ConditionTrue, ReasonInProgress, fmt.Sprintf("Fencing node %s", nodeName), logger); err != nil {
 		logger.Error(err, "Failed to update remediation condition to in progress")
+		return ctrl.Result{}, err
 	}
 
 	// Execute fencing
@@ -505,7 +503,7 @@ func (r *SBDRemediationReconciler) handleDeletion(
 			"node", nodeName)
 		return ctrl.Result{}, err
 	}
-	r.emitEventOnly(sbdRemediation, "Normal", "OOSTaintRemoved",
+	r.emitEventOnly(sbdRemediation, EventTypeNormal, ReasonOOSTaintRemoved,
 		fmt.Sprintf("Out-of-service taint removed from node '%s'", nodeName))
 
 	// Check if our finalizer is present
@@ -555,56 +553,53 @@ func (r *SBDRemediationReconciler) emitEventOnly(remediation *medik8sv1alpha1.St
 	r.emitEventf(remediation, eventType, eventReason, eventMessage)
 }
 
-// handleFencingFailure is a helper function to handle fencing failures consistently
+// handleFencingFailure records fencing failure on the remediation (FencingInProgress and Ready)
+// in a single status update.
+// This method does not need to return an error because the Reconcile loop will always return only the original root cause.
 func (r *SBDRemediationReconciler) handleFencingFailure(
 	ctx context.Context, remediation *medik8sv1alpha1.StorageBasedRemediation, err error, logger logr.Logger) {
 	nodeName := remediation.Name
 	logger.Error(err, "Fencing operation failed")
 
 	// Always emit failure event for observability, regardless of whether condition updates succeed
-	r.emitEventOnly(remediation, "Warning", ReasonFencingFailed,
+	r.emitEventOnly(remediation, EventTypeWarning, ReasonFencingFailed,
 		fmt.Sprintf("Fencing failed for node '%s': %v", nodeName, err))
 
-	// Try to update multiple conditions for failure state
-	// Log but don't fail if these updates don't work
-	if updateErr := r.updateRemediationCondition(ctx, remediation, medik8sv1alpha1.SBDRemediationConditionFencingInProgress, metav1.ConditionFalse, ReasonFailed, err.Error(), logger); updateErr != nil {
-		logger.Error(updateErr, "Failed to update FencingInProgress condition")
-		r.emitEventOnly(remediation, "Warning", "ConditionUpdateFailed",
-			fmt.Sprintf("Failed to update FencingInProgress condition: %v", updateErr))
-	}
+	remediation.SetCondition(medik8sv1alpha1.SBDRemediationConditionFencingInProgress, metav1.ConditionFalse, ReasonFailed, err.Error())
+	remediation.SetCondition(medik8sv1alpha1.SBDRemediationConditionReady, metav1.ConditionFalse, ReasonFailed, err.Error())
+	logger.Info("Setting failure conditions on StorageBasedRemediation", "targetNode", nodeName)
 
-	if updateErr := r.updateRemediationCondition(ctx, remediation, medik8sv1alpha1.SBDRemediationConditionReady, metav1.ConditionFalse, ReasonFailed, err.Error(), logger); updateErr != nil {
-		logger.Error(updateErr, "Failed to update Ready condition")
-		r.emitEventOnly(remediation, "Warning", "ConditionUpdateFailed",
-			fmt.Sprintf("Failed to update Ready condition: %v", updateErr))
+	if updateErr := r.Status().Update(ctx, remediation); updateErr != nil {
+		logger.Error(updateErr, "Failed to update StorageBasedRemediation status after fencing failure")
+		r.emitEventOnly(remediation, EventTypeWarning, ReasonConditionUpdateFailed,
+			fmt.Sprintf("Failed to update StorageBasedRemediation status after fencing failure: %v", updateErr))
 	}
 }
 
-// handleFencingSuccess is a helper function to handle fencing success consistently
+// handleFencingSuccess applies all success conditions in one status update, then emits events.
 func (r *SBDRemediationReconciler) handleFencingSuccess(
-	ctx context.Context, remediation *medik8sv1alpha1.StorageBasedRemediation, logger logr.Logger) {
+	ctx context.Context, remediation *medik8sv1alpha1.StorageBasedRemediation, logger logr.Logger) error {
 	nodeName := remediation.Name
 	logger.Info("Fencing operation completed successfully",
 		"targetNode", nodeName)
 
-	// Update multiple conditions for success state
-	if err := r.updateRemediationCondition(ctx, remediation, medik8sv1alpha1.SBDRemediationConditionFencingInProgress, metav1.ConditionFalse, ReasonCompleted, "Fencing completed", logger); err != nil {
-		logger.Error(err, "Failed to update fencing in progress condition")
-	}
-	if err := r.updateRemediationCondition(ctx, remediation, medik8sv1alpha1.SBDRemediationConditionFencingSucceeded, metav1.ConditionTrue, ReasonCompleted, fmt.Sprintf("Node %s fenced successfully", nodeName), logger); err != nil {
-		logger.Error(err, "Failed to update fencing succeeded condition")
-	}
-	if err := r.updateRemediationCondition(ctx, remediation, medik8sv1alpha1.SBDRemediationConditionReady, metav1.ConditionTrue, ReasonCompleted, "Remediation completed successfully", logger); err != nil {
-		logger.Error(err, "Failed to update ready condition")
+	remediation.SetCondition(medik8sv1alpha1.SBDRemediationConditionFencingInProgress, metav1.ConditionFalse, ReasonCompleted, "Fencing completed")
+	remediation.SetCondition(medik8sv1alpha1.SBDRemediationConditionFencingSucceeded, metav1.ConditionTrue, ReasonCompleted, fmt.Sprintf("Node %s fenced successfully", nodeName))
+	remediation.SetCondition(medik8sv1alpha1.SBDRemediationConditionReady, metav1.ConditionTrue, ReasonCompleted, "Remediation completed successfully")
+	logger.Info("Setting fencing success conditions on StorageBasedRemediation", "targetNode", nodeName)
+
+	if err := r.Status().Update(ctx, remediation); err != nil {
+		logger.Error(err, "Failed to update StorageBasedRemediation status after fencing succeeded")
+		return fmt.Errorf("failed to update StorageBasedRemediation status after fencing succeeded: %w", err)
 	}
 
-	// Emit success event
-	r.emitEventf(remediation, "Normal", ReasonNodeFenced,
+	r.emitEventf(remediation, EventTypeNormal, ReasonNodeFenced,
 		"Node '%s' has been fenced successfully", nodeName)
 
 	logger.Info("Cleared fencing operation",
 		"targetNode", nodeName)
 
+	return nil
 }
 
 // ensureOutOfServiceTaint adds the OutOfService taint to the given node if not already present
