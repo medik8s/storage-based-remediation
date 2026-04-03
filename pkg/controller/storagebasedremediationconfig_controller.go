@@ -49,50 +49,50 @@ import (
 	"github.com/medik8s/storage-based-remediation/pkg/retry"
 )
 
-// Event types and reasons for SBDConfig controller
+// Event types and reasons for StorageBasedRemediationConfig controller
 const (
 	// Event types
 	EventTypeNormal  = "Normal"
 	EventTypeWarning = "Warning"
 
-	// Event reasons for SBDConfig operations
-	ReasonSBDConfigReconciled       = "SBDConfigReconciled"
-	ReasonDaemonSetManaged          = "DaemonSetManaged"
-	ReasonServiceAccountCreated     = "ServiceAccountCreated"
-	ReasonClusterRoleBindingCreated = "ClusterRoleBindingCreated"
-	ReasonSCCManaged                = "SCCManaged"
-	ReasonReconcileError            = "ReconcileError"
-	ReasonDaemonSetError            = "DaemonSetError"
-	ReasonServiceAccountError       = "ServiceAccountError"
-	ReasonSCCError                  = "SCCError"
-	ReasonValidationError           = "ValidationError"
-	ReasonCleanupCompleted          = "CleanupCompleted"
-	ReasonCleanupError              = "CleanupError"
-	ReasonPVCManaged                = "PVCManaged"
-	ReasonPVCError                  = "PVCError"
-	ReasonSBDDeviceInitialized      = "SBDDeviceInitialized"
-	ReasonSBDDeviceInitError        = "SBDDeviceInitWaiting"
+	// Event reasons for StorageBasedRemediationConfig operations
+	ReasonStorageBasedRemediationConfigReconciled = "StorageBasedRemediationConfigReconciled"
+	ReasonDaemonSetManaged                        = "DaemonSetManaged"
+	ReasonServiceAccountCreated                   = "ServiceAccountCreated"
+	ReasonClusterRoleBindingCreated               = "ClusterRoleBindingCreated"
+	ReasonSCCManaged                              = "SCCManaged"
+	ReasonReconcileError                          = "ReconcileError"
+	ReasonDaemonSetError                          = "DaemonSetError"
+	ReasonServiceAccountError                     = "ServiceAccountError"
+	ReasonSCCError                                = "SCCError"
+	ReasonValidationError                         = "ValidationError"
+	ReasonCleanupCompleted                        = "CleanupCompleted"
+	ReasonCleanupError                            = "CleanupError"
+	ReasonPVCManaged                              = "PVCManaged"
+	ReasonPVCError                                = "PVCError"
+	ReasonSBDDeviceInitialized                    = "SBDDeviceInitialized"
+	ReasonSBDDeviceInitError                      = "SBDDeviceInitWaiting"
 
 	// Finalizer for cleanup operations
-	SBDConfigFinalizerName = "sbd-operator.medik8s.io/cleanup"
+	StorageBasedRemediationConfigFinalizerName = "sbd-operator.medik8s.io/cleanup"
 
 	// Default image constants
 	DefaultSBDAgentImage = "sbd-agent:latest"
 	SBDOperatorName      = "sbd-operator"
 
-	// Retry configuration constants for SBDConfig controller
-	// MaxSBDConfigRetries is the maximum number of retry attempts for SBDConfig operations
-	MaxSBDConfigRetries = 3
-	// InitialSBDConfigRetryDelay is the initial delay between SBDConfig operation retries
-	InitialSBDConfigRetryDelay = 500 * time.Millisecond
-	// MaxSBDConfigRetryDelay is the maximum delay between SBDConfig operation retries
-	MaxSBDConfigRetryDelay = 10 * time.Second
-	// SBDConfigRetryBackoffFactor is the exponential backoff factor for SBDConfig operation retries
-	SBDConfigRetryBackoffFactor = 2.0
+	// Retry configuration constants for StorageBasedRemediationConfig controller
+	// MaxStorageBasedRemediationConfigRetries is the maximum number of retry attempts for StorageBasedRemediationConfig operations
+	MaxStorageBasedRemediationConfigRetries = 3
+	// InitialStorageBasedRemediationConfigRetryDelay is the initial delay between StorageBasedRemediationConfig operation retries
+	InitialStorageBasedRemediationConfigRetryDelay = 500 * time.Millisecond
+	// MaxStorageBasedRemediationConfigRetryDelay is the maximum delay between StorageBasedRemediationConfig operation retries
+	MaxStorageBasedRemediationConfigRetryDelay = 10 * time.Second
+	// StorageBasedRemediationConfigRetryBackoffFactor is the exponential backoff factor for StorageBasedRemediationConfig operation retries
+	StorageBasedRemediationConfigRetryBackoffFactor = 2.0
 )
 
-// SBDConfigReconciler reconciles a SBDConfig object
-type SBDConfigReconciler struct {
+// StorageBasedRemediationConfigReconciler reconciles a StorageBasedRemediationConfig object
+type StorageBasedRemediationConfigReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
@@ -107,19 +107,19 @@ type SBDConfigReconciler struct {
 	FilterLog logr.Logger
 }
 
-// initializeRetryConfig initializes the retry configuration for SBDConfig operations
-func (r *SBDConfigReconciler) initializeRetryConfig(logger logr.Logger) {
+// initializeRetryConfig initializes the retry configuration for StorageBasedRemediationConfig operations
+func (r *StorageBasedRemediationConfigReconciler) initializeRetryConfig(logger logr.Logger) {
 	r.retryConfig = retry.Config{
-		MaxRetries:    MaxSBDConfigRetries,
-		InitialDelay:  InitialSBDConfigRetryDelay,
-		MaxDelay:      MaxSBDConfigRetryDelay,
-		BackoffFactor: SBDConfigRetryBackoffFactor,
+		MaxRetries:    MaxStorageBasedRemediationConfigRetries,
+		InitialDelay:  InitialStorageBasedRemediationConfigRetryDelay,
+		MaxDelay:      MaxStorageBasedRemediationConfigRetryDelay,
+		BackoffFactor: StorageBasedRemediationConfigRetryBackoffFactor,
 		Logger:        logger.WithName("sbdconfig-retry"),
 	}
 }
 
 // isTransientKubernetesError determines if a Kubernetes API error is transient and should be retried
-func (r *SBDConfigReconciler) isTransientKubernetesError(err error) bool {
+func (r *StorageBasedRemediationConfigReconciler) isTransientKubernetesError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -153,7 +153,7 @@ func (r *SBDConfigReconciler) isTransientKubernetesError(err error) bool {
 }
 
 // performKubernetesAPIOperationWithRetry performs a Kubernetes API operation with retry logic
-func (r *SBDConfigReconciler) performKubernetesAPIOperationWithRetry(
+func (r *StorageBasedRemediationConfigReconciler) performKubernetesAPIOperationWithRetry(
 	ctx context.Context, operation string, fn func() error, logger logr.Logger) error {
 	return retry.Do(ctx, r.retryConfig, operation, func() error {
 		err := fn()
@@ -167,15 +167,15 @@ func (r *SBDConfigReconciler) performKubernetesAPIOperationWithRetry(
 	})
 }
 
-// emitEvent is a helper function to emit Kubernetes events for the SBDConfig controller
-func (r *SBDConfigReconciler) emitEvent(object client.Object, eventType, reason, message string) {
+// emitEvent is a helper function to emit Kubernetes events for the StorageBasedRemediationConfig controller
+func (r *StorageBasedRemediationConfigReconciler) emitEvent(object client.Object, eventType, reason, message string) {
 	if r.Recorder != nil {
 		r.Recorder.Event(object, eventType, reason, message)
 	}
 }
 
-// emitEventf is a helper function to emit formatted Kubernetes events for the SBDConfig controller
-func (r *SBDConfigReconciler) emitEventf(
+// emitEventf is a helper function to emit formatted Kubernetes events for the StorageBasedRemediationConfig controller
+func (r *StorageBasedRemediationConfigReconciler) emitEventf(
 	object client.Object, eventType, reason, messageFmt string, args ...interface{}) {
 	if r.Recorder != nil {
 		r.Recorder.Eventf(object, eventType, reason, messageFmt, args...)
@@ -185,7 +185,7 @@ func (r *SBDConfigReconciler) emitEventf(
 // getOperatorImage discovers the operator's own image by querying the current pod
 // It uses environment variables (POD_NAME, POD_NAMESPACE) to find the current pod
 // and extracts the image from the pod spec
-func (r *SBDConfigReconciler) getOperatorImage(ctx context.Context, logger logr.Logger) string {
+func (r *StorageBasedRemediationConfigReconciler) getOperatorImage(ctx context.Context, logger logr.Logger) string {
 	// In CI, RELATED_IMAGE_SBD_AGENT is injected via `oc set env` after bundle installation,
 	// pointing to the CI-built agent image. In non-CI runs this env var is not set,
 	// so we fall through to pod image discovery and derivation.
@@ -232,7 +232,7 @@ func (r *SBDConfigReconciler) getOperatorImage(ctx context.Context, logger logr.
 
 // isRunningOnOpenShift detects if the operator is running on OpenShift
 // by checking for the presence of OpenShift-specific API resources
-func (r *SBDConfigReconciler) isRunningOnOpenShift(logger logr.Logger) bool {
+func (r *StorageBasedRemediationConfigReconciler) isRunningOnOpenShift(logger logr.Logger) bool {
 	// Use cached result if available
 	if r.isOpenShift != nil {
 		return *r.isOpenShift
@@ -263,9 +263,9 @@ func (r *SBDConfigReconciler) isRunningOnOpenShift(logger logr.Logger) bool {
 // We use the built-in "privileged" SCC (Option A / SNR-style): sbd-agent gets "use" via the
 // ClusterRole sbd-operator-sbd-agent-privileged-scc and a ClusterRoleBinding created in ensureServiceAccount.
 // No custom SCC is required; this function is a no-op on OpenShift.
-func (r *SBDConfigReconciler) ensureSCCPermissions(
+func (r *StorageBasedRemediationConfigReconciler) ensureSCCPermissions(
 	ctx context.Context,
-	sbdConfig *medik8sv1alpha1.SBDConfig,
+	sbdConfig *medik8sv1alpha1.StorageBasedRemediationConfig,
 	namespaceName string,
 	logger logr.Logger,
 ) (controllerutil.OperationResult, error) {
@@ -279,8 +279,8 @@ func (r *SBDConfigReconciler) ensureSCCPermissions(
 }
 
 // validateStorageClass validates that the specified storage class supports ReadWriteMany access mode
-func (r *SBDConfigReconciler) validateStorageClass(
-	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, logger logr.Logger) error {
+func (r *StorageBasedRemediationConfigReconciler) validateStorageClass(
+	ctx context.Context, sbdConfig *medik8sv1alpha1.StorageBasedRemediationConfig, logger logr.Logger) error {
 	if !sbdConfig.Spec.HasSharedStorage() {
 		// No shared storage configured, nothing to validate
 		return fmt.Errorf("no shared storage configured")
@@ -337,7 +337,7 @@ func (r *SBDConfigReconciler) validateStorageClass(
 }
 
 // isRWXCompatibleProvisioner checks if a CSI provisioner is known to support ReadWriteMany
-func (r *SBDConfigReconciler) isRWXCompatibleProvisioner(provisioner string) bool {
+func (r *StorageBasedRemediationConfigReconciler) isRWXCompatibleProvisioner(provisioner string) bool {
 	// Known RWX-compatible provisioners
 	rwxProvisioners := map[string]bool{
 		// AWS
@@ -370,7 +370,7 @@ func (r *SBDConfigReconciler) isRWXCompatibleProvisioner(provisioner string) boo
 }
 
 // isRWXIncompatibleProvisioner checks if a CSI provisioner is known to NOT support ReadWriteMany
-func (r *SBDConfigReconciler) isRWXIncompatibleProvisioner(provisioner string) bool {
+func (r *StorageBasedRemediationConfigReconciler) isRWXIncompatibleProvisioner(provisioner string) bool {
 	// Known RWX-incompatible provisioners (block storage that only supports RWO)
 	rwxIncompatibleProvisioners := map[string]bool{
 		// AWS
@@ -400,7 +400,7 @@ func (r *SBDConfigReconciler) isRWXIncompatibleProvisioner(provisioner string) b
 }
 
 // isNFSBasedProvisioner checks if a provisioner uses NFS and requires mount option validation
-func (r *SBDConfigReconciler) isNFSBasedProvisioner(provisioner string) bool {
+func (r *StorageBasedRemediationConfigReconciler) isNFSBasedProvisioner(provisioner string) bool {
 	// NFS-based provisioners that use standard NFS mount options
 	nfsProvisioners := map[string]bool{
 		// AWS EFS uses NFS4
@@ -418,7 +418,7 @@ func (r *SBDConfigReconciler) isNFSBasedProvisioner(provisioner string) bool {
 }
 
 // validateNFSMountOptions validates that NFS mount options include cache coherency settings for SBD
-func (r *SBDConfigReconciler) validateNFSMountOptions(storageClass *storagev1.StorageClass, logger logr.Logger) error {
+func (r *StorageBasedRemediationConfigReconciler) validateNFSMountOptions(storageClass *storagev1.StorageClass, logger logr.Logger) error {
 	if storageClass != nil {
 		logger.Info("Skipping NFS mount options validation - TODO: Until we find some storage that actually works with SBD")
 		return nil
@@ -477,8 +477,8 @@ func (r *SBDConfigReconciler) validateNFSMountOptions(storageClass *storagev1.St
 }
 
 // testRWXSupport tests if a storage class actually supports ReadWriteMany by creating a temporary PVC
-func (r *SBDConfigReconciler) testRWXSupport(
-	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, storageClassName string, logger logr.Logger) error {
+func (r *StorageBasedRemediationConfigReconciler) testRWXSupport(
+	ctx context.Context, sbdConfig *medik8sv1alpha1.StorageBasedRemediationConfig, storageClassName string, logger logr.Logger) error {
 	// Create a temporary PVC with ReadWriteMany to test compatibility
 	testPVCName := fmt.Sprintf("%s-rwx-test", sbdConfig.Name)
 
@@ -564,9 +564,9 @@ func (r *SBDConfigReconciler) testRWXSupport(
 }
 
 // ensurePVC ensures that a PVC exists for shared storage when SharedStorageClass is specified
-func (r *SBDConfigReconciler) ensurePVC(
+func (r *StorageBasedRemediationConfigReconciler) ensurePVC(
 	ctx context.Context,
-	sbdConfig *medik8sv1alpha1.SBDConfig,
+	sbdConfig *medik8sv1alpha1.StorageBasedRemediationConfig,
 	logger logr.Logger,
 ) (
 	controllerutil.OperationResult, error,
@@ -666,9 +666,9 @@ func (r *SBDConfigReconciler) ensurePVC(
 }
 
 // ensureSBDDevice ensures that the SBD device file exists in shared storage when SharedStorageClass is specified
-func (r *SBDConfigReconciler) ensureSBDDevice(
+func (r *StorageBasedRemediationConfigReconciler) ensureSBDDevice(
 	ctx context.Context,
-	sbdConfig *medik8sv1alpha1.SBDConfig,
+	sbdConfig *medik8sv1alpha1.StorageBasedRemediationConfig,
 	logger logr.Logger,
 ) (
 	controllerutil.OperationResult, error,
@@ -961,14 +961,14 @@ echo "SBD devices initialization completed successfully"
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// For SBDConfig, this implementation deploys and manages the SBD Agent DaemonSet.
+// For StorageBasedRemediationConfig, this implementation deploys and manages the SBD Agent DaemonSet.
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/reconcile
-func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithName("sbdconfig-controller").WithValues(
 		"request", req.NamespacedName,
-		"controller", "SBDConfig",
+		"controller", "StorageBasedRemediationConfig",
 	)
 
 	// Initialize retry configuration if not already done
@@ -976,25 +976,25 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.initializeRetryConfig(logger)
 	}
 
-	// Retrieve the SBDConfig object
-	var sbdConfig medik8sv1alpha1.SBDConfig
+	// Retrieve the StorageBasedRemediationConfig object
+	var sbdConfig medik8sv1alpha1.StorageBasedRemediationConfig
 	err := r.Get(ctx, req.NamespacedName, &sbdConfig)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// The SBDConfig resource was deleted
-			logger.Info("SBDConfig resource not found, it may have been deleted",
+			// The StorageBasedRemediationConfig resource was deleted
+			logger.Info("StorageBasedRemediationConfig resource not found, it may have been deleted",
 				"name", req.Name,
 				"namespace", req.Namespace)
 			return ctrl.Result{}, nil
 		}
 		// Error reading the object - requeue with backoff for transient errors
-		logger.Error(err, "Failed to get SBDConfig",
+		logger.Error(err, "Failed to get StorageBasedRemediationConfig",
 			"name", req.Name,
 			"namespace", req.Namespace)
 
 		// Return requeue with backoff for transient errors
 		if r.isTransientKubernetesError(err) {
-			return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+			return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 		}
 		return ctrl.Result{}, err
 	}
@@ -1009,14 +1009,14 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Handle deletion with finalizer
 	if sbdConfig.DeletionTimestamp != nil {
-		logger.Info("SBDConfig is being deleted, performing cleanup")
+		logger.Info("StorageBasedRemediationConfig is being deleted, performing cleanup")
 		return r.handleDeletion(ctx, &sbdConfig, logger)
 	}
 
 	// Add finalizer if not present
-	if !controllerutil.ContainsFinalizer(&sbdConfig, SBDConfigFinalizerName) {
-		logger.Info("Adding finalizer to SBDConfig")
-		controllerutil.AddFinalizer(&sbdConfig, SBDConfigFinalizerName)
+	if !controllerutil.ContainsFinalizer(&sbdConfig, StorageBasedRemediationConfigFinalizerName) {
+		logger.Info("Adding finalizer to StorageBasedRemediationConfig")
+		controllerutil.AddFinalizer(&sbdConfig, StorageBasedRemediationConfigFinalizerName)
 		return ctrl.Result{Requeue: true}, r.Update(ctx, &sbdConfig)
 	}
 
@@ -1025,32 +1025,32 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	agentImage, err := sbdConfig.Spec.GetImageWithOperatorImage(operatorImage)
 	if err != nil {
-		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	}
 	logger.Info("Resolved agent image", "agentImage", agentImage)
-	logger.V(1).Info("Starting SBDConfig reconciliation",
+	logger.V(1).Info("Starting StorageBasedRemediationConfig reconciliation",
 		"spec.image", agentImage,
 		"namespace", sbdConfig.Namespace,
-		"spec.sbdWatchdogPath", sbdConfig.Spec.GetSbdWatchdogPath(),
+		"spec.sbdWatchdogPath", sbdConfig.Spec.GetWatchdogPath(),
 		"spec.staleNodeTimeout", sbdConfig.Spec.GetStaleNodeTimeout(),
 		"spec.watchdogTimeout", sbdConfig.Spec.GetWatchdogTimeout(),
 		"spec.petIntervalMultiple", sbdConfig.Spec.GetPetIntervalMultiple(),
 		"spec.calculatedPetInterval", sbdConfig.Spec.GetPetInterval())
 
-	// Validate the SBDConfig spec
+	// Validate the StorageBasedRemediationConfig spec
 	if err := sbdConfig.Spec.ValidateAll(); err != nil {
-		logger.Error(err, "SBDConfig validation failed")
+		logger.Error(err, "StorageBasedRemediationConfig validation failed")
 		r.emitEventf(&sbdConfig, EventTypeWarning, ReasonValidationError,
-			"SBDConfig validation failed: %v", err)
+			"StorageBasedRemediationConfig validation failed: %v", err)
 		// Don't requeue on validation errors - user needs to fix the configuration
-		return ctrl.Result{}, fmt.Errorf("SBDConfig validation failed: %w", err)
+		return ctrl.Result{}, fmt.Errorf("StorageBasedRemediationConfig validation failed: %w", err)
 	}
 
 	// Note: Node selector overlap validation is now handled by the admission webhook
 	// to provide immediate feedback and prevent invalid configurations from being created
 
 	// Ensure the service account and RBAC resources exist with retry logic
-	// Deploy in the same namespace as the SBDConfig CR
+	// Deploy in the same namespace as the StorageBasedRemediationConfig CR
 	result, err := r.ensureServiceAccount(ctx, &sbdConfig, sbdConfig.Namespace, logger)
 	if err != nil {
 		logger.Error(err, "Failed to ensure service account exists after retries",
@@ -1059,7 +1059,7 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.emitEventf(&sbdConfig, EventTypeWarning, ReasonServiceAccountError,
 			"Failed to ensure service account 'sbd-agent' exists in namespace '%s': %v", sbdConfig.Namespace, err)
 
-		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 
 	} else if result != controllerutil.OperationResultNone {
 		return ctrl.Result{Requeue: true}, err
@@ -1076,7 +1076,7 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			"Failed to ensure SCC permissions for service account 'sbd-agent' in namespace '%s': %v", sbdConfig.Namespace, err)
 
 		// Return requeue with backoff for transient errors
-		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	} else if result != controllerutil.OperationResultNone {
 		return ctrl.Result{Requeue: true}, err
 	}
@@ -1096,7 +1096,7 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		// Return requeue with backoff for transient errors
 		if r.isTransientKubernetesError(err) {
-			return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+			return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 		}
 		return ctrl.Result{}, err
 	}
@@ -1122,7 +1122,7 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			"operation", "sbd-device-init")
 		r.emitEventf(&sbdConfig, EventTypeWarning, ReasonSBDDeviceInitError, err.Error())
 
-		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	} else if action != controllerutil.OperationResultNone {
 		return ctrl.Result{Requeue: true}, err
 	}
@@ -1146,7 +1146,7 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		"operation", "daemonset-create-or-update",
 		"desired.image", desiredDaemonSet.Spec.Template.Spec.Containers[0].Image)
 	daemonSetLogger.Info("SBD agent DaemonSet watchdog configuration",
-		"watchdogPath", sbdConfig.Spec.GetSbdWatchdogPath(),
+		"watchdogPath", sbdConfig.Spec.GetWatchdogPath(),
 		"watchdogTimeout", sbdConfig.Spec.GetWatchdogTimeout().String())
 
 	action, err = controllerutil.CreateOrUpdate(ctx, r.Client, actualDaemonSet, func() error {
@@ -1165,7 +1165,7 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.emitEventf(&sbdConfig, EventTypeWarning, ReasonDaemonSetError,
 			"Failed to create or update DaemonSet '%s': %v", desiredDaemonSet.Name, err)
 
-		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	} else if action != controllerutil.OperationResultNone {
 		// Emit event for DaemonSet management
 		r.emitEventf(&sbdConfig, EventTypeNormal, ReasonDaemonSetManaged,
@@ -1173,38 +1173,38 @@ func (r *SBDConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		daemonSetLogger.Info(fmt.Sprintf("DaemonSet %s successfully", action))
 	}
 
-	// Update the SBDConfig status with retry logic
-	err = r.performKubernetesAPIOperationWithRetry(ctx, "update SBDConfig status", func() error {
+	// Update the StorageBasedRemediationConfig status with retry logic
+	err = r.performKubernetesAPIOperationWithRetry(ctx, "update StorageBasedRemediationConfig status", func() error {
 		return r.updateStatus(ctx, &sbdConfig, actualDaemonSet)
 	}, logger)
 	if err != nil {
-		logger.Error(err, "Failed to update SBDConfig status after retries",
+		logger.Error(err, "Failed to update StorageBasedRemediationConfig status after retries",
 			"operation", "status-update",
 			"daemonset.name", actualDaemonSet.Name)
 		r.emitEventf(&sbdConfig, EventTypeWarning, ReasonReconcileError,
-			"Failed to update SBDConfig status: %v", err)
+			"Failed to update StorageBasedRemediationConfig status: %v", err)
 
 		// Return requeue with backoff for transient errors
-		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	}
 
-	logger.Info("Successfully reconciled SBDConfig",
+	logger.Info("Successfully reconciled StorageBasedRemediationConfig",
 		"operation", "reconcile-complete",
 		"daemonset.name", actualDaemonSet.Name)
 
-	// Emit success event for SBDConfig reconciliation
-	r.emitEventf(&sbdConfig, EventTypeNormal, ReasonSBDConfigReconciled,
-		"SBDConfig '%s' successfully reconciled", sbdConfig.Name)
+	// Emit success event for StorageBasedRemediationConfig reconciliation
+	r.emitEventf(&sbdConfig, EventTypeNormal, ReasonStorageBasedRemediationConfigReconciled,
+		"StorageBasedRemediationConfig '%s' successfully reconciled", sbdConfig.Name)
 
 	return ctrl.Result{}, nil
 }
 
-// handleDeletion handles the cleanup when an SBDConfig is being deleted
-func (r *SBDConfigReconciler) handleDeletion(
-	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, logger logr.Logger) (ctrl.Result, error) {
-	logger.Info("Starting SBDConfig cleanup")
+// handleDeletion handles the cleanup when an StorageBasedRemediationConfig is being deleted
+func (r *StorageBasedRemediationConfigReconciler) handleDeletion(
+	ctx context.Context, sbdConfig *medik8sv1alpha1.StorageBasedRemediationConfig, logger logr.Logger) (ctrl.Result, error) {
+	logger.Info("Starting StorageBasedRemediationConfig cleanup")
 
-	// Clean up the ClusterRoleBinding specific to this SBDConfig
+	// Clean up the ClusterRoleBinding specific to this StorageBasedRemediationConfig
 	clusterRoleBindingName := fmt.Sprintf("sbd-agent-%s-%s", sbdConfig.Namespace, sbdConfig.Name)
 	clusterRoleBinding := &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1217,43 +1217,43 @@ func (r *SBDConfigReconciler) handleDeletion(
 		logger.Error(err, "Failed to delete ClusterRoleBinding during cleanup", "clusterRoleBinding", clusterRoleBindingName)
 		r.emitEventf(sbdConfig, EventTypeWarning, ReasonCleanupError,
 			"Failed to delete ClusterRoleBinding '%s': %v", clusterRoleBindingName, err)
-		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	}
 
 	if err == nil {
 		logger.Info("ClusterRoleBinding deleted successfully", "clusterRoleBinding", clusterRoleBindingName)
 	}
 
-	// Note: We don't delete the shared service account because other SBDConfigs in the same namespace might be using it
+	// Note: We don't delete the shared service account because other StorageBasedRemediationConfigs in the same namespace might be using it
 	// The service account will be cleaned up when the namespace is deleted or manually by administrators
 
 	// Note: DaemonSet cleanup is handled automatically by Kubernetes garbage collection due to OwnerReference
 
 	// Remove the finalizer to allow deletion
-	controllerutil.RemoveFinalizer(sbdConfig, SBDConfigFinalizerName)
+	controllerutil.RemoveFinalizer(sbdConfig, StorageBasedRemediationConfigFinalizerName)
 	err = r.Update(ctx, sbdConfig)
 	if err != nil {
-		logger.Error(err, "Failed to remove finalizer from SBDConfig")
+		logger.Error(err, "Failed to remove finalizer from StorageBasedRemediationConfig")
 		r.emitEventf(sbdConfig, EventTypeWarning, ReasonCleanupError,
 			"Failed to remove finalizer: %v", err)
-		return ctrl.Result{RequeueAfter: InitialSBDConfigRetryDelay}, err
+		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	}
 
-	logger.Info("SBDConfig cleanup completed successfully")
+	logger.Info("StorageBasedRemediationConfig cleanup completed successfully")
 	r.emitEventf(sbdConfig, EventTypeNormal, ReasonCleanupCompleted,
-		"SBDConfig cleanup completed successfully")
+		"StorageBasedRemediationConfig cleanup completed successfully")
 
 	return ctrl.Result{}, nil
 }
 
 // ensureServiceAccount creates the service account and RBAC resources if they don't exist
-func (r *SBDConfigReconciler) ensureServiceAccount(
+func (r *StorageBasedRemediationConfigReconciler) ensureServiceAccount(
 	ctx context.Context,
-	sbdConfig *medik8sv1alpha1.SBDConfig,
+	sbdConfig *medik8sv1alpha1.StorageBasedRemediationConfig,
 	namespaceName string,
 	logger logr.Logger,
 ) (controllerutil.OperationResult, error) {
-	// Create the service account - SHARED across multiple SBDConfigs in the same namespace
+	// Create the service account - SHARED across multiple StorageBasedRemediationConfigs in the same namespace
 	serviceAccount := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "sbd-agent",
@@ -1273,7 +1273,7 @@ func (r *SBDConfigReconciler) ensureServiceAccount(
 	}
 
 	result, err := controllerutil.CreateOrUpdate(ctx, r.Client, serviceAccount, func() error {
-		// DO NOT set controller reference - allow multiple SBDConfigs to share this service account
+		// DO NOT set controller reference - allow multiple StorageBasedRemediationConfigs to share this service account
 		// Instead, use labels and annotations to track management
 		if serviceAccount.Labels == nil {
 			serviceAccount.Labels = make(map[string]string)
@@ -1305,7 +1305,7 @@ func (r *SBDConfigReconciler) ensureServiceAccount(
 	}
 
 	// Create the ClusterRoleBinding to use the existing sbd-agent-role
-	// Use SBDConfig-specific name to avoid conflicts
+	// Use StorageBasedRemediationConfig-specific name to avoid conflicts
 	clusterRoleBinding := &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("sbd-agent-%s-%s", namespaceName, sbdConfig.Name),
@@ -1385,8 +1385,8 @@ func (r *SBDConfigReconciler) ensureServiceAccount(
 	return result, nil
 }
 
-// buildDaemonSet constructs the desired DaemonSet based on the SBDConfig
-func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfig, agentImage string) *appsv1.DaemonSet {
+// buildDaemonSet constructs the desired DaemonSet based on the StorageBasedRemediationConfig
+func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.StorageBasedRemediationConfig, agentImage string) *appsv1.DaemonSet {
 	daemonSetName := fmt.Sprintf("sbd-agent-%s", sbdConfig.Name)
 	labels := map[string]string{
 		"app":        "sbd-agent",
@@ -1526,7 +1526,7 @@ func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfi
 									Exec: &corev1.ExecAction{
 										Command: []string{"/bin/sh", "-c",
 											fmt.Sprintf("test -c %s && grep -l sbd-agent /proc/*/cmdline 2>/dev/null",
-												sbdConfig.Spec.GetSbdWatchdogPath())},
+												sbdConfig.Spec.GetWatchdogPath())},
 									},
 								},
 								InitialDelaySeconds: 60,
@@ -1558,19 +1558,19 @@ func (r *SBDConfigReconciler) buildDaemonSet(sbdConfig *medik8sv1alpha1.SBDConfi
 }
 
 // buildSBDAgentArgs builds the command line arguments for the sbd-agent container
-func (r *SBDConfigReconciler) buildSBDAgentArgs(sbdConfig *medik8sv1alpha1.SBDConfig) []string {
+func (r *StorageBasedRemediationConfigReconciler) buildSBDAgentArgs(sbdConfig *medik8sv1alpha1.StorageBasedRemediationConfig) []string {
 	// Get configured watchdog timeout and calculate pet interval
 	watchdogTimeout := sbdConfig.Spec.GetWatchdogTimeout()
 	petInterval := sbdConfig.Spec.GetPetInterval()
 	ioTimeout := sbdConfig.Spec.GetIOTimeout()
 	rebootMethod := sbdConfig.Spec.GetRebootMethod()
-	sbdTimeoutSeconds := sbdConfig.Spec.GetSBDTimeoutSeconds()
-	sbdUpdateInterval := sbdConfig.Spec.GetSBDUpdateInterval()
+	sbdTimeoutSeconds := sbdConfig.Spec.GetSBRTimeoutSeconds()
+	sbdUpdateInterval := sbdConfig.Spec.GetSBRUpdateInterval()
 	peerCheckInterval := sbdConfig.Spec.GetPeerCheckInterval()
 
 	// Base arguments using shared flag constants
 	args := []string{
-		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, sbdConfig.Spec.GetSbdWatchdogPath()),
+		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, sbdConfig.Spec.GetWatchdogPath()),
 		fmt.Sprintf("--%s=%s", agent.FlagWatchdogTimeout, watchdogTimeout.String()),
 		fmt.Sprintf("--%s=%s", agent.FlagPetInterval, petInterval.String()),
 		fmt.Sprintf("--%s=%s", agent.FlagLogLevel, sbdConfig.Spec.GetLogLevel()),
@@ -1603,7 +1603,7 @@ func (r *SBDConfigReconciler) buildSBDAgentArgs(sbdConfig *medik8sv1alpha1.SBDCo
 }
 
 // buildNodeSelector builds the node selector for the DaemonSet, merging user-specified selectors with OS requirement
-func (r *SBDConfigReconciler) buildNodeSelector(sbdConfig *medik8sv1alpha1.SBDConfig) map[string]string {
+func (r *StorageBasedRemediationConfigReconciler) buildNodeSelector(sbdConfig *medik8sv1alpha1.StorageBasedRemediationConfig) map[string]string {
 	// Start with the user-specified node selector (defaults to worker nodes only)
 	nodeSelector := make(map[string]string)
 	for k, v := range sbdConfig.Spec.GetNodeSelector() {
@@ -1617,7 +1617,7 @@ func (r *SBDConfigReconciler) buildNodeSelector(sbdConfig *medik8sv1alpha1.SBDCo
 }
 
 // buildVolumeMounts builds the volume mounts for the sbd-agent container
-func (r *SBDConfigReconciler) buildVolumeMounts(sbdConfig *medik8sv1alpha1.SBDConfig) []corev1.VolumeMount {
+func (r *StorageBasedRemediationConfigReconciler) buildVolumeMounts(sbdConfig *medik8sv1alpha1.StorageBasedRemediationConfig) []corev1.VolumeMount {
 	mounts := []corev1.VolumeMount{
 		{Name: "dev", MountPath: "/dev"},
 		{Name: "sys", MountPath: "/sys", ReadOnly: true},
@@ -1636,7 +1636,7 @@ func (r *SBDConfigReconciler) buildVolumeMounts(sbdConfig *medik8sv1alpha1.SBDCo
 }
 
 // buildVolumes builds the volumes for the DaemonSet pod spec
-func (r *SBDConfigReconciler) buildVolumes(sbdConfig *medik8sv1alpha1.SBDConfig) []corev1.Volume {
+func (r *StorageBasedRemediationConfigReconciler) buildVolumes(sbdConfig *medik8sv1alpha1.StorageBasedRemediationConfig) []corev1.Volume {
 	volumes := []corev1.Volume{
 		{
 			Name: "dev",
@@ -1682,9 +1682,9 @@ func (r *SBDConfigReconciler) buildVolumes(sbdConfig *medik8sv1alpha1.SBDConfig)
 	return volumes
 }
 
-// updateStatus updates the SBDConfig status based on the DaemonSet state
-func (r *SBDConfigReconciler) updateStatus(
-	ctx context.Context, sbdConfig *medik8sv1alpha1.SBDConfig, daemonSet *appsv1.DaemonSet) error {
+// updateStatus updates the StorageBasedRemediationConfig status based on the DaemonSet state
+func (r *StorageBasedRemediationConfigReconciler) updateStatus(
+	ctx context.Context, sbdConfig *medik8sv1alpha1.StorageBasedRemediationConfig, daemonSet *appsv1.DaemonSet) error {
 	// Check if we need to fetch the latest DaemonSet status
 	latestDaemonSet := &appsv1.DaemonSet{}
 	err := r.Get(ctx, types.NamespacedName{
@@ -1706,7 +1706,7 @@ func (r *SBDConfigReconciler) updateStatus(
 	// Set DaemonSet readiness condition
 	if daemonSetReady {
 		sbdConfig.SetCondition(
-			medik8sv1alpha1.SBDConfigConditionDaemonSetReady,
+			medik8sv1alpha1.SBRConfigConditionDaemonSetReady,
 			metav1.ConditionTrue,
 			"DaemonSetReady",
 			fmt.Sprintf("All %d SBD agent pods are ready", latestDaemonSet.Status.NumberReady),
@@ -1723,7 +1723,7 @@ func (r *SBDConfigReconciler) updateStatus(
 				latestDaemonSet.Status.DesiredNumberScheduled)
 		}
 		sbdConfig.SetCondition(
-			medik8sv1alpha1.SBDConfigConditionDaemonSetReady,
+			medik8sv1alpha1.SBRConfigConditionDaemonSetReady,
 			metav1.ConditionFalse,
 			reason,
 			message,
@@ -1735,14 +1735,14 @@ func (r *SBDConfigReconciler) updateStatus(
 		// For now, we'll assume shared storage is ready if the PVC name is specified
 		// In the future, we could add more sophisticated checks
 		sbdConfig.SetCondition(
-			medik8sv1alpha1.SBDConfigConditionSharedStorageReady,
+			medik8sv1alpha1.SBRConfigConditionSharedStorageReady,
 			metav1.ConditionTrue,
 			"SharedStorageConfigured",
 			fmt.Sprintf("Shared storage PVC '%s' is configured", sbdConfig.Spec.GetSharedStoragePVCName(sbdConfig.Name)),
 		)
 	} else {
 		sbdConfig.SetCondition(
-			medik8sv1alpha1.SBDConfigConditionSharedStorageReady,
+			medik8sv1alpha1.SBRConfigConditionSharedStorageReady,
 			metav1.ConditionTrue,
 			"SharedStorageNotRequired",
 			"Shared storage is not configured and not required",
@@ -1750,27 +1750,27 @@ func (r *SBDConfigReconciler) updateStatus(
 	}
 
 	// Set overall readiness condition
-	if daemonSetReady && (sbdConfig.IsConditionTrue(medik8sv1alpha1.SBDConfigConditionSharedStorageReady)) {
+	if daemonSetReady && (sbdConfig.IsConditionTrue(medik8sv1alpha1.SBRConfigConditionSharedStorageReady)) {
 		sbdConfig.SetCondition(
-			medik8sv1alpha1.SBDConfigConditionReady,
+			medik8sv1alpha1.SBRConfigConditionReady,
 			metav1.ConditionTrue,
 			"Ready",
-			"SBDConfig is ready and all components are operational",
+			"StorageBasedRemediationConfig is ready and all components are operational",
 		)
 	} else {
 		var reasons []string
 		if !daemonSetReady {
 			reasons = append(reasons, "DaemonSet not ready")
 		}
-		if !sbdConfig.IsConditionTrue(medik8sv1alpha1.SBDConfigConditionSharedStorageReady) {
+		if !sbdConfig.IsConditionTrue(medik8sv1alpha1.SBRConfigConditionSharedStorageReady) {
 			reasons = append(reasons, "Shared storage not ready")
 		}
 
 		sbdConfig.SetCondition(
-			medik8sv1alpha1.SBDConfigConditionReady,
+			medik8sv1alpha1.SBRConfigConditionReady,
 			metav1.ConditionFalse,
 			"NotReady",
-			fmt.Sprintf("SBDConfig is not ready: %s", strings.Join(reasons, ", ")),
+			fmt.Sprintf("StorageBasedRemediationConfig is not ready: %s", strings.Join(reasons, ", ")),
 		)
 	}
 
@@ -1789,7 +1789,7 @@ func mustParseQuantity(s string) resource.Quantity {
 
 // Example predicate that only triggers on meaningful changes
 // nolint:unused // kept for future event debugging
-func (r *SBDConfigReconciler) filterEvents() predicate.Predicate {
+func (r *StorageBasedRemediationConfigReconciler) filterEvents() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			r.FilterLog.Info("CREATE event", "object", e.Object.GetName(),
@@ -1823,15 +1823,15 @@ func (r *SBDConfigReconciler) filterEvents() predicate.Predicate {
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *SBDConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	logger := mgr.GetLogger().WithName("setup").WithValues("controller", "SBDConfig")
+func (r *StorageBasedRemediationConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	logger := mgr.GetLogger().WithName("setup").WithValues("controller", "StorageBasedRemediationConfig")
 
-	logger.Info("Setting up SBDConfig controller")
+	logger.Info("Setting up StorageBasedRemediationConfig controller")
 
 	r.FilterLog = logger.WithName("filter")
 
 	err := ctrl.NewControllerManagedBy(mgr).
-		For(&medik8sv1alpha1.SBDConfig{}).
+		For(&medik8sv1alpha1.StorageBasedRemediationConfig{}).
 		Owns(&appsv1.DaemonSet{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
@@ -1841,10 +1841,10 @@ func (r *SBDConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	//	WithEventFilter(r.filterEvents()).
 
 	if err != nil {
-		logger.Error(err, "Failed to setup SBDConfig controller")
+		logger.Error(err, "Failed to setup StorageBasedRemediationConfig controller")
 		return err
 	}
 
-	logger.Info("SBDConfig controller setup completed successfully")
+	logger.Info("StorageBasedRemediationConfig controller setup completed successfully")
 	return nil
 }

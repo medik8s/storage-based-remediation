@@ -29,12 +29,12 @@ import (
 // testCase represents a generic test case for validation functions
 type testCase struct {
 	name      string
-	spec      SBDConfigSpec
+	spec      StorageBasedRemediationConfigSpec
 	wantError bool
 }
 
 // runValidationTests is a generic helper for testing validation methods
-func runValidationTests(t *testing.T, testName string, tests []testCase, validateFunc func(SBDConfigSpec) error) {
+func runValidationTests(t *testing.T, testName string, tests []testCase, validateFunc func(StorageBasedRemediationConfigSpec) error) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateFunc(tt.spec)
@@ -48,12 +48,12 @@ func runValidationTests(t *testing.T, testName string, tests []testCase, validat
 // testCaseInterval represents a generic test case for interval validation functions
 type testCaseInterval struct {
 	name    string
-	spec    SBDConfigSpec
+	spec    StorageBasedRemediationConfigSpec
 	wantErr bool
 }
 
 // runIntervalTests is a generic helper for testing interval validation methods
-func runIntervalTests(t *testing.T, testName string, tests []testCaseInterval, validateFunc func(SBDConfigSpec) error) {
+func runIntervalTests(t *testing.T, testName string, tests []testCaseInterval, validateFunc func(StorageBasedRemediationConfigSpec) error) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateFunc(tt.spec)
@@ -66,7 +66,7 @@ func runIntervalTests(t *testing.T, testName string, tests []testCaseInterval, v
 
 // createTimeoutValidationTests creates standard test cases for timeout validation
 func createTimeoutValidationTests(
-	fieldSetter func(*SBDConfigSpec, *metav1.Duration),
+	fieldSetter func(*StorageBasedRemediationConfigSpec, *metav1.Duration),
 	validValue time.Duration,
 	tooSmallValue time.Duration,
 	tooLargeValue time.Duration,
@@ -76,13 +76,13 @@ func createTimeoutValidationTests(
 	return []testCase{
 		{
 			name:      "default timeout is valid",
-			spec:      SBDConfigSpec{},
+			spec:      StorageBasedRemediationConfigSpec{},
 			wantError: false,
 		},
 		{
 			name: "valid custom timeout",
-			spec: func() SBDConfigSpec {
-				spec := SBDConfigSpec{}
+			spec: func() StorageBasedRemediationConfigSpec {
+				spec := StorageBasedRemediationConfigSpec{}
 				fieldSetter(&spec, &metav1.Duration{Duration: validValue})
 				return spec
 			}(),
@@ -90,8 +90,8 @@ func createTimeoutValidationTests(
 		},
 		{
 			name: "timeout too small",
-			spec: func() SBDConfigSpec {
-				spec := SBDConfigSpec{}
+			spec: func() StorageBasedRemediationConfigSpec {
+				spec := StorageBasedRemediationConfigSpec{}
 				fieldSetter(&spec, &metav1.Duration{Duration: tooSmallValue})
 				return spec
 			}(),
@@ -99,8 +99,8 @@ func createTimeoutValidationTests(
 		},
 		{
 			name: "timeout too large",
-			spec: func() SBDConfigSpec {
-				spec := SBDConfigSpec{}
+			spec: func() StorageBasedRemediationConfigSpec {
+				spec := StorageBasedRemediationConfigSpec{}
 				fieldSetter(&spec, &metav1.Duration{Duration: tooLargeValue})
 				return spec
 			}(),
@@ -108,8 +108,8 @@ func createTimeoutValidationTests(
 		},
 		{
 			name: "minimum timeout is valid",
-			spec: func() SBDConfigSpec {
-				spec := SBDConfigSpec{}
+			spec: func() StorageBasedRemediationConfigSpec {
+				spec := StorageBasedRemediationConfigSpec{}
 				fieldSetter(&spec, &metav1.Duration{Duration: minValue})
 				return spec
 			}(),
@@ -117,8 +117,8 @@ func createTimeoutValidationTests(
 		},
 		{
 			name: "maximum timeout is valid",
-			spec: func() SBDConfigSpec {
-				spec := SBDConfigSpec{}
+			spec: func() StorageBasedRemediationConfigSpec {
+				spec := StorageBasedRemediationConfigSpec{}
 				fieldSetter(&spec, &metav1.Duration{Duration: maxValue})
 				return spec
 			}(),
@@ -129,7 +129,7 @@ func createTimeoutValidationTests(
 
 // createIntervalValidationTests creates standard test cases for interval validation
 func createIntervalValidationTests(
-	fieldSetter func(*SBDConfigSpec, *metav1.Duration),
+	fieldSetter func(*StorageBasedRemediationConfigSpec, *metav1.Duration),
 	validValue time.Duration,
 	tooSmallValue time.Duration,
 	tooLargeValue time.Duration,
@@ -137,13 +137,13 @@ func createIntervalValidationTests(
 	return []testCaseInterval{
 		{
 			name:    "nil interval uses default (valid)",
-			spec:    SBDConfigSpec{},
+			spec:    StorageBasedRemediationConfigSpec{},
 			wantErr: false,
 		},
 		{
 			name: "valid interval",
-			spec: func() SBDConfigSpec {
-				spec := SBDConfigSpec{}
+			spec: func() StorageBasedRemediationConfigSpec {
+				spec := StorageBasedRemediationConfigSpec{}
 				fieldSetter(&spec, &metav1.Duration{Duration: validValue})
 				return spec
 			}(),
@@ -151,8 +151,8 @@ func createIntervalValidationTests(
 		},
 		{
 			name: "minimum interval",
-			spec: func() SBDConfigSpec {
-				spec := SBDConfigSpec{}
+			spec: func() StorageBasedRemediationConfigSpec {
+				spec := StorageBasedRemediationConfigSpec{}
 				fieldSetter(&spec, &metav1.Duration{Duration: 1 * time.Second})
 				return spec
 			}(),
@@ -160,8 +160,8 @@ func createIntervalValidationTests(
 		},
 		{
 			name: "maximum interval",
-			spec: func() SBDConfigSpec {
-				spec := SBDConfigSpec{}
+			spec: func() StorageBasedRemediationConfigSpec {
+				spec := StorageBasedRemediationConfigSpec{}
 				fieldSetter(&spec, &metav1.Duration{Duration: 60 * time.Second})
 				return spec
 			}(),
@@ -169,8 +169,8 @@ func createIntervalValidationTests(
 		},
 		{
 			name: "too small interval",
-			spec: func() SBDConfigSpec {
-				spec := SBDConfigSpec{}
+			spec: func() StorageBasedRemediationConfigSpec {
+				spec := StorageBasedRemediationConfigSpec{}
 				fieldSetter(&spec, &metav1.Duration{Duration: tooSmallValue})
 				return spec
 			}(),
@@ -178,8 +178,8 @@ func createIntervalValidationTests(
 		},
 		{
 			name: "too large interval",
-			spec: func() SBDConfigSpec {
-				spec := SBDConfigSpec{}
+			spec: func() StorageBasedRemediationConfigSpec {
+				spec := StorageBasedRemediationConfigSpec{}
 				fieldSetter(&spec, &metav1.Duration{Duration: tooLargeValue})
 				return spec
 			}(),
@@ -188,29 +188,29 @@ func createIntervalValidationTests(
 	}
 }
 
-func TestSBDConfigSpec_GetStaleNodeTimeout(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_GetStaleNodeTimeout(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		expected time.Duration
 	}{
 		{
 			name: "nil timeout returns default",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				StaleNodeTimeout: nil,
 			},
 			expected: DefaultStaleNodeTimeout,
 		},
 		{
 			name: "explicit timeout is returned",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				StaleNodeTimeout: &metav1.Duration{Duration: 5 * time.Minute},
 			},
 			expected: 5 * time.Minute,
 		},
 		{
 			name: "zero timeout returns zero",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				StaleNodeTimeout: &metav1.Duration{Duration: 0},
 			},
 			expected: 0,
@@ -227,9 +227,9 @@ func TestSBDConfigSpec_GetStaleNodeTimeout(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_ValidateStaleNodeTimeout(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_ValidateStaleNodeTimeout(t *testing.T) {
 	tests := createTimeoutValidationTests(
-		func(spec *SBDConfigSpec, d *metav1.Duration) { spec.StaleNodeTimeout = d },
+		func(spec *StorageBasedRemediationConfigSpec, d *metav1.Duration) { spec.StaleNodeTimeout = d },
 		5*time.Minute,
 		30*time.Second,
 		25*time.Hour,
@@ -237,7 +237,7 @@ func TestSBDConfigSpec_ValidateStaleNodeTimeout(t *testing.T) {
 		MaxStaleNodeTimeout,
 	)
 
-	runValidationTests(t, "ValidateStaleNodeTimeout()", tests, func(spec SBDConfigSpec) error {
+	runValidationTests(t, "ValidateStaleNodeTimeout()", tests, func(spec StorageBasedRemediationConfigSpec) error {
 		return spec.ValidateStaleNodeTimeout()
 	})
 }
@@ -268,37 +268,37 @@ func TestConstants(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_GetSbdWatchdogPath(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_GetWatchdogPath(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		expected string
 	}{
 		{
 			name: "empty path returns default",
-			spec: SBDConfigSpec{
-				SbdWatchdogPath: "",
+			spec: StorageBasedRemediationConfigSpec{
+				WatchdogPath: "",
 			},
 			expected: DefaultWatchdogPath,
 		},
 		{
 			name: "explicit path is returned",
-			spec: SBDConfigSpec{
-				SbdWatchdogPath: "/dev/watchdog1",
+			spec: StorageBasedRemediationConfigSpec{
+				WatchdogPath: "/dev/watchdog1",
 			},
 			expected: "/dev/watchdog1",
 		},
 		{
 			name: "custom path is returned",
-			spec: SBDConfigSpec{
-				SbdWatchdogPath: "/custom/watchdog",
+			spec: StorageBasedRemediationConfigSpec{
+				WatchdogPath: "/custom/watchdog",
 			},
 			expected: "/custom/watchdog",
 		},
 		{
 			name: "default path when unset",
-			spec: SBDConfigSpec{
-				// SbdWatchdogPath not set
+			spec: StorageBasedRemediationConfigSpec{
+				// WatchdogPath not set
 			},
 			expected: DefaultWatchdogPath,
 		},
@@ -306,7 +306,7 @@ func TestSBDConfigSpec_GetSbdWatchdogPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetSbdWatchdogPath()
+			result := tt.spec.GetWatchdogPath()
 			if result != tt.expected {
 				t.Errorf("Expected %s, got %s", tt.expected, result)
 			}
@@ -314,29 +314,29 @@ func TestSBDConfigSpec_GetSbdWatchdogPath(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_GetWatchdogTimeout(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_GetWatchdogTimeout(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		expected time.Duration
 	}{
 		{
 			name: "nil timeout returns default",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				WatchdogTimeout: nil,
 			},
 			expected: DefaultWatchdogTimeout,
 		},
 		{
 			name: "explicit timeout is returned",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				WatchdogTimeout: &metav1.Duration{Duration: 30 * time.Second},
 			},
 			expected: 30 * time.Second,
 		},
 		{
 			name: "custom timeout is returned",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				WatchdogTimeout: &metav1.Duration{Duration: 120 * time.Second},
 			},
 			expected: 120 * time.Second,
@@ -353,29 +353,29 @@ func TestSBDConfigSpec_GetWatchdogTimeout(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_GetPetIntervalMultiple(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_GetPetIntervalMultiple(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		expected int32
 	}{
 		{
 			name: "nil multiple returns default",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				PetIntervalMultiple: nil,
 			},
 			expected: DefaultPetIntervalMultiple,
 		},
 		{
 			name: "explicit multiple is returned",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				PetIntervalMultiple: &[]int32{5}[0],
 			},
 			expected: 5,
 		},
 		{
 			name: "custom multiple is returned",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				PetIntervalMultiple: &[]int32{6}[0],
 			},
 			expected: 6,
@@ -392,34 +392,34 @@ func TestSBDConfigSpec_GetPetIntervalMultiple(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_GetPetInterval(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_GetPetInterval(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		expected time.Duration
 	}{
 		{
 			name:     "default values",
-			spec:     SBDConfigSpec{},
+			spec:     StorageBasedRemediationConfigSpec{},
 			expected: DefaultWatchdogTimeout / time.Duration(DefaultPetIntervalMultiple), // 60s / 4 = 15s
 		},
 		{
 			name: "custom watchdog timeout with default multiple",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				WatchdogTimeout: &metav1.Duration{Duration: 120 * time.Second},
 			},
 			expected: 120 * time.Second / time.Duration(DefaultPetIntervalMultiple), // 120s / 4 = 30s
 		},
 		{
 			name: "default watchdog timeout with custom multiple",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				PetIntervalMultiple: &[]int32{6}[0],
 			},
 			expected: DefaultWatchdogTimeout / 6, // 60s / 6 = 10s
 		},
 		{
 			name: "custom values",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				WatchdogTimeout:     &metav1.Duration{Duration: 90 * time.Second},
 				PetIntervalMultiple: &[]int32{5}[0],
 			},
@@ -427,7 +427,7 @@ func TestSBDConfigSpec_GetPetInterval(t *testing.T) {
 		},
 		{
 			name: "minimum pet interval enforced",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				WatchdogTimeout:     &metav1.Duration{Duration: 10 * time.Second},
 				PetIntervalMultiple: &[]int32{20}[0],
 			},
@@ -445,9 +445,9 @@ func TestSBDConfigSpec_GetPetInterval(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_ValidateWatchdogTimeout(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_ValidateWatchdogTimeout(t *testing.T) {
 	tests := createTimeoutValidationTests(
-		func(spec *SBDConfigSpec, d *metav1.Duration) { spec.WatchdogTimeout = d },
+		func(spec *StorageBasedRemediationConfigSpec, d *metav1.Duration) { spec.WatchdogTimeout = d },
 		30*time.Second,
 		5*time.Second,
 		400*time.Second,
@@ -455,53 +455,53 @@ func TestSBDConfigSpec_ValidateWatchdogTimeout(t *testing.T) {
 		MaxWatchdogTimeout,
 	)
 
-	runValidationTests(t, "ValidateWatchdogTimeout()", tests, func(spec SBDConfigSpec) error {
+	runValidationTests(t, "ValidateWatchdogTimeout()", tests, func(spec StorageBasedRemediationConfigSpec) error {
 		return spec.ValidateWatchdogTimeout()
 	})
 }
 
-func TestSBDConfigSpec_ValidatePetIntervalMultiple(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_ValidatePetIntervalMultiple(t *testing.T) {
 	tests := []struct {
 		name      string
-		spec      SBDConfigSpec
+		spec      StorageBasedRemediationConfigSpec
 		wantError bool
 	}{
 		{
 			name:      "default multiple is valid",
-			spec:      SBDConfigSpec{},
+			spec:      StorageBasedRemediationConfigSpec{},
 			wantError: false,
 		},
 		{
 			name: "valid custom multiple",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				PetIntervalMultiple: &[]int32{5}[0],
 			},
 			wantError: false,
 		},
 		{
 			name: "multiple too small",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				PetIntervalMultiple: &[]int32{2}[0],
 			},
 			wantError: true,
 		},
 		{
 			name: "multiple too large",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				PetIntervalMultiple: &[]int32{25}[0],
 			},
 			wantError: true,
 		},
 		{
 			name: "minimum multiple is valid",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				PetIntervalMultiple: &[]int32{MinPetIntervalMultiple}[0],
 			},
 			wantError: false,
 		},
 		{
 			name: "maximum multiple is valid",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				PetIntervalMultiple: &[]int32{MaxPetIntervalMultiple}[0],
 			},
 			wantError: false,
@@ -518,20 +518,20 @@ func TestSBDConfigSpec_ValidatePetIntervalMultiple(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_ValidatePetIntervalTiming(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_ValidatePetIntervalTiming(t *testing.T) {
 	tests := []struct {
 		name      string
-		spec      SBDConfigSpec
+		spec      StorageBasedRemediationConfigSpec
 		wantError bool
 	}{
 		{
 			name:      "default values are valid",
-			spec:      SBDConfigSpec{},
+			spec:      StorageBasedRemediationConfigSpec{},
 			wantError: false,
 		},
 		{
 			name: "safe configuration",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				WatchdogTimeout:     &metav1.Duration{Duration: 60 * time.Second},
 				PetIntervalMultiple: &[]int32{4}[0],
 			},
@@ -539,7 +539,7 @@ func TestSBDConfigSpec_ValidatePetIntervalTiming(t *testing.T) {
 		},
 		{
 			name: "pet interval too long - exceeds 1/3 rule",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				WatchdogTimeout:     &metav1.Duration{Duration: 90 * time.Second},
 				PetIntervalMultiple: &[]int32{2}[0], // Would give 45s pet interval, which is > 30s (90/3)
 			},
@@ -547,7 +547,7 @@ func TestSBDConfigSpec_ValidatePetIntervalTiming(t *testing.T) {
 		},
 		{
 			name: "pet interval equal to watchdog timeout",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				WatchdogTimeout:     &metav1.Duration{Duration: 10 * time.Second},
 				PetIntervalMultiple: &[]int32{1}[0],
 			},
@@ -555,7 +555,7 @@ func TestSBDConfigSpec_ValidatePetIntervalTiming(t *testing.T) {
 		},
 		{
 			name: "pet interval exactly at 1/3 limit",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				WatchdogTimeout:     &metav1.Duration{Duration: 60 * time.Second},
 				PetIntervalMultiple: &[]int32{3}[0], // Gives exactly 20s pet interval (60/3)
 			},
@@ -573,29 +573,29 @@ func TestSBDConfigSpec_ValidatePetIntervalTiming(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_GetRebootMethod(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_GetRebootMethod(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		expected string
 	}{
 		{
 			name: "empty reboot method returns default",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				RebootMethod: "",
 			},
 			expected: DefaultRebootMethod,
 		},
 		{
 			name: "explicit panic method is returned",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				RebootMethod: "panic",
 			},
 			expected: "panic",
 		},
 		{
 			name: "explicit systemctl-reboot method is returned",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				RebootMethod: "systemctl-reboot",
 			},
 			expected: "systemctl-reboot",
@@ -612,30 +612,30 @@ func TestSBDConfigSpec_GetRebootMethod(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_GetSBDTimeoutSeconds(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_GetSBRTimeoutSeconds(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		expected int32
 	}{
 		{
 			name: "nil timeout returns default",
-			spec: SBDConfigSpec{
-				SBDTimeoutSeconds: nil,
+			spec: StorageBasedRemediationConfigSpec{
+				SBRTimeoutSeconds: nil,
 			},
 			expected: DefaultSBDTimeoutSeconds,
 		},
 		{
 			name: "explicit timeout is returned",
-			spec: SBDConfigSpec{
-				SBDTimeoutSeconds: func(v int32) *int32 { return &v }(60),
+			spec: StorageBasedRemediationConfigSpec{
+				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(60),
 			},
 			expected: 60,
 		},
 		{
 			name: "minimum timeout is returned",
-			spec: SBDConfigSpec{
-				SBDTimeoutSeconds: func(v int32) *int32 { return &v }(10),
+			spec: StorageBasedRemediationConfigSpec{
+				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(10),
 			},
 			expected: 10,
 		},
@@ -643,38 +643,38 @@ func TestSBDConfigSpec_GetSBDTimeoutSeconds(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetSBDTimeoutSeconds()
+			result := tt.spec.GetSBRTimeoutSeconds()
 			if result != tt.expected {
-				t.Errorf("GetSBDTimeoutSeconds() = %v, expected %v", result, tt.expected)
+				t.Errorf("GetSBRTimeoutSeconds() = %v, expected %v", result, tt.expected)
 			}
 		})
 	}
 }
 
-func TestSBDConfigSpec_GetSBDUpdateInterval(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_GetSBRUpdateInterval(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		expected time.Duration
 	}{
 		{
 			name: "nil interval returns default",
-			spec: SBDConfigSpec{
-				SBDUpdateInterval: nil,
+			spec: StorageBasedRemediationConfigSpec{
+				SBRUpdateInterval: nil,
 			},
 			expected: DefaultSBDUpdateInterval,
 		},
 		{
 			name: "explicit interval is returned",
-			spec: SBDConfigSpec{
-				SBDUpdateInterval: &metav1.Duration{Duration: 10 * time.Second},
+			spec: StorageBasedRemediationConfigSpec{
+				SBRUpdateInterval: &metav1.Duration{Duration: 10 * time.Second},
 			},
 			expected: 10 * time.Second,
 		},
 		{
 			name: "minimum interval is returned",
-			spec: SBDConfigSpec{
-				SBDUpdateInterval: &metav1.Duration{Duration: 1 * time.Second},
+			spec: StorageBasedRemediationConfigSpec{
+				SBRUpdateInterval: &metav1.Duration{Duration: 1 * time.Second},
 			},
 			expected: 1 * time.Second,
 		},
@@ -682,37 +682,37 @@ func TestSBDConfigSpec_GetSBDUpdateInterval(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetSBDUpdateInterval()
+			result := tt.spec.GetSBRUpdateInterval()
 			if result != tt.expected {
-				t.Errorf("GetSBDUpdateInterval() = %v, expected %v", result, tt.expected)
+				t.Errorf("GetSBRUpdateInterval() = %v, expected %v", result, tt.expected)
 			}
 		})
 	}
 }
 
-func TestSBDConfigSpec_GetPeerCheckInterval(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_GetPeerCheckInterval(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		expected time.Duration
 	}{
 		{
 			name: "nil interval returns default",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				PeerCheckInterval: nil,
 			},
 			expected: DefaultPeerCheckInterval,
 		},
 		{
 			name: "explicit interval is returned",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				PeerCheckInterval: &metav1.Duration{Duration: 3 * time.Second},
 			},
 			expected: 3 * time.Second,
 		},
 		{
 			name: "maximum interval is returned",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				PeerCheckInterval: &metav1.Duration{Duration: 60 * time.Second},
 			},
 			expected: 60 * time.Second,
@@ -729,43 +729,43 @@ func TestSBDConfigSpec_GetPeerCheckInterval(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_ValidateRebootMethod(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_ValidateRebootMethod(t *testing.T) {
 	tests := []struct {
 		name    string
-		spec    SBDConfigSpec
+		spec    StorageBasedRemediationConfigSpec
 		wantErr bool
 	}{
 		{
 			name: "valid panic method",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				RebootMethod: "panic",
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid systemctl-reboot method",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				RebootMethod: "systemctl-reboot",
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid none method",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				RebootMethod: "none",
 			},
 			wantErr: false,
 		},
 		{
 			name: "empty method uses default (valid)",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				RebootMethod: "",
 			},
 			wantErr: false,
 		},
 		{
 			name: "invalid method",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				RebootMethod: "invalid-method",
 			},
 			wantErr: true,
@@ -782,51 +782,51 @@ func TestSBDConfigSpec_ValidateRebootMethod(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_ValidateSBDTimeoutSeconds(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_ValidateSBRTimeoutSeconds(t *testing.T) {
 	tests := []struct {
 		name    string
-		spec    SBDConfigSpec
+		spec    StorageBasedRemediationConfigSpec
 		wantErr bool
 	}{
 		{
 			name: "nil timeout uses default (valid)",
-			spec: SBDConfigSpec{
-				SBDTimeoutSeconds: nil,
+			spec: StorageBasedRemediationConfigSpec{
+				SBRTimeoutSeconds: nil,
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid timeout",
-			spec: SBDConfigSpec{
-				SBDTimeoutSeconds: func(v int32) *int32 { return &v }(60),
+			spec: StorageBasedRemediationConfigSpec{
+				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(60),
 			},
 			wantErr: false,
 		},
 		{
 			name: "minimum timeout",
-			spec: SBDConfigSpec{
-				SBDTimeoutSeconds: func(v int32) *int32 { return &v }(10),
+			spec: StorageBasedRemediationConfigSpec{
+				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(10),
 			},
 			wantErr: false,
 		},
 		{
 			name: "maximum timeout",
-			spec: SBDConfigSpec{
-				SBDTimeoutSeconds: func(v int32) *int32 { return &v }(300),
+			spec: StorageBasedRemediationConfigSpec{
+				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(300),
 			},
 			wantErr: false,
 		},
 		{
 			name: "too small timeout",
-			spec: SBDConfigSpec{
-				SBDTimeoutSeconds: func(v int32) *int32 { return &v }(5),
+			spec: StorageBasedRemediationConfigSpec{
+				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(5),
 			},
 			wantErr: true,
 		},
 		{
 			name: "too large timeout",
-			spec: SBDConfigSpec{
-				SBDTimeoutSeconds: func(v int32) *int32 { return &v }(400),
+			spec: StorageBasedRemediationConfigSpec{
+				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(400),
 			},
 			wantErr: true,
 		},
@@ -834,54 +834,54 @@ func TestSBDConfigSpec_ValidateSBDTimeoutSeconds(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.spec.ValidateSBDTimeoutSeconds()
+			err := tt.spec.ValidateSBRTimeoutSeconds()
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateSBDTimeoutSeconds() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ValidateSBRTimeoutSeconds() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
 }
 
-func TestSBDConfigSpec_ValidateSBDUpdateInterval(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_ValidateSBRUpdateInterval(t *testing.T) {
 	tests := createIntervalValidationTests(
-		func(spec *SBDConfigSpec, d *metav1.Duration) { spec.SBDUpdateInterval = d },
+		func(spec *StorageBasedRemediationConfigSpec, d *metav1.Duration) { spec.SBRUpdateInterval = d },
 		10*time.Second,
 		500*time.Millisecond,
 		120*time.Second,
 	)
 
-	runIntervalTests(t, "ValidateSBDUpdateInterval()", tests, func(spec SBDConfigSpec) error {
-		return spec.ValidateSBDUpdateInterval()
+	runIntervalTests(t, "ValidateSBRUpdateInterval()", tests, func(spec StorageBasedRemediationConfigSpec) error {
+		return spec.ValidateSBRUpdateInterval()
 	})
 }
 
-func TestSBDConfigSpec_ValidatePeerCheckInterval(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_ValidatePeerCheckInterval(t *testing.T) {
 	tests := createIntervalValidationTests(
-		func(spec *SBDConfigSpec, d *metav1.Duration) { spec.PeerCheckInterval = d },
+		func(spec *StorageBasedRemediationConfigSpec, d *metav1.Duration) { spec.PeerCheckInterval = d },
 		5*time.Second,
 		500*time.Millisecond,
 		90*time.Second,
 	)
 
-	runIntervalTests(t, "ValidatePeerCheckInterval()", tests, func(spec SBDConfigSpec) error {
+	runIntervalTests(t, "ValidatePeerCheckInterval()", tests, func(spec StorageBasedRemediationConfigSpec) error {
 		return spec.ValidatePeerCheckInterval()
 	})
 }
 
-func TestSBDConfigSpec_ValidateAll(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_ValidateAll(t *testing.T) {
 	tests := []struct {
 		name      string
-		spec      SBDConfigSpec
+		spec      StorageBasedRemediationConfigSpec
 		wantError bool
 	}{
 		{
 			name:      "all defaults are valid",
-			spec:      SBDConfigSpec{},
+			spec:      StorageBasedRemediationConfigSpec{},
 			wantError: false,
 		},
 		{
 			name: "all valid custom values",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				StaleNodeTimeout:    &metav1.Duration{Duration: 2 * time.Hour},
 				WatchdogTimeout:     &metav1.Duration{Duration: 90 * time.Second},
 				PetIntervalMultiple: &[]int32{5}[0],
@@ -890,7 +890,7 @@ func TestSBDConfigSpec_ValidateAll(t *testing.T) {
 		},
 		{
 			name: "invalid stale node timeout",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				StaleNodeTimeout: &metav1.Duration{Duration: 30 * time.Second}, // Too small
 				WatchdogTimeout:  &metav1.Duration{Duration: 60 * time.Second},
 			},
@@ -898,21 +898,21 @@ func TestSBDConfigSpec_ValidateAll(t *testing.T) {
 		},
 		{
 			name: "invalid watchdog timeout",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				WatchdogTimeout: &metav1.Duration{Duration: 5 * time.Second}, // Too small
 			},
 			wantError: true,
 		},
 		{
 			name: "invalid pet interval multiple",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				PetIntervalMultiple: &[]int32{2}[0], // Too small
 			},
 			wantError: true,
 		},
 		{
 			name: "invalid pet interval timing",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				WatchdogTimeout:     &metav1.Duration{Duration: 60 * time.Second},
 				PetIntervalMultiple: &[]int32{2}[0], // Would give 30s pet interval, which is > 20s (60/3)
 			},
@@ -920,21 +920,21 @@ func TestSBDConfigSpec_ValidateAll(t *testing.T) {
 		},
 		{
 			name: "invalid I/O timeout - too small",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				IOTimeout: &metav1.Duration{Duration: 50 * time.Millisecond}, // Too small
 			},
 			wantError: true,
 		},
 		{
 			name: "invalid I/O timeout - too large",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				IOTimeout: &metav1.Duration{Duration: 10 * time.Minute}, // Too large
 			},
 			wantError: true,
 		},
 		{
 			name: "valid I/O timeout",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				IOTimeout: &metav1.Duration{Duration: 5 * time.Second}, // Valid
 			},
 			wantError: false,
@@ -1002,31 +1002,31 @@ func TestWatchdogConstants(t *testing.T) {
 func TestGetImagePullPolicy(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		expected string
 	}{
 		{
 			name:     "default value",
-			spec:     SBDConfigSpec{},
+			spec:     StorageBasedRemediationConfigSpec{},
 			expected: "IfNotPresent",
 		},
 		{
 			name: "explicit Always",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				ImagePullPolicy: "Always",
 			},
 			expected: "Always",
 		},
 		{
 			name: "explicit Never",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				ImagePullPolicy: "Never",
 			},
 			expected: "Never",
 		},
 		{
 			name: "explicit IfNotPresent",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				ImagePullPolicy: "IfNotPresent",
 			},
 			expected: "IfNotPresent",
@@ -1046,39 +1046,39 @@ func TestGetImagePullPolicy(t *testing.T) {
 func TestValidateImagePullPolicy(t *testing.T) {
 	tests := []struct {
 		name      string
-		spec      SBDConfigSpec
+		spec      StorageBasedRemediationConfigSpec
 		wantError bool
 		errorMsg  string
 	}{
 		{
 			name:      "default value (valid)",
-			spec:      SBDConfigSpec{},
+			spec:      StorageBasedRemediationConfigSpec{},
 			wantError: false,
 		},
 		{
 			name: "Always (valid)",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				ImagePullPolicy: "Always",
 			},
 			wantError: false,
 		},
 		{
 			name: "Never (valid)",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				ImagePullPolicy: "Never",
 			},
 			wantError: false,
 		},
 		{
 			name: "IfNotPresent (valid)",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				ImagePullPolicy: "IfNotPresent",
 			},
 			wantError: false,
 		},
 		{
 			name: "invalid value",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				ImagePullPolicy: "InvalidPolicy",
 			},
 			wantError: true,
@@ -1086,7 +1086,7 @@ func TestValidateImagePullPolicy(t *testing.T) {
 		},
 		{
 			name: "empty string (should use default)",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				ImagePullPolicy: "",
 			},
 			wantError: false,
@@ -1114,62 +1114,62 @@ func TestValidateImagePullPolicy(t *testing.T) {
 func TestGetImageWithOperatorImage(t *testing.T) {
 	tests := []struct {
 		name          string
-		spec          SBDConfigSpec
+		spec          StorageBasedRemediationConfigSpec
 		operatorImage string
 		expected      string
 		wantErr       bool
 	}{
 		{
 			name:          "explicit image specified",
-			spec:          SBDConfigSpec{Image: "custom-registry.com/custom-org/custom-agent:v1.0.0"},
+			spec:          StorageBasedRemediationConfigSpec{Image: "custom-registry.com/custom-org/custom-agent:v1.0.0"},
 			operatorImage: "quay.io/medik8s/sbd-operator:v1.2.3",
 			expected:      "custom-registry.com/custom-org/custom-agent:v1.0.0",
 		},
 		{
 			name:          "no image specified - derive from operator image with tag",
-			spec:          SBDConfigSpec{},
+			spec:          StorageBasedRemediationConfigSpec{},
 			operatorImage: "quay.io/medik8s/sbd-operator:v1.2.3",
 			expected:      "quay.io/medik8s/sbd-agent:v1.2.3",
 		},
 		{
 			name:          "no image specified - derive from operator image without tag",
-			spec:          SBDConfigSpec{},
+			spec:          StorageBasedRemediationConfigSpec{},
 			operatorImage: "quay.io/medik8s/sbd-operator",
 			expected:      "quay.io/medik8s/sbd-agent:latest",
 		},
 		{
 			name:          "no image specified - simple operator image with tag",
-			spec:          SBDConfigSpec{},
+			spec:          StorageBasedRemediationConfigSpec{},
 			operatorImage: "sbd-operator:v1.0.0",
 			expected:      "sbd-agent:v1.0.0",
 		},
 		{
 			name:          "no image specified - simple operator image without tag",
-			spec:          SBDConfigSpec{},
+			spec:          StorageBasedRemediationConfigSpec{},
 			operatorImage: "sbd-operator",
 			expected:      "sbd-agent:latest",
 		},
 		{
 			name:          "no image specified - empty operator image",
-			spec:          SBDConfigSpec{},
+			spec:          StorageBasedRemediationConfigSpec{},
 			operatorImage: "",
 			wantErr:       true,
 		},
 		{
 			name:          "no image specified - complex registry path",
-			spec:          SBDConfigSpec{},
+			spec:          StorageBasedRemediationConfigSpec{},
 			operatorImage: "registry.example.com:5000/my-org/my-project/sbd-operator:dev-123",
 			expected:      "registry.example.com:5000/my-org/my-project/sbd-agent:dev-123",
 		},
 		{
 			name:          "no image specified - storage-based-remediation operator image (RH naming)",
-			spec:          SBDConfigSpec{},
+			spec:          StorageBasedRemediationConfigSpec{},
 			operatorImage: "registry.redhat.io/workload-availability/storage-based-remediation-rhel9-operator:v0.1.0",
 			expected:      "registry.redhat.io/workload-availability/storage-based-remediation-agent-rhel9:v0.1.0",
 		},
 		{
 			name:          "no image specified - already agent image (e.g. controller fallback)",
-			spec:          SBDConfigSpec{},
+			spec:          StorageBasedRemediationConfigSpec{},
 			operatorImage: "sbd-agent:latest",
 			expected:      "sbd-agent:latest",
 		},
@@ -1195,22 +1195,22 @@ func TestGetImageWithOperatorImage(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_GetSharedStoragePVCName(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_GetSharedStoragePVCName(t *testing.T) {
 	tests := []struct {
 		name          string
-		spec          SBDConfigSpec
+		spec          StorageBasedRemediationConfigSpec
 		sbdConfigName string
 		expected      string
 	}{
 		{
 			name:          "no storage class configured",
-			spec:          SBDConfigSpec{},
+			spec:          StorageBasedRemediationConfigSpec{},
 			sbdConfigName: "test-config",
 			expected:      "",
 		},
 		{
 			name: "storage class configured",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: "efs-sc",
 			},
 			sbdConfigName: "my-sbd-config",
@@ -1218,7 +1218,7 @@ func TestSBDConfigSpec_GetSharedStoragePVCName(t *testing.T) {
 		},
 		{
 			name: "complex storage class name",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: "nfs-client",
 			},
 			sbdConfigName: "sbd-config-with-shared-storage",
@@ -1236,27 +1236,27 @@ func TestSBDConfigSpec_GetSharedStoragePVCName(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_GetSharedStorageStorageClass(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_GetSharedStorageStorageClass(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		expected string
 	}{
 		{
 			name:     "no storage class configured",
-			spec:     SBDConfigSpec{},
+			spec:     StorageBasedRemediationConfigSpec{},
 			expected: "",
 		},
 		{
 			name: "storage class configured",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: "efs-sc",
 			},
 			expected: "efs-sc",
 		},
 		{
 			name: "complex storage class name",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: "nfs-client",
 			},
 			expected: "nfs-client",
@@ -1273,15 +1273,15 @@ func TestSBDConfigSpec_GetSharedStorageStorageClass(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_GetSharedStorageMountPath(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_GetSharedStorageMountPath(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		expected string
 	}{
 		{
 			name:     "returns fixed path",
-			spec:     SBDConfigSpec{},
+			spec:     StorageBasedRemediationConfigSpec{},
 			expected: agent.SharedStorageSBDDeviceDirectory,
 		},
 	}
@@ -1296,34 +1296,34 @@ func TestSBDConfigSpec_GetSharedStorageMountPath(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_HasSharedStorage(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_HasSharedStorage(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		expected bool
 	}{
 		{
 			name:     "no shared storage configured",
-			spec:     SBDConfigSpec{},
+			spec:     StorageBasedRemediationConfigSpec{},
 			expected: false,
 		},
 		{
 			name: "shared storage class configured",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: "efs-sc",
 			},
 			expected: true,
 		},
 		{
 			name: "empty storage class name means no shared storage",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: "",
 			},
 			expected: false,
 		},
 		{
 			name: "only storage class enables shared storage",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: "efs-sc",
 			},
 			expected: true,
@@ -1340,22 +1340,22 @@ func TestSBDConfigSpec_HasSharedStorage(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_GetNodeSelector(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_GetNodeSelector(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		expected map[string]string
 	}{
 		{
 			name: "default node selector - worker nodes only",
-			spec: SBDConfigSpec{},
+			spec: StorageBasedRemediationConfigSpec{},
 			expected: map[string]string{
 				"node-role.kubernetes.io/worker": "",
 			},
 		},
 		{
 			name: "explicit node selector",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				NodeSelector: map[string]string{
 					"custom-label": "custom-value",
 				},
@@ -1366,7 +1366,7 @@ func TestSBDConfigSpec_GetNodeSelector(t *testing.T) {
 		},
 		{
 			name: "multiple node selector labels",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				NodeSelector: map[string]string{
 					"zone":        "us-east-1a",
 					"node-type":   "compute",
@@ -1381,7 +1381,7 @@ func TestSBDConfigSpec_GetNodeSelector(t *testing.T) {
 		},
 		{
 			name: "empty node selector map returns default",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				NodeSelector: map[string]string{},
 			},
 			expected: map[string]string{
@@ -1406,35 +1406,35 @@ func TestSBDConfigSpec_GetNodeSelector(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_ValidateSharedStorageClass(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_ValidateSharedStorageClass(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		wantErr  bool
 		errorMsg string
 	}{
 		{
 			name:    "no storage class configured - valid",
-			spec:    SBDConfigSpec{},
+			spec:    StorageBasedRemediationConfigSpec{},
 			wantErr: false,
 		},
 		{
 			name: "valid storage class name",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: "efs-sc",
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid complex storage class name",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: "nfs-client",
 			},
 			wantErr: false,
 		},
 		{
 			name: "invalid storage class name - starts with hyphen",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: "-invalid-sc",
 			},
 			wantErr:  true,
@@ -1442,7 +1442,7 @@ func TestSBDConfigSpec_ValidateSharedStorageClass(t *testing.T) {
 		},
 		{
 			name: "invalid storage class name - ends with hyphen",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: "invalid-sc-",
 			},
 			wantErr:  true,
@@ -1450,7 +1450,7 @@ func TestSBDConfigSpec_ValidateSharedStorageClass(t *testing.T) {
 		},
 		{
 			name: "invalid storage class name - too long",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: strings.Repeat("a", 254),
 			},
 			wantErr:  true,
@@ -1458,7 +1458,7 @@ func TestSBDConfigSpec_ValidateSharedStorageClass(t *testing.T) {
 		},
 		{
 			name: "valid storage class name - max length",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: strings.Repeat("a", 253),
 			},
 			wantErr: false,
@@ -1483,23 +1483,23 @@ func TestSBDConfigSpec_ValidateSharedStorageClass(t *testing.T) {
 	}
 }
 
-func TestSBDConfigSpec_ValidateAll_WithSharedStorage(t *testing.T) {
+func TestStorageBasedRemediationConfigSpec_ValidateAll_WithSharedStorage(t *testing.T) {
 	tests := []struct {
 		name     string
-		spec     SBDConfigSpec
+		spec     StorageBasedRemediationConfigSpec
 		wantErr  bool
 		errorMsg string
 	}{
 		{
 			name: "valid shared storage configuration",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: "efs-sc",
 			},
 			wantErr: false,
 		},
 		{
 			name: "invalid storage class name",
-			spec: SBDConfigSpec{
+			spec: StorageBasedRemediationConfigSpec{
 				SharedStorageClass: "-invalid-sc",
 			},
 			wantErr:  true,

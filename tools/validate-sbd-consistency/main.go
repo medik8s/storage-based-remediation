@@ -28,7 +28,7 @@ func main() {
 		fmt.Println()
 		fmt.Println("Examples:")
 		fmt.Printf("  %s default                    # Check all SBD agents in default namespace\n", os.Args[0])
-		fmt.Printf("  %s default test-sbd-config   # Check agents for specific SBDConfig\n", os.Args[0])
+		fmt.Printf("  %s default test-sbd-config   # Check agents for specific StorageBasedRemediationConfig\n", os.Args[0])
 		fmt.Println()
 		fmt.Println("The tool performs the following validations:")
 		fmt.Println("  • Discovers all SBD agent pods in the namespace")
@@ -56,7 +56,7 @@ func main() {
 		fmt.Printf("Namespace: %s\n", namespace)
 	}
 	if sbdConfigName != "" {
-		fmt.Printf("SBDConfig: %s\n", sbdConfigName)
+		fmt.Printf("StorageBasedRemediationConfig: %s\n", sbdConfigName)
 	}
 	fmt.Printf("Time: %s\n\n", time.Now().Format("2006-01-02 15:04:05"))
 
@@ -73,18 +73,18 @@ func main() {
 
 	testClients := &utils.TestClients{}
 
-	// If sbdConfigName is empty, find the first SBDConfig in the namespace and use it
+	// If sbdConfigName is empty, find the first StorageBasedRemediationConfig in the namespace and use it
 	if sbdConfigName == "" {
-		fmt.Printf("No SBDConfig name provided, discovering first SBDConfig in namespace %q...\n", namespace)
-		sbdConfigs, err := getSBDConfigs(namespace)
+		fmt.Printf("No StorageBasedRemediationConfig name provided, discovering first StorageBasedRemediationConfig in namespace %q...\n", namespace)
+		sbdConfigs, err := getStorageBasedRemediationConfigs(namespace)
 		if err != nil {
-			log.Fatalf("Failed to list SBDConfigs in namespace %q: %v", namespace, err)
+			log.Fatalf("Failed to list StorageBasedRemediationConfigs in namespace %q: %v", namespace, err)
 		}
 		if len(sbdConfigs) == 0 {
-			log.Fatalf("No SBDConfig resources found in namespace %q", namespace)
+			log.Fatalf("No StorageBasedRemediationConfig resources found in namespace %q", namespace)
 		}
 		sbdConfigName = sbdConfigs[0]
-		fmt.Printf("Using SBDConfig: %s in namespace %s\n", sbdConfigName, namespace)
+		fmt.Printf("Using StorageBasedRemediationConfig: %s in namespace %s\n", sbdConfigName, namespace)
 	}
 
 	// Discover SBD agent pods
@@ -209,8 +209,8 @@ func getKubeConfig() (*rest.Config, error) {
 	return kubeConfig.ClientConfig()
 }
 
-// getSBDConfigs lists SBDConfig resources in the given namespace
-func getSBDConfigs(namespace string) ([]string, error) {
+// getStorageBasedRemediationConfigs lists StorageBasedRemediationConfig resources in the given namespace
+func getStorageBasedRemediationConfigs(namespace string) ([]string, error) {
 	config, err := getKubeConfig()
 	if err != nil {
 		return nil, err

@@ -1611,9 +1611,9 @@ var _ = Describe("Fence flow with real SBD agent", func() {
 			mockFenceDevice := mocks.NewMockBlockDevice("/tmp/detect-only-fence", 1024*1024)
 			mockHeartbeatDevice.SetFailWrite(true)
 
-			By("Creating mock event recorder and SBDConfig object for events")
+			By("Creating mock event recorder and StorageBasedRemediationConfig object for events")
 			mockRecorder := mocks.NewMockEventRecorder()
-			recorderObject := &medik8sv1alpha1.SBDConfig{
+			recorderObject := &medik8sv1alpha1.StorageBasedRemediationConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "detect-only-test", Namespace: "default"},
 			}
 
@@ -1661,7 +1661,7 @@ var _ = Describe("Fence flow with real SBD agent", func() {
 			mockHeartbeatDevice   *mocks.MockBlockDevice
 			mockFenceDevice       *mocks.MockBlockDevice
 			mockRecorder          *mocks.MockEventRecorder
-			recorderObject        *medik8sv1alpha1.SBDConfig
+			recorderObject        *medik8sv1alpha1.StorageBasedRemediationConfig
 			agent                 *SBDAgent
 			mockWatchdog          *mocks.MockWatchdog
 			petCountWhenUnhealthy int
@@ -1679,9 +1679,9 @@ var _ = Describe("Fence flow with real SBD agent", func() {
 				Expect(mockHeartbeatDevice.WritePeerHeartbeat(worker1ID, ts+uint64(round), uint64(round+1))).To(Succeed())
 				Expect(mockHeartbeatDevice.WritePeerHeartbeat(worker2ID, ts+uint64(round), uint64(round+1))).To(Succeed())
 			}
-			By("Creating mock event recorder and SBDConfig for event verification")
+			By("Creating mock event recorder and StorageBasedRemediationConfig for event verification")
 			mockRecorder = mocks.NewMockEventRecorder()
-			recorderObject = &medik8sv1alpha1.SBDConfig{
+			recorderObject = &medik8sv1alpha1.StorageBasedRemediationConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: fenceFlowUnhealthyPrefix + "config", Namespace: "default"},
 			}
 			By("Creating real SBD agent (not detect-only) and overriding recorder")

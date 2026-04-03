@@ -262,11 +262,11 @@ func printResults(result *odf.SetupResult) {
 	}
 
 	fmt.Println("\n✅ Your cluster now has CephFS ReadWriteMany (RWX) storage!")
-	fmt.Printf("   Use StorageClass '%s' in your SBDConfig for shared storage.\n", result.StorageClassName)
-	fmt.Println("\n📖 Example SBDConfig configuration:")
+	fmt.Printf("   Use StorageClass '%s' in your StorageBasedRemediationConfig for shared storage.\n", result.StorageClassName)
+	fmt.Println("\n📖 Example StorageBasedRemediationConfig configuration:")
 	fmt.Printf(`
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
-kind: SBDConfig
+kind: StorageBasedRemediationConfig
 metadata:
   name: sbd-with-odf
 spec:

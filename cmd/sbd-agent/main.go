@@ -62,7 +62,7 @@ import (
 )
 
 // RBAC permissions for SBD Agent
-// The agent reads SBDConfig, sets SBRStorageUnhealthy node condition for unhealthy peers, and reconciles StorageBasedRemediation CRs (created by NHC) for fencing.
+// The agent reads StorageBasedRemediationConfig, sets SBRStorageUnhealthy node condition for unhealthy peers, and reconciles StorageBasedRemediation CRs (created by NHC) for fencing.
 // +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=sbdconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=sbdconfigs/status,verbs=get
 // +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=storagebasedremediations,verbs=get;list;watch;update;patch
@@ -661,18 +661,18 @@ func NewSBDAgentWithWatchdog(
 		return nil, fmt.Errorf("failed to initialize controller manager: %w", err)
 	}
 	sbdAgent.recorder = sbdAgent.controllerManager.GetEventRecorderFor("sbd-agent")
-	// Get the first SBDConfig object from the POD_NAMESPACE
-	sbdConfigs := &v1alpha1.SBDConfigList{}
+	// Get the first StorageBasedRemediationConfig object from the POD_NAMESPACE
+	sbdConfigs := &v1alpha1.StorageBasedRemediationConfigList{}
 	if err := sbdAgent.k8sClient.List(
 		sbdAgent.ctx,
 		sbdConfigs,
 		client.InNamespace(os.Getenv("POD_NAMESPACE")),
 	); err != nil {
-		logger.Error(err, "Failed to list SBDConfig objects")
+		logger.Error(err, "Failed to list StorageBasedRemediationConfig objects")
 	} else if len(sbdConfigs.Items) > 0 {
 		sbdAgent.recorderObject = &sbdConfigs.Items[0]
 	} else {
-		logger.Info("No SBDConfig found in namespace", "namespace", os.Getenv("POD_NAMESPACE"))
+		logger.Info("No StorageBasedRemediationConfig found in namespace", "namespace", os.Getenv("POD_NAMESPACE"))
 		sbdAgent.recorderObject = nil
 	}
 	if sbdAgent.recorder != nil && sbdAgent.recorderObject != nil {

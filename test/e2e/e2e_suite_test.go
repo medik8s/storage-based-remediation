@@ -92,7 +92,7 @@ var _ = BeforeSuite(func() {
 	By("Cleaning up previous test attempts")
 	cleanupTestArtifacts(testNamespace)
 	utils.WaitForNodesReady(testNamespace, "10m", "30s", true)
-	utils.CleanupSBDConfigs(testNamespace)
+	utils.CleanupStorageBasedRemediationConfigs(testNamespace)
 
 	By("Complete: Cleaning up previous test attempts")
 })
@@ -117,7 +117,7 @@ var _ = AfterEach(func() {
 	utils.WaitForNodesReady(testNamespace, "10m", "30s", false)
 	debugCollector := testClients.NewDebugCollector(testNamespace.ArtifactsDir)
 	debugCollector.CollectAgentLogs(testNamespace.Name)
-	utils.CleanupSBDConfigs(testNamespace)
+	utils.CleanupStorageBasedRemediationConfigs(testNamespace)
 })
 
 func createReportAndCleanUp() {

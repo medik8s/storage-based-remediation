@@ -31,17 +31,17 @@ var sbdconfiglog = logf.Log.WithName("sbdconfig-resource")
 
 // +kubebuilder:webhook:path=/validate-medik8s-medik8s-io-v1alpha1-sbdconfig,mutating=false,failurePolicy=fail,sideEffects=None,groups=storage-based-remediation.medik8s.io,resources=sbdconfigs,verbs=create;update,versions=v1alpha1,name=vsbdconfig.kb.io,admissionReviewVersions=v1
 
-// SBDConfigValidator implements admission webhook validation for SBDConfig
-type SBDConfigValidator struct{}
+// StorageBasedRemediationConfigValidator implements admission webhook validation for StorageBasedRemediationConfig
+type StorageBasedRemediationConfigValidator struct{}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
-func (v *SBDConfigValidator) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	sbdConfig := obj.(*SBDConfig)
+func (v *StorageBasedRemediationConfigValidator) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+	sbdConfig := obj.(*StorageBasedRemediationConfig)
 	sbdconfiglog.Info("validate create", "name", sbdConfig.Name, "namespace", sbdConfig.Namespace)
 
-	// Validate the SBDConfig spec
+	// Validate the StorageBasedRemediationConfig spec
 	if err := sbdConfig.Spec.ValidateAll(); err != nil {
-		return nil, fmt.Errorf("SBDConfig spec validation failed: %w", err)
+		return nil, fmt.Errorf("StorageBasedRemediationConfig spec validation failed: %w", err)
 	}
 
 	// TODO: Add node selector overlap validation once we can access the client
@@ -52,16 +52,16 @@ func (v *SBDConfigValidator) ValidateCreate(ctx context.Context, obj runtime.Obj
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
-func (v *SBDConfigValidator) ValidateUpdate(
+func (v *StorageBasedRemediationConfigValidator) ValidateUpdate(
 	ctx context.Context,
 	oldObj, newObj runtime.Object,
 ) (admission.Warnings, error) {
-	sbdConfig := newObj.(*SBDConfig)
+	sbdConfig := newObj.(*StorageBasedRemediationConfig)
 	sbdconfiglog.Info("validate update", "name", sbdConfig.Name, "namespace", sbdConfig.Namespace)
 
-	// Validate the SBDConfig spec
+	// Validate the StorageBasedRemediationConfig spec
 	if err := sbdConfig.Spec.ValidateAll(); err != nil {
-		return nil, fmt.Errorf("SBDConfig spec validation failed: %w", err)
+		return nil, fmt.Errorf("StorageBasedRemediationConfig spec validation failed: %w", err)
 	}
 
 	// TODO: Add node selector overlap validation once we can access the client
@@ -72,8 +72,8 @@ func (v *SBDConfigValidator) ValidateUpdate(
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type
-func (v *SBDConfigValidator) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	sbdConfig := obj.(*SBDConfig)
+func (v *StorageBasedRemediationConfigValidator) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+	sbdConfig := obj.(*StorageBasedRemediationConfig)
 	sbdconfiglog.Info("validate delete", "name", sbdConfig.Name, "namespace", sbdConfig.Namespace)
 
 	// No validation needed for deletion
@@ -81,9 +81,9 @@ func (v *SBDConfigValidator) ValidateDelete(ctx context.Context, obj runtime.Obj
 }
 
 // SetupWithManager sets up the webhook with the Manager.
-func (v *SBDConfigValidator) SetupWithManager(mgr ctrl.Manager) error {
+func (v *StorageBasedRemediationConfigValidator) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).
-		For(&SBDConfig{}).
+		For(&StorageBasedRemediationConfig{}).
 		WithValidator(v).
 		Complete()
 }

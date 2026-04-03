@@ -13,7 +13,7 @@ resources:
   controller: true
   domain: medik8s.io
   group: storage-based-remediation
-  kind: SBDConfig
+  kind: StorageBasedRemediationConfig
   path: github.com/medik8s/storage-based-remediation/api/v1alpha1
   version: v1alpha1
 - api:

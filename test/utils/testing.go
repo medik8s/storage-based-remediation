@@ -186,18 +186,18 @@ func (tn *TestNamespace) Cleanup() error {
 	return nil
 }
 
-// CreateSBDConfig creates a test SBDConfig with common defaults
-func (tn *TestNamespace) CreateSBDConfig(name string,
-	options ...func(*medik8sv1alpha1.SBDConfig)) (*medik8sv1alpha1.SBDConfig, error) {
-	sbdConfig := &medik8sv1alpha1.SBDConfig{
+// CreateStorageBasedRemediationConfig creates a test StorageBasedRemediationConfig with common defaults
+func (tn *TestNamespace) CreateStorageBasedRemediationConfig(name string,
+	options ...func(*medik8sv1alpha1.StorageBasedRemediationConfig)) (*medik8sv1alpha1.StorageBasedRemediationConfig, error) {
+	sbdConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: tn.Name,
 		},
-		Spec: medik8sv1alpha1.SBDConfigSpec{
+		Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
 			IOTimeout:       &metav1.Duration{Duration: 5 * time.Second},
 			ImagePullPolicy: string(corev1.PullAlways),
-			SbdWatchdogPath: "/dev/watchdog",
+			WatchdogPath:    "/dev/watchdog",
 			LogLevel:        "debug",
 			RebootMethod:    "none", // Always use "none" for testing to prevent actual reboots
 			WatchdogTimeout: &metav1.Duration{Duration: 60 * time.Second},
@@ -215,22 +215,22 @@ func (tn *TestNamespace) CreateSBDConfig(name string,
 
 	err := tn.Clients.Client.Create(tn.Clients.Context, sbdConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create SBDConfig %s: %w", name, err)
+		return nil, fmt.Errorf("failed to create StorageBasedRemediationConfig %s: %w", name, err)
 	}
 
 	return sbdConfig, nil
 }
 
-// CleanupSBDConfig deletes an SBDConfig and waits for cleanup to complete
-func (tn *TestNamespace) CleanupSBDConfig(sbdConfig *medik8sv1alpha1.SBDConfig) error {
+// CleanupStorageBasedRemediationConfig deletes an StorageBasedRemediationConfig and waits for cleanup to complete
+func (tn *TestNamespace) CleanupStorageBasedRemediationConfig(sbdConfig *medik8sv1alpha1.StorageBasedRemediationConfig) error {
 	err := tn.Clients.Client.Delete(tn.Clients.Context, sbdConfig)
 	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete SBDConfig %s: %w", sbdConfig.Name, err)
+		return fmt.Errorf("failed to delete StorageBasedRemediationConfig %s: %w", sbdConfig.Name, err)
 	}
 
-	// Wait for SBDConfig to be fully deleted
+	// Wait for StorageBasedRemediationConfig to be fully deleted
 	Eventually(func() bool {
-		var config medik8sv1alpha1.SBDConfig
+		var config medik8sv1alpha1.StorageBasedRemediationConfig
 		err := tn.Clients.Client.Get(tn.Clients.Context, client.ObjectKey{
 			Name:      sbdConfig.Name,
 			Namespace: tn.Name,
@@ -238,12 +238,12 @@ func (tn *TestNamespace) CleanupSBDConfig(sbdConfig *medik8sv1alpha1.SBDConfig) 
 		if err != nil && errors.IsNotFound(err) {
 			return true
 		} else if err != nil {
-			GinkgoWriter.Printf("Failed to get SBDConfig %s: %v\n", sbdConfig.Name, err)
+			GinkgoWriter.Printf("Failed to get StorageBasedRemediationConfig %s: %v\n", sbdConfig.Name, err)
 			return false
 		}
-		GinkgoWriter.Printf("Got SBDConfig %s\n", sbdConfig.Name)
+		GinkgoWriter.Printf("Got StorageBasedRemediationConfig %s\n", sbdConfig.Name)
 		return false
-	}, time.Minute*5, time.Second*5).Should(BeTrue(), fmt.Sprintf("SBDConfig %s not deleted", sbdConfig.Name))
+	}, time.Minute*5, time.Second*5).Should(BeTrue(), fmt.Sprintf("StorageBasedRemediationConfig %s not deleted", sbdConfig.Name))
 
 	// Wait for associated pods to be terminated, with force deletion for stuck non-running pods
 	podCleanupStartTime := time.Now()
@@ -300,7 +300,7 @@ func (tn *TestNamespace) CleanupSBDConfig(sbdConfig *medik8sv1alpha1.SBDConfig) 
 		}
 
 		return len(pods.Items)
-	}, time.Minute*5, time.Second*10).Should(Equal(0), fmt.Sprintf("SBDConfig %s pods not deleted", sbdConfig.Name))
+	}, time.Minute*5, time.Second*10).Should(Equal(0), fmt.Sprintf("StorageBasedRemediationConfig %s pods not deleted", sbdConfig.Name))
 
 	// Wait for associated DaemonSets to be deleted
 	Eventually(func() int {
@@ -312,7 +312,7 @@ func (tn *TestNamespace) CleanupSBDConfig(sbdConfig *medik8sv1alpha1.SBDConfig) 
 			return -1
 		}
 		return len(daemonSets.Items)
-	}, time.Minute*5, time.Second*5).Should(Equal(0), fmt.Sprintf("SBDConfig %s DaemonSets not deleted", sbdConfig.Name))
+	}, time.Minute*5, time.Second*5).Should(Equal(0), fmt.Sprintf("StorageBasedRemediationConfig %s DaemonSets not deleted", sbdConfig.Name))
 
 	return nil
 }
@@ -775,7 +775,7 @@ func (dc *DebugCollector) collectJobPodLogs(namespace, jobName string) {
 
 // CollectSBDRemediations collects StorageBasedRemediation CRs
 //
-//nolint:dupl // similar to CollectSBDConfigs; kept distinct for clarity
+//nolint:dupl // similar to CollectStorageBasedRemediationConfigs; kept distinct for clarity
 func (dc *DebugCollector) CollectSBDRemediations(namespace string) {
 	By(fmt.Sprintf("Fetching SBDRemediations in namespace %s", namespace))
 	remediations := &medik8sv1alpha1.StorageBasedRemediationList{}
@@ -798,12 +798,12 @@ func (dc *DebugCollector) CollectSBDRemediations(namespace string) {
 	}
 }
 
-// CollectSBDConfigs collects SBDConfig CRs
+// CollectStorageBasedRemediationConfigs collects StorageBasedRemediationConfig CRs
 //
 //nolint:dupl // similar to CollectSBDRemediations; kept distinct for clarity
-func (dc *DebugCollector) CollectSBDConfigs(namespace string) {
-	By(fmt.Sprintf("Fetching SBDConfigs in namespace %s", namespace))
-	configs := &medik8sv1alpha1.SBDConfigList{}
+func (dc *DebugCollector) CollectStorageBasedRemediationConfigs(namespace string) {
+	By(fmt.Sprintf("Fetching StorageBasedRemediationConfigs in namespace %s", namespace))
+	configs := &medik8sv1alpha1.StorageBasedRemediationConfigList{}
 	err := dc.Clients.Client.List(dc.Clients.Context, configs, client.InNamespace(namespace))
 	if err == nil {
 		for _, config := range configs.Items {
@@ -813,10 +813,10 @@ func (dc *DebugCollector) CollectSBDConfigs(namespace string) {
 				if f, fileErr := os.Create(logFileName); fileErr == nil {
 					defer func() { _ = f.Close() }()
 					_, _ = f.Write(data)
-					GinkgoWriter.Printf("SBDConfig %s saved to %s\n", config.Name, logFileName)
+					GinkgoWriter.Printf("StorageBasedRemediationConfig %s saved to %s\n", config.Name, logFileName)
 				} else {
-					GinkgoWriter.Printf("Failed to write SBDConfig to file %s: %s\n", logFileName, fileErr)
-					GinkgoWriter.Printf("SBDConfig %s:\n%s\n", config.Name, string(data))
+					GinkgoWriter.Printf("Failed to write StorageBasedRemediationConfig to file %s: %s\n", logFileName, fileErr)
+					GinkgoWriter.Printf("StorageBasedRemediationConfig %s:\n%s\n", config.Name, string(data))
 				}
 			}
 		}
@@ -1227,19 +1227,19 @@ func (tn *TestNamespace) NewSBDAgentValidator() *SBDAgentValidator {
 
 // ValidateAgentDeploymentOptions configures the validation behavior
 type ValidateAgentDeploymentOptions struct {
-	SBDConfigName    string
-	ExpectedArgs     []string
-	MinReadyPods     int
-	DaemonSetTimeout time.Duration
-	PodReadyTimeout  time.Duration
-	NodeStableTime   time.Duration
-	LogCheckTimeout  time.Duration
+	StorageBasedRemediationConfigName string
+	ExpectedArgs                      []string
+	MinReadyPods                      int
+	DaemonSetTimeout                  time.Duration
+	PodReadyTimeout                   time.Duration
+	NodeStableTime                    time.Duration
+	LogCheckTimeout                   time.Duration
 }
 
 // DefaultValidateAgentDeploymentOptions returns sensible defaults for validation
 func DefaultValidateAgentDeploymentOptions(sbdConfigName string) ValidateAgentDeploymentOptions {
 	return ValidateAgentDeploymentOptions{
-		SBDConfigName: sbdConfigName,
+		StorageBasedRemediationConfigName: sbdConfigName,
 		ExpectedArgs: []string{
 			"--watchdog-path=/dev/watchdog",
 			"--watchdog-timeout=1m30s",
@@ -1256,7 +1256,7 @@ func DefaultValidateAgentDeploymentOptions(sbdConfigName string) ValidateAgentDe
 func (sav *SBDAgentValidator) ValidateAgentDeployment(opts ValidateAgentDeploymentOptions) error {
 	By("waiting for SBD agent DaemonSet to be created")
 	dsChecker := sav.TestNS.NewDaemonSetChecker()
-	daemonSet, err := dsChecker.WaitForDaemonSet(map[string]string{"sbdconfig": opts.SBDConfigName}, opts.DaemonSetTimeout)
+	daemonSet, err := dsChecker.WaitForDaemonSet(map[string]string{"sbdconfig": opts.StorageBasedRemediationConfigName}, opts.DaemonSetTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to wait for DaemonSet: %w", err)
 	}
@@ -1270,7 +1270,7 @@ func (sav *SBDAgentValidator) ValidateAgentDeployment(opts ValidateAgentDeployme
 	}
 
 	By("waiting for SBD agent pods to become ready")
-	podChecker := sav.TestNS.NewPodStatusChecker(map[string]string{"sbdconfig": opts.SBDConfigName})
+	podChecker := sav.TestNS.NewPodStatusChecker(map[string]string{"sbdconfig": opts.StorageBasedRemediationConfigName})
 	err = podChecker.WaitForPodsReady(opts.MinReadyPods, opts.PodReadyTimeout)
 	if err != nil {
 		return fmt.Errorf("pods failed to become ready: %w", err)
@@ -1280,7 +1280,7 @@ func (sav *SBDAgentValidator) ValidateAgentDeployment(opts ValidateAgentDeployme
 	pods := &corev1.PodList{}
 	err = sav.Clients.Client.List(sav.Clients.Context, pods,
 		client.InNamespace(sav.TestNS.Name),
-		client.MatchingLabels{"sbdconfig": opts.SBDConfigName})
+		client.MatchingLabels{"sbdconfig": opts.StorageBasedRemediationConfigName})
 	if err != nil {
 		return fmt.Errorf("failed to list pods: %w", err)
 	}
@@ -1378,13 +1378,13 @@ func (sav *SBDAgentValidator) ValidateNoNodeReboots(opts ValidateAgentDeployment
 
 	By("waiting for SBD agent DaemonSet to be created")
 	dsChecker := sav.TestNS.NewDaemonSetChecker()
-	_, err = dsChecker.WaitForDaemonSet(map[string]string{"sbdconfig": opts.SBDConfigName}, opts.DaemonSetTimeout)
+	_, err = dsChecker.WaitForDaemonSet(map[string]string{"sbdconfig": opts.StorageBasedRemediationConfigName}, opts.DaemonSetTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to wait for DaemonSet: %w", err)
 	}
 
 	By("waiting for SBD agent pods to become ready")
-	podChecker := sav.TestNS.NewPodStatusChecker(map[string]string{"sbdconfig": opts.SBDConfigName})
+	podChecker := sav.TestNS.NewPodStatusChecker(map[string]string{"sbdconfig": opts.StorageBasedRemediationConfigName})
 	err = podChecker.WaitForPodsReady(opts.MinReadyPods, opts.PodReadyTimeout)
 	if err != nil {
 		return fmt.Errorf("pods failed to become ready: %w", err)
@@ -1409,17 +1409,17 @@ func (sav *SBDAgentValidator) ValidateNoNodeReboots(opts ValidateAgentDeployment
 	return nil
 }
 
-func CleanupSBDConfigs(testNamespace *TestNamespace) {
+func CleanupStorageBasedRemediationConfigs(testNamespace *TestNamespace) {
 	By("Cleaning up SBD configuration and waiting for agents to terminate")
-	// Clean up all SBDConfigs in the test namespace
-	sbdConfigs := &medik8sv1alpha1.SBDConfigList{}
+	// Clean up all StorageBasedRemediationConfigs in the test namespace
+	sbdConfigs := &medik8sv1alpha1.StorageBasedRemediationConfigList{}
 	err := testNamespace.Clients.Client.List(
 		testNamespace.Clients.Context, sbdConfigs, client.InNamespace(testNamespace.Name))
 	if err == nil {
 		for _, config := range sbdConfigs.Items {
-			err := testNamespace.CleanupSBDConfig(&config)
+			err := testNamespace.CleanupStorageBasedRemediationConfig(&config)
 			if err != nil {
-				GinkgoWriter.Printf("Warning: failed to cleanup SBDConfig %s: %v\n", config.Name, err)
+				GinkgoWriter.Printf("Warning: failed to cleanup StorageBasedRemediationConfig %s: %v\n", config.Name, err)
 			}
 		}
 	}
@@ -1505,16 +1505,16 @@ func SuiteSetup(prefix string) (*TestNamespace, error) {
 	apiResourceList, err := testClients.Clientset.Discovery().ServerResourcesForGroupVersion("storage-based-remediation.medik8s.io/v1alpha1")
 	Expect(err).NotTo(HaveOccurred(), "Failed to get API resources for storage-based-remediation.medik8s.io/v1alpha1")
 
-	var foundSBDConfig, foundSBDRemediation bool
+	var foundStorageBasedRemediationConfig, foundSBDRemediation bool
 	for _, resource := range apiResourceList.APIResources {
-		if resource.Kind == "SBDConfig" {
-			foundSBDConfig = true
+		if resource.Kind == "StorageBasedRemediationConfig" {
+			foundStorageBasedRemediationConfig = true
 		}
 		if resource.Kind == "StorageBasedRemediation" {
 			foundSBDRemediation = true
 		}
 	}
-	Expect(foundSBDConfig).To(BeTrue(), "Expected SBDConfig CRD to be installed (should be done by Makefile setup)")
+	Expect(foundStorageBasedRemediationConfig).To(BeTrue(), "Expected StorageBasedRemediationConfig CRD to be installed (should be done by Makefile setup)")
 	Expect(foundSBDRemediation).To(BeTrue(),
 		"Expected StorageBasedRemediation CRD to be installed (should be done by Makefile setup)")
 
@@ -1644,7 +1644,7 @@ func DescribeEnvironment(testClients *TestClients, testNamespace *TestNamespace)
 				len(podList.Items), testNamespace.Name)
 		}
 
-		debugCollector.CollectSBDConfigs(testNamespace.Name)
+		debugCollector.CollectStorageBasedRemediationConfigs(testNamespace.Name)
 		debugCollector.CollectSBDRemediations(testNamespace.Name)
 
 		By("validating that SBD agent pods are running as expected")

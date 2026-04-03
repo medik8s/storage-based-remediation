@@ -89,7 +89,7 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.BoolVar(&enableWebhooks, "enable-webhooks", true,
-		"If set, admission webhooks will be enabled for SBDConfig validation")
+		"If set, admission webhooks will be enabled for StorageBasedRemediationConfig validation")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -258,12 +258,12 @@ func main() {
 		setupLog.Info("Leader election DISABLED - this instance will handle SBD config controller")
 	}
 
-	if err := (&controller.SBDConfigReconciler{
+	if err := (&controller.StorageBasedRemediationConfigReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("sbd-config-controller"),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "SBDConfig")
+		setupLog.Error(err, "unable to create controller", "controller", "StorageBasedRemediationConfig")
 		os.Exit(1)
 	}
 
@@ -271,12 +271,12 @@ func main() {
 
 	// Set up admission webhooks (only if enabled)
 	if enableWebhooks {
-		sbdConfigValidator := &medik8sv1alpha1.SBDConfigValidator{}
+		sbdConfigValidator := &medik8sv1alpha1.StorageBasedRemediationConfigValidator{}
 		if err := sbdConfigValidator.SetupWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create webhook", "webhook", "SBDConfig")
+			setupLog.Error(err, "unable to create webhook", "webhook", "StorageBasedRemediationConfig")
 			os.Exit(1)
 		}
-		setupLog.Info("Admission webhooks enabled for SBDConfig validation")
+		setupLog.Info("Admission webhooks enabled for StorageBasedRemediationConfig validation")
 	} else {
 		setupLog.Info("Admission webhooks disabled - validation will be skipped")
 	}

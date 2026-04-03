@@ -129,7 +129,7 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 		})
 
 		It("should handle basic SBD configuration and agent deployment", func() {
-			testBasicSBDConfiguration()
+			testBasicStorageBasedRemediationConfiguration()
 		})
 
 		It("should inspect SBD node mapping and device state", func() {
@@ -261,8 +261,8 @@ func selectWorkerNode(cluster ClusterInfo) NodeInfo {
 	return selectedNode
 }
 
-func testBasicSBDConfiguration() {
-	By("Creating SBDConfig with proper agent deployment")
+func testBasicStorageBasedRemediationConfiguration() {
+	By("Creating StorageBasedRemediationConfig with proper agent deployment")
 
 	// Look for a storage class that supports RWX (ReadWriteMany) access mode
 	By("Looking for RWX-compatible storage class")
@@ -288,13 +288,13 @@ func testBasicSBDConfiguration() {
 	GinkgoWriter.Printf("Selected storage class for testing: %s\n", testStorageClassName)
 
 	name := fmt.Sprintf("test-sbd-config-%d", time.Now().UnixNano()/1000000000)
-	sbdConfig, err := testNamespace.CreateSBDConfig(name, func(config *medik8sv1alpha1.SBDConfig) {
-		config.Spec.SbdWatchdogPath = "/dev/watchdog"
+	sbdConfig, err := testNamespace.CreateStorageBasedRemediationConfig(name, func(config *medik8sv1alpha1.StorageBasedRemediationConfig) {
+		config.Spec.WatchdogPath = "/dev/watchdog"
 		config.Spec.SharedStorageClass = testStorageClassName
 		config.Spec.StaleNodeTimeout = &metav1.Duration{Duration: 2 * time.Hour}
 		config.Spec.WatchdogTimeout = &metav1.Duration{Duration: 90 * time.Second}
 	})
-	Expect(err).NotTo(HaveOccurred(), "SBDConfig creation failed")
+	Expect(err).NotTo(HaveOccurred(), "StorageBasedRemediationConfig creation failed")
 
 	validator := testNamespace.NewSBDAgentValidator()
 	opts := utils.DefaultValidateAgentDeploymentOptions(sbdConfig.Name)
@@ -369,15 +369,15 @@ func testIncompatibleStorageClass() {
 		}
 	}()
 
-	By("Creating SBDConfig with incompatible storage class")
-	sbdConfig, err := testNamespace.CreateSBDConfig("test-bad-storage-class", func(config *medik8sv1alpha1.SBDConfig) {
-		config.Spec.SbdWatchdogPath = "/dev/watchdog"
+	By("Creating StorageBasedRemediationConfig with incompatible storage class")
+	sbdConfig, err := testNamespace.CreateStorageBasedRemediationConfig("test-bad-storage-class", func(config *medik8sv1alpha1.StorageBasedRemediationConfig) {
+		config.Spec.WatchdogPath = "/dev/watchdog"
 		config.Spec.SharedStorageClass = gp3StorageClass.Name
 		config.Spec.StaleNodeTimeout = &metav1.Duration{Duration: 2 * time.Hour}
 		config.Spec.WatchdogTimeout = &metav1.Duration{Duration: 90 * time.Second}
 	})
 
-	By("Expecting SBDConfig creation to succeed initially")
+	By("Expecting StorageBasedRemediationConfig creation to succeed initially")
 	Expect(err).NotTo(HaveOccurred())
 
 	By("Waiting for controller to detect storage class incompatibility")
@@ -658,7 +658,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 		"AWS must be initialized for storage access interruption test")
 
 	By("Setting up SBD configuration for storage access test")
-	testBasicSBDConfiguration()
+	testBasicStorageBasedRemediationConfiguration()
 
 	// Select a random actual worker node for testing (not control plane)
 	targetNode := selectWorkerNode(cluster)
@@ -764,7 +764,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 func testKubeletCommunicationFailure(cluster ClusterInfo) {
 
 	By("Setting up SBD configuration for kubelet communication test")
-	testBasicSBDConfiguration()
+	testBasicStorageBasedRemediationConfiguration()
 
 	// Select a random actual worker node for testing (not control plane)
 	targetNode := selectWorkerNode(cluster)
@@ -861,7 +861,7 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 
 func testFakeRemediation() {
 	By("Setting up SBD configuration for remediation loop test")
-	testBasicSBDConfiguration()
+	testBasicStorageBasedRemediationConfiguration()
 
 	// Create StorageBasedRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
 	By("Creating StorageBasedRemediation CR to simulate external operator behavior")
@@ -883,7 +883,7 @@ func testFakeRemediation() {
 
 func testNodeRemediation(cluster ClusterInfo) {
 	By("Setting up SBD configuration for node remediation test")
-	testBasicSBDConfiguration()
+	testBasicStorageBasedRemediationConfiguration()
 	// Determine target node for remediation (set in BeforeEach or fallback to random worker)
 	var nodeName string
 	if selected.Metadata.Name != "" {
@@ -1079,7 +1079,7 @@ func testNodeRemediation(cluster ClusterInfo) {
 
 func testSBDInspection() {
 	By("Setting up SBD configuration for inspection test")
-	testBasicSBDConfiguration()
+	testBasicStorageBasedRemediationConfiguration()
 
 	// Find an SBD agent pod to inspect
 	By("Finding SBD agent pod for inspection")
@@ -1199,7 +1199,7 @@ func testSBDInspection() {
 
 func testSBDAgentCrash(cluster ClusterInfo) {
 	By("Setting up SBD configuration for agent crash test")
-	testBasicSBDConfiguration()
+	testBasicStorageBasedRemediationConfiguration()
 
 	targetNode := selectWorkerNode(cluster)
 	By(fmt.Sprintf("Testing SBD agent crash and recovery on verified worker node %s", targetNode.Metadata.Name))
@@ -1265,7 +1265,7 @@ func testSBDAgentCrash(cluster ClusterInfo) {
 
 func testNonFencingFailure(cluster ClusterInfo) {
 	By("Testing non-fencing failure scenario")
-	testBasicSBDConfiguration()
+	testBasicStorageBasedRemediationConfiguration()
 
 	By("Creating a temporary resource constraint that should not trigger fencing")
 	// Create a pod that uses resources but doesn't cause critical failure

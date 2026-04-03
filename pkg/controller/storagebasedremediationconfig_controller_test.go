@@ -54,21 +54,21 @@ func checkForDefaultReconcile(counter int, result reconcile.Result, err error) {
 	Expect(counter).To(BeNumerically("==", 6))
 }
 
-func defaultSBDConfig(resourceName, namespace string) *medik8sv1alpha1.SBDConfig {
-	return &medik8sv1alpha1.SBDConfig{
+func defaultStorageBasedRemediationConfig(resourceName, namespace string) *medik8sv1alpha1.StorageBasedRemediationConfig {
+	return &medik8sv1alpha1.StorageBasedRemediationConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      resourceName,
 			Namespace: namespace,
 		},
-		Spec: medik8sv1alpha1.SBDConfigSpec{
-			SbdWatchdogPath:    "/dev/watchdog",
+		Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+			WatchdogPath:       "/dev/watchdog",
 			SharedStorageClass: validSharedStorageClass,
 			Image:              "test-sbd-agent:latest",
 		},
 	}
 }
 func runReconcile(
-	ctx context.Context, controllerReconciler *SBDConfigReconciler, typeNamespacedName types.NamespacedName) (
+	ctx context.Context, controllerReconciler *StorageBasedRemediationConfigReconciler, typeNamespacedName types.NamespacedName) (
 	int, reconcile.Result, error) {
 	var result reconcile.Result
 	var err error
@@ -91,7 +91,7 @@ func runReconcile(
 
 func reconcileWithJob(
 	ctx context.Context,
-	controllerReconciler *SBDConfigReconciler,
+	controllerReconciler *StorageBasedRemediationConfigReconciler,
 	typeNamespacedName types.NamespacedName,
 ) (int, reconcile.Result, error) {
 	var result reconcile.Result
@@ -118,7 +118,7 @@ func reconcileWithJob(
 		Expect(jobs.Items).To(HaveLen(1))
 		Expect(job.Status.Succeeded).To(BeNumerically("==", 1))
 
-		By("Reconciling the SBDConfig again")
+		By("Reconciling the StorageBasedRemediationConfig again")
 		partial := 0
 		partial, result, err = runReconcile(ctx, controllerReconciler, typeNamespacedName)
 		counter = counter + partial
@@ -126,7 +126,7 @@ func reconcileWithJob(
 	return counter, result, err
 }
 
-var _ = Describe("SBDConfig Controller", func() {
+var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 	Context("When reconciling a resource", func() {
 		const (
 			resourceName = "test-sbdconfig"
@@ -141,7 +141,7 @@ var _ = Describe("SBDConfig Controller", func() {
 		// typeNamespacedName will be set dynamically in tests since namespace is set in BeforeEach
 		var typeNamespacedName types.NamespacedName
 
-		var controllerReconciler *SBDConfigReconciler
+		var controllerReconciler *StorageBasedRemediationConfigReconciler
 
 		BeforeEach(func() {
 			// Generate unique namespace for each test to avoid conflicts
@@ -162,7 +162,7 @@ var _ = Describe("SBDConfig Controller", func() {
 			Expect(k8sClient.Create(ctx, testNamespace)).To(Succeed())
 
 			By("initializing controller reconciler")
-			controllerReconciler = &SBDConfigReconciler{
+			controllerReconciler = &StorageBasedRemediationConfigReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
@@ -200,8 +200,8 @@ var _ = Describe("SBDConfig Controller", func() {
 		})
 
 		AfterEach(func() {
-			By("cleaning up the specific resource instance SBDConfig")
-			resource := &medik8sv1alpha1.SBDConfig{}
+			By("cleaning up the specific resource instance StorageBasedRemediationConfig")
+			resource := &medik8sv1alpha1.StorageBasedRemediationConfig{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			if err == nil {
 				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
@@ -216,8 +216,8 @@ var _ = Describe("SBDConfig Controller", func() {
 		})
 
 		It("should successfully reconcile an existing resource", func() {
-			By("creating the custom resource for the Kind SBDConfig")
-			resource := defaultSBDConfig(resourceName, namespace)
+			By("creating the custom resource for the Kind StorageBasedRemediationConfig")
+			resource := defaultStorageBasedRemediationConfig(resourceName, namespace)
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
 			By("reconciling the created resource")
@@ -225,7 +225,7 @@ var _ = Describe("SBDConfig Controller", func() {
 			checkForDefaultReconcile(counter, result, err)
 
 			By("verifying the resource still exists")
-			sbdconfig := &medik8sv1alpha1.SBDConfig{}
+			sbdconfig := &medik8sv1alpha1.StorageBasedRemediationConfig{}
 			err = k8sClient.Get(ctx, typeNamespacedName, sbdconfig)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(sbdconfig.Name).To(Equal(resourceName))
@@ -244,8 +244,8 @@ var _ = Describe("SBDConfig Controller", func() {
 		})
 
 		It("should configure sbd-device flag correctly for shared storage", func() {
-			By("creating an SBDConfig with shared storage")
-			resource := defaultSBDConfig(resourceName, namespace)
+			By("creating an StorageBasedRemediationConfig with shared storage")
+			resource := defaultStorageBasedRemediationConfig(resourceName, namespace)
 
 			By("testing the buildSBDAgentArgs method")
 			args := controllerReconciler.buildSBDAgentArgs(resource)
@@ -261,8 +261,8 @@ var _ = Describe("SBDConfig Controller", func() {
 		})
 
 		It("should successfully reconcile after resource deletion", func() {
-			By("creating the custom resource for the Kind SBDConfig")
-			resource := defaultSBDConfig(resourceName, namespace)
+			By("creating the custom resource for the Kind StorageBasedRemediationConfig")
+			resource := defaultStorageBasedRemediationConfig(resourceName, namespace)
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
 			By("deleting the resource first")
@@ -291,7 +291,7 @@ var _ = Describe("SBDConfig Controller", func() {
 		// typeNamespacedName will be set dynamically in BeforeEach
 		var typeNamespacedName types.NamespacedName
 
-		var controllerReconciler *SBDConfigReconciler
+		var controllerReconciler *StorageBasedRemediationConfigReconciler
 
 		BeforeEach(func() {
 			// Generate unique namespace for each test to avoid conflicts
@@ -312,15 +312,15 @@ var _ = Describe("SBDConfig Controller", func() {
 			Expect(k8sClient.Create(ctx, testNamespace)).To(Succeed())
 
 			By("initializing controller reconciler")
-			controllerReconciler = &SBDConfigReconciler{
+			controllerReconciler = &StorageBasedRemediationConfigReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
 		})
 
 		AfterEach(func() {
-			By("cleaning up the specific resource instance SBDConfig")
-			resource := &medik8sv1alpha1.SBDConfig{}
+			By("cleaning up the specific resource instance StorageBasedRemediationConfig")
+			resource := &medik8sv1alpha1.StorageBasedRemediationConfig{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			if err == nil {
 				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
@@ -334,12 +334,12 @@ var _ = Describe("SBDConfig Controller", func() {
 			}
 		})
 
-		It("should create a DaemonSet when SBDConfig is applied", func() {
-			By("creating the SBDConfig resource")
-			sbdConfig := defaultSBDConfig(resourceName, namespace)
+		It("should create a DaemonSet when StorageBasedRemediationConfig is applied", func() {
+			By("creating the StorageBasedRemediationConfig resource")
+			sbdConfig := defaultStorageBasedRemediationConfig(resourceName, namespace)
 			Expect(k8sClient.Create(ctx, sbdConfig)).To(Succeed())
 
-			By("reconciling the SBDConfig multiple times for finalizer and resource creation")
+			By("reconciling the StorageBasedRemediationConfig multiple times for finalizer and resource creation")
 			counter, result, err := reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
 			checkForDefaultReconcile(counter, result, err)
 
@@ -363,7 +363,7 @@ var _ = Describe("SBDConfig Controller", func() {
 			By("verifying the DaemonSet has the correct owner reference")
 			Expect(daemonSet.OwnerReferences).To(HaveLen(1))
 			Expect(daemonSet.OwnerReferences[0].Name).To(Equal(resourceName))
-			Expect(daemonSet.OwnerReferences[0].Kind).To(Equal("SBDConfig"))
+			Expect(daemonSet.OwnerReferences[0].Kind).To(Equal("StorageBasedRemediationConfig"))
 			Expect(*daemonSet.OwnerReferences[0].Controller).To(BeTrue())
 
 			By("verifying the DaemonSet pod template has correct configuration")
@@ -393,13 +393,13 @@ var _ = Describe("SBDConfig Controller", func() {
 			Expect(*container.SecurityContext.RunAsUser).To(BeEquivalentTo(0))
 		})
 
-		It("should update DaemonSet when SBDConfig is modified", func() {
-			By("creating the SBDConfig resource")
-			sbdConfig := defaultSBDConfig(resourceName, namespace)
+		It("should update DaemonSet when StorageBasedRemediationConfig is modified", func() {
+			By("creating the StorageBasedRemediationConfig resource")
+			sbdConfig := defaultStorageBasedRemediationConfig(resourceName, namespace)
 			sbdConfig.Spec.Image = "test-sbd-agent:v1.0.0"
 			Expect(k8sClient.Create(ctx, sbdConfig)).To(Succeed())
 
-			By("reconciling the SBDConfig multiple times for finalizer and resource creation")
+			By("reconciling the StorageBasedRemediationConfig multiple times for finalizer and resource creation")
 			counter, result, err := reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
 			checkForDefaultReconcile(counter, result, err)
 
@@ -414,15 +414,15 @@ var _ = Describe("SBDConfig Controller", func() {
 			}, timeout, interval).Should(Succeed())
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].Image).To(Equal("test-sbd-agent:v1.0.0"))
 
-			By("updating the SBDConfig image")
+			By("updating the StorageBasedRemediationConfig image")
 			// Fetch the latest version to avoid conflicts
 			err = k8sClient.Get(ctx, typeNamespacedName, sbdConfig)
 			Expect(err).NotTo(HaveOccurred())
 			sbdConfig.Spec.Image = "test-sbd-agent:v2.0.0"
-			sbdConfig.Spec.SbdWatchdogPath = "/dev/watchdog1"
+			sbdConfig.Spec.WatchdogPath = "/dev/watchdog1"
 			Expect(k8sClient.Update(ctx, sbdConfig)).To(Succeed())
 
-			By("reconciling the updated SBDConfig")
+			By("reconciling the updated StorageBasedRemediationConfig")
 			counter, result, err = runReconcile(ctx, controllerReconciler, typeNamespacedName)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(Equal(reconcile.Result{}))
@@ -453,11 +453,11 @@ var _ = Describe("SBDConfig Controller", func() {
 		})
 
 		It("should set correct owner reference for garbage collection", func() {
-			By("creating the SBDConfig resource")
-			sbdConfig := defaultSBDConfig(resourceName, namespace)
+			By("creating the StorageBasedRemediationConfig resource")
+			sbdConfig := defaultStorageBasedRemediationConfig(resourceName, namespace)
 			Expect(k8sClient.Create(ctx, sbdConfig)).To(Succeed())
 
-			By("reconciling the SBDConfig multiple times for finalizer and resource creation")
+			By("reconciling the StorageBasedRemediationConfig multiple times for finalizer and resource creation")
 			counter, result, err := reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
 			checkForDefaultReconcile(counter, result, err)
 
@@ -479,19 +479,19 @@ var _ = Describe("SBDConfig Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(daemonSet.OwnerReferences).To(HaveLen(1))
 			Expect(daemonSet.OwnerReferences[0].Name).To(Equal(resourceName))
-			Expect(daemonSet.OwnerReferences[0].Kind).To(Equal("SBDConfig"))
+			Expect(daemonSet.OwnerReferences[0].Kind).To(Equal("StorageBasedRemediationConfig"))
 			Expect(*daemonSet.OwnerReferences[0].Controller).To(BeTrue())
 
-			By("deleting the SBDConfig")
+			By("deleting the StorageBasedRemediationConfig")
 			Expect(k8sClient.Delete(ctx, sbdConfig)).To(Succeed())
 
-			By("reconciling the SBDConfig deletion to handle finalizer cleanup")
+			By("reconciling the StorageBasedRemediationConfig deletion to handle finalizer cleanup")
 			counter, result, err = reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
 			Expect(counter).To(BeNumerically("==", 1))
 			Expect(result).To(Equal(reconcile.Result{}))
 			Expect(err).NotTo(HaveOccurred())
 
-			By("verifying the SBDConfig is deleted")
+			By("verifying the StorageBasedRemediationConfig is deleted")
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, typeNamespacedName, sbdConfig)
 				return errors.IsNotFound(err)
@@ -502,12 +502,12 @@ var _ = Describe("SBDConfig Controller", func() {
 		})
 
 		It("should handle default values correctly", func() {
-			By("creating the SBDConfig resource with minimal spec")
-			sbdConfig := defaultSBDConfig(resourceName, namespace)
+			By("creating the StorageBasedRemediationConfig resource with minimal spec")
+			sbdConfig := defaultStorageBasedRemediationConfig(resourceName, namespace)
 			sbdConfig.Spec.Image = "" // no image specified - should use defaults
 			Expect(k8sClient.Create(ctx, sbdConfig)).To(Succeed())
 
-			By("reconciling the SBDConfig multiple times for finalizer and resource creation")
+			By("reconciling the StorageBasedRemediationConfig multiple times for finalizer and resource creation")
 			counter, result, err := reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
 			checkForDefaultReconcile(counter, result, err)
 
@@ -517,7 +517,7 @@ var _ = Describe("SBDConfig Controller", func() {
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
 					Name:      expectedDaemonSetName,
-					Namespace: namespace, // deployed to same namespace as SBDConfig
+					Namespace: namespace, // deployed to same namespace as StorageBasedRemediationConfig
 				}, daemonSet)
 			}, timeout, interval).Should(Succeed())
 
@@ -537,7 +537,7 @@ var _ = Describe("SBDConfig Controller", func() {
 		ctx := context.Background()
 		var typeNamespacedName types.NamespacedName
 
-		var controllerReconciler *SBDConfigReconciler
+		var controllerReconciler *StorageBasedRemediationConfigReconciler
 		var mockRecorder *mocks.MockEventRecorder
 
 		BeforeEach(func() {
@@ -559,7 +559,7 @@ var _ = Describe("SBDConfig Controller", func() {
 			Expect(k8sClient.Create(ctx, testNamespace)).To(Succeed())
 
 			mockRecorder = mocks.NewMockEventRecorder()
-			controllerReconciler = &SBDConfigReconciler{
+			controllerReconciler = &StorageBasedRemediationConfigReconciler{
 				Client:   k8sClient,
 				Scheme:   k8sClient.Scheme(),
 				Recorder: mockRecorder,
@@ -568,7 +568,7 @@ var _ = Describe("SBDConfig Controller", func() {
 
 		AfterEach(func() {
 			// Clean up resources
-			resource := &medik8sv1alpha1.SBDConfig{}
+			resource := &medik8sv1alpha1.StorageBasedRemediationConfig{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			if err == nil {
 				_ = k8sClient.Delete(ctx, resource)
@@ -582,8 +582,8 @@ var _ = Describe("SBDConfig Controller", func() {
 		})
 
 		It("should emit events during successful reconciliation", func() {
-			By("creating the SBDConfig resource")
-			resource := defaultSBDConfig(resourceName, namespace)
+			By("creating the StorageBasedRemediationConfig resource")
+			resource := defaultStorageBasedRemediationConfig(resourceName, namespace)
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
 			By("reconciling the resource multiple times for finalizer and resource creation")
@@ -608,18 +608,18 @@ var _ = Describe("SBDConfig Controller", func() {
 			// Check for reconciliation success event
 			reconcileEvent := false
 			for _, event := range events {
-				if event.Reason == ReasonSBDConfigReconciled && event.EventType == EventTypeNormal {
+				if event.Reason == ReasonStorageBasedRemediationConfigReconciled && event.EventType == EventTypeNormal {
 					reconcileEvent = true
 					Expect(event.Message).To(ContainSubstring(resourceName))
 					break
 				}
 			}
-			Expect(reconcileEvent).To(BeTrue(), "SBDConfig reconciled event should be emitted")
+			Expect(reconcileEvent).To(BeTrue(), "StorageBasedRemediationConfig reconciled event should be emitted")
 		})
 
 		It("should emit events for helper methods", func() {
 			By("testing emitEvent helper")
-			resource := &medik8sv1alpha1.SBDConfig{
+			resource := &medik8sv1alpha1.StorageBasedRemediationConfig{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
@@ -649,7 +649,7 @@ var _ = Describe("SBDConfig Controller", func() {
 			By("setting recorder to nil")
 			controllerReconciler.Recorder = nil
 
-			resource := &medik8sv1alpha1.SBDConfig{
+			resource := &medik8sv1alpha1.StorageBasedRemediationConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName},
 			}
 
@@ -690,7 +690,7 @@ var _ = Describe("SBDConfig Controller", func() {
 		})
 
 		It("should create a controller reconciler successfully", func() {
-			reconciler := &SBDConfigReconciler{
+			reconciler := &StorageBasedRemediationConfigReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
@@ -706,7 +706,7 @@ var _ = Describe("SBDConfig Controller", func() {
 			interval = time.Millisecond * 250
 		)
 
-		var validationReconciler *SBDConfigReconciler
+		var validationReconciler *StorageBasedRemediationConfigReconciler
 		var mockEventRecorder *mocks.MockEventRecorder
 		var validationNamespace string
 
@@ -723,7 +723,7 @@ var _ = Describe("SBDConfig Controller", func() {
 
 			// Create reconciler with mock event recorder
 			mockEventRecorder = mocks.NewMockEventRecorder()
-			validationReconciler = &SBDConfigReconciler{
+			validationReconciler = &StorageBasedRemediationConfigReconciler{
 				Client:   k8sClient,
 				Scheme:   k8sClient.Scheme(),
 				Recorder: mockEventRecorder,
@@ -753,13 +753,13 @@ var _ = Describe("SBDConfig Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, gp3StorageClass)).To(Succeed())
 
-			By("creating SBDConfig with gp3-csi storage class")
-			sbdConfig := &medik8sv1alpha1.SBDConfig{
+			By("creating StorageBasedRemediationConfig with gp3-csi storage class")
+			sbdConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gp3-validation",
 					Namespace: validationNamespace,
 				},
-				Spec: medik8sv1alpha1.SBDConfigSpec{
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
 					SharedStorageClass: "gp3-csi",
 					Image:              "test-sbd-agent:latest",
 				},
@@ -793,13 +793,13 @@ var _ = Describe("SBDConfig Controller", func() {
 		})
 
 		It("should reject non-existent storage class", func() {
-			By("creating SBDConfig with non-existent storage class")
-			sbdConfig := &medik8sv1alpha1.SBDConfig{
+			By("creating StorageBasedRemediationConfig with non-existent storage class")
+			sbdConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-missing-sc",
 					Namespace: validationNamespace,
 				},
-				Spec: medik8sv1alpha1.SBDConfigSpec{
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
 					SharedStorageClass: "non-existent-storage-class",
 					Image:              "test-sbd-agent:latest",
 				},
@@ -829,20 +829,20 @@ var _ = Describe("SBDConfig Controller", func() {
 		})
 
 		It("should skip validation when no shared storage is configured", func() {
-			By("creating SBDConfig without shared storage")
-			sbdConfig := &medik8sv1alpha1.SBDConfig{
+			By("creating StorageBasedRemediationConfig without shared storage")
+			sbdConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-no-shared-storage",
 					Namespace: validationNamespace,
 				},
-				Spec: medik8sv1alpha1.SBDConfigSpec{
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
 					Image: "test-sbd-agent:latest",
 					// No SharedStorageClass specified
 				},
 			}
 			Expect(k8sClient.Create(ctx, sbdConfig)).To(Succeed())
 
-			By("reconciling the SBDConfig")
+			By("reconciling the StorageBasedRemediationConfig")
 			counter, result, err := reconcileWithJob(ctx, validationReconciler, types.NamespacedName{
 				Name:      sbdConfig.Name,
 				Namespace: sbdConfig.Namespace,
@@ -916,20 +916,20 @@ var _ = Describe("SBDConfig Controller", func() {
 				}
 				Expect(k8sClient.Create(ctx, customStorageClass)).To(Succeed())
 
-				By("creating SBDConfig with unknown provisioner")
-				sbdConfig := &medik8sv1alpha1.SBDConfig{
+				By("creating StorageBasedRemediationConfig with unknown provisioner")
+				sbdConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-unknown-provisioner",
 						Namespace: validationNamespace,
 					},
-					Spec: medik8sv1alpha1.SBDConfigSpec{
+					Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
 						SharedStorageClass: "custom-unknown-provisioner",
 						Image:              "test-sbd-agent:latest",
 					},
 				}
 				Expect(k8sClient.Create(ctx, sbdConfig)).To(Succeed())
 
-				By("reconciling the SBDConfig")
+				By("reconciling the StorageBasedRemediationConfig")
 				counter, result, err := runReconcile(ctx, validationReconciler, types.NamespacedName{
 					Name:      sbdConfig.Name,
 					Namespace: sbdConfig.Namespace,

@@ -34,7 +34,7 @@ var typesLog = logf.Log.WithName("sbdconfig-types")
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// Constants for SBDConfig validation and defaults
+// Constants for StorageBasedRemediationConfig validation and defaults
 const (
 	// DefaultStaleNodeTimeout is the default timeout for considering nodes stale
 	DefaultStaleNodeTimeout = 1 * time.Hour
@@ -96,28 +96,28 @@ const (
 	DetectOnlyModeEnabled DetectOnlyModeType = "Enabled"
 )
 
-// SBDConfigConditionType represents the type of condition for SBDConfig
-type SBDConfigConditionType string
+// SBRConfigConditionType represents the type of condition for StorageBasedRemediationConfig
+type SBRConfigConditionType string
 
 const (
-	// SBDConfigConditionDaemonSetReady indicates whether the SBD agent DaemonSet is ready
-	SBDConfigConditionDaemonSetReady SBDConfigConditionType = "DaemonSetReady"
-	// SBDConfigConditionSharedStorageReady indicates whether shared storage is properly configured
-	SBDConfigConditionSharedStorageReady SBDConfigConditionType = "SharedStorageReady"
-	// SBDConfigConditionReady indicates the overall readiness of the SBDConfig
-	SBDConfigConditionReady SBDConfigConditionType = "Ready"
+	// SBRConfigConditionDaemonSetReady indicates whether the SBD agent DaemonSet is ready
+	SBRConfigConditionDaemonSetReady SBRConfigConditionType = "DaemonSetReady"
+	// SBRConfigConditionSharedStorageReady indicates whether shared storage is properly configured
+	SBRConfigConditionSharedStorageReady SBRConfigConditionType = "SharedStorageReady"
+	// SBRConfigConditionReady indicates the overall readiness of the StorageBasedRemediationConfig
+	SBRConfigConditionReady SBRConfigConditionType = "Ready"
 )
 
-// SBDConfigSpec defines the desired state of SBDConfig.
-type SBDConfigSpec struct {
+// StorageBasedRemediationConfigSpec defines the desired state of StorageBasedRemediationConfig.
+type StorageBasedRemediationConfigSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// SbdWatchdogPath is the path to the watchdog device on the host
+	// WatchdogPath is the path to the watchdog device on the host
 	// If not specified, defaults to "/dev/watchdog"
 	// +kubebuilder:default="/dev/watchdog"
 	// +optional
-	SbdWatchdogPath string `json:"sbdWatchdogPath,omitempty"`
+	WatchdogPath string `json:"watchdogPath,omitempty"`
 
 	// Image is the container image for the SBD agent DaemonSet
 	// If not specified, defaults to sbd-agent from the same registry/org/tag as the operator
@@ -204,25 +204,25 @@ type SBDConfigSpec struct {
 	// +optional
 	RebootMethod string `json:"rebootMethod,omitempty"`
 
-	// SBDTimeoutSeconds defines the SBD timeout in seconds, which determines the heartbeat interval.
-	// The heartbeat interval is calculated as SBD timeout divided by 2.
+	// SBRTimeoutSeconds defines the SBR timeout in seconds, which determines the heartbeat interval.
+	// The heartbeat interval is calculated as SBR timeout divided by 2.
 	// This value controls how quickly the cluster can detect and respond to node failures.
 	// The value must be between 10 and 300 seconds.
 	// +kubebuilder:validation:Minimum=10
 	// +kubebuilder:validation:Maximum=300
 	// +kubebuilder:default=30
 	// +optional
-	SBDTimeoutSeconds *int32 `json:"sbdTimeoutSeconds,omitempty"`
+	SBRTimeoutSeconds *int32 `json:"sbrTimeoutSeconds,omitempty"`
 
-	// SBDUpdateInterval defines the interval for updating the SBD device with node status information.
-	// This determines how frequently each node writes its status to the shared SBD device.
+	// SBRUpdateInterval defines the interval for updating the SBR device with node status information.
+	// This determines how frequently each node writes its status to the shared SBR device.
 	// More frequent updates provide faster failure detection but increase I/O load on the shared storage.
 	// The value must be between 1 second and 60 seconds.
 	// +kubebuilder:validation:Type=string
 	// +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(s|m))+$"
 	// +kubebuilder:default="5s"
 	// +optional
-	SBDUpdateInterval *metav1.Duration `json:"sbdUpdateInterval,omitempty"`
+	SBRUpdateInterval *metav1.Duration `json:"sbrUpdateInterval,omitempty"`
 
 	// PeerCheckInterval defines the interval for checking peer node heartbeats in the SBD device.
 	// This determines how frequently each node reads and processes heartbeats from other nodes.
@@ -243,24 +243,24 @@ type SBDConfigSpec struct {
 }
 
 // GetDetectOnlyMode returns whether detect-only mode is enabled (default false).
-func (s *SBDConfigSpec) GetDetectOnlyMode() bool {
+func (s *StorageBasedRemediationConfigSpec) GetDetectOnlyMode() bool {
 	if s.DetectOnlyMode != nil {
 		return *s.DetectOnlyMode == DetectOnlyModeEnabled
 	}
 	return false
 }
 
-// GetSbdWatchdogPath returns the watchdog path with default fallback
-func (s *SBDConfigSpec) GetSbdWatchdogPath() string {
-	if s.SbdWatchdogPath != "" {
-		return s.SbdWatchdogPath
+// GetWatchdogPath returns the watchdog path with default fallback
+func (s *StorageBasedRemediationConfigSpec) GetWatchdogPath() string {
+	if s.WatchdogPath != "" {
+		return s.WatchdogPath
 	}
 	return DefaultWatchdogPath
 }
 
 // GetImageWithOperatorImage returns the agent image with default fallback
 // The default is constructed from the operator's image by replacing the image name with sbd-agent
-func (s *SBDConfigSpec) GetImageWithOperatorImage(operatorImage string) (string, error) {
+func (s *StorageBasedRemediationConfigSpec) GetImageWithOperatorImage(operatorImage string) (string, error) {
 	if s.Image != "" {
 		return s.Image, nil
 	}
@@ -268,7 +268,7 @@ func (s *SBDConfigSpec) GetImageWithOperatorImage(operatorImage string) (string,
 }
 
 // GetImagePullPolicy returns the image pull policy with default fallback
-func (s *SBDConfigSpec) GetImagePullPolicy() string {
+func (s *StorageBasedRemediationConfigSpec) GetImagePullPolicy() string {
 	if s.ImagePullPolicy != "" {
 		return s.ImagePullPolicy
 	}
@@ -276,7 +276,7 @@ func (s *SBDConfigSpec) GetImagePullPolicy() string {
 }
 
 // GetStaleNodeTimeout returns the stale node timeout with default fallback
-func (s *SBDConfigSpec) GetStaleNodeTimeout() time.Duration {
+func (s *StorageBasedRemediationConfigSpec) GetStaleNodeTimeout() time.Duration {
 	if s.StaleNodeTimeout != nil {
 		return s.StaleNodeTimeout.Duration
 	}
@@ -284,7 +284,7 @@ func (s *SBDConfigSpec) GetStaleNodeTimeout() time.Duration {
 }
 
 // GetWatchdogTimeout returns the watchdog timeout with default fallback
-func (s *SBDConfigSpec) GetWatchdogTimeout() time.Duration {
+func (s *StorageBasedRemediationConfigSpec) GetWatchdogTimeout() time.Duration {
 	if s.WatchdogTimeout != nil {
 		return s.WatchdogTimeout.Duration
 	}
@@ -292,7 +292,7 @@ func (s *SBDConfigSpec) GetWatchdogTimeout() time.Duration {
 }
 
 // GetPetIntervalMultiple returns the pet interval multiple with default fallback
-func (s *SBDConfigSpec) GetPetIntervalMultiple() int32 {
+func (s *StorageBasedRemediationConfigSpec) GetPetIntervalMultiple() int32 {
 	if s.PetIntervalMultiple != nil {
 		return *s.PetIntervalMultiple
 	}
@@ -300,7 +300,7 @@ func (s *SBDConfigSpec) GetPetIntervalMultiple() int32 {
 }
 
 // GetPetInterval calculates the pet interval based on watchdog timeout and multiple
-func (s *SBDConfigSpec) GetPetInterval() time.Duration {
+func (s *StorageBasedRemediationConfigSpec) GetPetInterval() time.Duration {
 	watchdogTimeout := s.GetWatchdogTimeout()
 	multiple := s.GetPetIntervalMultiple()
 	petInterval := watchdogTimeout / time.Duration(multiple)
@@ -314,7 +314,7 @@ func (s *SBDConfigSpec) GetPetInterval() time.Duration {
 }
 
 // GetLogLevel returns the log level with default fallback
-func (s *SBDConfigSpec) GetLogLevel() string {
+func (s *StorageBasedRemediationConfigSpec) GetLogLevel() string {
 	if s.LogLevel != "" {
 		return s.LogLevel
 	}
@@ -322,7 +322,7 @@ func (s *SBDConfigSpec) GetLogLevel() string {
 }
 
 // GetIOTimeout returns the SBD I/O timeout with default fallback
-func (s *SBDConfigSpec) GetIOTimeout() time.Duration {
+func (s *StorageBasedRemediationConfigSpec) GetIOTimeout() time.Duration {
 	if s.IOTimeout != nil {
 		return s.IOTimeout.Duration
 	}
@@ -330,31 +330,31 @@ func (s *SBDConfigSpec) GetIOTimeout() time.Duration {
 }
 
 // GetRebootMethod returns the reboot method with default fallback
-func (s *SBDConfigSpec) GetRebootMethod() string {
+func (s *StorageBasedRemediationConfigSpec) GetRebootMethod() string {
 	if s.RebootMethod != "" {
 		return s.RebootMethod
 	}
 	return DefaultRebootMethod
 }
 
-// GetSBDTimeoutSeconds returns the SBD timeout in seconds with default fallback
-func (s *SBDConfigSpec) GetSBDTimeoutSeconds() int32 {
-	if s.SBDTimeoutSeconds != nil {
-		return *s.SBDTimeoutSeconds
+// GetSBRTimeoutSeconds returns the SBR timeout in seconds with default fallback
+func (s *StorageBasedRemediationConfigSpec) GetSBRTimeoutSeconds() int32 {
+	if s.SBRTimeoutSeconds != nil {
+		return *s.SBRTimeoutSeconds
 	}
 	return DefaultSBDTimeoutSeconds
 }
 
-// GetSBDUpdateInterval returns the SBD update interval with default fallback
-func (s *SBDConfigSpec) GetSBDUpdateInterval() time.Duration {
-	if s.SBDUpdateInterval != nil {
-		return s.SBDUpdateInterval.Duration
+// GetSBRUpdateInterval returns the SBR update interval with default fallback
+func (s *StorageBasedRemediationConfigSpec) GetSBRUpdateInterval() time.Duration {
+	if s.SBRUpdateInterval != nil {
+		return s.SBRUpdateInterval.Duration
 	}
 	return DefaultSBDUpdateInterval
 }
 
 // GetPeerCheckInterval returns the peer check interval with default fallback
-func (s *SBDConfigSpec) GetPeerCheckInterval() time.Duration {
+func (s *StorageBasedRemediationConfigSpec) GetPeerCheckInterval() time.Duration {
 	if s.PeerCheckInterval != nil {
 		return s.PeerCheckInterval.Duration
 	}
@@ -362,7 +362,7 @@ func (s *SBDConfigSpec) GetPeerCheckInterval() time.Duration {
 }
 
 // GetSharedStoragePVCName returns the generated PVC name for shared storage
-func (s *SBDConfigSpec) GetSharedStoragePVCName(sbdConfigName string) string {
+func (s *StorageBasedRemediationConfigSpec) GetSharedStoragePVCName(sbdConfigName string) string {
 	if s.SharedStorageClass == "" {
 		return ""
 	}
@@ -370,12 +370,12 @@ func (s *SBDConfigSpec) GetSharedStoragePVCName(sbdConfigName string) string {
 }
 
 // GetSharedStorageStorageClass returns the storage class name for shared storage
-func (s *SBDConfigSpec) GetSharedStorageStorageClass() string {
+func (s *StorageBasedRemediationConfigSpec) GetSharedStorageStorageClass() string {
 	return s.SharedStorageClass
 }
 
 // GetSharedStorageSize returns the fixed storage size
-func (s *SBDConfigSpec) GetSharedStorageSize() string {
+func (s *StorageBasedRemediationConfigSpec) GetSharedStorageSize() string {
 	if s.SharedStorageClass == "" {
 		return ""
 	}
@@ -383,7 +383,7 @@ func (s *SBDConfigSpec) GetSharedStorageSize() string {
 }
 
 // GetSharedStorageAccessModes returns the fixed access modes
-func (s *SBDConfigSpec) GetSharedStorageAccessModes() []string {
+func (s *StorageBasedRemediationConfigSpec) GetSharedStorageAccessModes() []string {
 	if s.SharedStorageClass == "" {
 		return nil
 	}
@@ -392,17 +392,17 @@ func (s *SBDConfigSpec) GetSharedStorageAccessModes() []string {
 
 // GetSharedStorageMountPath returns the shared storage mount path
 // The controller automatically chooses a sensible path for mounting shared storage
-func (s *SBDConfigSpec) GetSharedStorageMountPath() string {
+func (s *StorageBasedRemediationConfigSpec) GetSharedStorageMountPath() string {
 	return agent.SharedStorageSBDDeviceDirectory
 }
 
 // HasSharedStorage returns true if shared storage is configured
-func (s *SBDConfigSpec) HasSharedStorage() bool {
+func (s *StorageBasedRemediationConfigSpec) HasSharedStorage() bool {
 	return s.SharedStorageClass != ""
 }
 
 // GetNodeSelector returns the node selector with default fallback to worker nodes only
-func (s *SBDConfigSpec) GetNodeSelector() map[string]string {
+func (s *StorageBasedRemediationConfigSpec) GetNodeSelector() map[string]string {
 	if len(s.NodeSelector) > 0 {
 		return s.NodeSelector
 	}
@@ -414,7 +414,7 @@ func (s *SBDConfigSpec) GetNodeSelector() map[string]string {
 }
 
 // ValidateStaleNodeTimeout validates the stale node timeout value
-func (s *SBDConfigSpec) ValidateStaleNodeTimeout() error {
+func (s *StorageBasedRemediationConfigSpec) ValidateStaleNodeTimeout() error {
 	timeout := s.GetStaleNodeTimeout()
 
 	if timeout < MinStaleNodeTimeout {
@@ -429,7 +429,7 @@ func (s *SBDConfigSpec) ValidateStaleNodeTimeout() error {
 }
 
 // ValidateWatchdogTimeout validates the watchdog timeout value
-func (s *SBDConfigSpec) ValidateWatchdogTimeout() error {
+func (s *StorageBasedRemediationConfigSpec) ValidateWatchdogTimeout() error {
 	timeout := s.GetWatchdogTimeout()
 
 	if timeout < MinWatchdogTimeout {
@@ -444,7 +444,7 @@ func (s *SBDConfigSpec) ValidateWatchdogTimeout() error {
 }
 
 // ValidatePetIntervalMultiple validates the pet interval multiple value
-func (s *SBDConfigSpec) ValidatePetIntervalMultiple() error {
+func (s *StorageBasedRemediationConfigSpec) ValidatePetIntervalMultiple() error {
 	multiple := s.GetPetIntervalMultiple()
 
 	if multiple < MinPetIntervalMultiple {
@@ -459,7 +459,7 @@ func (s *SBDConfigSpec) ValidatePetIntervalMultiple() error {
 }
 
 // ValidatePetIntervalTiming validates that the calculated pet interval is appropriate
-func (s *SBDConfigSpec) ValidatePetIntervalTiming() error {
+func (s *StorageBasedRemediationConfigSpec) ValidatePetIntervalTiming() error {
 	watchdogTimeout := s.GetWatchdogTimeout()
 	petInterval := s.GetPetInterval()
 
@@ -485,7 +485,7 @@ func (s *SBDConfigSpec) ValidatePetIntervalTiming() error {
 }
 
 // ValidateIOTimeout validates the SBD I/O timeout value
-func (s *SBDConfigSpec) ValidateIOTimeout() error {
+func (s *StorageBasedRemediationConfigSpec) ValidateIOTimeout() error {
 	timeout := s.GetIOTimeout()
 
 	if timeout < MinIOTimeout {
@@ -500,7 +500,7 @@ func (s *SBDConfigSpec) ValidateIOTimeout() error {
 }
 
 // ValidateImagePullPolicy validates the image pull policy value
-func (s *SBDConfigSpec) ValidateImagePullPolicy() error {
+func (s *StorageBasedRemediationConfigSpec) ValidateImagePullPolicy() error {
 	policy := s.GetImagePullPolicy()
 
 	switch policy {
@@ -512,7 +512,7 @@ func (s *SBDConfigSpec) ValidateImagePullPolicy() error {
 }
 
 // ValidateSharedStorageClass validates the shared storage class configuration
-func (s *SBDConfigSpec) ValidateSharedStorageClass() error {
+func (s *StorageBasedRemediationConfigSpec) ValidateSharedStorageClass() error {
 	storageClassName := s.SharedStorageClass
 	if storageClassName == "" {
 		return nil // Optional field
@@ -545,7 +545,7 @@ func (s *SBDConfigSpec) ValidateSharedStorageClass() error {
 }
 
 // ValidateRebootMethod validates the reboot method value
-func (s *SBDConfigSpec) ValidateRebootMethod() error {
+func (s *StorageBasedRemediationConfigSpec) ValidateRebootMethod() error {
 	method := s.GetRebootMethod()
 
 	switch method {
@@ -556,38 +556,38 @@ func (s *SBDConfigSpec) ValidateRebootMethod() error {
 	}
 }
 
-// ValidateSBDTimeoutSeconds validates the SBD timeout value
-func (s *SBDConfigSpec) ValidateSBDTimeoutSeconds() error {
-	timeout := s.GetSBDTimeoutSeconds()
+// ValidateSBRTimeoutSeconds validates the SBR timeout value
+func (s *StorageBasedRemediationConfigSpec) ValidateSBRTimeoutSeconds() error {
+	timeout := s.GetSBRTimeoutSeconds()
 
 	if timeout < MinSBDTimeoutSeconds {
-		return fmt.Errorf("SBD timeout %d seconds is less than minimum %d seconds", timeout, MinSBDTimeoutSeconds)
+		return fmt.Errorf("SBR timeout %d seconds is less than minimum %d seconds", timeout, MinSBDTimeoutSeconds)
 	}
 
 	if timeout > MaxSBDTimeoutSeconds {
-		return fmt.Errorf("SBD timeout %d seconds is greater than maximum %d seconds", timeout, MaxSBDTimeoutSeconds)
+		return fmt.Errorf("SBR timeout %d seconds is greater than maximum %d seconds", timeout, MaxSBDTimeoutSeconds)
 	}
 
 	return nil
 }
 
-// ValidateSBDUpdateInterval validates the SBD update interval value
-func (s *SBDConfigSpec) ValidateSBDUpdateInterval() error {
-	interval := s.GetSBDUpdateInterval()
+// ValidateSBRUpdateInterval validates the SBR update interval value
+func (s *StorageBasedRemediationConfigSpec) ValidateSBRUpdateInterval() error {
+	interval := s.GetSBRUpdateInterval()
 
 	if interval < MinSBDUpdateInterval {
-		return fmt.Errorf("SBD update interval %v is less than minimum %v", interval, MinSBDUpdateInterval)
+		return fmt.Errorf("SBR update interval %v is less than minimum %v", interval, MinSBDUpdateInterval)
 	}
 
 	if interval > MaxSBDUpdateInterval {
-		return fmt.Errorf("SBD update interval %v is greater than maximum %v", interval, MaxSBDUpdateInterval)
+		return fmt.Errorf("SBR update interval %v is greater than maximum %v", interval, MaxSBDUpdateInterval)
 	}
 
 	return nil
 }
 
 // ValidatePeerCheckInterval validates the peer check interval value
-func (s *SBDConfigSpec) ValidatePeerCheckInterval() error {
+func (s *StorageBasedRemediationConfigSpec) ValidatePeerCheckInterval() error {
 	interval := s.GetPeerCheckInterval()
 
 	if interval < MinPeerCheckInterval {
@@ -602,7 +602,7 @@ func (s *SBDConfigSpec) ValidatePeerCheckInterval() error {
 }
 
 // ValidateAll validates all configuration values
-func (s *SBDConfigSpec) ValidateAll() error {
+func (s *StorageBasedRemediationConfigSpec) ValidateAll() error {
 	if err := s.ValidateStaleNodeTimeout(); err != nil {
 		return fmt.Errorf("stale node timeout validation failed: %w", err)
 	}
@@ -635,12 +635,12 @@ func (s *SBDConfigSpec) ValidateAll() error {
 		return fmt.Errorf("reboot method validation failed: %w", err)
 	}
 
-	if err := s.ValidateSBDTimeoutSeconds(); err != nil {
-		return fmt.Errorf("SBD timeout seconds validation failed: %w", err)
+	if err := s.ValidateSBRTimeoutSeconds(); err != nil {
+		return fmt.Errorf("SBR timeout seconds validation failed: %w", err)
 	}
 
-	if err := s.ValidateSBDUpdateInterval(); err != nil {
-		return fmt.Errorf("SBD update interval validation failed: %w", err)
+	if err := s.ValidateSBRUpdateInterval(); err != nil {
+		return fmt.Errorf("SBR update interval validation failed: %w", err)
 	}
 
 	if err := s.ValidatePeerCheckInterval(); err != nil {
@@ -705,12 +705,12 @@ func deriveAgentImageFromOperator(operatorImage string) (string, error) {
 	return prefix + agentSuffix, nil
 }
 
-// SBDConfigStatus defines the observed state of SBDConfig.
-type SBDConfigStatus struct {
+// StorageBasedRemediationConfigStatus defines the observed state of StorageBasedRemediationConfig.
+type StorageBasedRemediationConfigStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// Conditions represent the latest available observations of the SBDConfig's current state
+	// Conditions represent the latest available observations of the StorageBasedRemediationConfig's current state
 	// +patchMergeKey=type
 	// +patchStrategy=merge
 	// +listType=map
@@ -728,30 +728,30 @@ type SBDConfigStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced
 
-// SBDConfig is the Schema for the sbdconfigs API.
-type SBDConfig struct {
+// StorageBasedRemediationConfig is the Schema for the sbdconfigs API.
+type StorageBasedRemediationConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   SBDConfigSpec   `json:"spec,omitempty"`
-	Status SBDConfigStatus `json:"status,omitempty"`
+	Spec   StorageBasedRemediationConfigSpec   `json:"spec,omitempty"`
+	Status StorageBasedRemediationConfigStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// SBDConfigList contains a list of SBDConfig.
-type SBDConfigList struct {
+// StorageBasedRemediationConfigList contains a list of StorageBasedRemediationConfig.
+type StorageBasedRemediationConfigList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []SBDConfig `json:"items"`
+	Items           []StorageBasedRemediationConfig `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&SBDConfig{}, &SBDConfigList{})
+	SchemeBuilder.Register(&StorageBasedRemediationConfig{}, &StorageBasedRemediationConfigList{})
 }
 
 // GetCondition returns the condition with the given type if it exists
-func (c *SBDConfig) GetCondition(conditionType SBDConfigConditionType) *metav1.Condition {
+func (c *StorageBasedRemediationConfig) GetCondition(conditionType SBRConfigConditionType) *metav1.Condition {
 	for i := range c.Status.Conditions {
 		if c.Status.Conditions[i].Type == string(conditionType) {
 			return &c.Status.Conditions[i]
@@ -760,9 +760,9 @@ func (c *SBDConfig) GetCondition(conditionType SBDConfigConditionType) *metav1.C
 	return nil
 }
 
-// SetCondition sets the given condition on the SBDConfig
-func (c *SBDConfig) SetCondition(
-	conditionType SBDConfigConditionType,
+// SetCondition sets the given condition on the StorageBasedRemediationConfig
+func (c *StorageBasedRemediationConfig) SetCondition(
+	conditionType SBRConfigConditionType,
 	status metav1.ConditionStatus,
 	reason, message string,
 ) {
@@ -799,34 +799,34 @@ func (c *SBDConfig) SetCondition(
 }
 
 // IsConditionTrue returns true if the condition is set to True
-func (c *SBDConfig) IsConditionTrue(conditionType SBDConfigConditionType) bool {
+func (c *StorageBasedRemediationConfig) IsConditionTrue(conditionType SBRConfigConditionType) bool {
 	condition := c.GetCondition(conditionType)
 	return condition != nil && condition.Status == metav1.ConditionTrue
 }
 
 // IsConditionFalse returns true if the condition is set to False
-func (c *SBDConfig) IsConditionFalse(conditionType SBDConfigConditionType) bool {
+func (c *StorageBasedRemediationConfig) IsConditionFalse(conditionType SBRConfigConditionType) bool {
 	condition := c.GetCondition(conditionType)
 	return condition != nil && condition.Status == metav1.ConditionFalse
 }
 
 // IsConditionUnknown returns true if the condition is set to Unknown or doesn't exist
-func (c *SBDConfig) IsConditionUnknown(conditionType SBDConfigConditionType) bool {
+func (c *StorageBasedRemediationConfig) IsConditionUnknown(conditionType SBRConfigConditionType) bool {
 	condition := c.GetCondition(conditionType)
 	return condition == nil || condition.Status == metav1.ConditionUnknown
 }
 
 // IsDaemonSetReady returns true if the DaemonSet is ready
-func (c *SBDConfig) IsDaemonSetReady() bool {
-	return c.IsConditionTrue(SBDConfigConditionDaemonSetReady)
+func (c *StorageBasedRemediationConfig) IsDaemonSetReady() bool {
+	return c.IsConditionTrue(SBRConfigConditionDaemonSetReady)
 }
 
 // IsSharedStorageReady returns true if shared storage is ready
-func (c *SBDConfig) IsSharedStorageReady() bool {
-	return c.IsConditionTrue(SBDConfigConditionSharedStorageReady)
+func (c *StorageBasedRemediationConfig) IsSharedStorageReady() bool {
+	return c.IsConditionTrue(SBRConfigConditionSharedStorageReady)
 }
 
-// IsReady returns true if the SBDConfig is ready overall
-func (c *SBDConfig) IsReady() bool {
-	return c.IsConditionTrue(SBDConfigConditionReady)
+// IsReady returns true if the StorageBasedRemediationConfig is ready overall
+func (c *StorageBasedRemediationConfig) IsReady() bool {
+	return c.IsConditionTrue(SBRConfigConditionReady)
 }
