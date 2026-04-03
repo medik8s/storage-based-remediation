@@ -34,10 +34,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
-	"github.com/medik8s/sbd-operator/pkg/mocks"
-	"github.com/medik8s/sbd-operator/pkg/retry"
-	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
+	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/pkg/mocks"
+	"github.com/medik8s/storage-based-remediation/pkg/retry"
+	"github.com/medik8s/storage-based-remediation/pkg/sbdprotocol"
 )
 
 const (

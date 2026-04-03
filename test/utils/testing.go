@@ -44,7 +44,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
-	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
+	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
 )
 
 var (

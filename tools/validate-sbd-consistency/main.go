@@ -18,7 +18,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/medik8s/sbd-operator/test/utils"
+	"github.com/medik8s/storage-based-remediation/test/utils"
 )
 
 func main() {

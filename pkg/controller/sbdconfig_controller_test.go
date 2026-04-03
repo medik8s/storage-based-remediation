@@ -36,9 +36,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
-	agent "github.com/medik8s/sbd-operator/pkg/agent"
-	"github.com/medik8s/sbd-operator/pkg/mocks"
+	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
+	agent "github.com/medik8s/storage-based-remediation/pkg/agent"
+	"github.com/medik8s/storage-based-remediation/pkg/mocks"
 )
 
 const (

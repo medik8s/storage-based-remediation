@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/medik8s/sbd-operator/pkg/storage/k8s"
+	"github.com/medik8s/storage-based-remediation/pkg/storage/k8s"
 )
 
 // Config holds all configuration for storage setup

@@ -38,9 +38,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
-	"github.com/medik8s/sbd-operator/pkg/controller"
-	"github.com/medik8s/sbd-operator/pkg/version"
+	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/pkg/controller"
+	"github.com/medik8s/storage-based-remediation/pkg/version"
 	// +kubebuilder:scaffold:imports
 )
 

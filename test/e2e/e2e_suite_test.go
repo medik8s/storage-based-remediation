@@ -27,7 +27,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/medik8s/sbd-operator/test/utils"
+	"github.com/medik8s/storage-based-remediation/test/utils"
 )
 
 var (

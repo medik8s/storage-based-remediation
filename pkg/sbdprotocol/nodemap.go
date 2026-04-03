@@ -27,7 +27,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/medik8s/sbd-operator/pkg/agent"
+	"github.com/medik8s/storage-based-remediation/pkg/agent"
 )
 
 // SBD Node Mapping Constants

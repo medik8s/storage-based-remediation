@@ -22,7 +22,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/medik8s/sbd-operator/pkg/sbdprotocol"
+	"github.com/medik8s/storage-based-remediation/pkg/sbdprotocol"
 )
 
 // BlockDevice defines the interface for block device operations

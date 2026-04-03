@@ -28,7 +28,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/medik8s/sbd-operator/pkg/retry"
+	"github.com/medik8s/storage-based-remediation/pkg/retry"
 )
 
 // Retry configuration constants for block device operations

@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/medik8s/sbd-operator/pkg/storage/odf"
+	"github.com/medik8s/storage-based-remediation/pkg/storage/odf"
 )
 
 // Configuration holds all the configuration for the ODF storage setup
