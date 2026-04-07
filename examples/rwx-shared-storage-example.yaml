@@ -1,39 +1,39 @@
 ---
-# Example: Using RWX Storage Class for SBD Shared Storage
+# Example: Using RWX Storage Class for SBR Shared Storage
 # This example shows how to use a StorageClass for automatic shared storage
-# provisioning for SBD agent coordination across multiple nodes
+# provisioning for SBR agent coordination across multiple nodes
 
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: sbd-shared-config
-  namespace: sbd-system
+  name: sbr-shared-config
+  namespace: sbr-system
 data:
   shared-data.txt: |
     This is shared configuration data that can be accessed
-    by all SBD agent pods across different worker nodes.
-    
+    by all SBR agent pods across different worker nodes.
+
     Use cases:
-    - Shared SBD device metadata
+    - Shared SBR device metadata
     - Coordination data between agents
     - Shared logs or status files
     - Cross-node communication files
 
 ---
-# SBDConfig with RWX shared storage integration
-# This demonstrates the native shared storage support in SBDConfig CRD
+# StorageBasedRemediationConfig with RWX shared storage integration
+# This demonstrates the native shared storage support in StorageBasedRemediationConfig CRD
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
-kind: SBDConfig
+kind: StorageBasedRemediationConfig
 metadata:
-  name: sbd-config-with-shared-storage
-  namespace: sbd-system
+  name: sbr-config-with-shared-storage
+  namespace: sbr-system
 spec:
-  # SBD agent image configuration
-  image: "quay.io/medik8s/sbd-agent:latest"
+  # SBR agent image configuration
+  image: "quay.io/medik8s/sbr-agent:latest"
   imagePullPolicy: "IfNotPresent"
   
   # Watchdog configuration
-  sbdWatchdogPath: "/dev/watchdog"
+  watchdogPath: "/dev/watchdog"
   watchdogTimeout: "60s"
   petIntervalMultiple: 4
   
@@ -42,15 +42,15 @@ spec:
   
   # ✅ SHARED STORAGE CONFIGURATION ✅
   # This field enables automatic shared storage integration
-  # The controller will create a PVC using this StorageClass and configure the sbd-agent accordingly
+  # The controller will create a PVC using this StorageClass and configure the sbr-agent accordingly
   sharedStorageClass: "efs-sc"                 # Required: Name of RWX StorageClass
   
   # When shared storage is configured, the controller automatically:
   # 1. Creates a PVC using the specified StorageClass with RWX access mode
   # 2. Validates the StorageClass name and mount path
   # 3. Adds the PVC as a volume in the DaemonSet
-  # 4. Mounts it at the specified path in sbd-agent containers
-  # 5. Passes --sbd-device=/sbd-shared/sbd-device and --sbd-file-locking=true to the sbd-agent command
+  # 4. Mounts it at the specified path in sbr-agent containers
+  # 5. Passes --sbr-device=/sbr-shared/sbr-device and --sbr-file-locking=true to the sbr-agent command
   # 6. Enables cross-node coordination features
   #
   # Common StorageClass names:
@@ -61,12 +61,12 @@ spec:
 
 ---
 # Example Pod to test RWX storage functionality
-# This pod will use the auto-generated PVC created by the SBDConfig controller
+# This pod will use the auto-generated PVC created by the StorageBasedRemediationConfig controller
 apiVersion: v1
 kind: Pod
 metadata:
   name: rwx-storage-test
-  namespace: sbd-system
+  namespace: sbr-system
   labels:
     app: storage-test
 spec:
@@ -103,8 +103,8 @@ spec:
   volumes:
   - name: shared-storage
     persistentVolumeClaim:
-      # Use the auto-generated PVC name: {sbdconfig-name}-shared-storage
-      claimName: sbd-config-with-shared-storage-shared-storage
+      # Use the auto-generated PVC name: {storagebasedremediationconfig-name}-shared-storage
+      claimName: sbr-config-with-shared-storage-shared-storage
   
   restartPolicy: Always
 
@@ -114,7 +114,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: verify-rwx-storage
-  namespace: sbd-system
+  namespace: sbr-system
 spec:
   template:
     spec:
@@ -164,8 +164,8 @@ spec:
       volumes:
       - name: shared-storage
         persistentVolumeClaim:
-          # Use the auto-generated PVC name: {sbdconfig-name}-shared-storage
-          claimName: sbd-config-with-shared-storage-shared-storage
+          # Use the auto-generated PVC name: {storagebasedremediationconfig-name}-shared-storage
+          claimName: sbr-config-with-shared-storage-shared-storage
       
       restartPolicy: Never
   backoffLimit: 3 

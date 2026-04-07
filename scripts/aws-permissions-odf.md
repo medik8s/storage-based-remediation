@@ -357,7 +357,7 @@ The tool creates EBS volumes that ODF uses for:
 
 ## Related Documentation
 
-- [SBD Operator User Guide](../docs/sbdconfig-user-guide.md)
+- [SBR Operator User Guide](../docs/storagebasedremediationconfig-user-guide.md)
 - [OpenShift Data Foundation Documentation](https://access.redhat.com/documentation/en-us/red_hat_openshift_data_foundation)
 - [AWS EBS Volume Types](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-volume-types.html)
 - [AWS IAM Best Practices](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html) 

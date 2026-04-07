@@ -5,7 +5,7 @@
 domain: medik8s.io
 layout:
 - go.kubebuilder.io/v4
-projectName: sbd-operator
+projectName: storage-based-remediation-operator
 repo: github.com/medik8s/storage-based-remediation
 resources:
 - api:

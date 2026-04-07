@@ -1,9 +1,9 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: sbdremediations.storage-based-remediation.medik8s.io
+  name: storagebasedremediations.storage-based-remediation.medik8s.io
   annotations:
-    api-approved.kubernetes.io: "https://github.com/medik8s/sbd-operator"
+    api-approved.kubernetes.io: "https://github.com/medik8s/storage-based-remediation"
 spec:
   group: storage-based-remediation.medik8s.io
   versions:
@@ -15,7 +15,7 @@ spec:
     schema:
       openAPIV3Schema:
         type: object
-        description: "SBDRemediation is created by an external operator (e.g., Node Healthcheck Operator) to request SBD-based fencing for a specific unhealthy node. The SBD Operator will update its status."
+        description: "StorageBasedRemediation is created by an external operator (e.g., Node Healthcheck Operator) to request SBR-based fencing for a specific unhealthy node. The SBR Operator will update its status."
         properties:
           apiVersion:
             type: string
@@ -27,7 +27,7 @@ spec:
             type: object
           spec:
             type: object
-            description: "SBDRemediationSpec defines the desired state of SBDRemediation"
+            description: "StorageBasedRemediationSpec defines the desired state of StorageBasedRemediation"
             required:
             - nodeName
             properties:
@@ -51,7 +51,7 @@ spec:
                 default: 60
           status:
             type: object
-            description: "SBDRemediationStatus defines the observed state of SBDRemediation"
+            description: "StorageBasedRemediationStatus defines the observed state of StorageBasedRemediation"
             properties:
               conditions:
                 description: "Conditions represent the latest available observations of the remediation's current state"
@@ -101,14 +101,14 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               fenceMessageWritten:
-                description: "FenceMessageWritten indicates if the fence message was successfully written to the SBD device"
+                description: "FenceMessageWritten indicates if the fence message was successfully written to the SBR device"
                 type: boolean
               lastUpdateTime:
                 description: "LastUpdateTime is the time when this status was last updated"
                 type: string
                 format: date-time
               nodeID:
-                description: "NodeID is the numeric ID assigned to the target node for SBD operations"
+                description: "NodeID is the numeric ID assigned to the target node for SBR operations"
                 type: integer
               operatorInstance:
                 description: "OperatorInstance identifies which operator instance is handling this remediation"
@@ -135,7 +135,7 @@ spec:
       jsonPath: .metadata.creationTimestamp
   scope: Namespaced
   names:
-    plural: sbdremediations
-    singular: sbdremediation
-    kind: SBDRemediation
-    listKind: SBDRemediationList 
+    plural: storagebasedremediations
+    singular: storagebasedremediation
+    kind: StorageBasedRemediation
+    listKind: StorageBasedRemediationList 

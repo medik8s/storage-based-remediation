@@ -1,14 +1,14 @@
 #!/bin/bash
 
-# Webhook Certificate Generation Script for SBD Operator
+# Webhook Certificate Generation Script for SBR Operator
 # Supports both self-signed certificates (for testing) and Let's Encrypt certificates (for production)
 
 set -e
 
 # Default configuration
 USE_LETSENCRYPT="${USE_LETSENCRYPT:-false}"
-WEBHOOK_DOMAIN="${WEBHOOK_DOMAIN:-sbd-webhook.default.svc}"
-NAMESPACE="${NAMESPACE:-sbd-operator-system}"
+WEBHOOK_DOMAIN="${WEBHOOK_DOMAIN:-sbr-webhook.default.svc}"
+NAMESPACE="${NAMESPACE:-sbr-operator-system}"
 CERT_DIR="${CERT_DIR:-/tmp/k8s-webhook-server/serving-certs}"
 LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-}"
 LETSENCRYPT_STAGING="${LETSENCRYPT_STAGING:-true}"
@@ -49,7 +49,7 @@ generate_self_signed_certs() {
     
     # Generate CA certificate
     openssl req -new -x509 -days 365 -key "$CERT_DIR/ca.key" \
-        -subj "/C=US/ST=CA/L=San Francisco/O=SBD Operator/CN=SBD Webhook CA" \
+        -subj "/C=US/ST=CA/L=San Francisco/O=SBR Operator/CN=SBR Webhook CA" \
         -out "$CERT_DIR/$CA_NAME"
     
     # Generate webhook private key
@@ -69,16 +69,16 @@ keyUsage = nonRepudiation, digitalSignature, keyEncipherment
 subjectAltName = @alt_names
 
 [alt_names]
-DNS.1 = sbd-operator-webhook-service
-DNS.2 = sbd-operator-webhook-service.${NAMESPACE}
-DNS.3 = sbd-operator-webhook-service.${NAMESPACE}.svc
-DNS.4 = sbd-operator-webhook-service.${NAMESPACE}.svc.cluster.local
+DNS.1 = sbr-operator-webhook-service
+DNS.2 = sbr-operator-webhook-service.${NAMESPACE}
+DNS.3 = sbr-operator-webhook-service.${NAMESPACE}.svc
+DNS.4 = sbr-operator-webhook-service.${NAMESPACE}.svc.cluster.local
 DNS.5 = ${WEBHOOK_DOMAIN}
 EOF
 
     # Generate certificate signing request
     openssl req -new -key "$CERT_DIR/$KEY_NAME" \
-        -subj "/C=US/ST=CA/L=San Francisco/O=SBD Operator/CN=sbd-operator-webhook-service.${NAMESPACE}.svc" \
+        -subj "/C=US/ST=CA/L=San Francisco/O=SBR Operator/CN=sbr-operator-webhook-service.${NAMESPACE}.svc" \
         -out "$CERT_DIR/webhook.csr" \
         -config "$CERT_DIR/webhook.conf"
     
@@ -185,7 +185,7 @@ validate_certificates() {
 
 # Main function
 main() {
-    log_info "SBD Operator Webhook Certificate Generator"
+    log_info "SBR Operator Webhook Certificate Generator"
     log_info "=========================================="
     log_info "Configuration:"
     log_info "  Use Let's Encrypt: $USE_LETSENCRYPT"

@@ -11,8 +11,8 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DEBUG_TOOL_SOURCE="${PROJECT_ROOT}/debug-watchdog-arm64.go"
 AWS_REGION="${AWS_REGION:-ap-southeast-2}"
 KEY_NAME="${AWS_KEY_NAME:-aws-linux}"
-SECURITY_GROUP_NAME="sbd-watchdog-debug-sg"
-INSTANCE_TAG_NAME="sbd-watchdog-debug"
+SECURITY_GROUP_NAME="sbr-watchdog-debug-sg"
+INSTANCE_TAG_NAME="sbr-watchdog-debug"
 
 # Instance configurations - using ap-southeast-2 region AMIs
 # Format: AMI_ID INSTANCE_TYPE ARCHITECTURE
@@ -126,7 +126,7 @@ setup_security_group() {
     sg_id=$(aws ec2 create-security-group \
         --region "${AWS_REGION}" \
         --group-name "${SECURITY_GROUP_NAME}" \
-        --description "Security group for SBD watchdog debugging" \
+        --description "Security group for SBR watchdog debugging" \
         --vpc-id "${vpc_id}" \
         --query 'GroupId' \
         --output text)
@@ -161,10 +161,10 @@ create_instance() {
 yum update -y
 yum install -y golang git gcc kernel-devel
 modprobe softdog soft_margin=60 || true
-mkdir -p /opt/sbd-debug
-chmod 755 /opt/sbd-debug
+mkdir -p /opt/sbr-debug
+chmod 755 /opt/sbr-debug
 chmod 666 /dev/watchdog* 2>/dev/null || true
-echo 'Instance setup completed' > /opt/sbd-debug/setup.log"
+echo 'Instance setup completed' > /opt/sbr-debug/setup.log"
     local user_data=$(echo "${user_data_raw}" | base64)
     
     local instance_id
@@ -225,15 +225,15 @@ deploy_debug_tool() {
     
     # Copy the debug tool source
     scp -i ~/.ssh/"${KEY_NAME}".pem -o StrictHostKeyChecking=no \
-        "${DEBUG_TOOL_SOURCE}" ec2-user@"${ip}":/opt/sbd-debug/debug-watchdog.go
+        "${DEBUG_TOOL_SOURCE}" ec2-user@"${ip}":/opt/sbr-debug/debug-watchdog.go
     
     # Compile the debug tool
     ssh -i ~/.ssh/"${KEY_NAME}".pem -o StrictHostKeyChecking=no \
-        ec2-user@"${ip}" "cd /opt/sbd-debug && go build -o debug-watchdog debug-watchdog.go && chmod +x debug-watchdog"
+        ec2-user@"${ip}" "cd /opt/sbr-debug && go build -o debug-watchdog debug-watchdog.go && chmod +x debug-watchdog"
     
     # Create system info
     ssh -i ~/.ssh/"${KEY_NAME}".pem -o StrictHostKeyChecking=no \
-        ec2-user@"${ip}" "cd /opt/sbd-debug && uname -a > system-info.txt && lscpu >> system-info.txt"
+        ec2-user@"${ip}" "cd /opt/sbr-debug && uname -a > system-info.txt && lscpu >> system-info.txt"
     
     log_success "Debug tool deployed to ${arch} instance"
 }
@@ -248,12 +248,12 @@ run_debug_test() {
     local output_file="/tmp/watchdog-debug-${arch}-$(date +%s).txt"
     
     ssh -i ~/.ssh/"${KEY_NAME}".pem -o StrictHostKeyChecking=no \
-        ec2-user@"${ip}" "cd /opt/sbd-debug && sudo ./debug-watchdog" > "${output_file}" 2>&1 || true
+        ec2-user@"${ip}" "cd /opt/sbr-debug && sudo ./debug-watchdog" > "${output_file}" 2>&1 || true
     
     # Also get system info  
     local sysinfo_file="/tmp/system-info-${arch}-$(date +%s).txt"
     ssh -i ~/.ssh/"${KEY_NAME}".pem -o StrictHostKeyChecking=no \
-        ec2-user@"${ip}" "cat /opt/sbd-debug/system-info.txt" > "${sysinfo_file}" 2>&1 || true
+        ec2-user@"${ip}" "cat /opt/sbr-debug/system-info.txt" > "${sysinfo_file}" 2>&1 || true
     
     log_success "Debug test completed for ${arch} instance"
     echo "${output_file}:${sysinfo_file}"

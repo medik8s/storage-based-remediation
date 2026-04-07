@@ -4,21 +4,21 @@ metadata:
   annotations:
     alm-examples: '[]'
     capabilities: Basic Install
-  name: sbd-operator.v0.0.0
+  name: sbr-operator.v0.0.0
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
   customresourcedefinitions:
     owned:
-    - description: SBDConfig is the Schema for the sbdconfigs API.
-      displayName: SBDConfig
-      kind: SBDConfig
-      name: sbdconfigs.storage-based-remediation.medik8s.io
+    - description: StorageBasedRemediationConfig is the Schema for the storagebasedremediationconfigs API.
+      displayName: StorageBasedRemediationConfig
+      kind: StorageBasedRemediationConfig
+      name: storagebasedremediationconfigs.storage-based-remediation.medik8s.io
       version: v1alpha1
-    - description: SBDRemediation is the Schema for the sbdremediations API.
-      displayName: SBDRemediation
-      kind: SBDRemediation
-      name: sbdremediations.storage-based-remediation.medik8s.io
+    - description: StorageBasedRemediation is the Schema for the storagebasedremediations API.
+      displayName: StorageBasedRemediation
+      kind: StorageBasedRemediation
+      name: storagebasedremediations.storage-based-remediation.medik8s.io
       version: v1alpha1
     - description: StorageBasedRemediationTemplate is the Schema for the storagebasedremediationtemplates
         API.
@@ -27,7 +27,7 @@ spec:
       name: storagebasedremediationtemplates.storage-based-remediation.medik8s.io
       version: v1alpha1
   description: TBD
-  displayName: SBD
+  displayName: Storage Based Remediation
   icon:
   - base64data: ""
     mediatype: ""
@@ -45,11 +45,11 @@ spec:
   - supported: true
     type: AllNamespaces
   keywords:
-  - sbd
+  - sbr
   - storage
   - remediation
   links:
-  - name: SBD Operator
+  - name: SBR Operator
     url: https://medik8s.io
   maintainers:
   - email: medik8s@googlegroups.com

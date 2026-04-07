@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Deployment script for SBD Agent Kubernetes resources
-# This script deploys the SBD Agent DaemonSet and related resources
+# Deployment script for SBR Agent Kubernetes resources
+# This script deploys the SBR Agent DaemonSet and related resources
 
 set -e
 
 # Configuration
-NAMESPACE="sbd-system"
-DEPLOYMENT_NAME="sbd-agent-test-sbdconfig"
+NAMESPACE="sbr-system"
+DEPLOYMENT_NAME="sbr-agent-test-storagebasedremediationconfig"
 
 # Colors for output
 RED='\033[0;31m'
@@ -50,8 +50,8 @@ check_kubectl() {
 
 # Function to deploy resources
 deploy_resources() {
-    log_info "Deploying SBD Agent resources..."
-    kubectl apply -f scripts/example-sbdconfig.yaml
+    log_info "Deploying SBR Agent resources..."
+    kubectl apply -f scripts/example-storagebasedremediationconfig.yaml
     
     log_success "Resources deployed successfully"
 }
@@ -99,12 +99,12 @@ check_status() {
 
 # Function to show logs
 show_logs() {
-    log_info "Showing recent logs from SBD Agent pods..."
-    
-    local pods=$(kubectl get pods -n ${NAMESPACE} -l component=sbd-agent -o jsonpath='{.items[*].metadata.name}')
-    
+    log_info "Showing recent logs from SBR Agent pods..."
+
+    local pods=$(kubectl get pods -n ${NAMESPACE} -l component=sbr-agent -o jsonpath='{.items[*].metadata.name}')
+
     if [ -z "${pods}" ]; then
-        log_warning "No SBD Agent pods found"
+        log_warning "No SBR Agent pods found"
         return 1
     fi
     
@@ -121,18 +121,18 @@ show_logs() {
 
 # Function to delete resources
 delete_resources() {
-    log_info "Deleting SBD Agent resources..."
-    
+    log_info "Deleting SBR Agent resources..."
+
     # Delete DaemonSet and related resources
-    if kubectl get -f deploy/sbd-agent-daemonset-simple.yaml &> /dev/null; then
-        kubectl delete -f deploy/sbd-agent-daemonset-simple.yaml
+    if kubectl get -f deploy/sbr-agent-daemonset-simple.yaml &> /dev/null; then
+        kubectl delete -f deploy/sbr-agent-daemonset-simple.yaml
         log_success "DaemonSet and RBAC resources deleted"
     else
         log_warning "DaemonSet resources not found"
     fi
     
     # Delete namespace (optional, commented out by default)
-    # kubectl delete -f deploy/sbd-system-namespace.yaml
+    # kubectl delete -f deploy/sbr-system-namespace.yaml
     # log_success "Namespace deleted"
     
     log_warning "Namespace ${NAMESPACE} was not deleted. Delete manually if needed."
@@ -160,10 +160,10 @@ show_usage() {
     echo "Usage: $0 [COMMAND]"
     echo ""
     echo "Commands:"
-    echo "  deploy    Deploy SBD Agent resources (default)"
+    echo "  deploy    Deploy SBR Agent resources (default)"
     echo "  status    Check deployment status"
-    echo "  logs      Show logs from SBD Agent pods"
-    echo "  delete    Delete SBD Agent resources"
+    echo "  logs      Show logs from SBR Agent pods"
+    echo "  delete    Delete SBR Agent resources"
     echo "  wait      Wait for rollout to complete"
     echo "  help      Show this help message"
     echo ""
@@ -178,7 +178,7 @@ COMMAND=${1:-"deploy"}
 
 case ${COMMAND} in
     deploy)
-        log_info "SBD Agent Deployment Script"
+        log_info "SBR Agent Deployment Script"
         echo ""
         check_kubectl
         deploy_resources

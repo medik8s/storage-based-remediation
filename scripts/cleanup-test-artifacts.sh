@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # cleanup-test-artifacts.sh
-# Script to clean up leftover artifacts from SBD operator e2e test runs
+# Script to clean up leftover artifacts from SBR operator e2e test runs
 # This removes temporary security groups and other AWS resources created during testing
 
 set -euo pipefail
 
-echo "=== SBD Operator Test Cleanup Script ==="
+echo "=== SBR Operator Test Cleanup Script ==="
 echo
 
 # Check if AWS CLI is available
@@ -49,7 +49,7 @@ echo
 echo "Finding test-related security groups..."
 
 TEST_SECURITY_GROUPS=$(aws ec2 describe-security-groups \
-    --query 'SecurityGroups[?contains(GroupName, `sbd-e2e-`) || contains(GroupName, `sbd-e2e-network-disruptor`) || contains(GroupName, `sbd-e2e-restore`) || contains(GroupName, `sbd-e2e-network-test`) || contains(GroupName, `sbd-e2e-storage-test`)].{GroupId:GroupId,GroupName:GroupName}' \
+    --query 'SecurityGroups[?contains(GroupName, `sbr-e2e-`) || contains(GroupName, `sbr-e2e-network-disruptor`) || contains(GroupName, `sbr-e2e-restore`) || contains(GroupName, `sbr-e2e-network-test`) || contains(GroupName, `sbr-e2e-storage-test`)].{GroupId:GroupId,GroupName:GroupName}' \
     --output text 2>/dev/null || echo "")
 
 if [ -z "$TEST_SECURITY_GROUPS" ]; then
@@ -176,7 +176,7 @@ if command -v kubectl &> /dev/null; then
     echo
     echo "Cleaning up test namespaces in Kubernetes..."
     
-    TEST_NAMESPACES=$(kubectl get namespaces -o name 2>/dev/null | grep -E 'sbd-.*-test|sbd-e2e' || echo "")
+    TEST_NAMESPACES=$(kubectl get namespaces -o name 2>/dev/null | grep -E 'sbr-.*-test|sbr-e2e' || echo "")
     
     if [ -z "$TEST_NAMESPACES" ]; then
         echo "✓ No test namespaces found"

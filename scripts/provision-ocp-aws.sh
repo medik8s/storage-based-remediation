@@ -14,7 +14,7 @@ INSTALL_CONFIG_TEMPLATE="${SCRIPT_DIR}/install-config.yaml.template"
 TOOLS_DIR="${PROJECT_ROOT}/.tools"
 
 # Default values
-DEFAULT_CLUSTER_NAME="sbd-operator-test"
+DEFAULT_CLUSTER_NAME="sbr-operator-test"
 DEFAULT_REGION="us-east-1"
 DEFAULT_WORKER_COUNT=3
 DEFAULT_INSTANCE_TYPE="m5.4xlarge"
@@ -276,7 +276,7 @@ usage() {
     cat << EOF
 Usage: $0 [OPTIONS]
 
-Provision an OpenShift cluster on AWS for SBD operator testing.
+Provision an OpenShift cluster on AWS for SBR operator testing.
 This script automatically downloads and installs required tools if missing.
 
 OPTIONS:
@@ -385,7 +385,7 @@ parse_args() {
 
     # Validate worker count
     if [[ "${WORKER_COUNT}" -lt 3 ]]; then
-        log_error "Worker count must be at least 3 for proper SBD testing"
+        log_error "Worker count must be at least 3 for proper SBR testing"
         exit 1
     fi
 
@@ -540,7 +540,7 @@ setup_ssh_key() {
     SSH_KEY_PATH="${HOME}/.ssh/id_rsa"
     if [[ ! -f "${SSH_KEY_PATH}" ]]; then
         log_info "Creating new SSH key..."
-        ssh-keygen -t rsa -b 4096 -f "${SSH_KEY_PATH}" -N "" -C "sbd-operator-test"
+        ssh-keygen -t rsa -b 4096 -f "${SSH_KEY_PATH}" -N "" -C "sbr-operator-test"
     fi
     
     SSH_PUBLIC_KEY=$(cat "${SSH_KEY_PATH}.pub")

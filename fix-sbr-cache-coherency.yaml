@@ -1,11 +1,11 @@
 ---
-# Updated StorageClass with aggressive cache coherency for SBD
+# Updated StorageClass with aggressive cache coherency for SBR
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: sbd-nfs-aggressive-coherency
+  name: sbr-nfs-aggressive-coherency
   labels:
-    app.kubernetes.io/managed-by: sbd-operator
+    app.kubernetes.io/managed-by: sbr-operator
     storage.medik8s.io/type: shared-nfs-aggressive
 provisioner: nfs.csi.k8s.io
 parameters:
@@ -28,11 +28,11 @@ allowVolumeExpansion: true
 reclaimPolicy: Retain
 volumeBindingMode: Immediate
 ---
-# Test SBDConfig using the new StorageClass
+# Test StorageBasedRemediationConfig using the new StorageClass
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
-kind: SBDConfig
+kind: StorageBasedRemediationConfig
 metadata:
-  name: test-sbd-aggressive-coherency
+  name: test-sbr-aggressive-coherency
   namespace: default
 spec:
   imagePullPolicy: Always
@@ -41,9 +41,9 @@ spec:
   peerCheckInterval: 5s
   petIntervalMultiple: 4
   rebootMethod: none
-  sbdTimeoutSeconds: 30
-  sbdUpdateInterval: 5s
-  sbdWatchdogPath: /dev/watchdog
-  sharedStorageClass: sbd-nfs-aggressive-coherency
+  sbrTimeoutSeconds: 30
+  sbrUpdateInterval: 5s
+  watchdogPath: /dev/watchdog
+  sharedStorageClass: sbr-nfs-aggressive-coherency
   staleNodeTimeout: 2h0m0s
   watchdogTimeout: 1m30s 

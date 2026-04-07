@@ -1,10 +1,10 @@
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
-kind: SBDRemediation
+kind: StorageBasedRemediation
 metadata:
   labels:
-    app.kubernetes.io/name: sbd-operator
+    app.kubernetes.io/name: sbr-operator
     app.kubernetes.io/managed-by: kustomize
-  name: sbdremediation-sample
+  name: storagebasedremediation-sample
   namespace: default
 spec:
   # Name of the Kubernetes node to be fenced

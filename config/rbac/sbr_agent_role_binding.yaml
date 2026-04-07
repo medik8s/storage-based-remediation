@@ -2,17 +2,17 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: sbd-agent-rolebinding
+  name: sbr-agent-rolebinding
   labels:
-    app.kubernetes.io/name: sbd-agent
+    app.kubernetes.io/name: sbr-agent
     app.kubernetes.io/component: agent
-    app.kubernetes.io/part-of: sbd-operator
-    app.kubernetes.io/managed-by: sbd-operator
+    app.kubernetes.io/part-of: sbr-operator
+    app.kubernetes.io/managed-by: sbr-operator
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: sbd-agent-role
+  name: sbr-agent-role
 subjects:
 - kind: ServiceAccount
-  name: sbd-agent
+  name: sbr-agent
   namespace: system 

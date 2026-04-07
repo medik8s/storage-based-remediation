@@ -19,7 +19,7 @@ set -euo pipefail
 # Script configuration
 SCRIPT_NAME="show-node-map.sh"
 SCRIPT_VERSION="1.0.0"
-SBD_DEVICE_PATH="/dev/sbd/sbd-device"
+SBR_DEVICE_PATH="/dev/sbr/sbr-device"
 SHOW_HEARTBEATS=false
 JSON_OUTPUT=false
 VERBOSE=false
@@ -64,11 +64,11 @@ usage() {
     cat <<EOF
 Usage: $SCRIPT_NAME [OPTIONS]
 
-Display SBD agent node map showing node-to-slot assignments and heartbeat status.
+Display SBR agent node map showing node-to-slot assignments and heartbeat status.
 
 OPTIONS:
-  -n, --namespace NAME    Kubernetes namespace for SBD agents (auto-detected if not specified)
-  -H, --heartbeats        Show current heartbeat status from SBD device
+  -n, --namespace NAME    Kubernetes namespace for SBR agents (auto-detected if not specified)
+  -H, --heartbeats        Show current heartbeat status from SBR device
   -j, --json              Output in JSON format
   -v, --verbose           Enable verbose output
   -h, --help              Show this help message
@@ -82,7 +82,7 @@ EXAMPLES:
   $SCRIPT_NAME --heartbeats
 
   # Use specific namespace
-  $SCRIPT_NAME --namespace sbd-system
+  $SCRIPT_NAME --namespace sbr-system
 
   # JSON output for automation
   $SCRIPT_NAME --json
@@ -91,23 +91,23 @@ EXAMPLES:
   $SCRIPT_NAME --verbose --heartbeats
 
 DESCRIPTION:
-  This script reads the SBD node mapping file (-nodemap) from running SBD agent pods
+  This script reads the SBR node mapping file (-nodemap) from running SBR agent pods
   and displays:
   - Node names and their assigned slot IDs
   - Hash values used for slot assignment
   - Last seen timestamps
   - Cluster information
-  - Optional: Current heartbeat status from SBD device slots
+  - Optional: Current heartbeat status from SBR device slots
 
-  The script reads from SBD agent pods via kubectl/oc.
-  SBD device is always located at /dev/sbd/sbd-device in the pods.
+  The script reads from SBR agent pods via kubectl/oc.
+  SBR device is always located at /dev/sbr/sbr-device in the pods.
 
 REQUIREMENTS:
   - kubectl or oc command available
   - KUBECONFIG configured for target cluster
-  - Read permissions for pods in SBD namespace
+  - Read permissions for pods in SBR namespace
   - jq command for JSON parsing (automatically checked)
-  - Optional: hexdump for binary SBD device analysis
+  - Optional: hexdump for binary SBR device analysis
 
 EOF
 }
@@ -177,59 +177,59 @@ check_cluster_connectivity() {
 
 
 
-# Auto-detect SBD namespace if not specified
-detect_sbd_namespace() {
-    log_debug "Auto-detecting SBD namespace..."
+# Auto-detect SBR namespace if not specified
+detect_sbr_namespace() {
+    log_debug "Auto-detecting SBR namespace..."
     
-    # Common namespace patterns for SBD agents
-    local common_namespaces=("sbd-system" "sbd" "medik8s" "openshift-sbd" "kube-system" "default")
+    # Common namespace patterns for SBR agents
+    local common_namespaces=("sbr-system" "sbr" "medik8s" "openshift-sbr" "kube-system" "default")
     
     for ns in "${common_namespaces[@]}"; do
         log_debug "Checking namespace: $ns"
         local pod_count
-        pod_count=$($KUBECTL_CMD get pods -n "$ns" -l app=sbd-agent --no-headers 2>/dev/null | wc -l)
+        pod_count=$($KUBECTL_CMD get pods -n "$ns" -l app=sbr-agent --no-headers 2>/dev/null | wc -l)
         if [[ $pod_count -gt 0 ]]; then
             KUBERNETES_NAMESPACE="$ns"
-            log_debug "Found $pod_count SBD agent pods in namespace: $ns"
+            log_debug "Found $pod_count SBR agent pods in namespace: $ns"
             return 0
         fi
     done
     
     # Search all namespaces
-    log_debug "Searching all namespaces for SBD agent pods..."
+    log_debug "Searching all namespaces for SBR agent pods..."
     local all_namespaces
-    all_namespaces=$($KUBECTL_CMD get pods --all-namespaces -l app=sbd-agent --no-headers 2>/dev/null | awk '{print $1}' | sort -u)
+    all_namespaces=$($KUBECTL_CMD get pods --all-namespaces -l app=sbr-agent --no-headers 2>/dev/null | awk '{print $1}' | sort -u)
     
     if [[ -n "$all_namespaces" ]]; then
         local ns_count
         ns_count=$(echo "$all_namespaces" | wc -l)
         if [[ $ns_count -eq 1 ]]; then
             KUBERNETES_NAMESPACE="$all_namespaces"
-            log_debug "Found SBD agents in namespace: $KUBERNETES_NAMESPACE"
+            log_debug "Found SBR agents in namespace: $KUBERNETES_NAMESPACE"
             return 0
         else
-            log_error "Multiple namespaces with SBD agents found: $(echo "$all_namespaces" | tr '\n' ' ')"
+            log_error "Multiple namespaces with SBR agents found: $(echo "$all_namespaces" | tr '\n' ' ')"
             log_info "Please specify namespace with --namespace option"
             exit 1
         fi
     else
-        log_error "No SBD agent pods found in any namespace"
-        log_info "Are SBD agents deployed? Check with: $KUBECTL_CMD get pods -A -l app=sbd-agent"
+        log_error "No SBR agent pods found in any namespace"
+        log_info "Are SBR agents deployed? Check with: $KUBECTL_CMD get pods -A -l app=sbr-agent"
         exit 1
     fi
 }
 
-# Find a running SBD agent pod
-find_sbd_agent_pod() {
-    log_debug "Finding running SBD agent pod in namespace: $KUBERNETES_NAMESPACE"
+# Find a running SBR agent pod
+find_sbr_agent_pod() {
+    log_debug "Finding running SBR agent pod in namespace: $KUBERNETES_NAMESPACE"
     
-    # Get running SBD agent pods
+    # Get running SBR agent pods
     local pod_info
-    pod_info=$($KUBECTL_CMD get pods -n "$KUBERNETES_NAMESPACE" -l app=sbd-agent --field-selector=status.phase=Running --no-headers 2>/dev/null)
+    pod_info=$($KUBECTL_CMD get pods -n "$KUBERNETES_NAMESPACE" -l app=sbr-agent --field-selector=status.phase=Running --no-headers 2>/dev/null)
     
     if [[ -z "$pod_info" ]]; then
-        log_error "No running SBD agent pods found in namespace '$KUBERNETES_NAMESPACE'"
-        log_info "Check pod status with: $KUBECTL_CMD get pods -n $KUBERNETES_NAMESPACE -l app=sbd-agent"
+        log_error "No running SBR agent pods found in namespace '$KUBERNETES_NAMESPACE'"
+        log_info "Check pod status with: $KUBECTL_CMD get pods -n $KUBERNETES_NAMESPACE -l app=sbr-agent"
         exit 1
     fi
     
@@ -239,14 +239,14 @@ find_sbd_agent_pod() {
     local pod_status
     pod_status=$(echo "$pod_info" | head -1 | awk '{print $3}')
     
-    log_debug "Selected SBD agent pod: $pod_name (status: $pod_status)"
+    log_debug "Selected SBR agent pod: $pod_name (status: $pod_status)"
     echo "$pod_name"
 }
 
 # Read node mapping from Kubernetes pod
 read_node_mapping_from_k8s() {
     local pod_name="$1"
-    local nodemap_file="${SBD_DEVICE_PATH}-nodemap"
+    local nodemap_file="${SBR_DEVICE_PATH}-nodemap"
     
     log_debug "Reading node mapping from pod $pod_name at path: $nodemap_file"
     
@@ -254,7 +254,7 @@ read_node_mapping_from_k8s() {
     if ! $KUBECTL_CMD exec -n "$KUBERNETES_NAMESPACE" "$pod_name" -- test -f "$nodemap_file" 2>/dev/null; then
         log_error "Node mapping file not found in pod: $nodemap_file"
         log_info "This could mean:"
-        log_info "  - SBD agent has not yet created the mapping"
+        log_info "  - SBR agent has not yet created the mapping"
         log_info "  - Volume mount configuration issue"
         exit 1
     fi
@@ -281,18 +281,18 @@ get_heartbeat_status_from_k8s() {
     local pod_name="$1"
     local slot_id="$2"
     
-    # Each slot is 512 bytes (SBD_SLOT_SIZE)
+    # Each slot is 512 bytes (SBR_SLOT_SIZE)
     local slot_size=512
     local offset=$((slot_id * slot_size))
     
     # Read the first 64 bytes of the slot (contains the header)
     local header_data
-    if header_data=$($KUBECTL_CMD exec -n "$KUBERNETES_NAMESPACE" "$pod_name" -- dd if="$SBD_DEVICE_PATH" bs=64 count=1 skip=$((offset / 64)) 2>/dev/null | hexdump -C 2>/dev/null); then
+    if header_data=$($KUBECTL_CMD exec -n "$KUBERNETES_NAMESPACE" "$pod_name" -- dd if="$SBR_DEVICE_PATH" bs=64 count=1 skip=$((offset / 64)) 2>/dev/null | hexdump -C 2>/dev/null); then
         # Look for non-zero data which indicates activity
         if echo "$header_data" | grep -q -v "00 00 00 00 00 00 00 00"; then
             # Try to extract timestamp (assuming it's in the first 8 bytes)
             local timestamp_hex
-            timestamp_hex=$($KUBECTL_CMD exec -n "$KUBERNETES_NAMESPACE" "$pod_name" -- dd if="$SBD_DEVICE_PATH" bs=8 count=1 skip=$((offset / 8)) 2>/dev/null | hexdump -e '1/8 "%016x"' 2>/dev/null || echo "unknown")
+            timestamp_hex=$($KUBECTL_CMD exec -n "$KUBERNETES_NAMESPACE" "$pod_name" -- dd if="$SBR_DEVICE_PATH" bs=8 count=1 skip=$((offset / 8)) 2>/dev/null | hexdump -e '1/8 "%016x"' 2>/dev/null || echo "unknown")
             echo "active:$timestamp_hex"
         else
             echo "empty"
@@ -307,7 +307,7 @@ get_all_heartbeats_from_k8s() {
     local pod_name="$1"
     local json_data="$2"
     
-    log_debug "Reading heartbeat status from SBD device via pod $pod_name..."
+    log_debug "Reading heartbeat status from SBR device via pod $pod_name..."
 
     # Extract slot usage from JSON
     local slot_usage
@@ -380,7 +380,7 @@ display_node_mapping() {
     # Display header
     echo
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${CYAN}                     SBD Agent Node Mapping${NC}"
+    echo -e "${CYAN}                     SBR Agent Node Mapping${NC}"
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     echo
     echo -e "${BLUE}Cluster Name:${NC} $cluster_name"
@@ -389,7 +389,7 @@ display_node_mapping() {
     
     # Show access mode
     echo -e "${BLUE}Access Mode:${NC} Kubernetes (namespace: $KUBERNETES_NAMESPACE)"
-    echo -e "${BLUE}SBD Device:${NC} $SBD_DEVICE_PATH"
+    echo -e "${BLUE}SBR Device:${NC} $SBR_DEVICE_PATH"
     
     # Count nodes
     local node_count
@@ -557,20 +557,20 @@ main() {
     # Check prerequisites
     check_prerequisites
 
-    # Read from SBD agent pods
-    log_debug "Reading node mapping from SBD agent pods"
+    # Read from SBR agent pods
+    log_debug "Reading node mapping from SBR agent pods"
     
     # Auto-detect namespace if not specified
     if [[ -z "$KUBERNETES_NAMESPACE" ]]; then
-        detect_sbd_namespace
+        detect_sbr_namespace
     fi
     
-    # Find a running SBD agent pod
+    # Find a running SBR agent pod
     local pod_name
-    pod_name=$(find_sbd_agent_pod)
+    pod_name=$(find_sbr_agent_pod)
     
     # Read node mapping from the pod
-    log_debug "Reading node mapping from pod $pod_name at $SBD_DEVICE_PATH"
+    log_debug "Reading node mapping from pod $pod_name at $SBR_DEVICE_PATH"
     local json_data
     json_data=$(read_node_mapping_from_k8s "$pod_name")
     

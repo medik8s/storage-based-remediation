@@ -1,14 +1,14 @@
 #!/bin/bash
 
-# Build script for SBD Agent container
-# This script builds the SBD Agent Docker image and provides testing options
+# Build script for SBR Agent container
+# This script builds the SBR Agent Docker image and provides testing options
 
 set -e
 
 # Configuration
-IMAGE_NAME="sbd-agent"
+IMAGE_NAME="sbr-agent"
 IMAGE_TAG=${IMAGE_TAG:-"latest"}
-DOCKERFILE="Dockerfile.sbd-agent"
+DOCKERFILE="Dockerfile.sbr-agent"
 
 # Colors for output
 RED='\033[0;31m'
@@ -55,8 +55,8 @@ check_prerequisites() {
 test_go_build() {
     log_info "Testing Go compilation..."
     
-    if go build -o /tmp/sbd-agent-test ./cmd/sbd-agent/main.go; then
-        rm -f /tmp/sbd-agent-test
+    if go build -o /tmp/sbr-agent-test ./cmd/sbr-agent/main.go; then
+        rm -f /tmp/sbr-agent-test
         log_success "Go compilation successful"
     else
         log_error "Go compilation failed"
@@ -108,18 +108,18 @@ test_run() {
     # Create mock devices for testing
     local temp_dir=$(mktemp -d)
     touch "${temp_dir}/watchdog"
-    touch "${temp_dir}/sbd"
+    touch "${temp_dir}/sbr"
     
     log_info "Starting container with mock devices..."
     log_warning "This will run for 10 seconds then stop automatically"
     
     # Run container with timeout
     timeout 10s docker run --rm \
-        --name sbd-agent-test \
+        --name sbr-agent-test \
         -v "${temp_dir}:/tmp/mock" \
         ${IMAGE_NAME}:${IMAGE_TAG} \
         --watchdog-path=/tmp/mock/watchdog \
-        --sbd-device=/tmp/mock/sbd \
+        --sbr-device=/tmp/mock/sbr \
         --watchdog-timeout=5s \
         --log-level=info || true
     
@@ -192,7 +192,7 @@ done
 COMMAND=${COMMAND:-"build"}
 
 # Main execution
-log_info "SBD Agent Build Script"
+log_info "SBR Agent Build Script"
 log_info "Image: ${IMAGE_NAME}:${IMAGE_TAG}"
 log_info "Command: ${COMMAND}"
 echo ""

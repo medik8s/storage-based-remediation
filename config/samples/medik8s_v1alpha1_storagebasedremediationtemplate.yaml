@@ -2,7 +2,7 @@ apiVersion: storage-based-remediation.medik8s.io/v1alpha1
 kind: StorageBasedRemediationTemplate
 metadata:
   labels:
-    app.kubernetes.io/name: sbd-operator
+    app.kubernetes.io/name: sbr-operator
     app.kubernetes.io/managed-by: kustomize
   name: storagebasedremediationtemplate-sample
 spec:

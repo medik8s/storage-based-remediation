@@ -2,5 +2,5 @@
 resources:
 - medik8s_v1alpha1_storagebasedremediation.yaml
 - medik8s_v1alpha1_storagebasedremediationtemplate.yaml
-- medik8s_v1alpha1_sbdconfig.yaml
+- medik8s_v1alpha1_storagebasedremediationconfig.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

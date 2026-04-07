@@ -1,14 +1,14 @@
-# SBD Operator Debugging Scripts
+# SBR Operator Debugging Scripts
 
-This directory contains useful scripts for debugging and troubleshooting the SBD Operator and its agents.
+This directory contains useful scripts for debugging and troubleshooting the SBR Operator and its agents.
 
 ## Scripts Overview
 
 ### 🔍 `list-agent-pods.sh` - Agent Pod Overview
-Lists all SBD agent pods across OpenShift nodes with their status.
+Lists all SBR agent pods across OpenShift nodes with their status.
 
 **Use this when you want to:**
-- Get an overview of SBD agent deployment across the cluster
+- Get an overview of SBR agent deployment across the cluster
 - Check which nodes have agents running
 - See pod status at a glance
 - Identify problematic pods before digging into logs
@@ -16,71 +16,71 @@ Lists all SBD agent pods across OpenShift nodes with their status.
 **Example output:**
 ```bash
 $ ./list-agent-pods.sh
-[2025-01-24 10:30:15] SBD Agent Pod Listing Tool
-[2025-01-24 10:30:15] Auto-detected SBD namespace: sbd-system
-[2025-01-24 10:30:15] SBD Agent Pods in namespace: sbd-system
+[2025-01-24 10:30:15] SBR Agent Pod Listing Tool
+[2025-01-24 10:30:15] Auto-detected SBR namespace: sbr-system
+[2025-01-24 10:30:15] SBR Agent Pods in namespace: sbr-system
 ==============================================
 
 POD NAME                                 NODE NAME                      STATUS         
 ---------------------------------------- ------------------------------ ---------------
-sbd-agent-test-config-abc123            worker-1.example.com           Running        
-sbd-agent-test-config-def456            worker-2.example.com           Running        
-sbd-agent-test-config-ghi789            master-1.example.com           Running        
+sbr-agent-test-config-abc123            worker-1.example.com           Running        
+sbr-agent-test-config-def456            worker-2.example.com           Running        
+sbr-agent-test-config-ghi789            master-1.example.com           Running        
 
 [2025-01-24 10:30:15] Summary: 3 total pods, 3 running, 0 pending, 0 failed
 ```
 
 ### 📋 `get-agent-logs.sh` - Node-Specific Logs
-Retrieves logs from the SBD agent pod running on a specific OpenShift node.
+Retrieves logs from the SBR agent pod running on a specific OpenShift node.
 
 **Use this when you want to:**
 - Debug issues on a specific node
 - Follow real-time logs from an agent
 - Get previous logs after a pod restart
-- Troubleshoot node-specific SBD problems
+- Troubleshoot node-specific SBR problems
 
 **Example output:**
 ```bash
 $ ./get-agent-logs.sh worker-1.example.com --tail 50
-[2025-01-24 10:31:22] SBD Agent Log Retrieval Tool
+[2025-01-24 10:31:22] SBR Agent Log Retrieval Tool
 [2025-01-24 10:31:22] Node: worker-1.example.com
-[2025-01-24 10:31:22] Auto-detected SBD namespace: sbd-system
-[2025-01-24 10:31:22] Found SBD agent pod: sbd-agent-test-config-abc123 (status: Running)
-[2025-01-24 10:31:22] Retrieving logs from SBD agent pod 'sbd-agent-test-config-abc123'...
+[2025-01-24 10:31:22] Auto-detected SBR namespace: sbr-system
+[2025-01-24 10:31:22] Found SBR agent pod: sbr-agent-test-config-abc123 (status: Running)
+[2025-01-24 10:31:22] Retrieving logs from SBR agent pod 'sbr-agent-test-config-abc123'...
 ==============================================
 ```
 
-### 🗺️ `show-node-map.sh` - SBD Agent Node Mapping
-Displays the SBD agent node mapping showing which nodes are assigned to which slots by reading from running SBD agent pods.
+### 🗺️ `show-node-map.sh` - SBR Agent Node Mapping
+Displays the SBR agent node mapping showing which nodes are assigned to which slots by reading from running SBR agent pods.
 
 **Use this when you want to:**
-- View current node-to-slot assignments in the SBD device
+- View current node-to-slot assignments in the SBR device
 - Check which nodes are active in the cluster
 - Debug slot assignment conflicts or issues
 - Monitor node heartbeat status
-- Understand the SBD agent coordination structure
+- Understand the SBR agent coordination structure
 
 **Key Features:**
-- Reads directly from SBD agent pods via Kubernetes API
+- Reads directly from SBR agent pods via Kubernetes API
 - Shows hash-based slot assignments for each node
 - Displays last seen timestamps for cluster health
-- Optional real-time heartbeat status from SBD device
+- Optional real-time heartbeat status from SBR device
 - Supports JSON output for automation
 - Color-coded status indicators (OK/STALE/OFFLINE)
-- Auto-detects SBD namespace and running pods
+- Auto-detects SBR namespace and running pods
 
 **Example output:**
 ```bash
 $ ./show-node-map.sh --heartbeats
 ═══════════════════════════════════════════════════════════════
-                     SBD Agent Node Mapping
+                     SBR Agent Node Mapping
 ═══════════════════════════════════════════════════════════════
 
 Cluster Name: my-openshift-cluster
 Version: 15
 Last Update: 2m ago
-Access Mode: Kubernetes (namespace: sbd-system)
-SBD Device: /sbd-shared/sbd-device
+Access Mode: Kubernetes (namespace: sbr-system)
+SBR Device: /sbr-shared/sbr-device
 Total Nodes: 3
 
 SLOT NODE NAME                     HASH       LAST SEEN      HEARTBEAT    STATUS
@@ -97,7 +97,7 @@ Immediately and ungracefully reboots a specified OpenShift node using `oc debug`
 
 **Use this when you want to:**
 - Emergency fence/reboot an unresponsive node
-- Simulate SBD fencing behavior for testing
+- Simulate SBR fencing behavior for testing
 - Force reboot a node when normal remediation has failed
 - Test cluster resilience to sudden node failures
 
@@ -155,7 +155,7 @@ $ ./emergency-reboot-node.sh --dry-run worker-node-1
 ./scripts/get-agent-logs.sh <node-name> --follow
 ```
 
-### 4. Display SBD agent node mapping
+### 4. Display SBR agent node mapping
 ```bash
 # Show basic node-to-slot mapping
 ./scripts/show-node-map.sh
@@ -164,7 +164,7 @@ $ ./emergency-reboot-node.sh --dry-run worker-node-1
 ./scripts/show-node-map.sh --heartbeats
 
 # Use specific namespace
-./scripts/show-node-map.sh --namespace sbd-system
+./scripts/show-node-map.sh --namespace sbr-system
 
 # JSON output for automation
 ./scripts/show-node-map.sh --json
@@ -188,7 +188,7 @@ $ ./emergency-reboot-node.sh --dry-run worker-node-1
 4. **Get detailed logs:** `./get-agent-logs.sh <problematic-node>`
 5. **Follow real-time:** `./get-agent-logs.sh <node> --follow --tail 100`
 
-### SBD Coordination Debugging Workflow
+### SBR Coordination Debugging Workflow
 1. **Check node mapping:** `./show-node-map.sh --kubernetes --verbose`
 2. **Monitor heartbeats:** `./show-node-map.sh --kubernetes --heartbeats`
 3. **Check for slot conflicts:** Look for hash collisions or duplicate assignments
@@ -210,7 +210,7 @@ $ ./emergency-reboot-node.sh --dry-run worker-node-1
 ./get-agent-logs.sh worker-1 --tail 200
 
 # Follow logs during agent restart
-oc delete pod sbd-agent-xxx -n sbd-system
+oc delete pod sbr-agent-xxx -n sbr-system
 ./get-agent-logs.sh worker-1 --follow
 ```
 
@@ -232,20 +232,20 @@ oc delete pod sbd-agent-xxx -n sbd-system
 ./list-agent-pods.sh --output json > agent-pods.json
 
 # Check specific namespace
-./list-agent-pods.sh -n my-sbd-namespace
+./list-agent-pods.sh -n my-sbr-namespace
 ```
 
 ## Script Features
 
 ### Auto-Detection
 Both scripts automatically detect:
-- ✅ **Namespace:** Finds SBD agents in common namespaces
+- ✅ **Namespace:** Finds SBR agents in common namespaces
 - ✅ **Command:** Uses `oc` if available, falls back to `kubectl`
 - ✅ **Cluster:** Validates connection before proceeding
 
 ### Environment Variables
 Set these for easier usage:
-- `SBD_NAMESPACE`: Default namespace for SBD agents
+- `SBR_NAMESPACE`: Default namespace for SBR agents
 - `KUBECONFIG`: Path to kubeconfig file
 
 ### Error Handling
@@ -261,14 +261,14 @@ Scripts provide clear error messages for:
 ### For monitoring/debugging scripts (`list-agent-pods.sh`, `get-agent-logs.sh`):
 - ✅ OpenShift CLI (`oc`) or Kubernetes CLI (`kubectl`)
 - ✅ Access to OpenShift/Kubernetes cluster
-- ✅ Read permissions for pods and logs in SBD namespace
+- ✅ Read permissions for pods and logs in SBR namespace
 
 ### For node mapping script (`show-node-map.sh`):
 - ✅ OpenShift CLI (`oc`) or Kubernetes CLI (`kubectl`)
 - ✅ KUBECONFIG configured for target cluster
-- ✅ Read permissions for pods in SBD namespace
+- ✅ Read permissions for pods in SBR namespace
 - ✅ `jq` command for JSON parsing
-- ✅ Optional: `hexdump` for SBD device heartbeat analysis
+- ✅ Optional: `hexdump` for SBR device heartbeat analysis
 - ✅ Optional: `date` command for timestamp formatting
 
 ### For emergency reboot script (`emergency-reboot-node.sh`):
@@ -280,10 +280,10 @@ Scripts provide clear error messages for:
 
 ## Troubleshooting the Scripts
 
-### "No SBD agent pods found"
-- Check if SBD operator is deployed: `oc get pods -A | grep sbd`
-- Verify namespace: `oc get pods -n <sbd-namespace>`
-- Check labels: `oc get pods -l app=sbd-agent -A`
+### "No SBR agent pods found"
+- Check if SBR operator is deployed: `oc get pods -A | grep sbr`
+- Verify namespace: `oc get pods -n <sbr-namespace>`
+- Check labels: `oc get pods -l app=sbr-agent -A`
 
 ### "Node not found"
 - List available nodes: `oc get nodes`
@@ -296,10 +296,10 @@ Scripts provide clear error messages for:
 - Test connectivity: `oc get nodes`
 
 ### "Node mapping file not found"
-- Ensure SBD agent is running: `./list-agent-pods.sh`
-- Check if SBD agent pods have the shared storage mounted
-- Verify SBD agent has created the mapping: `oc exec <pod> -- ls -la /sbd-shared/`
-- Check pod volume mounts: `oc describe pod <sbd-agent-pod>`
+- Ensure SBR agent is running: `./list-agent-pods.sh`
+- Check if SBR agent pods have the shared storage mounted
+- Verify SBR agent has created the mapping: `oc exec <pod> -- ls -la /sbr-shared/`
+- Check pod volume mounts: `oc describe pod <sbr-agent-pod>`
 
 ### "Emergency reboot failed"
 - Check permissions: `oc auth can-i debug node`
@@ -351,6 +351,6 @@ When adding new debugging scripts:
 
 ## See Also
 
-- [SBD Operator Documentation](../docs/)
+- [SBR Operator Documentation](../docs/)
 - [OpenShift CLI Reference](https://docs.openshift.com/container-platform/latest/cli_reference/openshift_cli/getting-started-cli.html)
 - [Kubernetes Debugging Guide](https://kubernetes.io/docs/tasks/debug-application-cluster/) 

@@ -1,16 +1,16 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: sbdconfigs.medik8s.io
+  name: storagebasedremediationconfigs.medik8s.io
   annotations:
     controller-gen.kubebuilder.io/version: v0.9.2
 spec:
   group: medik8s.io
   names:
-    kind: SBDConfig
-    listKind: SBDConfigList
-    plural: sbdconfigs
-    singular: sbdconfig
+    kind: StorageBasedRemediationConfig
+    listKind: StorageBasedRemediationConfigList
+    plural: storagebasedremediationconfigs
+    singular: storagebasedremediationconfig
   scope: Cluster
   versions:
   - name: v1alpha1
@@ -18,7 +18,7 @@ spec:
     storage: true
     schema:
       openAPIV3Schema:
-        description: SBDConfig defines cluster-wide parameters for the Storage-Based Death (SBD) fencing mechanism.
+        description: StorageBasedRemediationConfig defines cluster-wide parameters for the Storage-Based Remediation (SBR) fencing mechanism.
         type: object
         properties:
           apiVersion:
@@ -30,30 +30,30 @@ spec:
           metadata:
             type: object
           spec:
-            description: SBDConfigSpec defines the desired state of SBDConfig
+            description: StorageBasedRemediationConfigSpec defines the desired state of StorageBasedRemediationConfig
             type: object
             required:
-            - sbdDevicePVCName
-            - sbdTimeoutSeconds
-            - sbdWatchdogPath
+            - sbrDevicePVCName
+            - sbrTimeoutSeconds
+            - watchdogPath
             properties:
-              sbdDevicePVCName:
+              sbrDevicePVCName:
                 description: The name of the PVC providing the shared block device
                 type: string
                 minLength: 1
                 pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
-              sbdTimeoutSeconds:
-                description: The SBD timeout in seconds
+              sbrTimeoutSeconds:
+                description: The SBR timeout in seconds
                 type: integer
                 minimum: 1
                 maximum: 3600
-              sbdWatchdogPath:
+              watchdogPath:
                 description: The path to the local kernel watchdog device (e.g., /dev/watchdog)
                 type: string
                 minLength: 1
                 pattern: '^/dev/.*$'
               nodeExclusionList:
-                description: A list of node names to exclude from SBD management
+                description: A list of node names to exclude from SBR management
                 type: array
                 items:
                   type: string
@@ -67,11 +67,11 @@ spec:
                 - systemctl-reboot
                 default: panic
           status:
-            description: SBDConfigStatus defines the observed state of SBDConfig
+            description: StorageBasedRemediationConfigStatus defines the observed state of StorageBasedRemediationConfig
             type: object
             properties:
               conditions:
-                description: Conditions represent the latest available observations of the SBDConfig state
+                description: Conditions represent the latest available observations of the StorageBasedRemediationConfig state
                 type: array
                 items:
                   description: "Condition contains details for one aspect of the current state of this API Resource. --- This struct is intended for direct use as an array at the field path .status.conditions.  For example, type FooStatus struct{ // Represents the observations of a foo's current state. // Known .status.conditions.type are: \"Available\", \"Progressing\", and \"Degraded\" // +patchMergeKey=type // +patchStrategy=merge // +listType=map // +listMapKey=type Conditions []metav1.Condition `json:\"conditions,omitempty\" patchStrategy:\"merge\" patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"` // other fields }"
@@ -115,7 +115,7 @@ spec:
                       maxLength: 316
                       pattern: '^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$'
               phase:
-                description: Phase represents the current phase of the SBDConfig
+                description: Phase represents the current phase of the StorageBasedRemediationConfig
                 type: string
                 enum:
                 - Pending
@@ -125,22 +125,22 @@ spec:
     - name: PVC Name
       type: string
       description: The name of the PVC providing the shared block device
-      jsonPath: .spec.sbdDevicePVCName
+      jsonPath: .spec.sbrDevicePVCName
     - name: Timeout
       type: integer
-      description: The SBD timeout in seconds
-      jsonPath: .spec.sbdTimeoutSeconds
+      description: The SBR timeout in seconds
+      jsonPath: .spec.sbrTimeoutSeconds
     - name: Watchdog Path
       type: string
       description: The path to the local kernel watchdog device
-      jsonPath: .spec.sbdWatchdogPath
+      jsonPath: .spec.watchdogPath
     - name: Reboot Method
       type: string
       description: The method to use for self-fencing
       jsonPath: .spec.rebootMethod
     - name: Phase
       type: string
-      description: The current phase of the SBDConfig
+      description: The current phase of the StorageBasedRemediationConfig
       jsonPath: .status.phase
     - name: Age
       type: date

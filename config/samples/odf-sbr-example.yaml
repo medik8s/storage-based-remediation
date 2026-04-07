@@ -1,24 +1,24 @@
-# Example SBDConfig using OpenShift Data Foundation CephFS storage
-# This example demonstrates how to configure SBD with CephFS storage
+# Example StorageBasedRemediationConfig using OpenShift Data Foundation CephFS storage
+# This example demonstrates how to configure SBR with CephFS storage
 # provisioned by OpenShift Data Foundation for high-availability clustering
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
-kind: SBDConfig
+kind: StorageBasedRemediationConfig
 metadata:
-  name: sbd-with-odf-cephfs
-  namespace: sbd-system
+  name: sbr-with-odf-cephfs
+  namespace: sbr-system
   labels:
-    app.kubernetes.io/name: sbd-operator
-    app.kubernetes.io/instance: sbd-with-odf
+    app.kubernetes.io/name: sbr-operator
+    app.kubernetes.io/instance: sbr-with-odf
     storage.medik8s.io/type: cephfs
   annotations:
-    description: "SBD configuration using OpenShift Data Foundation CephFS for shared storage coordination"
+    description: "SBR configuration using OpenShift Data Foundation CephFS for shared storage coordination"
 spec:
-  # SBD agent image configuration
-  image: "quay.io/clobrano/sbd-agent:latest"
+  # SBR agent image configuration
+  image: "quay.io/medik8s/sbr-agent:latest"
   imagePullPolicy: "IfNotPresent"
   
   # Watchdog configuration
-  sbdWatchdogPath: "/dev/watchdog"
+  watchdogPath: "/dev/watchdog"
   watchdogTimeout: "60s"
   petIntervalMultiple: 4
   
@@ -28,7 +28,7 @@ spec:
   # ✅ OPENSHIFT DATA FOUNDATION CEPHFS STORAGE CONFIGURATION ✅
   # This StorageClass should be created by the setup-odf-storage tool
   # It provides ReadWriteMany (RWX) access mode with POSIX file locking
-  sharedStorageClass: "sbd-cephfs"
+  sharedStorageClass: "sbr-cephfs"
   
   # Node selector to target specific nodes (optional)
   # Default targets worker nodes only
@@ -44,26 +44,26 @@ spec:
 
 ---
 # Example: Alternative configuration with aggressive cache coherency
-# Use this when strict SBD coordination is required
+# Use this when strict SBR coordination is required
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
-kind: SBDConfig
+kind: StorageBasedRemediationConfig
 metadata:
-  name: sbd-with-odf-strict
-  namespace: sbd-system
+  name: sbr-with-odf-strict
+  namespace: sbr-system
   labels:
-    app.kubernetes.io/name: sbd-operator
-    app.kubernetes.io/instance: sbd-with-odf-strict
+    app.kubernetes.io/name: sbr-operator
+    app.kubernetes.io/instance: sbr-with-odf-strict
     storage.medik8s.io/type: cephfs
     storage.medik8s.io/mode: strict-coherency
   annotations:
-    description: "SBD configuration with strict cache coherency for mission-critical environments"
+    description: "SBR configuration with strict cache coherency for mission-critical environments"
 spec:
-  # SBD agent image configuration
-  image: "quay.io/clobrano/sbd-agent:latest"
+  # SBR agent image configuration
+  image: "quay.io/medik8s/sbr-agent:latest"
   imagePullPolicy: "IfNotPresent"
   
   # Watchdog configuration with shorter timeout for faster response
-  sbdWatchdogPath: "/dev/watchdog"
+  watchdogPath: "/dev/watchdog"
   watchdogTimeout: "30s"
   petIntervalMultiple: 3
   
@@ -71,31 +71,31 @@ spec:
   staleNodeTimeout: "30m"
   
   # StorageClass created with --aggressive-coherency flag
-  # This should be created by: ./setup-odf-storage --aggressive-coherency --storage-class-name=sbd-cephfs-strict
-  sharedStorageClass: "sbd-cephfs-strict"
+  # This should be created by: ./setup-odf-storage --aggressive-coherency --storage-class-name=sbr-cephfs-strict
+  sharedStorageClass: "sbr-cephfs-strict"
   
   # Target all worker nodes
   nodeSelector:
     node-role.kubernetes.io/worker: ""
 
 ---
-# Example: Multi-tenant SBD configuration
-# Demonstrates multiple SBD configurations in the same namespace
+# Example: Multi-tenant SBR configuration
+# Demonstrates multiple SBR configurations in the same namespace
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
-kind: SBDConfig
+kind: StorageBasedRemediationConfig
 metadata:
-  name: sbd-tenant-a
-  namespace: sbd-system
+  name: sbr-tenant-a
+  namespace: sbr-system
   labels:
-    app.kubernetes.io/name: sbd-operator
-    app.kubernetes.io/instance: sbd-tenant-a
+    app.kubernetes.io/name: sbr-operator
+    app.kubernetes.io/instance: sbr-tenant-a
     tenant: "tenant-a"
     storage.medik8s.io/type: cephfs
 spec:
-  image: "quay.io/clobrano/sbd-agent:latest"
-  sbdWatchdogPath: "/dev/watchdog"
+  image: "quay.io/medik8s/sbr-agent:latest"
+  watchdogPath: "/dev/watchdog"
   watchdogTimeout: "60s"
-  sharedStorageClass: "sbd-cephfs"
+  sharedStorageClass: "sbr-cephfs"
   
   # Target specific nodes for tenant A
   nodeSelector:
@@ -106,28 +106,28 @@ spec:
 # Example: Development/Testing configuration
 # Smaller timeouts and simpler configuration for testing
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
-kind: SBDConfig
+kind: StorageBasedRemediationConfig
 metadata:
-  name: sbd-dev-test
-  namespace: sbd-system
+  name: sbr-dev-test
+  namespace: sbr-system
   labels:
-    app.kubernetes.io/name: sbd-operator
-    app.kubernetes.io/instance: sbd-dev-test
+    app.kubernetes.io/name: sbr-operator
+    app.kubernetes.io/instance: sbr-dev-test
     environment: development
     storage.medik8s.io/type: cephfs
   annotations:
-    description: "Development SBD configuration for testing and validation"
+    description: "Development SBR configuration for testing and validation"
 spec:
-  image: "quay.io/clobrano/sbd-agent:latest"
+  image: "quay.io/medik8s/sbr-agent:latest"
   imagePullPolicy: "Always"  # Always pull for development
   
   # Shorter timeouts for faster testing cycles
-  sbdWatchdogPath: "/dev/watchdog"
+  watchdogPath: "/dev/watchdog"
   watchdogTimeout: "30s"
   petIntervalMultiple: 2
   staleNodeTimeout: "10m"
   
-  sharedStorageClass: "sbd-cephfs"
+  sharedStorageClass: "sbr-cephfs"
   
   # Target development nodes only
   nodeSelector:

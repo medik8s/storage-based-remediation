@@ -1,19 +1,19 @@
-# SBDConfig Sample Configuration
+# StorageBasedRemediationConfig Sample Configuration
 #
-# This is a sample configuration for the SBD (STONITH Block Device) operator.
-# The SBD operator provides watchdog-based fencing for Kubernetes clusters
+# This is a sample configuration for the SBR (Storage-Based Remediation) operator.
+# The SBR operator provides watchdog-based fencing for Kubernetes clusters
 # to ensure high availability through automatic node remediation.
 #
-# For comprehensive documentation, see: docs/sbdconfig-user-guide.md
+# For comprehensive documentation, see: docs/storagebasedremediationconfig-user-guide.md
 
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
-kind: SBDConfig
+kind: StorageBasedRemediationConfig
 metadata:
   labels:
-    app.kubernetes.io/name: sbd-operator
+    app.kubernetes.io/name: sbr-operator
     app.kubernetes.io/managed-by: kustomize
-  name: test-sbd-config
-  namespace: sbd-test-e2e-1751869637547792000
+  name: test-sbr-config
+  namespace: sbr-test-e2e-1751869637547792000
 spec:
   # ========================================================================
   # WATCHDOG CONFIGURATION
@@ -24,8 +24,8 @@ spec:
   # - Common alternatives: "/dev/watchdog0", "/dev/watchdog1"
   # - If hardware watchdog is not available, softdog will be used automatically
   # - All nodes should have the same watchdog device path
-  # sbdWatchdogPath: "/dev/watchdog"
-  sharedStorageClass: sbd-efs-sc
+  # watchdogPath: "/dev/watchdog"
+  sharedStorageClass: sbr-efs-sc
   
   # Watchdog timeout configuration for hardware/software watchdog device
   # - Default: "60s" (60 seconds)
@@ -60,21 +60,21 @@ spec:
   # CONTAINER IMAGE CONFIGURATION
   # ========================================================================
   
-  # Container image for the SBD Agent DaemonSet
+  # Container image for the SBR Agent DaemonSet
   # - If not specified, automatically derived from the operator's image
-  #   (same registry/org/tag as operator, but with "sbd-agent" as image name)
+  #   (same registry/org/tag as operator, but with "sbr-agent" as image name)
   # - Use specific version tags for production deployments
-  # - Available images: quay.io/medik8s/sbd-agent:<version>
+  # - Available images: quay.io/medik8s/sbr-agent:<version>
   # - For development: use "latest" tag
   # - For production: use specific version like "v1.0.0"
-  # 
+  #
   # Examples:
-  # - If operator image is "quay.io/medik8s/sbd-operator:v1.2.3"
-  #   then agent image becomes "quay.io/medik8s/sbd-agent:v1.2.3"
+  # - If operator image is "quay.io/medik8s/sbr-operator:v1.2.3"
+  #   then agent image becomes "quay.io/medik8s/sbr-agent:v1.2.3"
   # - Override with custom image if needed:
-  # image: "quay.io/medik8s/sbd-agent:latest"
+  # image: "quay.io/medik8s/sbr-agent:latest"
   
-  # Image pull policy for the SBD Agent container
+  # Image pull policy for the SBR Agent container
   # - Always: Always pull the image, useful for development with "latest" tags
   # - IfNotPresent: Pull only if image not present locally (default, production-safe)
   # - Never: Never pull, only use local images
@@ -85,7 +85,7 @@ spec:
   # DEPLOYMENT CONFIGURATION
   # ========================================================================
   
-  # Node selector for controlling which nodes the SBD Agent runs on
+  # Node selector for controlling which nodes the SBR Agent runs on
   # - Default: worker nodes only (node-role.kubernetes.io/worker: "")
   # - Automatically merged with Linux OS requirement (kubernetes.io/os: linux)
   # - Customize to target specific nodes by labels
@@ -94,10 +94,10 @@ spec:
   # - Default behavior (worker nodes only) - no configuration needed
   # - All nodes: nodeSelector: {}
   # - Specific zone: nodeSelector: {"topology.kubernetes.io/zone": "us-east-1a"}
-  # - Custom labels: nodeSelector: {"sbd-enabled": "true", "tier": "compute"}
+  # - Custom labels: nodeSelector: {"sbr-enabled": "true", "tier": "compute"}
   # 
   # Note: The controller automatically adds "kubernetes.io/os: linux" requirement
-  # The SBD Agent DaemonSet will be deployed in the same namespace as this SBDConfig resource
+  # The SBR Agent DaemonSet will be deployed in the same namespace as this StorageBasedRemediationConfig resource
   # nodeSelector:
   #   node-role.kubernetes.io/worker: ""
   
@@ -124,7 +124,7 @@ spec:
   
   # Storage class name for creating shared storage for cross-node coordination
   # - When specified, the controller creates a PVC using this StorageClass
-  # - The PVC is mounted in all SBD agent pods for coordination and slot assignment
+  # - The PVC is mounted in all SBR agent pods for coordination and slot assignment
   # - The StorageClass must support ReadWriteMany (RWX) access mode
   # - Common RWX storage classes: "efs-sc", "nfs-client", "cephfs", "glusterfs"
   # 
@@ -134,32 +134,32 @@ spec:
   # - CephFS: "cephfs"
   # - GlusterFS: "glusterfs"
   # 
-  # Note: If not specified, SBD agents will operate independently without coordination
+  # Note: If not specified, SBR agents will operate independently without coordination
   # sharedStorageClass: "efs-sc"
 
 # ========================================================================
-# MULTIPLE SBDCONFIG SUPPORT (NEW in v1.1+)
+# MULTIPLE StorageBasedRemediationConfig SUPPORT (NEW in v1.1+)
 # ========================================================================
 #
-# The SBD operator now supports multiple SBDConfig resources in the same namespace!
+# The SBR operator now supports multiple StorageBasedRemediationConfig resources in the same namespace!
 # This enables advanced deployment scenarios like A/B testing, gradual rollouts,
 # and different configurations for different teams.
 #
 # KEY FEATURES:
-# - Shared service account across all SBDConfigs in a namespace
-# - Separate DaemonSets with unique names for each SBDConfig
+# - Shared service account across all StorageBasedRemediationConfigs in a namespace
+# - Separate DaemonSets with unique names for each StorageBasedRemediationConfig
 # - Independent configurations (images, timeouts, node selectors, etc.)
-# - Automatic cleanup when SBDConfigs are deleted
+# - Automatic cleanup when StorageBasedRemediationConfigs are deleted
 #
 # RESOURCE NAMING:
-# - Service Account: sbd-agent (shared across all SBDConfigs in namespace)
-# - DaemonSet: sbd-agent-{sbdconfig-name} (unique per SBDConfig)
-# - ClusterRoleBinding: sbd-agent-{namespace}-{sbdconfig-name} (globally unique)
+# - Service Account: sbr-agent (shared across all StorageBasedRemediationConfigs in namespace)
+# - DaemonSet: sbr-agent-{storagebasedremediationconfig-name} (unique per StorageBasedRemediationConfig)
+# - ClusterRoleBinding: sbr-agent-{namespace}-{storagebasedremediationconfig-name} (globally unique)
 #
 # EXAMPLE USAGE:
-# kubectl apply -f production-sbd.yaml -f canary-sbd.yaml
-# kubectl get sbdconfig -n my-app
-# kubectl get daemonset -n my-app -l app=sbd-agent
+# kubectl apply -f production-sbr.yaml -f canary-sbr.yaml
+# kubectl get storagebasedremediationconfig -n my-app
+# kubectl get daemonset -n my-app -l app=sbr-agent
 #
 # ========================================================================
 # CONFIGURATION EXAMPLES
@@ -173,25 +173,25 @@ spec:
 # Production with Custom Image:
 # -----------------------------
 # spec:
-#   image: "quay.io/medik8s/sbd-agent:latest"
+#   image: "quay.io/medik8s/sbr-agent:latest"
 #   staleNodeTimeout: "30m"
 #
 # Multiple Configurations in Same Namespace:
 # ------------------------------------------
 # # Production config
 # metadata:
-#   name: production-sbd
+#   name: production-sbr
 #   namespace: my-app
 # spec:
-#   image: "quay.io/medik8s/sbd-agent:latest"
+#   image: "quay.io/medik8s/sbr-agent:latest"
 #   imagePullPolicy: "IfNotPresent"
 # ---
-# # Canary config  
+# # Canary config
 # metadata:
-#   name: canary-sbd
+#   name: canary-sbr
 #   namespace: my-app
 # spec:
-#   image: "quay.io/medik8s/sbd-agent:latest"
+#   image: "quay.io/medik8s/sbr-agent:latest"
 #   imagePullPolicy: "Always"
 #   nodeSelector:
 #     canary: "true"
@@ -199,7 +199,7 @@ spec:
 # High-Availability Configuration:
 # --------------------------------
 # spec:
-#   sbdWatchdogPath: "/dev/watchdog1"
+#   watchdogPath: "/dev/watchdog1"
 #   staleNodeTimeout: "2h"
 #
 # Development/Testing Configuration:
@@ -208,8 +208,8 @@ spec:
 #   imagePullPolicy: "Always"
 #   staleNodeTimeout: "5m"
 #
-# Note: Each SBDConfig creates its own DaemonSet in the specified namespace.
-# Multiple SBDConfigs in the same namespace share the service account but
+# Note: Each StorageBasedRemediationConfig creates its own DaemonSet in the specified namespace.
+# Multiple StorageBasedRemediationConfigs in the same namespace share the service account but
 # have separate DaemonSets and configurations.
 #
 # ========================================================================
@@ -217,40 +217,40 @@ spec:
 # ========================================================================
 #
 # Apply configuration:
-#   kubectl apply -f medik8s_v1alpha1_sbdconfig.yaml
+#   kubectl apply -f medik8s_v1alpha1_storagebasedremediationconfig.yaml
 #
 # Check status:
-#   kubectl get sbdconfig
-#   kubectl describe sbdconfig sbdconfig-sample
+#   kubectl get storagebasedremediationconfig
+#   kubectl describe storagebasedremediationconfig storagebasedremediationconfig-sample
 #
 # Monitor deployment:
 #   kubectl get pods -n <namespace>
-#   kubectl logs -n <namespace> -l app=sbd-agent
-#   (Replace <namespace> with the namespace where you created the SBDConfig)
+#   kubectl logs -n <namespace> -l app=sbr-agent
+#   (Replace <namespace> with the namespace where you created the StorageBasedRemediationConfig)
 #
 # ========================================================================
 # OPENSHIFT SECURITY CONTEXT CONSTRAINTS (SCC) MANAGEMENT
 # ========================================================================
 #
-# The SBD operator automatically manages OpenShift SecurityContextConstraints
+# The SBR operator automatically manages OpenShift SecurityContextConstraints
 # when deployed on OpenShift clusters. The controller will:
 #
 # 1. Detect if running on OpenShift platform
-# 2. Check for the required SCC: sbd-operator-sbd-agent-privileged
+# 2. Check for the required SCC: sbr-operator-sbr-agent-privileged
 # 3. Automatically update the SCC to grant permissions to service accounts
-#    in any namespace where SBDConfig resources are deployed
+#    in any namespace where StorageBasedRemediationConfig resources are deployed
 #
-# Example: If you create an SBDConfig in namespace "my-app", the operator
-# will automatically add "system:serviceaccount:my-app:sbd-agent" to the
+# Example: If you create a StorageBasedRemediationConfig in namespace "my-app", the operator
+# will automatically add "system:serviceaccount:my-app:sbr-agent" to the
 # SCC users list, allowing pods to start with required privileges.
 #
 # Manual SCC management (if needed):
 #   # Check SCC status
-#   oc get scc sbd-operator-sbd-agent-privileged -o yaml
-#   
+#   oc get scc sbr-operator-sbr-agent-privileged -o yaml
+#
 #   # Manually add service account (normally automatic)
-#   oc adm policy add-scc-to-user sbd-operator-sbd-agent-privileged \
-#     system:serviceaccount:my-namespace:sbd-agent
+#   oc adm policy add-scc-to-user sbr-operator-sbr-agent-privileged \
+#     system:serviceaccount:my-namespace:sbr-agent
 #
 # Note: The base SCC must be installed via the OpenShift installer:
 #   make build-openshift-installer

@@ -3,9 +3,9 @@ IMAGE_REGISTRY ?= quay.io/medik8s
 export IMAGE_REGISTRY
 
 # Quay registry configuration - primary image naming system
-OPERATOR_NAME ?= sbd-operator
+OPERATOR_NAME ?= sbr-operator
 OPERATOR_NAMESPACE ?= openshift-workload-availability
-AGENT_NAME ?= sbd-agent
+AGENT_NAME ?= sbr-agent
 QUAY_OPERATOR_NAME ?= $(IMAGE_REGISTRY)/$(OPERATOR_NAME)
 QUAY_AGENT_IMG ?= $(IMAGE_REGISTRY)/$(AGENT_NAME)
 
@@ -27,16 +27,16 @@ IMAGE_TAG = v$(VERSION)
 endif
 export IMAGE_TAG
 # Image URL to use all building/pushing image targets
-IMG ?= $(IMAGE_REGISTRY)/sbd-operator:$(IMAGE_TAG)
+IMG ?= $(IMAGE_REGISTRY)/sbr-operator:$(IMAGE_TAG)
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
-BUNDLE_IMG ?= $(IMAGE_REGISTRY)/sbd-operator-bundle:$(IMAGE_TAG)
+BUNDLE_IMG ?= $(IMAGE_REGISTRY)/sbr-operator-bundle:$(IMAGE_TAG)
 
 # The image tag given to the resulting catalog image (e.g. make catalog-build CATALOG_IMG=example.com/operator-catalog:v0.2.0).
-CATALOG_IMG ?= $(IMAGE_REGISTRY)/sbd-operator-catalog:$(IMAGE_TAG)
+CATALOG_IMG ?= $(IMAGE_REGISTRY)/sbr-operator-catalog:$(IMAGE_TAG)
 
-AGENT_IMG ?= $(IMAGE_REGISTRY)/sbd-agent:$(IMAGE_TAG)
+AGENT_IMG ?= $(IMAGE_REGISTRY)/sbr-agent:$(IMAGE_TAG)
 
 OPERATOR_SHA=$$(podman inspect $(QUAY_OPERATOR_NAME):$(IMAGE_TAG) --format "{{.ID}}" )
 AGENT_SHA=$$(podman inspect $(QUAY_AGENT_IMG):$(IMAGE_TAG) --format "{{.ID}}" )
@@ -87,8 +87,8 @@ manifests: controller-gen agent-rbac ## Generate WebhookConfiguration, ClusterRo
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: agent-rbac
-agent-rbac: controller-gen ## Generate ClusterRole for SBD Agent with minimal permissions.
-	$(CONTROLLER_GEN) rbac:roleName=sbd-agent-role,fileName=sbd_agent_generated_role.yaml paths="./cmd/sbd-agent/..." output:rbac:artifacts:config=config/rbac/
+agent-rbac: controller-gen ## Generate ClusterRole for SBR Agent with minimal permissions.
+	$(CONTROLLER_GEN) rbac:roleName=sbr-agent-role,fileName=sbr_agent_generated_role.yaml paths="./cmd/sbr-agent/..." output:rbac:artifacts:config=config/rbac/
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -150,8 +150,8 @@ load-images:
 .PHONY: test-smoke-reload
 test-smoke-reload:
 	@echo "Reloading operator deployment..."
-	@eval $$(crc oc-env) && kubectl patch deployment sbd-operator-controller-manager -n sbd-operator-system -p '{"spec":{"template":{"spec":{"containers":[{"name":"manager","image":"$(QUAY_OPERATOR_NAME)@sha256:$$(podman inspect $(QUAY_AGENT_IMG):$(IMAGE_TAG) --format "{{.ID}}"| head -c 12 )","imagePullPolicy":"Never"}]}}}}'
-	@eval $$(crc oc-env) && kubectl patch sbdconfig test-config -n sbd-operator-system -p '{"spec":{"image":"$(QUAY_AGENT_IMG)@sha256:$$(podman inspect $(QUAY_AGENT_IMG):$(IMAGE_TAG) --format "{{.ID}}"| head -c 12 )"}}'
+	@eval $$(crc oc-env) && kubectl patch deployment sbr-operator-controller-manager -n sbr-operator-system -p '{"spec":{"template":{"spec":{"containers":[{"name":"manager","image":"$(QUAY_OPERATOR_NAME)@sha256:$$(podman inspect $(QUAY_AGENT_IMG):$(IMAGE_TAG) --format "{{.ID}}"| head -c 12 )","imagePullPolicy":"Never"}]}}}}'
+	@eval $$(crc oc-env) && kubectl patch storagebasedremediationconfig test-config -n sbr-operator-system -p '{"spec":{"image":"$(QUAY_AGENT_IMG)@sha256:$$(podman inspect $(QUAY_AGENT_IMG):$(IMAGE_TAG) --format "{{.ID}}"| head -c 12 )"}}'
 	#	OPERATOR_NAME="$(QUAY_OPERATOR_NAME)@sha256:$(OPERATOR_SHA)" \
 	#	AGENT_IMG="$(QUAY_AGENT_IMG)@sha256:$(AGENT_SHA)" \
 
@@ -161,7 +161,7 @@ test-smoke-reload:
 # The provisioning script automatically downloads and installs required tools:
 # - AWS CLI v2, openshift-install, oc CLI, and jq
 # Prerequisites: AWS credentials configured, Red Hat pull secret
-OCP_CLUSTER_NAME ?= beekhof-sbd-operator-test
+OCP_CLUSTER_NAME ?= beekhof-sbr-operator-test
 AWS_REGION ?= us-east-1
 OCP_WORKER_COUNT ?= 4
 OCP_INSTANCE_TYPE ?= m5.large
@@ -245,8 +245,8 @@ build: manifests generate fmt vet ## Build manager binary.
 	./hack/build.sh -o bin/manager ./cmd/main.go
 
 .PHONY: build-agent
-build-agent: manifests generate fmt vet ## Build SBD agent binary.
-	./hack/build.sh -o bin/sbd-agent ./cmd/sbd-agent/main.go
+build-agent: manifests generate fmt vet ## Build SBR agent binary.
+	./hack/build.sh -o bin/sbr-agent ./cmd/sbr-agent/main.go
 
 ##@ Tools
 
@@ -286,13 +286,13 @@ setup-shared-storage: ## Build the shared storage setup tool.
 	@echo "🔨 Building setup-shared-storage tool..."
 	@$(MAKE) -C tools/setup-shared-storage build
 
-.PHONY: validate-sbd-consistency
-validate-sbd-consistency: ## Build the shared storage setup tool.
-	@echo "🔨 Building validate-sbd-consistency tool..."
-	@$(MAKE) -C tools/validate-sbd-consistency build
+.PHONY: validate-sbr-consistency
+validate-sbr-consistency: ## Build the shared storage consistency validation tool.
+	@echo "🔨 Building validate-sbr-consistency tool..."
+	@$(MAKE) -C tools/validate-sbr-consistency build
 
 .PHONY: build-tools
-build-tools: setup-odf-storage setup-shared-storage validate-sbd-consistency
+build-tools: setup-odf-storage setup-shared-storage validate-sbr-consistency
 
 .PHONY: run
 run: manifests generate fmt vet webhook-certs ## Run a controller from your host.
@@ -319,10 +319,10 @@ webhook-certs: ## Generate certificates for webhook development (uses Let's Encr
 .PHONY: webhook-certs-letsencrypt
 webhook-certs-letsencrypt: ## Generate Let's Encrypt certificates for webhook development.
 	@echo "Generating Let's Encrypt certificates for webhook development..."
-	@echo "Using domain: sbd-webhook.aws.validatedpatterns.io"
+	@echo "Using domain: sbr-webhook.aws.validatedpatterns.io"
 	@chmod +x scripts/generate-webhook-certs.sh
 	@USE_LETSENCRYPT=true \
-	 WEBHOOK_DOMAIN=sbd-webhook.aws.validatedpatterns.io \
+	 WEBHOOK_DOMAIN=sbr-webhook.aws.validatedpatterns.io \
 	 LETSENCRYPT_EMAIL=$(LETSENCRYPT_EMAIL) \
 	 LETSENCRYPT_STAGING=false \
 	 scripts/generate-webhook-certs.sh
@@ -330,10 +330,10 @@ webhook-certs-letsencrypt: ## Generate Let's Encrypt certificates for webhook de
 .PHONY: webhook-certs-staging
 webhook-certs-staging: ## Generate Let's Encrypt staging certificates for webhook development.
 	@echo "Generating Let's Encrypt staging certificates for webhook development..."
-	@echo "Using domain: sbd-webhook.aws.validatedpatterns.io"
+	@echo "Using domain: sbr-webhook.aws.validatedpatterns.io"
 	@chmod +x scripts/generate-webhook-certs.sh
 	@USE_LETSENCRYPT=true \
-	 WEBHOOK_DOMAIN=sbd-webhook.aws.validatedpatterns.io \
+	 WEBHOOK_DOMAIN=sbr-webhook.aws.validatedpatterns.io \
 	 LETSENCRYPT_EMAIL=$(LETSENCRYPT_EMAIL) \
 	 LETSENCRYPT_STAGING=true \
 	 scripts/generate-webhook-certs.sh
@@ -371,7 +371,7 @@ build-operator-image: manifests generate fmt vet ## Build operator container ima
 build-agent-image: manifests generate fmt vet ## Build agent container image.
 	@echo "Building agent image: $(QUAY_AGENT_IMG):$(IMAGE_TAG)"
 	@echo "Git version info will be calculated automatically during build"
-	$(CONTAINER_TOOL) build -f cmd/sbd-agent/Dockerfile -t ${AGENT_IMG} .
+	$(CONTAINER_TOOL) build -f cmd/sbr-agent/Dockerfile -t ${AGENT_IMG} .
 
 .PHONY: build-multiarch-operator-image
 build-multiarch-operator-image: manifests generate fmt vet ## Build multi-platform operator container image.
@@ -385,17 +385,17 @@ build-multiarch-agent-image: manifests generate fmt vet ## Build multi-platform 
 	@echo "Building multi-platform agent image: $(QUAY_AGENT_IMG):$(IMAGE_TAG)"
 	@echo "Platforms: $(PLATFORMS)"
 	@echo "Git version info will be calculated automatically during build"
-	$(CONTAINER_TOOL) build --platform=$(PLATFORMS) -f cmd/sbd-agent/Dockerfile -t $(QUAY_AGENT_IMG):$(IMAGE_TAG) .
+	$(CONTAINER_TOOL) build --platform=$(PLATFORMS) -f cmd/sbr-agent/Dockerfile -t $(QUAY_AGENT_IMG):$(IMAGE_TAG) .
 
 .PHONY: build-images
 build-images: build-operator-image build-agent-image ## Build both operator and agent container images.
-	@echo "Built SBD Operator images..."
+	@echo "Built SBR Operator images..."
 	@echo "Operator: $(QUAY_OPERATOR_NAME):$(IMAGE_TAG)"
 	@echo "Agent: $(QUAY_AGENT_IMG):$(IMAGE_TAG)"
 
 .PHONY: build-multiarch-images
 build-multiarch-images: build-multiarch-operator-image build-multiarch-agent-image ## Build both operator and agent multi-platform container images.
-	@echo "Built multi-platform SBD Operator images..."
+	@echo "Built multi-platform SBR Operator images..."
 	@echo "Operator: $(QUAY_OPERATOR_NAME):$(IMAGE_TAG)"
 	@echo "Agent: $(QUAY_AGENT_IMG):$(IMAGE_TAG)"
 	@echo "Platforms: $(PLATFORMS)"
@@ -412,7 +412,7 @@ push-agent-image: ## Push agent container image to registry.
 
 .PHONY: push-images
 push-images: push-operator-image push-agent-image ## Push both operator and agent container images to registry.
-	@echo "Pushed SBD images to registry..."
+	@echo "Pushed SBR images to registry..."
 
 .PHONY: push-multiarch-operator-image
 push-multiarch-operator-image: ## Push multi-platform operator container image to registry.
@@ -426,7 +426,7 @@ push-multiarch-agent-image: ## Push multi-platform agent container image to regi
 
 .PHONY: push-multiarch-images
 push-multiarch-images: push-multiarch-operator-image push-multiarch-agent-image ## Push both operator and agent multi-platform container images to registry.
-	@echo "Pushed multi-platform SBD images to registry..."
+	@echo "Pushed multi-platform SBR images to registry..."
 
 .PHONY: build-push
 build-push: update-manifests build-images push-images ## Build and push both operator and agent images to registry.
@@ -471,10 +471,10 @@ update-manifests: ## Update all manifests to use current QUAY image references (
 	@echo "Agent: $(QUAY_AGENT_IMG):$(IMAGE_TAG)  aka. $(AGENT_SHA)"
 	
 	# Update agent daemonset manifests
-	@for file in deploy/sbd-agent-daemonset*.yaml; do \
+	@for file in deploy/sbr-agent-daemonset*.yaml; do \
 		if [ -f "$$file" ]; then \
 			echo "Updating $$file..."; \
-			sed -i.bak 's|image: quay\.io/medik8s/sbd-agent:.*|image: $(QUAY_AGENT_IMG):$(IMAGE_TAG)|g' "$$file"; \
+			sed -i.bak 's|image: quay\.io/medik8s/sbr-agent:.*|image: $(QUAY_AGENT_IMG):$(IMAGE_TAG)|g' "$$file"; \
 			rm -f "$$file.bak"; \
 		fi; \
 	done
@@ -483,7 +483,7 @@ update-manifests: ## Update all manifests to use current QUAY image references (
 	@for file in config/samples/*.yaml; do \
 		if [ -f "$$file" ] && grep -q 'image:' "$$file"; then \
 			echo "Updating $$file..."; \
-			sed -i.bak 's|image: "quay\.io/medik8s/sbd-agent:.*"|image: "$(QUAY_AGENT_IMG):$(IMAGE_TAG)"|g' "$$file"; \
+			sed -i.bak 's|image: "quay\.io/medik8s/sbr-agent:.*"|image: "$(QUAY_AGENT_IMG):$(IMAGE_TAG)"|g' "$$file"; \
 			rm -f "$$file.bak"; \
 		fi; \
 	done

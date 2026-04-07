@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Script to get SBD agent logs for a specific OpenShift node
+# Script to get SBR agent logs for a specific OpenShift node
 # Usage: ./get-agent-logs.sh <node-name> [options]
 
 SCRIPT_NAME="$(basename "$0")"
@@ -10,26 +10,26 @@ FOLLOW_LOGS=false
 TAIL_LINES=""
 PREVIOUS_LOGS=false
 SHOW_TIMESTAMPS=true
-CONTAINER_NAME="sbd-agent"
+CONTAINER_NAME="sbr-agent"
 
 usage() {
     cat << EOF
 Usage: $SCRIPT_NAME <node-name> [options]
 
 Description:
-    Display SBD agent logs for a specific OpenShift node.
-    Finds the SBD agent pod running on the specified node and shows its logs.
+    Display SBR agent logs for a specific OpenShift node.
+    Finds the SBR agent pod running on the specified node and shows its logs.
 
 Arguments:
     <node-name>     Name of the OpenShift node to get agent logs from
 
 Options:
-    -n, --namespace <namespace>    Namespace where SBD agents are deployed (default: auto-detect)
+    -n, --namespace <namespace>    Namespace where SBR agents are deployed (default: auto-detect)
     -f, --follow                   Follow log output (like tail -f)
     -p, --previous                 Show logs from previous container instance
     --tail <lines>                 Show last N lines of logs (default: all)
     --no-timestamps               Hide timestamps from log output
-    -c, --container <name>         Container name (default: sbd-agent)
+    -c, --container <name>         Container name (default: sbr-agent)
     -h, --help                     Show this help message
 
 Examples:
@@ -40,19 +40,19 @@ Examples:
     $SCRIPT_NAME master-1 --follow --tail 100
 
     # Get logs from specific namespace
-    $SCRIPT_NAME ip-10-0-1-23.ec2.internal -n sbd-system
+    $SCRIPT_NAME ip-10-0-1-23.ec2.internal -n sbr-system
 
     # Get previous container logs (useful after pod restart)
     $SCRIPT_NAME worker-2 --previous
 
 Environment Variables:
     KUBECONFIG     Path to kubeconfig file (if not using default)
-    SBD_NAMESPACE  Default namespace for SBD agents
+    SBR_NAMESPACE  Default namespace for SBR agents
 
 Dependencies:
     - oc or kubectl command line tool
     - Access to OpenShift cluster
-    - Read permissions for pods and logs in SBD namespace
+    - Read permissions for pods and logs in SBR namespace
 
 EOF
 }
@@ -87,44 +87,44 @@ check_dependencies() {
 }
 
 detect_namespace() {
-    if [[ -n "${SBD_NAMESPACE:-}" ]]; then
-        NAMESPACE="$SBD_NAMESPACE"
-        log "Using namespace from SBD_NAMESPACE: $NAMESPACE"
+    if [[ -n "${SBR_NAMESPACE:-}" ]]; then
+        NAMESPACE="$SBR_NAMESPACE"
+        log "Using namespace from SBR_NAMESPACE: $NAMESPACE"
         return
     fi
 
-    # Look for common SBD operator namespaces
-    local common_namespaces=("sbd-system" "sbd-operator-system" "openshift-sbd")
+    # Look for common SBR operator namespaces
+    local common_namespaces=("sbr-system" "sbr-operator-system" "openshift-sbr")
     
     for ns in "${common_namespaces[@]}"; do
         if $KUBECTL_CMD get namespace "$ns" >/dev/null 2>&1; then
-            # Check if there are SBD agent pods in this namespace
+            # Check if there are SBR agent pods in this namespace
             local agent_count
-            agent_count=$($KUBECTL_CMD get pods -n "$ns" -l app=sbd-agent --no-headers 2>/dev/null | wc -l)
+            agent_count=$($KUBECTL_CMD get pods -n "$ns" -l app=sbr-agent --no-headers 2>/dev/null | wc -l)
             if [[ $agent_count -gt 0 ]]; then
                 NAMESPACE="$ns"
-                log "Auto-detected SBD namespace: $NAMESPACE"
+                log "Auto-detected SBR namespace: $NAMESPACE"
                 return
             fi
         fi
     done
 
     # If auto-detection fails, try all namespaces
-    log "Searching all namespaces for SBD agent pods..."
+    log "Searching all namespaces for SBR agent pods..."
     local all_namespaces
-    all_namespaces=$($KUBECTL_CMD get pods --all-namespaces -l app=sbd-agent --no-headers 2>/dev/null | awk '{print $1}' | sort -u)
+    all_namespaces=$($KUBECTL_CMD get pods --all-namespaces -l app=sbr-agent --no-headers 2>/dev/null | awk '{print $1}' | sort -u)
     
     if [[ -n "$all_namespaces" ]]; then
         local ns_count
         ns_count=$(echo "$all_namespaces" | wc -l)
         if [[ $ns_count -eq 1 ]]; then
             NAMESPACE="$all_namespaces"
-            log "Found SBD agents in namespace: $NAMESPACE"
+            log "Found SBR agents in namespace: $NAMESPACE"
         else
-            error "Multiple namespaces with SBD agents found: $(echo "$all_namespaces" | tr '\n' ' '). Please specify with -n option."
+            error "Multiple namespaces with SBR agents found: $(echo "$all_namespaces" | tr '\n' ' '). Please specify with -n option."
         fi
     else
-        error "No SBD agent pods found in any namespace. Are SBD agents deployed?"
+        error "No SBR agent pods found in any namespace. Are SBR agents deployed?"
     fi
 }
 
@@ -136,14 +136,14 @@ find_agent_pod() {
         error "Node '$node_name' not found in cluster"
     fi
 
-    # Find SBD agent pod on the specified node
+    # Find SBR agent pod on the specified node
     local pod_info
-    pod_info=$($KUBECTL_CMD get pods -n "$NAMESPACE" -l app=sbd-agent \
+    pod_info=$($KUBECTL_CMD get pods -n "$NAMESPACE" -l app=sbr-agent \
         --field-selector spec.nodeName="$node_name" \
         --no-headers -o custom-columns=NAME:.metadata.name,STATUS:.status.phase 2>/dev/null)
 
     if [[ -z "$pod_info" ]]; then
-        error "No SBD agent pod found on node '$node_name' in namespace '$NAMESPACE'"
+        error "No SBR agent pod found on node '$node_name' in namespace '$NAMESPACE'"
     fi
 
     local pod_name pod_status
@@ -158,12 +158,12 @@ find_agent_pod() {
     local pod_count
     pod_count=$(echo "$pod_info" | wc -l)
     if [[ $pod_count -gt 1 ]]; then
-        warn "Multiple SBD agent pods found on node '$node_name'. Using first one: $pod_name"
+        warn "Multiple SBR agent pods found on node '$node_name'. Using first one: $pod_name"
         pod_name=$(echo "$pod_info" | head -1 | awk '{print $1}')
         pod_status=$(echo "$pod_info" | head -1 | awk '{print $2}')
     fi
 
-    log "Found SBD agent pod: $pod_name (status: $pod_status) on node: $node_name"
+    log "Found SBR agent pod: $pod_name (status: $pod_status) on node: $node_name"
     
     # Warn if pod is not running (but still try to get logs)
     if [[ "$pod_status" != "Running" ]]; then
@@ -196,7 +196,7 @@ get_logs() {
         log_cmd+=("--timestamps")
     fi
 
-    log "Retrieving logs from SBD agent pod '$pod_name' on node '$node_name'..."
+    log "Retrieving logs from SBR agent pod '$pod_name' on node '$node_name'..."
     log "Command: ${log_cmd[*]}"
     log "=============================================="
     
@@ -273,7 +273,7 @@ main() {
         error "Invalid --tail value: '$TAIL_LINES'. Must be a positive number."
     fi
 
-    log "SBD Agent Log Retrieval Tool"
+    log "SBR Agent Log Retrieval Tool"
     log "Node: $node_name"
     
     check_dependencies
