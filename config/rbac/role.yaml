@@ -122,7 +122,7 @@ rules:
 - apiGroups:
   - storage-based-remediation.medik8s.io
   resources:
-  - sbdconfigs
+  - storagebasedremediationconfigs
   - storagebasedremediations
   verbs:
   - create
@@ -135,14 +135,14 @@ rules:
 - apiGroups:
   - storage-based-remediation.medik8s.io
   resources:
-  - sbdconfigs/finalizers
+  - storagebasedremediationconfigs/finalizers
   - storagebasedremediations/finalizers
   verbs:
   - update
 - apiGroups:
   - storage-based-remediation.medik8s.io
   resources:
-  - sbdconfigs/status
+  - storagebasedremediationconfigs/status
   - storagebasedremediations/status
   verbs:
   - get

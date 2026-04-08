@@ -63,8 +63,8 @@ import (
 
 // RBAC permissions for SBR Agent
 // The agent reads StorageBasedRemediationConfig, sets SBRStorageUnhealthy node condition for unhealthy peers, and reconciles StorageBasedRemediation CRs (created by NHC) for fencing.
-// +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=sbdconfigs,verbs=get;list;watch
-// +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=sbdconfigs/status,verbs=get
+// +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=storagebasedremediationconfigs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=storagebasedremediationconfigs/status,verbs=get
 // +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=storagebasedremediations,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=storagebasedremediations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
