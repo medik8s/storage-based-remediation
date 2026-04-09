@@ -4,6 +4,15 @@ metadata:
   annotations:
     alm-examples: '[]'
     capabilities: Basic Install
+    categories: OpenShift Optional
+    containerImage: quay.io/medik8s/sbd-operator:v0.0.1
+    createdAt: ""
+    description: Storage-Based Remediation Operator for remediating nodes using storage-based fencing (SBD/STONITH).
+    olm.skipRange: '>=0.0.1'
+    operatorframework.io/suggested-namespace: openshift-workload-availability
+    operatorframework.io/suggested-namespace-template: '{"kind":"Namespace","apiVersion":"v1","metadata":{"name":"openshift-workload-availability","annotations":{"openshift.io/node-selector":""}}}'
+    repository: https://github.com/medik8s/storage-based-remediation
+    support: Medik8s
   name: sbd-operator.v0.0.0
   namespace: placeholder
 spec:
@@ -26,11 +35,11 @@ spec:
       kind: StorageBasedRemediationTemplate
       name: storagebasedremediationtemplates.storage-based-remediation.medik8s.io
       version: v1alpha1
-  description: TBD
-  displayName: SBD
+  description: Storage-Based Remediation operator for remediating nodes using storage-based fencing (SBD/STONITH).
+  displayName: Storage-Based Remediation
   icon:
-  - base64data: ""
-    mediatype: ""
+  - base64data: "base64EncodedIcon"
+    mediatype: "image/png"
   install:
     spec:
       deployments: null
@@ -55,6 +64,8 @@ spec:
   - email: medik8s@googlegroups.com
     name: Medik8s Team
   maturity: alpha
+  minKubeVersion: 1.26.0
   provider:
-    name: medik8s
+     name: medik8s
+     url: https://github.com/medik8s
   version: 0.0.0

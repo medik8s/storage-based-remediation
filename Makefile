@@ -17,6 +17,8 @@ QUAY_AGENT_IMG ?= $(IMAGE_REGISTRY)/$(AGENT_NAME)
 DEFAULT_VERSION := 0.0.1
 VERSION ?= $(DEFAULT_VERSION)
 PREVIOUS_VERSION ?= $(DEFAULT_VERSION)
+# Lower bound for the skipRange field in the CSV, should be set to the oldest supported version
+SKIP_RANGE_LOWER ?= 0.0.1
 export VERSION
 
 # When no version is set, use latest as image tags
@@ -165,7 +167,7 @@ OCP_CLUSTER_NAME ?= beekhof-sbd-operator-test
 AWS_REGION ?= us-east-1
 OCP_WORKER_COUNT ?= 4
 OCP_INSTANCE_TYPE ?= m5.large
-OCP_VERSION ?= 4.18.18
+OCP_VERSION ?= 4.18
 OCP_BASE_DOMAIN ?= aws.validatedpatterns.io
 
 .PHONY: provision-ocp-aws
@@ -649,8 +651,7 @@ CSV ?= ./bundle/manifests/$(OPERATOR_NAME).clusterserviceversion.yaml
 .PHONY: bundle
 bundle: manifests operator-sdk kustomize yq ## Generate OLM bundle manifests and metadata, then validate
 	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
-	$(KUSTOMIZE) build config/default | $(OPERATOR_SDK) generate bundle -q --manifests --metadata --overwrite --version $(VERSION) $(BUNDLE_METADATA_OPTS)
-	$(MAKE) bundle-update
+	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle -q --manifests --metadata --overwrite --version $(VERSION) $(BUNDLE_METADATA_OPTS)
 	$(MAKE) bundle-validate
 
 .PHONY: bundle-validate
@@ -685,8 +686,12 @@ add-replaces-field: ## Add replaces to CSV for versioned builds
 	fi
 
 .PHONY: bundle-reset
-bundle-reset: ## Reset bundle to default version
-	VERSION=0.0.1 $(MAKE) bundle
+bundle-reset: ## Revert all version or build date related changes
+	VERSION=$(DEFAULT_VERSION) $(MAKE) bundle
+	@# empty creation date
+	sed -r -i "s|createdAt: .*|createdAt: \"\"|;" ${CSV}
+	@# delete replaces field
+	sed -r -i "/replaces:.*/d" ${CSV}
 
 .PHONY: operator-sdk
 operator-sdk: $(OPERATOR_SDK) ## Download operator-sdk locally if necessary.
@@ -717,15 +722,46 @@ yq: ## Download yq locally if necessary.
 	$(call go-install-tool,$(YQ),$(YQ_DIR), github.com/mikefarah/yq/$(YQ_API_VERSION)@$(YQ_VERSION))
 
 .PHONY: bundle-update
-bundle-update: yq ## Patch CSV with image, icon and minKubeVersion
+bundle-update: yq ## Patch CSV with image, icon and skipRange
 	@echo "Patching CSV: ${CSV}"
 	@# set container image annotation
 	$(YQ) -i '.metadata.annotations.containerImage = "$(IMG)"' ${CSV}
-	@# ensure icon has data and mediatype
+	@# set icon
 	$(YQ) -i '.spec.icon[0].base64data = "$(ICON_BASE64)"' ${CSV}
-	$(YQ) -i '.spec.icon[0].mediatype = "image/png"' ${CSV}
-	@# set minimum supported Kubernetes version
-	$(YQ) -i '.spec.minKubeVersion = "1.26.0"' ${CSV}
+	@# set skipRange
+	$(YQ) -i '.metadata.annotations."olm.skipRange" = ">=$(SKIP_RANGE_LOWER) <$(VERSION)"' ${CSV}
+
+.PHONY: add-ocp-annotations
+add-ocp-annotations: yq ## Add OCP annotations
+	$(YQ) -i '.metadata.annotations."operators.openshift.io/valid-subscription" = "[\"OpenShift Kubernetes Engine\", \"OpenShift Container Platform\", \"OpenShift Platform Plus\"]"' ${CSV}
+	# infrastructure annotations, see https://docs.engineering.redhat.com/display/CFC/Best_Practices
+	$(YQ) -i '.metadata.annotations."features.operators.openshift.io/disconnected" = "true"' ${CSV}
+	$(YQ) -i '.metadata.annotations."features.operators.openshift.io/fips-compliant" = "false"' ${CSV}
+	$(YQ) -i '.metadata.annotations."features.operators.openshift.io/proxy-aware" = "false"' ${CSV}
+	$(YQ) -i '.metadata.annotations."features.operators.openshift.io/tls-profiles" = "false"' ${CSV}
+	$(YQ) -i '.metadata.annotations."features.operators.openshift.io/token-auth-aws" = "false"' ${CSV}
+	$(YQ) -i '.metadata.annotations."features.operators.openshift.io/token-auth-azure" = "false"' ${CSV}
+	$(YQ) -i '.metadata.annotations."features.operators.openshift.io/token-auth-gcp" = "false"' ${CSV}
+
+.PHONY: bundle-k8s
+bundle-k8s: bundle bundle-update ## Build community bundle for Kubernetes
+	$(MAKE) add-community-edition-to-display-name
+
+.PHONY: bundle-okd
+bundle-okd: bundle bundle-update ## Build community bundle for OKD
+	$(MAKE) add-community-edition-to-display-name
+	$(MAKE) add-replaces-field
+	echo -e "\n  # Annotations for OCP\n  com.redhat.openshift.versions: \"v$(OCP_VERSION)\"" >> bundle/metadata/annotations.yaml
+
+.PHONY: bundle-ocp
+bundle-ocp: bundle bundle-update ## Build bundle for OCP
+	$(MAKE) add-replaces-field
+	$(MAKE) add-ocp-annotations
+	echo -e "\n  # Annotations for OCP\n  com.redhat.openshift.versions: \"v$(OCP_VERSION)\"" >> bundle/metadata/annotations.yaml
+
+.PHONY: add-community-edition-to-display-name
+add-community-edition-to-display-name: ## Add community edition suffix to display name
+	sed -r -i "s|displayName: Storage-Based Remediation.*|displayName: Storage-Based Remediation - Community Edition|" ${CSV}
 
 .PHONY: full-gen
 full-gen: go-verify manifests  generate manifests fmt bundle fix-imports bundle-reset ## generates all automatically generated content
