@@ -1,16 +1,16 @@
-# SBD Operator RBAC Quick Reference
+# SBR Operator RBAC Quick Reference
 
 ## Files Overview
 
-### SBD Agent RBAC (Minimal Permissions)
-- `sbd_agent_service_account.yaml` - ServiceAccount for SBD Agent pods
-- `sbd_agent_role.yaml` - ClusterRole with read-only permissions
-- `sbd_agent_role_binding.yaml` - Binds ServiceAccount to ClusterRole
+### SBR Agent RBAC (Minimal Permissions)
+- `sbr_agent_service_account.yaml` - ServiceAccount for SBR Agent pods
+- `sbr_agent_role.yaml` - ClusterRole with read-only permissions
+- `sbr_agent_role_binding.yaml` - Binds ServiceAccount to ClusterRole
 
-### SBD Operator RBAC (Orchestration Permissions)
-- `sbd_operator_service_account.yaml` - ServiceAccount for SBD Operator
-- `sbd_operator_role.yaml` - ClusterRole with management permissions
-- `sbd_operator_role_binding.yaml` - Binds ServiceAccount to ClusterRole
+### SBR Operator RBAC (Orchestration Permissions)
+- `sbr_operator_service_account.yaml` - ServiceAccount for SBR Operator
+- `sbr_operator_role.yaml` - ClusterRole with management permissions
+- `sbr_operator_role_binding.yaml` - Binds ServiceAccount to ClusterRole
 
 ## Quick Deployment
 
@@ -18,27 +18,27 @@
 # Deploy all RBAC resources
 kubectl apply -k config/rbac/
 
-# Deploy only SBD Agent RBAC
-kubectl apply -f config/rbac/sbd_agent_service_account.yaml
-kubectl apply -f config/rbac/sbd_agent_role.yaml
-kubectl apply -f config/rbac/sbd_agent_role_binding.yaml
+# Deploy only SBR Agent RBAC
+kubectl apply -f config/rbac/sbr_agent_service_account.yaml
+kubectl apply -f config/rbac/sbr_agent_role.yaml
+kubectl apply -f config/rbac/sbr_agent_role_binding.yaml
 
-# Deploy only SBD Operator RBAC
-kubectl apply -f config/rbac/sbd_operator_service_account.yaml
-kubectl apply -f config/rbac/sbd_operator_role.yaml
-kubectl apply -f config/rbac/sbd_operator_role_binding.yaml
+# Deploy only SBR Operator RBAC
+kubectl apply -f config/rbac/sbr_operator_service_account.yaml
+kubectl apply -f config/rbac/sbr_operator_role.yaml
+kubectl apply -f config/rbac/sbr_operator_role_binding.yaml
 ```
 
 ## Permission Summary
 
-### SBD Agent Permissions (Read-Only)
+### SBR Agent Permissions (Read-Only)
 | Resource | Permissions | Purpose |
 |----------|-------------|---------|
 | `pods` | `get`, `list` | Read own pod metadata |
 | `nodes` | `get`, `list`, `watch` | Node name to ID mapping |
 | `events` | `create`, `patch` | Observability events |
 
-### SBD Operator Permissions (Management)
+### SBR Operator Permissions (Management)
 | Resource | Permissions | Purpose |
 |----------|-------------|---------|
 | `namespaces` | `create`, `get`, `list`, `patch`, `update`, `watch` | Namespace management |
@@ -47,50 +47,50 @@ kubectl apply -f config/rbac/sbd_operator_role_binding.yaml
 | `pods` | `get`, `list`, `watch` | Pod monitoring |
 | `leases` | `create`, `get`, `list`, `patch`, `update`, `watch` | Leader election |
 | `events` | `create`, `patch` | Event emission |
-| `sbdconfigs` | Full CRUD + `finalizers`, `status` | Configuration management |
-| `sbdremediations` | Full CRUD + `finalizers`, `status` | Fencing operations |
+| `storagebasedremediationconfigs` | Full CRUD + `finalizers`, `status` | Configuration management |
+| `storagebasedremediations` | Full CRUD + `finalizers`, `status` | Fencing operations |
 
 ## Security Validation
 
 ```bash
-# Test SBD Agent permissions
-kubectl auth can-i get pods --as=system:serviceaccount:sbd-system:sbd-agent
-kubectl auth can-i list nodes --as=system:serviceaccount:sbd-system:sbd-agent
-kubectl auth can-i delete nodes --as=system:serviceaccount:sbd-system:sbd-agent  # Should be "no"
+# Test SBR Agent permissions
+kubectl auth can-i get pods --as=system:serviceaccount:sbr-system:sbr-agent
+kubectl auth can-i list nodes --as=system:serviceaccount:sbr-system:sbr-agent
+kubectl auth can-i delete nodes --as=system:serviceaccount:sbr-system:sbr-agent  # Should be "no"
 
-# Test SBD Operator permissions
-kubectl auth can-i create daemonsets --as=system:serviceaccount:sbd-system:sbd-operator-controller-manager
-kubectl auth can-i update sbdremediations/status --as=system:serviceaccount:sbd-system:sbd-operator-controller-manager
-kubectl auth can-i delete nodes --as=system:serviceaccount:sbd-system:sbd-operator-controller-manager  # Should be "no"
+# Test SBR Operator permissions
+kubectl auth can-i create daemonsets --as=system:serviceaccount:sbr-system:sbr-operator-controller-manager
+kubectl auth can-i update storagebasedremediations/status --as=system:serviceaccount:sbr-system:sbr-operator-controller-manager
+kubectl auth can-i delete nodes --as=system:serviceaccount:sbr-system:sbr-operator-controller-manager  # Should be "no"
 ```
 
 ## Troubleshooting
 
 ### Common Issues
 1. **Permission Denied**: Verify ClusterRole and ClusterRoleBinding are applied
-2. **Wrong Namespace**: Ensure ServiceAccounts are in correct namespace (`sbd-system`)
+2. **Wrong Namespace**: Ensure ServiceAccounts are in correct namespace (`sbr-system`)
 3. **Missing Resources**: Check if CRDs are installed before applying RBAC
 
 ### Debug Commands
 ```bash
-# List all SBD-related RBAC
-kubectl get clusterroles | grep sbd
-kubectl get clusterrolebindings | grep sbd
-kubectl get serviceaccounts -n sbd-system | grep sbd
+# List all SBR-related RBAC
+kubectl get clusterroles | grep sbr
+kubectl get clusterrolebindings | grep sbr
+kubectl get serviceaccounts -n sbr-system | grep sbr
 
 # Check specific permissions
-kubectl describe clusterrole sbd-agent-role
-kubectl describe clusterrole sbd-operator-manager-role
+kubectl describe clusterrole sbr-agent-role
+kubectl describe clusterrole sbr-operator-manager-role
 
 # Verify bindings
-kubectl describe clusterrolebinding sbd-agent-rolebinding
-kubectl describe clusterrolebinding sbd-operator-manager-rolebinding
+kubectl describe clusterrolebinding sbr-agent-rolebinding
+kubectl describe clusterrolebinding sbr-operator-manager-rolebinding
 ```
 
 ## Security Notes
 
-- ✅ **Principle of Least Privilege**: Each component has minimal necessary permissions
-- ✅ **No Direct Node Fencing**: Neither component can delete/modify nodes via Kubernetes API
-- ✅ **Read-Only Node Access**: Both components only read node information
-- ✅ **Isolated Scope**: Permissions limited to SBD system resources
-- ✅ **Hardware-Based Fencing**: Actual fencing occurs via SBD block device, not API calls 
+- **Principle of Least Privilege**: Each component has minimal necessary permissions
+- **No Direct Node Fencing**: Neither component can delete/modify nodes via Kubernetes API
+- **Read-Only Node Access**: Both components only read node information
+- **Isolated Scope**: Permissions limited to SBR system resources
+- **Hardware-Based Fencing**: Actual fencing occurs via SBR block device, not API calls
