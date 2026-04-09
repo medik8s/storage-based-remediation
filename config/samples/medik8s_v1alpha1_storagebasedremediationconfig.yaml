@@ -35,7 +35,7 @@ spec:
   peerCheckInterval: "4s"
   
   # Container configuration
-  image: "quay.io/medik8s/sbr-agent:latest"
+  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
   imagePullPolicy: "IfNotPresent"
   
   # Logging
@@ -77,7 +77,7 @@ spec:
   # Production with Custom Image:
   # -----------------------------
   # spec:
-  #   image: "quay.io/medik8s/sbr-agent:latest"
+  #   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
   #   staleNodeTimeout: "30m"
   #
   # Multiple Configurations in Same Namespace:
@@ -87,7 +87,7 @@ spec:
   #   name: production-sbr
   #   namespace: my-app
   # spec:
-  #   image: "quay.io/medik8s/sbr-agent:latest"
+  #   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
   #   imagePullPolicy: "IfNotPresent"
   # ---
   # # Canary config  
@@ -95,7 +95,7 @@ spec:
   #   name: canary-sbr
   #   namespace: my-app
   # spec:
-  #   image: "quay.io/medik8s/sbr-agent:latest"
+  #   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
   #   imagePullPolicy: "Always"
   #   nodeSelector:
   #     canary: "true"

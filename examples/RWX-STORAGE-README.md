@@ -111,7 +111,7 @@ metadata:
   namespace: sbr-system
 spec:
   # SBR agent image configuration
-  image: "quay.io/medik8s/sbr-agent:latest"
+  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
   imagePullPolicy: "IfNotPresent"
   
   # Watchdog configuration

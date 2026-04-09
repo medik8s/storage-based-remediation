@@ -62,17 +62,17 @@ spec:
   
   # Container image for the SBR Agent DaemonSet
   # - If not specified, automatically derived from the operator's image
-  #   (same registry/org/tag as operator, but with "sbr-agent" as image name)
+  #   (same registry/org/tag as operator, but with "storage-based-remediation-agent" as image name)
   # - Use specific version tags for production deployments
-  # - Available images: quay.io/medik8s/sbr-agent:<version>
+  # - Available images: quay.io/medik8s/storage-based-remediation-agent:<version>
   # - For development: use "latest" tag
   # - For production: use specific version like "v1.0.0"
   #
   # Examples:
   # - If operator image is "quay.io/medik8s/sbr-operator:v1.2.3"
-  #   then agent image becomes "quay.io/medik8s/sbr-agent:v1.2.3"
+  #   then agent image becomes "quay.io/medik8s/storage-based-remediation-agent:v1.2.3"
   # - Override with custom image if needed:
-  # image: "quay.io/medik8s/sbr-agent:latest"
+  # image: "quay.io/medik8s/storage-based-remediation-agent:latest"
   
   # Image pull policy for the SBR Agent container
   # - Always: Always pull the image, useful for development with "latest" tags
@@ -173,7 +173,7 @@ spec:
 # Production with Custom Image:
 # -----------------------------
 # spec:
-#   image: "quay.io/medik8s/sbr-agent:latest"
+#   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
 #   staleNodeTimeout: "30m"
 #
 # Multiple Configurations in Same Namespace:
@@ -183,7 +183,7 @@ spec:
 #   name: production-sbr
 #   namespace: my-app
 # spec:
-#   image: "quay.io/medik8s/sbr-agent:latest"
+#   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
 #   imagePullPolicy: "IfNotPresent"
 # ---
 # # Canary config
@@ -191,7 +191,7 @@ spec:
 #   name: canary-sbr
 #   namespace: my-app
 # spec:
-#   image: "quay.io/medik8s/sbr-agent:latest"
+#   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
 #   imagePullPolicy: "Always"
 #   nodeSelector:
 #     canary: "true"
