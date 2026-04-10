@@ -6,7 +6,7 @@ export IMAGE_REGISTRY
 OPERATOR_NAME ?= storage-based-remediation
 OPERATOR_NAMESPACE ?= openshift-workload-availability
 AGENT_NAME ?= storage-based-remediation-agent
-QUAY_OPERATOR_NAME ?= $(IMAGE_REGISTRY)/$(OPERATOR_NAME)
+QUAY_OPERATOR_NAME ?= $(IMAGE_REGISTRY)/$(OPERATOR_NAME)-operator
 QUAY_AGENT_IMG ?= $(IMAGE_REGISTRY)/$(AGENT_NAME)
 
 # VERSION defines the project version for the bundle.
@@ -29,14 +29,14 @@ IMAGE_TAG = v$(VERSION)
 endif
 export IMAGE_TAG
 # Image URL to use all building/pushing image targets
-IMG ?= $(IMAGE_REGISTRY)/$(OPERATOR_NAME):$(IMAGE_TAG)
+IMG ?= $(QUAY_OPERATOR_NAME):$(IMAGE_TAG)
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
-BUNDLE_IMG ?= $(IMAGE_REGISTRY)/$(OPERATOR_NAME)-bundle:$(IMAGE_TAG)
+BUNDLE_IMG ?= $(QUAY_OPERATOR_NAME)-bundle:$(IMAGE_TAG)
 
 # The image tag given to the resulting catalog image (e.g. make catalog-build CATALOG_IMG=example.com/operator-catalog:v0.2.0).
-CATALOG_IMG ?= $(IMAGE_REGISTRY)/$(OPERATOR_NAME)-catalog:$(IMAGE_TAG)
+CATALOG_IMG ?= $(QUAY_OPERATOR_NAME)-catalog:$(IMAGE_TAG)
 
 AGENT_IMG ?= $(IMAGE_REGISTRY)/$(AGENT_NAME):$(IMAGE_TAG)
 
