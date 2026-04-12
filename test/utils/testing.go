@@ -34,6 +34,7 @@ import (
 	authenticationv1 "k8s.io/api/authentication/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -111,6 +112,10 @@ func SetupKubernetesClients() (*TestClients, error) {
 	err = medik8sv1alpha1.AddToScheme(clientScheme)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add SBR types to scheme: %w", err)
+	}
+	err = apiextensionsv1.AddToScheme(clientScheme)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add apiextensions types to scheme: %w", err)
 	}
 
 	// Create controller-runtime client
@@ -1126,6 +1131,87 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// WaitForCSIDriverOnAllNodes polls until the given CSI driver is registered on all worker nodes.
+// This prevents flaky test failures caused by ODF/CephFS CSI driver registration delays.
+// Skips the check for non-CSI provisioners (e.g., NFS) that don't register via CSINode.
+func (tc *TestClients) WaitForCSIDriverOnAllNodes(driverName string, timeout time.Duration) {
+	// Non-CSI provisioners (e.g., nfs-provisioner, glusterfs) never register in CSINode
+	if !strings.Contains(driverName, "csi") {
+		GinkgoWriter.Printf("Skipping CSI driver check for non-CSI provisioner %q\n", driverName)
+		return
+	}
+
+	By(fmt.Sprintf("Waiting for CSI driver %q to be registered on all worker nodes", driverName))
+
+	Eventually(func() bool {
+		// List all worker nodes
+		nodes := &corev1.NodeList{}
+		err := tc.Client.List(tc.Context, nodes)
+		if err != nil {
+			GinkgoWriter.Printf("Failed to list nodes: %v\n", err)
+			return false
+		}
+
+		// List CSINode objects
+		csiNodes, err := tc.Clientset.StorageV1().CSINodes().List(tc.Context, metav1.ListOptions{})
+		if err != nil {
+			GinkgoWriter.Printf("Failed to list CSINodes: %v\n", err)
+			return false
+		}
+
+		// Build a set of nodes that have the driver registered
+		nodesWithDriver := make(map[string]bool)
+		for _, csiNode := range csiNodes.Items {
+			for _, driver := range csiNode.Spec.Drivers {
+				if driver.Name == driverName {
+					nodesWithDriver[csiNode.Name] = true
+					break
+				}
+			}
+		}
+
+		// Check that all Ready worker nodes have the driver
+		var workerCount, readyCount int
+		var missingNodes []string
+		for _, node := range nodes.Items {
+			_, isCP := node.Labels["node-role.kubernetes.io/control-plane"]
+			_, isMaster := node.Labels["node-role.kubernetes.io/master"]
+			if isCP || isMaster {
+				continue
+			}
+			// Skip NotReady nodes — they won't have CSI drivers registered
+			isReady := false
+			for _, condition := range node.Status.Conditions {
+				if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+					isReady = true
+					break
+				}
+			}
+			if !isReady {
+				GinkgoWriter.Printf("Skipping NotReady node %s for CSI driver check\n", node.Name)
+				continue
+			}
+			workerCount++
+			if nodesWithDriver[node.Name] {
+				readyCount++
+			} else {
+				missingNodes = append(missingNodes, node.Name)
+			}
+		}
+
+		GinkgoWriter.Printf("CSI driver %q registered on %d/%d Ready worker nodes\n",
+			driverName, readyCount, workerCount)
+		if len(missingNodes) > 0 {
+			GinkgoWriter.Printf("Nodes missing CSI driver: %v\n", missingNodes)
+		}
+
+		return readyCount == workerCount && workerCount > 0
+	}, timeout, 15*time.Second).Should(BeTrue(),
+		fmt.Sprintf("CSI driver %q was not registered on all worker nodes within %v", driverName, timeout))
+
+	GinkgoWriter.Printf("CSI driver %q is registered on all worker nodes\n", driverName)
 }
 
 // DaemonSetChecker provides utilities for checking DaemonSet status

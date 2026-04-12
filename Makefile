@@ -138,7 +138,7 @@ E2E_TEST_DIR = $(TEST_HOME)/$(TEST_ID)
 .PHONY: test-e2e
 test-e2e: ginkgo ## Run e2e tests again (assumes operator already deployed).
 	@echo "Running e2e tests (operator must be already deployed)..."
-	mkdir -p $(E2E_TEST_DIR) && $(GINKGO) -v --junit-report=$(E2E_TEST_DIR)/junit_e2e.xml $(TEST_ARGS) test/e2e -- --test-id $(TEST_ID) --artifacts-dir $(E2E_TEST_DIR) | tee $(E2E_TEST_DIR)/execution.log
+	mkdir -p $(E2E_TEST_DIR) && $(GINKGO) -v --timeout=2h --junit-report=$(E2E_TEST_DIR)/junit_e2e.xml $(TEST_ARGS) test/e2e -- --test-id $(TEST_ID) --artifacts-dir $(E2E_TEST_DIR) | tee $(E2E_TEST_DIR)/execution.log
 
 
 .PHONY: load-images
