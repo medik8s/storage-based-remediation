@@ -318,6 +318,7 @@ spec:
                   capabilities:
                     drop:
                     - ALL
+              priorityClassName: system-cluster-critical
               securityContext:
                 runAsNonRoot: true
                 seccompProfile:

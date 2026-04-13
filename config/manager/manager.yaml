@@ -30,6 +30,7 @@ spec:
         control-plane: controller-manager
         app.kubernetes.io/name: sbd-operator
     spec:
+      priorityClassName: system-cluster-critical
       # TODO(user): Uncomment the following code to configure the nodeAffinity expression
       # according to the platforms which are supported by your solution.
       # It is considered best practice to support multiple architectures. You can
