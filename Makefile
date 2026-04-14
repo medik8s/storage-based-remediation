@@ -259,21 +259,25 @@ setup-odf-storage: ## Build the OpenShift Data Foundation setup tool.
 
 SETUP_ODF_STORAGE_BIN := bin/setup-odf-storage
 
+# OLM Subscription channel for ODF (optional; empty uses tool default). Example: ODF_SUBSCRIPTION_CHANNEL=stable-4.17
+# execution example: run-setup-odf-storage-retry ODF_SUBSCRIPTION_CHANNEL=stable-4.21
+ODF_SUBSCRIPTION_CHANNEL ?=
+
 .PHONY: verify-setup-odf-storage
 verify-setup-odf-storage: ## Verify setup-odf-storage binary was created under bin/setup-odf-storage.
 	@test -f $(SETUP_ODF_STORAGE_BIN) || (echo "Binary $(SETUP_ODF_STORAGE_BIN) not found"; exit 1)
 	@echo "✅ $(SETUP_ODF_STORAGE_BIN) exists"
 
 .PHONY: run-setup-odf-storage
-run-setup-odf-storage: verify-setup-odf-storage ## Run setup-odf-storage binary to set up storage (requires verify-setup-odf-storage).
+run-setup-odf-storage: verify-setup-odf-storage ## Run setup-odf-storage (optional: ODF_SUBSCRIPTION_CHANNEL=stable-4.17).
 	@echo "🚀 Running setup-odf-storage to set up storage..."
-	@./$(SETUP_ODF_STORAGE_BIN)
+	@./$(SETUP_ODF_STORAGE_BIN) $(if $(ODF_SUBSCRIPTION_CHANNEL),--odf-operator-channel=$(ODF_SUBSCRIPTION_CHANNEL))
 
 .PHONY: run-setup-odf-storage-retry
-run-setup-odf-storage-retry: verify-setup-odf-storage ## Run setup-odf-storage with up to 3 attempts, 1 min wait between retries.
+run-setup-odf-storage-retry: verify-setup-odf-storage ## Run setup-odf-storage with retries (optional: ODF_SUBSCRIPTION_CHANNEL).
 	@attempt=1; max=3; while [ $$attempt -le $$max ]; do \
 		echo "🚀 Running setup-odf-storage (attempt $$attempt of $$max)..."; \
-		./$(SETUP_ODF_STORAGE_BIN) && { echo "✅ setup-odf-storage succeeded"; exit 0; }; \
+		./$(SETUP_ODF_STORAGE_BIN) $(if $(ODF_SUBSCRIPTION_CHANNEL),--odf-operator-channel=$(ODF_SUBSCRIPTION_CHANNEL)) && { echo "✅ setup-odf-storage succeeded"; exit 0; }; \
 		echo "❌ Attempt $$attempt failed"; \
 		if [ $$attempt -lt $$max ]; then \
 			echo "⏳ Waiting 60s before retry..."; \

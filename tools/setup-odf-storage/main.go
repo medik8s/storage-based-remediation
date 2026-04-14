@@ -14,9 +14,10 @@ import (
 // Configuration holds all the configuration for the ODF storage setup
 type Config struct {
 	// ODF Configuration
-	StorageClassName string
-	ClusterName      string
-	Namespace        string
+	StorageClassName       string
+	ClusterName            string
+	Namespace              string
+	ODFSubscriptionChannel string
 
 	// Storage Configuration
 	StorageSize            string
@@ -86,6 +87,8 @@ func parseFlags() *Config {
 	flag.StringVar(&config.StorageClassName, "storage-class-name", "sbd-cephfs", "CephFS StorageClass name for SBD")
 	flag.StringVar(&config.ClusterName, "cluster-name", "ocs-storagecluster", "ODF StorageCluster name")
 	flag.StringVar(&config.Namespace, "namespace", "openshift-storage", "Namespace for ODF installation")
+	flag.StringVar(&config.ODFSubscriptionChannel, "odf-operator-channel", odf.DefaultODFSubscriptionChannel,
+		"OLM Subscription channel for the ODF operator (e.g. stable-4.19)")
 
 	// Storage Configuration
 	flag.StringVar(&config.StorageSize, "storage-size", "2Ti", "Total storage size for the cluster")
@@ -128,6 +131,7 @@ func (c *Config) toODFConfig() *odf.Config {
 		StorageClassName:       c.StorageClassName,
 		ClusterName:            c.ClusterName,
 		Namespace:              c.Namespace,
+		ODFSubscriptionChannel: c.ODFSubscriptionChannel,
 		StorageSize:            c.StorageSize,
 		ReplicaCount:           c.ReplicaCount,
 		EnableEncryption:       c.EnableEncryption,
@@ -208,6 +212,9 @@ EXAMPLES:
     # Preview changes without executing
     %s --dry-run --verbose
 
+    # Non-default ODF OLM subscription channel
+    %s --odf-operator-channel=stable-4.17
+
 REQUIREMENTS:
     • OpenShift cluster (4.8+) or Kubernetes (1.21+) with OLM
     • At least 3 worker nodes for storage replication
@@ -233,7 +240,7 @@ The tool creates optimized StorageClasses:
 This ensures optimal SBD operation with proper inter-node coordination.
 
 OPTIONS:
-`, os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], "sbd-cephfs")
+`, os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], "sbd-cephfs")
 
 	flag.PrintDefaults()
 }

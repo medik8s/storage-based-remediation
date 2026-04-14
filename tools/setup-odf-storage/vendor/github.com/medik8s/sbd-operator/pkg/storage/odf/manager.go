@@ -4,11 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
-	"time"
-
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -28,13 +27,18 @@ const (
 	// Operator names for ODF/OCS
 	ODFOperatorName = "odf-operator"
 	OCSOperatorName = "ocs-operator" // legacy name
+
+	// DefaultODFSubscriptionChannel is the OLM Subscription channel for odf-operator when Config.ODFSubscriptionChannel is empty.
+	DefaultODFSubscriptionChannel = "stable-4.19"
 )
 
 // Config holds ODF-specific configuration
 type Config struct {
-	StorageClassName       string
-	ClusterName            string
-	Namespace              string
+	StorageClassName string
+	ClusterName      string
+	Namespace        string
+	// ODFSubscriptionChannel is the OLM Subscription channel for the ODF operator (e.g. stable-4.19).
+	ODFSubscriptionChannel string
 	StorageSize            string
 	ReplicaCount           int
 	EnableEncryption       bool
@@ -321,7 +325,7 @@ func (m *Manager) createSubscription(ctx context.Context) error {
 				"namespace": m.config.Namespace,
 			},
 			"spec": map[string]interface{}{
-				"channel":             "stable-4.19",
+				"channel":             m.config.ODFSubscriptionChannel,
 				"installPlanApproval": "Automatic",
 				"name":                ODFOperatorName,
 				"source":              "redhat-operators",
@@ -1049,6 +1053,9 @@ func setDefaults(config *Config) {
 	if config.Namespace == "" {
 		config.Namespace = "openshift-storage"
 	}
+	if config.ODFSubscriptionChannel == "" {
+		config.ODFSubscriptionChannel = DefaultODFSubscriptionChannel
+	}
 	if config.StorageSize == "" {
 		config.StorageSize = "2Ti"
 	}
@@ -1062,6 +1069,7 @@ func printConfig(config *Config) {
 	log.Printf("  StorageClass Name: %s", config.StorageClassName)
 	log.Printf("  Cluster Name: %s", config.ClusterName)
 	log.Printf("  Namespace: %s", config.Namespace)
+	log.Printf("  ODF Subscription Channel: %s", config.ODFSubscriptionChannel)
 	log.Printf("  Storage Size: %s", config.StorageSize)
 	log.Printf("  Replica Count: %d", config.ReplicaCount)
 	log.Printf("  Encryption: %t", config.EnableEncryption)
