@@ -1,0 +1,8 @@
+# 1. Prow Job Definitions
+/.prow/                     @medik8s/qe-team
+
+# 2. Test Logic and Framework
+/test/                      @medik8s/qe-team
+
+# 3. GitHub Actions Workflow
+/.github/workflows/test.yml @medik8s/qe-team
