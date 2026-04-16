@@ -6,3 +6,6 @@
 
 # 3. GitHub Actions Workflow
 /.github/workflows/test.yml @medik8s/qe-team
+
+# 4. Operator bundle scorecard tests
+/bundle/tests               @medik8s/qe-team
