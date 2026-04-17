@@ -67,10 +67,10 @@ spec:
                 maximum: 20
                 minimum: 3
                 type: integer
-              sbdWatchdogPath:
+              watchdogPath:
                 default: /dev/watchdog
                 description: |-
-                  SbdWatchdogPath is the path to the watchdog device on the host
+                  WatchdogPath is the path to the watchdog device on the host
                   If not specified, defaults to "/dev/watchdog"
                 type: string
               staleNodeTimeout:

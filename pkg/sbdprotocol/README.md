@@ -44,7 +44,7 @@ package main
 
 import (
     "fmt"
-    "github.com/medik8s/sbd-operator/pkg/sbdprotocol"
+    "github.com/medik8s/storage-based-remediation/pkg/sbdprotocol"
 )
 
 func main() {
@@ -82,7 +82,7 @@ package main
 
 import (
     "fmt"
-    "github.com/medik8s/sbd-operator/pkg/sbdprotocol"
+    "github.com/medik8s/storage-based-remediation/pkg/sbdprotocol"
 )
 
 func main() {
@@ -126,7 +126,7 @@ package main
 
 import (
     "fmt"
-    "github.com/medik8s/sbd-operator/pkg/sbdprotocol"
+    "github.com/medik8s/storage-based-remediation/pkg/sbdprotocol"
 )
 
 func main() {
@@ -214,9 +214,9 @@ All functions return descriptive errors that can be used for debugging and loggi
 
 All functions in this package are thread-safe and can be called concurrently from multiple goroutines without external synchronization.
 
-## Integration with SBD Agent
+## Integration with SBR Agent
 
-This package is designed to be used by the SBD Agent for:
+This package is designed to be used by the SBR Agent for:
 1. Creating heartbeat messages to write to shared storage
 2. Reading and validating messages from other nodes
 3. Creating fence requests when node failures are detected
@@ -224,7 +224,7 @@ This package is designed to be used by the SBD Agent for:
 
 Example integration:
 ```go
-// In SBD Agent - sending heartbeat
+// In SBR Agent - sending heartbeat
 nodeID := getCurrentNodeID()
 sequence := getNextSequence()
 heartbeat := sbdprotocol.SBDHeartbeatMessage{

@@ -89,7 +89,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/medik8s/sbd-operator/pkg/blockdevice"
+    "github.com/medik8s/storage-based-remediation/pkg/blockdevice"
 )
 
 func main() {
@@ -261,4 +261,4 @@ However, be cautious about:
 
 ## License
 
-This package is part of the SBD Operator project and is licensed under the Apache License 2.0. 
+This package is part of the SBR Operator project and is licensed under the Apache License 2.0. 

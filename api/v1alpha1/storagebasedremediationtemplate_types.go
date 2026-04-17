@@ -46,7 +46,7 @@ type StorageBasedRemediationTemplateStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 
-// StorageBasedRemediationTemplate is the Schema for the sbdremediationtemplates API.
+// StorageBasedRemediationTemplate is the Schema for the storagebasedremediationtemplates API.
 // +operator-sdk:csv:customresourcedefinitions:resources={{"StorageBasedRemediationTemplate","v1alpha1","storagebasedremediationtemplates"}}
 type StorageBasedRemediationTemplate struct {
 	metav1.TypeMeta   `json:",inline"`

@@ -96,7 +96,7 @@ type StorageBasedRemediationStatus struct {
 // +kubebuilder:printcolumn:name="NodeID",type="integer",JSONPath=".status.nodeID"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// StorageBasedRemediation is the Schema for the sbdremediations API.
+// StorageBasedRemediation is the Schema for the storagebasedremediations API.
 type StorageBasedRemediation struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
