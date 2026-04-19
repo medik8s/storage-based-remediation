@@ -23,7 +23,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -31,8 +30,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
-	"github.com/medik8s/sbd-operator/test/utils"
+	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/test/utils"
 )
 
 var _ = Describe("SBR QE E2E Tests", Ordered, Serial, Label("qe", "e2e"), func() {
@@ -100,7 +99,7 @@ var _ = Describe("SBR QE E2E Tests", Ordered, Serial, Label("qe", "e2e"), func()
 			By("Checking for SBR custom resource definitions")
 
 			expectedCRDs := []string{
-				"sbdconfigs.storage-based-remediation.medik8s.io",
+				"storagebasedremediationconfigs.storage-based-remediation.medik8s.io",
 				"storagebasedremediations.storage-based-remediation.medik8s.io",
 				"storagebasedremediationtemplates.storage-based-remediation.medik8s.io",
 			}
@@ -132,34 +131,28 @@ var _ = Describe("SBR QE E2E Tests", Ordered, Serial, Label("qe", "e2e"), func()
 	Context("Agent Deployment", func() {
 
 		It("should deploy SBD agent DaemonSet on all worker nodes", func() {
-			By("Creating SBDConfig to trigger agent deployment")
+			By("Creating StorageBasedRemediationConfig to trigger agent deployment")
 
 			sbdConfigName := "qe-daemonset-test"
-			sbdConfig, err := testNamespace.CreateSBDConfig(sbdConfigName,
-				func(config *medik8sv1alpha1.SBDConfig) {
-					config.Spec.SbdWatchdogPath = "/dev/watchdog"
+			sbdConfig, err := testNamespace.CreateStorageBasedRemediationConfig(sbdConfigName,
+				func(config *medik8sv1alpha1.StorageBasedRemediationConfig) {
+					config.Spec.WatchdogPath = "/dev/watchdog"
 					config.Spec.SharedStorageClass = rwxStorageClassName
 				})
-			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDConfig")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create StorageBasedRemediationConfig")
 			DeferCleanup(func() {
-				if err := testNamespace.CleanupSBDConfig(sbdConfig); err != nil {
-					GinkgoWriter.Printf("Warning: failed to cleanup SBDConfig %s: %v\n", sbdConfig.Name, err)
+				if err := testNamespace.CleanupStorageBasedRemediationConfig(sbdConfig); err != nil {
+					GinkgoWriter.Printf("Warning: failed to cleanup StorageBasedRemediationConfig %s: %v\n", sbdConfig.Name, err)
 				}
 			})
-			By(fmt.Sprintf("Created SBDConfig: %s", sbdConfig.Name))
-
-			dsName := fmt.Sprintf("sbd-agent-%s", sbdConfigName)
+			By(fmt.Sprintf("Created StorageBasedRemediationConfig: %s", sbdConfig.Name))
 
 			By("Waiting for agent DaemonSet to be created")
-			daemonSet := &appsv1.DaemonSet{}
-			Eventually(func() error {
-				return testClients.Client.Get(testClients.Context,
-					client.ObjectKey{Name: dsName, Namespace: testNamespace.Name},
-					daemonSet)
-			}, 2*time.Minute, 5*time.Second).Should(Succeed(),
-				"DaemonSet %s should be created", dsName)
+			checker := testNamespace.NewDaemonSetChecker()
+			daemonSet, err := checker.WaitForDaemonSet(
+				map[string]string{"sbrconfig": sbdConfigName}, 3*time.Minute)
+			Expect(err).NotTo(HaveOccurred(), "DaemonSet should be created for config %s", sbdConfigName)
 
-			// Count worker nodes
 			workerCount := int32(len(clusterInfo.WorkerNodes))
 			By(fmt.Sprintf("Cluster has %d worker nodes", workerCount))
 			Expect(workerCount).To(BeNumerically(">=", int32(1)))
@@ -167,60 +160,44 @@ var _ = Describe("SBR QE E2E Tests", Ordered, Serial, Label("qe", "e2e"), func()
 			By("Waiting for DaemonSet to reach desired replicas")
 			Eventually(func() int32 {
 				_ = testClients.Client.Get(testClients.Context,
-					client.ObjectKey{Name: dsName, Namespace: testNamespace.Name},
+					client.ObjectKey{Name: daemonSet.Name, Namespace: testNamespace.Name},
 					daemonSet)
 				return daemonSet.Status.NumberReady
 			}, 3*time.Minute, 10*time.Second).Should(Equal(workerCount),
 				"All worker nodes should have ready agent replicas")
 
 			By(fmt.Sprintf("DaemonSet has %d/%d ready replicas", daemonSet.Status.NumberReady, workerCount))
-
-			// Verify agent pods are Running
-			agentPods := &corev1.PodList{}
-			err = testClients.Client.List(testClients.Context,
-				agentPods,
-				client.InNamespace(testNamespace.Name),
-				client.MatchingLabels{"app": "sbd-agent"})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(len(agentPods.Items)).To(Equal(int(workerCount)),
-				"Should have one agent pod per worker node")
-
-			for _, pod := range agentPods.Items {
-				Expect(pod.Status.Phase).To(Equal(corev1.PodRunning),
-					fmt.Sprintf("Agent pod %s should be Running", pod.Name))
-			}
-
-			By("Verified: All agent pods are running on eligible worker nodes")
 		})
 	})
 
 	Context("Node Remediation via NHC", func() {
 
 		It("should remediate a node when kubelet is stopped", func() {
-			By("Ensuring SBDConfig exists for remediation test")
+			By("Ensuring StorageBasedRemediationConfig exists for remediation test")
 			sbdConfigName := "qe-remediation-test"
-			sbdConfig, err := testNamespace.CreateSBDConfig(sbdConfigName,
-				func(config *medik8sv1alpha1.SBDConfig) {
-					config.Spec.SbdWatchdogPath = "/dev/watchdog"
+			sbdConfig, err := testNamespace.CreateStorageBasedRemediationConfig(sbdConfigName,
+				func(config *medik8sv1alpha1.StorageBasedRemediationConfig) {
+					config.Spec.WatchdogPath = "/dev/watchdog"
 					config.Spec.SharedStorageClass = rwxStorageClassName
 				})
-			Expect(err).NotTo(HaveOccurred(), "Failed to create SBDConfig")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create StorageBasedRemediationConfig")
 			DeferCleanup(func() {
-				if err := testNamespace.CleanupSBDConfig(sbdConfig); err != nil {
-					GinkgoWriter.Printf("Warning: failed to cleanup SBDConfig %s: %v\n", sbdConfig.Name, err)
+				if err := testNamespace.CleanupStorageBasedRemediationConfig(sbdConfig); err != nil {
+					GinkgoWriter.Printf("Warning: failed to cleanup StorageBasedRemediationConfig %s: %v\n", sbdConfig.Name, err)
 				}
 			})
 
-			dsName := fmt.Sprintf("sbd-agent-%s", sbdConfigName)
-
 			By("Waiting for agent DaemonSet to be fully ready on all nodes")
+			checker := testNamespace.NewDaemonSetChecker()
+			daemonSet, err := checker.WaitForDaemonSet(
+				map[string]string{"sbrconfig": sbdConfigName}, 3*time.Minute)
+			Expect(err).NotTo(HaveOccurred(), "DaemonSet should be created for config %s", sbdConfigName)
+
 			Eventually(func() bool {
-				ds := &appsv1.DaemonSet{}
-				if err := testClients.Client.Get(testClients.Context,
-					client.ObjectKey{Name: dsName, Namespace: testNamespace.Name}, ds); err != nil {
-					return false
-				}
-				return ds.Status.NumberReady > 0 && ds.Status.NumberReady == ds.Status.DesiredNumberScheduled
+				_ = testClients.Client.Get(testClients.Context,
+					client.ObjectKey{Name: daemonSet.Name, Namespace: testNamespace.Name},
+					daemonSet)
+				return daemonSet.Status.NumberReady > 0 && daemonSet.Status.NumberReady == daemonSet.Status.DesiredNumberScheduled
 			}, 3*time.Minute, 10*time.Second).Should(BeTrue(),
 				"All agent pods should be ready on all scheduled nodes")
 
@@ -231,18 +208,11 @@ var _ = Describe("SBR QE E2E Tests", Ordered, Serial, Label("qe", "e2e"), func()
 
 			for i := range nodeList.Items {
 				node := &nodeList.Items[i]
-				_, isCP := node.Labels["node-role.kubernetes.io/control-plane"]
-				_, isMaster := node.Labels["node-role.kubernetes.io/master"]
-				if isCP || isMaster {
+				if !utils.IsWorkerNode(node.Labels) {
 					continue
 				}
-				for _, c := range node.Status.Conditions {
-					if c.Type == corev1.NodeReady && c.Status == corev1.ConditionTrue {
-						targetNode = node
-						break
-					}
-				}
-				if targetNode != nil {
+				if utils.IsNodeReady(node) {
+					targetNode = node
 					break
 				}
 			}
@@ -250,7 +220,11 @@ var _ = Describe("SBR QE E2E Tests", Ordered, Serial, Label("qe", "e2e"), func()
 			By(fmt.Sprintf("Target node: %s", targetNode.Name))
 
 			By("Recording boot IDs for all nodes before disruption")
-			originalBootIDs := getNodeBootIDs(clusterInfo)
+			var workerNodeNames []string
+			for _, wn := range clusterInfo.WorkerNodes {
+				workerNodeNames = append(workerNodeNames, wn.Metadata.Name)
+			}
+			originalBootIDs := utils.GetNodeBootIDs(testClients, workerNodeNames)
 			originalBootID := targetNode.Status.NodeInfo.BootID
 			Expect(originalBootID).NotTo(BeEmpty())
 			By(fmt.Sprintf("Original boot ID for target node: %s", originalBootID))
@@ -288,13 +262,13 @@ var _ = Describe("SBR QE E2E Tests", Ordered, Serial, Label("qe", "e2e"), func()
 			}, 2*time.Minute, 5*time.Second).Should(Equal(corev1.PodRunning))
 
 			By("Stopping kubelet on target node via oc debug")
-			Expect(utils.StopKubeletOnNode(targetNode.Name)).To(Succeed())
 			DeferCleanup(func() {
 				By("DeferCleanup: ensuring kubelet is restarted on target node")
 				if err := utils.StartKubeletOnNode(targetNode.Name); err != nil {
 					GinkgoWriter.Printf("Warning: failed to restart kubelet on %s: %v\n", targetNode.Name, err)
 				}
 			})
+			Expect(utils.StopKubeletOnNode(targetNode.Name)).To(Succeed())
 
 			By("Waiting for node to become NotReady")
 			utils.WaitForNodeNotReady(testClients, targetNode.Name, 3*time.Minute)
@@ -308,13 +282,13 @@ var _ = Describe("SBR QE E2E Tests", Ordered, Serial, Label("qe", "e2e"), func()
 					Namespace: testNamespace.Name,
 				},
 				Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
-					Reason:         medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
+					Reason:         medik8sv1alpha1.SBRRemediationReasonHeartbeatTimeout,
 					TimeoutSeconds: 300,
 				},
 			}
 			Expect(testClients.Client.Create(testClients.Context, sbdRemediation)).To(Succeed())
 			DeferCleanup(func() {
-				// Strip finalizers to prevent stuck resources (matches CleanupSBDConfigs pattern)
+				// Strip finalizers to prevent stuck resources (matches CleanupStorageBasedRemediationConfigs pattern)
 				latest := &medik8sv1alpha1.StorageBasedRemediation{}
 				if err := testClients.Client.Get(testClients.Context,
 					client.ObjectKey{Name: sbdRemediation.Name, Namespace: testNamespace.Name}, latest); err == nil {
@@ -356,7 +330,7 @@ var _ = Describe("SBR QE E2E Tests", Ordered, Serial, Label("qe", "e2e"), func()
 				if strings.EqualFold(wn.Metadata.Name, targetNode.Name) {
 					continue
 				}
-				currentBootID := getNodeBootID(wn.Metadata.Name)
+				currentBootID := utils.GetNodeBootID(testClients, wn.Metadata.Name)
 				Expect(currentBootID).NotTo(BeEmpty(),
 					fmt.Sprintf("Should get boot ID for node %s", wn.Metadata.Name))
 				Expect(currentBootID).To(Equal(originalBootIDs[wn.Metadata.Name]),

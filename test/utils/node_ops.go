@@ -125,6 +125,46 @@ func WaitForNodeReady(clients *TestClients, nodeName string, timeout time.Durati
 	}, timeout, 10*time.Second).Should(BeTrue(), "Node %s should become Ready", nodeName)
 }
 
+// IsWorkerNode returns true if the node labels indicate a worker (non-control-plane) node.
+func IsWorkerNode(labels map[string]string) bool {
+	_, isCP := labels["node-role.kubernetes.io/control-plane"]
+	_, isMaster := labels["node-role.kubernetes.io/master"]
+	return !isCP && !isMaster
+}
+
+// IsNodeReady returns true if the node has condition NodeReady=True.
+func IsNodeReady(node *corev1.Node) bool {
+	for _, c := range node.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// GetNodeBootID fetches the current boot ID for a node, retrying until available.
+func GetNodeBootID(clients *TestClients, nodeName string) string {
+	node := &corev1.Node{}
+	Eventually(func() bool {
+		err := clients.Client.Get(clients.Context, client.ObjectKey{Name: nodeName}, node)
+		if err == nil {
+			return node.Status.NodeInfo.BootID != ""
+		}
+		return false
+	}, 2*time.Minute, 10*time.Second).Should(BeTrue(),
+		"Should get boot ID for node %s", nodeName)
+	return node.Status.NodeInfo.BootID
+}
+
+// GetNodeBootIDs returns a map of node name to boot ID for the given node names.
+func GetNodeBootIDs(clients *TestClients, nodeNames []string) map[string]string {
+	bootIDs := make(map[string]string)
+	for _, name := range nodeNames {
+		bootIDs[name] = GetNodeBootID(clients, name)
+	}
+	return bootIDs
+}
+
 // WaitForNodeReboot waits for a node to reboot by detecting a change in boot ID.
 func WaitForNodeReboot(clients *TestClients, nodeName string, originalBootID string, timeout time.Duration) {
 	GinkgoWriter.Printf("Waiting for node %s to reboot (original boot ID: %s)\n", nodeName, originalBootID)

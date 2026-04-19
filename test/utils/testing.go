@@ -1176,20 +1176,10 @@ func (tc *TestClients) WaitForCSIDriverOnAllNodes(driverName string, timeout tim
 		var workerCount, readyCount int
 		var missingNodes []string
 		for _, node := range nodes.Items {
-			_, isCP := node.Labels["node-role.kubernetes.io/control-plane"]
-			_, isMaster := node.Labels["node-role.kubernetes.io/master"]
-			if isCP || isMaster {
+			if !IsWorkerNode(node.Labels) {
 				continue
 			}
-			// Skip NotReady nodes — they won't have CSI drivers registered
-			isReady := false
-			for _, condition := range node.Status.Conditions {
-				if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
-					isReady = true
-					break
-				}
-			}
-			if !isReady {
+			if !IsNodeReady(&node) {
 				GinkgoWriter.Printf("Skipping NotReady node %s for CSI driver check\n", node.Name)
 				continue
 			}
