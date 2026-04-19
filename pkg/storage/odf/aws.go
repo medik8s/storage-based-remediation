@@ -199,7 +199,7 @@ func (a *AWSManager) CleanupODFVolumes(ctx context.Context) error {
 		Filters: []types.Filter{
 			{
 				Name:   aws.String("tag:kubernetes.io/created-by"),
-				Values: []string{"sbd-operator-odf-setup"},
+				Values: []string{"sbr-operator-odf-setup"},
 			},
 			{
 				Name:   aws.String("tag:medik8s.io/component"),
@@ -502,7 +502,7 @@ func (a *AWSManager) provisionVolumeForNode(ctx context.Context, nodeInfo NodeSt
 				Tags: []types.Tag{
 					{
 						Key:   aws.String("Name"),
-						Value: aws.String(fmt.Sprintf("sbd-odf-storage-%s", nodeInfo.NodeName)),
+						Value: aws.String(fmt.Sprintf("sbr-odf-storage-%s", nodeInfo.NodeName)),
 					},
 					{
 						Key:   aws.String("kubernetes.io/created-for/node"),
@@ -510,7 +510,7 @@ func (a *AWSManager) provisionVolumeForNode(ctx context.Context, nodeInfo NodeSt
 					},
 					{
 						Key:   aws.String("kubernetes.io/created-by"),
-						Value: aws.String("sbd-operator-odf-setup"),
+						Value: aws.String("sbr-operator-odf-setup"),
 					},
 					{
 						Key:   aws.String("medik8s.io/component"),

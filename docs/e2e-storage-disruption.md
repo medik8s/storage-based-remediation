@@ -2,7 +2,7 @@
 
 ## Overview
 
-The SBD operator e2e tests include comprehensive storage disruption testing to validate that nodes properly self-fence when they lose access to shared storage. The testing framework now supports multiple storage backends with specialized disruption methods.
+The SBR operator e2e tests include comprehensive storage disruption testing to validate that nodes properly self-fence when they lose access to shared storage. The testing framework now supports multiple storage backends with specialized disruption methods.
 
 ## Storage Backend Detection
 
@@ -170,7 +170,7 @@ After cleanup, the test verifies:
 - All iptables rules are removed
 - Storage connectivity is restored
 - Nodes regain access to shared storage
-- SBD agents resume normal operation
+- SBR agents resume normal operation
 
 ## Error Handling
 
@@ -238,10 +238,10 @@ After cleanup, the test verifies:
 Enable detailed logging:
 ```bash
 # View disruption pod logs
-kubectl logs -l app=sbd-e2e-ceph-storage-disruptor
+kubectl logs -l app=sbr-e2e-ceph-storage-disruptor
 
 # Check validation results
-kubectl logs -l app=sbd-e2e-ceph-storage-validator
+kubectl logs -l app=sbr-e2e-ceph-storage-validator
 
 # Verify iptables rules
 kubectl exec <disruption-pod> -- iptables -L OUTPUT -n -v

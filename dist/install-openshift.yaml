@@ -3,29 +3,29 @@ kind: Namespace
 metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
+    app.kubernetes.io/name: sbr-operator
     control-plane: controller-manager
-  name: sbd-operator-system
+  name: sbr-operator-system
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: sbdconfigs.medik8s.medik8s.io
+  name: storagebasedremediationconfigs.medik8s.medik8s.io
 spec:
   group: medik8s.medik8s.io
   names:
-    kind: SBDConfig
-    listKind: SBDConfigList
-    plural: sbdconfigs
-    singular: sbdconfig
+    kind: StorageBasedRemediationConfig
+    listKind: StorageBasedRemediationConfigList
+    plural: storagebasedremediationconfigs
+    singular: storagebasedremediationconfig
   scope: Cluster
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: SBDConfig is the Schema for the sbdconfigs API.
+        description: StorageBasedRemediationConfig is the Schema for the storagebasedremediationconfigs API.
         properties:
           apiVersion:
             description: |-
@@ -45,15 +45,15 @@ spec:
           metadata:
             type: object
           spec:
-            description: SBDConfigSpec defines the desired state of SBDConfig.
+            description: StorageBasedRemediationConfigSpec defines the desired state of StorageBasedRemediationConfig.
             properties:
               image:
-                default: sbd-agent:latest
-                description: Image is the container image for the SBD agent DaemonSet
+                default: sbr-agent:latest
+                description: Image is the container image for the SBR agent DaemonSet
                 type: string
               namespace:
-                default: sbd-system
-                description: Namespace is the namespace where the SBD agent DaemonSet
+                default: sbr-system
+                description: Namespace is the namespace where the SBR agent DaemonSet
                   will be deployed
                 type: string
               petIntervalMultiple:
@@ -67,17 +67,17 @@ spec:
                 maximum: 20
                 minimum: 3
                 type: integer
-              sbdWatchdogPath:
+              watchdogPath:
                 default: /dev/watchdog
                 description: |-
-                  SbdWatchdogPath is the path to the watchdog device on the host
+                  WatchdogPath is the path to the watchdog device on the host
                   If not specified, defaults to "/dev/watchdog"
                 type: string
               staleNodeTimeout:
                 default: 1h
                 description: |-
                   StaleNodeTimeout defines how long to wait before considering a node stale and removing it from slot mapping
-                  This timeout determines when inactive nodes are cleaned up from the shared SBD device slot assignments.
+                  This timeout determines when inactive nodes are cleaned up from the shared SBR device slot assignments.
                   Nodes that haven't updated their heartbeat within this duration will be considered stale and their slots
                   will be freed for reuse by new nodes. The value must be at least 1 minute.
                 pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
@@ -93,19 +93,19 @@ spec:
                 type: string
             type: object
           status:
-            description: SBDConfigStatus defines the observed state of SBDConfig.
+            description: StorageBasedRemediationConfigStatus defines the observed state of StorageBasedRemediationConfig.
             properties:
               daemonSetReady:
-                description: DaemonSetReady indicates whether the SBD agent DaemonSet
+                description: DaemonSetReady indicates whether the SBR agent DaemonSet
                   is ready
                 type: boolean
               readyNodes:
-                description: ReadyNodes is the number of nodes where the SBD agent
+                description: ReadyNodes is the number of nodes where the SBR agent
                   is ready
                 format: int32
                 type: integer
               totalNodes:
-                description: TotalNodes is the total number of nodes where the SBD
+                description: TotalNodes is the total number of nodes where the SBR
                   agent should be deployed
                 format: int32
                 type: integer
@@ -150,7 +150,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: StorageBasedRemediation is the Schema for the sbdremediations API.
+        description: StorageBasedRemediation is the Schema for the storagebasedremediations API.
         properties:
           apiVersion:
             description: |-
@@ -195,7 +195,7 @@ spec:
             - nodeName
             type: object
           status:
-            description: SBDRemediationStatus defines the observed state of StorageBasedRemediation.
+            description: StorageBasedRemediationStatus defines the observed state of StorageBasedRemediation.
             properties:
               conditions:
                 description: Conditions represent the latest available observations
@@ -260,7 +260,7 @@ spec:
                 x-kubernetes-list-type: map
               fenceMessageWritten:
                 description: FenceMessageWritten indicates if the fence message was
-                  successfully written to the SBD device
+                  successfully written to the SBR device
                 type: boolean
               lastUpdateTime:
                 description: LastUpdateTime is the time when this status was last
@@ -269,7 +269,7 @@ spec:
                 type: string
               nodeID:
                 description: NodeID is the numeric ID assigned to the target node
-                  for SBD operations
+                  for SBR operations
                 type: integer
               operatorInstance:
                 description: OperatorInstance identifies which operator instance is
@@ -287,9 +287,9 @@ kind: ServiceAccount
 metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-controller-manager
-  namespace: sbd-operator-system
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-controller-manager
+  namespace: sbr-operator-system
 ---
 apiVersion: v1
 automountServiceAccountToken: true
@@ -297,11 +297,11 @@ kind: ServiceAccount
 metadata:
   labels:
     app.kubernetes.io/component: agent
-    app.kubernetes.io/managed-by: sbd-operator
-    app.kubernetes.io/name: sbd-agent
-    app.kubernetes.io/part-of: sbd-operator
-  name: sbd-operator-sbd-agent
-  namespace: sbd-operator-system
+    app.kubernetes.io/managed-by: sbr-operator
+    app.kubernetes.io/name: sbr-agent
+    app.kubernetes.io/part-of: sbr-operator
+  name: sbr-operator-sbr-agent
+  namespace: sbr-operator-system
 ---
 apiVersion: v1
 automountServiceAccountToken: true
@@ -310,19 +310,19 @@ metadata:
   labels:
     app.kubernetes.io/component: manager
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
-    app.kubernetes.io/part-of: sbd-operator
-  name: sbd-operator-sbd-operator-controller-manager
-  namespace: sbd-operator-system
+    app.kubernetes.io/name: sbr-operator
+    app.kubernetes.io/part-of: sbr-operator
+  name: sbr-operator-sbr-operator-controller-manager
+  namespace: sbr-operator-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-leader-election-role
-  namespace: sbd-operator-system
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-leader-election-role
+  namespace: sbr-operator-system
 rules:
 - apiGroups:
   - ""
@@ -359,7 +359,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: sbd-operator-manager-role
+  name: sbr-operator-manager-role
 rules:
 - apiGroups:
   - ""
@@ -432,8 +432,8 @@ rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdconfigs
-  - sbdremediations
+  - storagebasedremediationconfigs
+  - storagebasedremediations
   verbs:
   - create
   - delete
@@ -445,15 +445,15 @@ rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdconfigs/finalizers
-  - sbdremediations/finalizers
+  - storagebasedremediationconfigs/finalizers
+  - storagebasedremediations/finalizers
   verbs:
   - update
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdconfigs/status
-  - sbdremediations/status
+  - storagebasedremediationconfigs/status
+  - storagebasedremediations/status
   verbs:
   - get
   - patch
@@ -475,7 +475,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: sbd-operator-metrics-auth-role
+  name: sbr-operator-metrics-auth-role
 rules:
 - apiGroups:
   - authentication.k8s.io
@@ -493,7 +493,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: sbd-operator-metrics-reader
+  name: sbr-operator-metrics-reader
 rules:
 - nonResourceURLs:
   - /metrics
@@ -505,10 +505,10 @@ kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/component: agent
-    app.kubernetes.io/managed-by: sbd-operator
-    app.kubernetes.io/name: sbd-agent
-    app.kubernetes.io/part-of: sbd-operator
-  name: sbd-operator-sbd-agent-role
+    app.kubernetes.io/managed-by: sbr-operator
+    app.kubernetes.io/name: sbr-agent
+    app.kubernetes.io/part-of: sbr-operator
+  name: sbr-operator-sbr-agent-role
 rules:
 - apiGroups:
   - ""
@@ -537,15 +537,15 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
-    app: sbd-agent
+    app: sbr-agent
     app.kubernetes.io/component: openshift-resources
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-sbd-agent-scc-user
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-sbr-agent-scc-user
 rules:
 - apiGroups:
   - security.openshift.io
   resourceNames:
-  - sbd-operator-sbd-agent-privileged
+  - sbr-operator-sbr-agent-privileged
   resources:
   - securitycontextconstraints
   verbs:
@@ -557,9 +557,9 @@ metadata:
   labels:
     app.kubernetes.io/component: manager
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
-    app.kubernetes.io/part-of: sbd-operator
-  name: sbd-operator-sbd-operator-manager-role
+    app.kubernetes.io/name: sbr-operator
+    app.kubernetes.io/part-of: sbr-operator
+  name: sbr-operator-sbr-operator-manager-role
 rules:
 - apiGroups:
   - ""
@@ -649,7 +649,7 @@ rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdconfigs
+  - storagebasedremediationconfigs
   verbs:
   - create
   - delete
@@ -661,13 +661,13 @@ rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdconfigs/finalizers
+  - storagebasedremediationconfigs/finalizers
   verbs:
   - update
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdconfigs/status
+  - storagebasedremediationconfigs/status
   verbs:
   - get
   - patch
@@ -675,7 +675,7 @@ rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdremediations
+  - storagebasedremediations
   verbs:
   - create
   - delete
@@ -687,13 +687,13 @@ rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdremediations/finalizers
+  - storagebasedremediations/finalizers
   verbs:
   - update
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdremediations/status
+  - storagebasedremediations/status
   verbs:
   - get
   - patch
@@ -704,19 +704,19 @@ kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-sbdconfig-admin-role
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-storagebasedremediationconfig-admin-role
 rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdconfigs
+  - storagebasedremediationconfigs
   verbs:
   - '*'
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdconfigs/status
+  - storagebasedremediationconfigs/status
   verbs:
   - get
 ---
@@ -725,13 +725,13 @@ kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-sbdconfig-editor-role
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-storagebasedremediationconfig-editor-role
 rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdconfigs
+  - storagebasedremediationconfigs
   verbs:
   - create
   - delete
@@ -743,7 +743,7 @@ rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdconfigs/status
+  - storagebasedremediationconfigs/status
   verbs:
   - get
 ---
@@ -752,13 +752,13 @@ kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-sbdconfig-viewer-role
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-storagebasedremediationconfig-viewer-role
 rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdconfigs
+  - storagebasedremediationconfigs
   verbs:
   - get
   - list
@@ -766,7 +766,7 @@ rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdconfigs/status
+  - storagebasedremediationconfigs/status
   verbs:
   - get
 ---
@@ -775,19 +775,19 @@ kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-sbdremediation-admin-role
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-storagebasedremediation-admin-role
 rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdremediations
+  - storagebasedremediations
   verbs:
   - '*'
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdremediations/status
+  - storagebasedremediations/status
   verbs:
   - get
 ---
@@ -796,13 +796,13 @@ kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-sbdremediation-editor-role
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-storagebasedremediation-editor-role
 rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdremediations
+  - storagebasedremediations
   verbs:
   - create
   - delete
@@ -814,7 +814,7 @@ rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdremediations/status
+  - storagebasedremediations/status
   verbs:
   - get
 ---
@@ -823,13 +823,13 @@ kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-sbdremediation-viewer-role
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-storagebasedremediation-viewer-role
 rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdremediations
+  - storagebasedremediations
   verbs:
   - get
   - list
@@ -837,7 +837,7 @@ rules:
 - apiGroups:
   - medik8s.medik8s.io
   resources:
-  - sbdremediations/status
+  - storagebasedremediations/status
   verbs:
   - get
 ---
@@ -846,13 +846,13 @@ kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/component: openshift-resources
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-system:openshift:scc:sbd-operator-sbd-agent-privileged
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-system:openshift:scc:sbr-operator-sbr-agent-privileged
 rules:
 - apiGroups:
   - security.openshift.io
   resourceNames:
-  - sbd-operator-sbd-agent-privileged
+  - sbr-operator-sbr-agent-privileged
   resources:
   - securitycontextconstraints
   verbs:
@@ -863,81 +863,81 @@ kind: RoleBinding
 metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-leader-election-rolebinding
-  namespace: sbd-operator-system
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-leader-election-rolebinding
+  namespace: sbr-operator-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: sbd-operator-leader-election-role
+  name: sbr-operator-leader-election-role
 subjects:
 - kind: ServiceAccount
-  name: sbd-operator-controller-manager
-  namespace: sbd-operator-system
+  name: sbr-operator-controller-manager
+  namespace: sbr-operator-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-manager-rolebinding
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-manager-rolebinding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: sbd-operator-manager-role
+  name: sbr-operator-manager-role
 subjects:
 - kind: ServiceAccount
-  name: sbd-operator-controller-manager
-  namespace: sbd-operator-system
+  name: sbr-operator-controller-manager
+  namespace: sbr-operator-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: sbd-operator-metrics-auth-rolebinding
+  name: sbr-operator-metrics-auth-rolebinding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: sbd-operator-metrics-auth-role
+  name: sbr-operator-metrics-auth-role
 subjects:
 - kind: ServiceAccount
-  name: sbd-operator-controller-manager
-  namespace: sbd-operator-system
+  name: sbr-operator-controller-manager
+  namespace: sbr-operator-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   labels:
     app.kubernetes.io/component: agent
-    app.kubernetes.io/managed-by: sbd-operator
-    app.kubernetes.io/name: sbd-agent
-    app.kubernetes.io/part-of: sbd-operator
-  name: sbd-operator-sbd-agent-rolebinding
+    app.kubernetes.io/managed-by: sbr-operator
+    app.kubernetes.io/name: sbr-agent
+    app.kubernetes.io/part-of: sbr-operator
+  name: sbr-operator-sbr-agent-rolebinding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: sbd-operator-sbd-agent-role
+  name: sbr-operator-sbr-agent-role
 subjects:
 - kind: ServiceAccount
-  name: sbd-operator-sbd-agent
-  namespace: sbd-operator-system
+  name: sbr-operator-sbr-agent
+  namespace: sbr-operator-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   labels:
-    app: sbd-agent
+    app: sbr-agent
     app.kubernetes.io/component: openshift-resources
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-sbd-agent-scc-user
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-sbr-agent-scc-user
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: sbd-operator-sbd-agent-scc-user
+  name: sbr-operator-sbr-agent-scc-user
 subjects:
 - kind: ServiceAccount
-  name: sbd-agent
-  namespace: sbd-system
+  name: sbr-agent
+  namespace: sbr-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -945,43 +945,43 @@ metadata:
   labels:
     app.kubernetes.io/component: manager
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
-    app.kubernetes.io/part-of: sbd-operator
-  name: sbd-operator-sbd-operator-manager-rolebinding
+    app.kubernetes.io/name: sbr-operator
+    app.kubernetes.io/part-of: sbr-operator
+  name: sbr-operator-sbr-operator-manager-rolebinding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: sbd-operator-sbd-operator-manager-role
+  name: sbr-operator-sbr-operator-manager-role
 subjects:
 - kind: ServiceAccount
-  name: sbd-operator-sbd-operator-controller-manager
-  namespace: sbd-operator-system
+  name: sbr-operator-sbr-operator-controller-manager
+  namespace: sbr-operator-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   labels:
     app.kubernetes.io/component: openshift-resources
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-system:openshift:scc:sbd-operator-sbd-agent-privileged:sbd-agent
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-system:openshift:scc:sbr-operator-sbr-agent-privileged:sbr-agent
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: sbd-operator-system:openshift:scc:sbd-operator-sbd-agent-privileged
+  name: sbr-operator-system:openshift:scc:sbr-operator-sbr-agent-privileged
 subjects:
 - kind: ServiceAccount
-  name: sbd-agent
-  namespace: sbd-system
+  name: sbr-agent
+  namespace: sbr-system
 ---
 apiVersion: v1
 kind: Service
 metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
+    app.kubernetes.io/name: sbr-operator
     control-plane: controller-manager
-  name: sbd-operator-controller-manager-metrics-service
-  namespace: sbd-operator-system
+  name: sbr-operator-controller-manager-metrics-service
+  namespace: sbr-operator-system
 spec:
   ports:
   - name: https
@@ -989,7 +989,7 @@ spec:
     protocol: TCP
     targetPort: 8443
   selector:
-    app.kubernetes.io/name: sbd-operator
+    app.kubernetes.io/name: sbr-operator
     control-plane: controller-manager
 ---
 apiVersion: apps/v1
@@ -997,22 +997,22 @@ kind: Deployment
 metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: sbd-operator
+    app.kubernetes.io/name: sbr-operator
     control-plane: controller-manager
-  name: sbd-operator-controller-manager
-  namespace: sbd-operator-system
+  name: sbr-operator-controller-manager
+  namespace: sbr-operator-system
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: sbd-operator
+      app.kubernetes.io/name: sbr-operator
       control-plane: controller-manager
   template:
     metadata:
       annotations:
         kubectl.kubernetes.io/default-container: manager
       labels:
-        app.kubernetes.io/name: sbd-operator
+        app.kubernetes.io/name: sbr-operator
         control-plane: controller-manager
     spec:
       containers:
@@ -1022,7 +1022,7 @@ spec:
         - --health-probe-bind-address=:8081
         command:
         - /manager
-        image: quay.io/medik8s/sbd-operator@sha256:357594cbd71062c33af808db4e1fef1a8c8ba28b7c04e96d0fd7f6a909274c09
+        image: quay.io/medik8s/sbr-operator@sha256:357594cbd71062c33af808db4e1fef1a8c8ba28b7c04e96d0fd7f6a909274c09
         imagePullPolicy: Never
         livenessProbe:
           httpGet:
@@ -1055,7 +1055,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
-      serviceAccountName: sbd-operator-controller-manager
+      serviceAccountName: sbr-operator-controller-manager
       terminationGracePeriodSeconds: 10
       volumes: []
 ---
@@ -1076,14 +1076,14 @@ groups: []
 kind: SecurityContextConstraints
 metadata:
   annotations:
-    kubernetes.io/description: SecurityContextConstraints for SBD Agent pods that
+    kubernetes.io/description: SecurityContextConstraints for SBR Agent pods that
       require privileged access to hardware watchdog and block devices
   labels:
-    app: sbd-agent
+    app: sbr-agent
     app.kubernetes.io/component: openshift-resources
-    app.kubernetes.io/name: sbd-operator
-  name: sbd-operator-sbd-agent-privileged
-  namespace: sbd-operator-system
+    app.kubernetes.io/name: sbr-operator
+  name: sbr-operator-sbr-agent-privileged
+  namespace: sbr-operator-system
 priority: 10
 readOnlyRootFilesystem: false
 requiredDropCapabilities: null
@@ -1096,7 +1096,7 @@ seccompProfiles:
 supplementalGroups:
   type: RunAsAny
 users:
-- system:serviceaccount:sbd-system:sbd-agent
+- system:serviceaccount:sbr-system:sbr-agent
 volumes:
 - configMap
 - downwardAPI

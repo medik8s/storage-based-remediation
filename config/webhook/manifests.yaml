@@ -10,9 +10,9 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-medik8s-medik8s-io-v1alpha1-sbdconfig
+      path: /validate-storage-based-remediation-medik8s-io-v1alpha1-storagebasedremediationconfig
   failurePolicy: Fail
-  name: vsbdconfig.kb.io
+  name: vstoragebasedremediationconfig.kb.io
   rules:
   - apiGroups:
     - storage-based-remediation.medik8s.io
@@ -22,5 +22,5 @@ webhooks:
     - CREATE
     - UPDATE
     resources:
-    - sbdconfigs
+    - storagebasedremediationconfigs
   sideEffects: None

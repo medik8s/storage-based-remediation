@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/medik8s/sbd-operator/pkg/storage"
+	"github.com/medik8s/storage-based-remediation/pkg/storage"
 )
 
 // Configuration holds all the configuration for the storage setup
@@ -71,7 +71,7 @@ func parseFlags() *Config {
 	// NFS Configuration
 	flag.StringVar(&config.NFSServer, "nfs-server", "", "NFS server address (required)")
 	flag.StringVar(&config.NFSShare, "nfs-share", "", "NFS share path (required)")
-	flag.StringVar(&config.StorageClassName, "storage-class-name", "sbd-nfs-coherent", "StorageClass name")
+	flag.StringVar(&config.StorageClassName, "storage-class-name", "sbr-nfs-coherent", "StorageClass name")
 
 	// Cache Coherency Configuration
 	flag.BoolVar(&config.AggressiveCoherency, "aggressive-coherency", false,
@@ -118,15 +118,15 @@ func showUsage() {
 	fmt.Printf(`
 Usage: %s [OPTIONS]
 
-This tool sets up Standard NFS CSI shared storage for Kubernetes clusters optimized for SBD.
-It provides explicit cache coherency controls required for reliable SBD cluster coordination.
+This tool sets up Standard NFS CSI shared storage for Kubernetes clusters optimized for SBR.
+It provides explicit cache coherency controls required for reliable SBR cluster coordination.
 
 DESCRIPTION:
-This tool creates a StorageClass using the Standard NFS CSI driver with SBD-optimized 
+This tool creates a StorageClass using the Standard NFS CSI driver with SBR-optimized 
 mount options including cache=none, sync, and local_lock=none to ensure proper 
 inter-node heartbeat coordination and prevent split-brain scenarios.
 
-CACHE COHERENCY FOR SBD:
+CACHE COHERENCY FOR SBR:
 • EFS provides built-in cache coherency across all NFS clients
 • nfsvers=4.1: Modern NFS protocol with better performance and features
 • hard: Ensures reliable mounting with automatic retries on server failure
@@ -134,28 +134,28 @@ CACHE COHERENCY FOR SBD:
 • timeo/retrans: Optimized timeout and retry settings for EFS
 
 AGGRESSIVE CACHE COHERENCY:
-For strict SBD coordination use --aggressive-coherency flag which adds:
+For strict SBR coordination use --aggressive-coherency flag which adds:
 • actimeo=0: Disable ALL attribute caching for real-time updates
 • sync: Force synchronous operations to prevent cache lag
 • lookupcache=none: Disable directory lookup caching
 • local_lock=none: Send all locks to server for distributed coordination
 • Smaller buffer sizes (65KB) for reduced cache windows
 
-Use this mode when SBD cache coherency tests fail with standard options.
+Use this mode when SBR cache coherency tests fail with standard options.
 
 EXAMPLES:
 
     # Standard setup (good performance, may have cache delays)
     %s --nfs-server=fs-12345.efs.us-east-1.amazonaws.com --nfs-share=/
 
-    # Aggressive coherency (strict SBD coordination, slower performance)
+    # Aggressive coherency (strict SBR coordination, slower performance)
     %s --nfs-server=fs-12345.efs.us-east-1.amazonaws.com --nfs-share=/ --aggressive-coherency
 
     # Use any existing NFS server with aggressive coherency
-    %s --nfs-server=192.168.1.100 --nfs-share=/shared/sbd --aggressive-coherency
+    %s --nfs-server=192.168.1.100 --nfs-share=/shared/sbr --aggressive-coherency
 
     # Clean up created StorageClass
-    %s --cleanup --storage-class-name sbd-nfs-coherent
+    %s --cleanup --storage-class-name sbr-nfs-coherent
 
     # Preview changes without executing
     %s --nfs-server=fs-12345.efs.us-east-1.amazonaws.com --nfs-share=/ --dry-run
@@ -174,7 +174,7 @@ The tool creates a StorageClass with these EFS-optimized mount options:
 • rsize=1048576, wsize=1048576 (performance optimization)
 • timeo=600, retrans=2 (EFS-optimized timeout and retry settings)
 
-This ensures optimal SBD operation with proper inter-node heartbeat coordination.
+This ensures optimal SBR operation with proper inter-node heartbeat coordination.
 
 OPTIONS:
 `, os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0])

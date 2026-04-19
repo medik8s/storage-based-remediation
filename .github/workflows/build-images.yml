@@ -10,8 +10,8 @@ on:
 env:
   REGISTRY: quay.io
   QUAY_ORG: medik8s
-  OPERATOR_IMG: sbd-operator
-  AGENT_IMG: sbd-agent
+  OPERATOR_IMG: storage-based-remediation-operator
+  AGENT_IMG: storage-based-remediation-agent
 
 jobs:
   build-and-push:
@@ -69,7 +69,7 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         context: .
-        file: ./cmd/sbd-agent/Dockerfile
+        file: ./cmd/sbr-agent/Dockerfile
         push: ${{ github.event_name != 'pull_request' }}
         tags: ${{ steps.image_tag.outputs.AGENT_IMAGE }}
         platforms: linux/amd64,linux/arm64

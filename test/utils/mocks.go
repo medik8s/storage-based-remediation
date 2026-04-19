@@ -33,7 +33,7 @@ func NewFakeClient(tb testing.TB) rtclient.Client {
 	return rtfake.NewClientBuilder().Build()
 }
 
-// TestAgentOptions contains options for creating test SBD agents
+// TestAgentOptions contains options for creating test SBR agents
 type TestAgentOptions struct {
 	NodeName           string
 	MetricsPort        int
@@ -42,14 +42,14 @@ type TestAgentOptions struct {
 	HeartbeatInterval  time.Duration
 	PeerCheckInterval  time.Duration
 	WatchdogTimeout    time.Duration
-	SBDTimeoutSeconds  int
+	SBRTimeoutSeconds  int
 	RebootMethod       string
 	SyncInterval       time.Duration
 	K8sClient          rtclient.Client
 	Logger             logr.Logger
 }
 
-// DefaultTestAgentOptions returns default options for test SBD agents
+// DefaultTestAgentOptions returns default options for test SBR agents
 func DefaultTestAgentOptions() TestAgentOptions {
 	return TestAgentOptions{
 		NodeName:           "test-node",
@@ -59,7 +59,7 @@ func DefaultTestAgentOptions() TestAgentOptions {
 		HeartbeatInterval:  1 * time.Second,
 		PeerCheckInterval:  1 * time.Second,
 		WatchdogTimeout:    1 * time.Second,
-		SBDTimeoutSeconds:  30,
+		SBRTimeoutSeconds:  30,
 		RebootMethod:       "panic",
 		SyncInterval:       2 * time.Second,
 		Logger:             logr.Discard(),

@@ -101,11 +101,11 @@ func (m *Manager) InstallStandardNFSCSIDriver(ctx context.Context) error {
 	return nil
 }
 
-// CreateStandardNFSStorageClass creates a StorageClass for Standard NFS CSI driver with SBD cache coherency options
+// CreateStandardNFSStorageClass creates a StorageClass for Standard NFS CSI driver with SBR cache coherency options
 func (m *Manager) CreateStandardNFSStorageClass(ctx context.Context, nfsServer, nfsShare string) error {
 	storageClassName := m.config.StorageClassName
 	if storageClassName == "" {
-		storageClassName = "sbd-nfs-coherent"
+		storageClassName = "sbr-nfs-coherent"
 	}
 
 	// Check if StorageClass already exists
@@ -120,7 +120,7 @@ func (m *Manager) CreateStandardNFSStorageClass(ctx context.Context, nfsServer, 
 	var mountOptionsDesc string
 
 	if m.config.AggressiveCoherency {
-		// Aggressive cache coherency mount options for strict SBD coordination
+		// Aggressive cache coherency mount options for strict SBR coordination
 		mountOptions = []string{
 			"nfsvers=4.1",      // Use NFSv4.1 for better performance
 			"hard",             // Hard mount for reliability
@@ -154,7 +154,7 @@ func (m *Manager) CreateStandardNFSStorageClass(ctx context.Context, nfsServer, 
 		ObjectMeta: metav1.ObjectMeta{
 			Name: storageClassName,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "sbd-operator",
+				"app.kubernetes.io/managed-by": "sbr-operator",
 				"storage.medik8s.io/type":      "shared-nfs",
 			},
 		},
@@ -174,7 +174,7 @@ func (m *Manager) CreateStandardNFSStorageClass(ctx context.Context, nfsServer, 
 		return fmt.Errorf("failed to create StorageClass: %w", err)
 	}
 
-	log.Printf("✅ Standard NFS StorageClass '%s' created with SBD cache coherency options:", storageClassName)
+	log.Printf("✅ Standard NFS StorageClass '%s' created with SBR cache coherency options:", storageClassName)
 	log.Printf("   📡 NFS Server: %s", nfsServer)
 	log.Printf("   📁 NFS Share: %s", nfsShare)
 	log.Printf("   🔄 Mount Options: %s", mountOptionsDesc)
@@ -193,7 +193,7 @@ func (m *Manager) TestCredentials(ctx context.Context, storageClassName string) 
 			Name:      testPVCName,
 			Namespace: testNamespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "sbd-operator",
+				"app.kubernetes.io/managed-by": "sbr-operator",
 				"storage.medik8s.io/test":      "true",
 			},
 		},
@@ -260,7 +260,7 @@ func (m *Manager) TestCredentials(ctx context.Context, storageClassName string) 
 func (m *Manager) Cleanup(ctx context.Context) error {
 	storageClassName := m.config.StorageClassName
 	if storageClassName == "" {
-		storageClassName = "sbd-nfs-coherent"
+		storageClassName = "sbr-nfs-coherent"
 	}
 
 	// Delete StorageClass

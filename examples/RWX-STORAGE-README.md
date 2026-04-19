@@ -1,14 +1,14 @@
-# ReadWriteMany (RWX) Shared Storage for SBD Operator
+# ReadWriteMany (RWX) Shared Storage for SBR Operator
 
 This directory contains scripts and examples for setting up ReadWriteMany (RWX) persistent volumes that can be shared between multiple OpenShift worker nodes on AWS.
 
 ## Overview
 
-The SBD operator can benefit from shared storage for:
-- **Coordination between agents**: Share status and coordination data between SBD agents running on different nodes
+The SBR operator can benefit from shared storage for:
+- **Coordination between agents**: Share status and coordination data between SBR agents running on different nodes
 - **Shared configuration**: Distribute configuration files across all nodes
 - **Logging and monitoring**: Centralized logging and status collection
-- **SBD device metadata**: Share information about SBD devices and slot assignments
+- **SBR device metadata**: Share information about SBR devices and slot assignments
 
 ## Prerequisites
 
@@ -48,9 +48,9 @@ Your AWS credentials must have the following permissions:
 
 # Custom configuration
 ./scripts/setup-shared-storage.sh \
-  --name "sbd-shared-storage" \
+  --name "sbr-shared-storage" \
   --size "20Gi" \
-  --namespace "sbd-system" \
+  --namespace "sbr-system" \
   --cluster-name "my-ocp-cluster"
 ```
 
@@ -58,12 +58,12 @@ Your AWS credentials must have the following permissions:
 
 ```bash
 # Check PV and PVC
-oc get pv sbd-shared-pv
-oc get pvc sbd-shared-pvc -n sbd-system
+oc get pv sbr-shared-pv
+oc get pvc sbr-shared-pvc -n sbr-system
 
 # Check EFS filesystem
 aws efs describe-file-systems --region us-east-1 \
-  --query "FileSystems[?Tags[?Key=='Name' && Value=='sbd-operator-shared-storage']]"
+  --query "FileSystems[?Tags[?Key=='Name' && Value=='sbr-operator-shared-storage']]"
 ```
 
 ### 3. Test RWX Functionality
@@ -73,21 +73,21 @@ aws efs describe-file-systems --region us-east-1 \
 oc apply -f examples/rwx-shared-storage-example.yaml
 
 # Check test pod
-oc logs rwx-storage-test -n sbd-system
+oc logs rwx-storage-test -n sbr-system
 
 # Run verification job
-oc get job verify-rwx-storage -n sbd-system
-oc logs job/verify-rwx-storage -n sbd-system
+oc get job verify-rwx-storage -n sbr-system
+oc logs job/verify-rwx-storage -n sbr-system
 ```
 
 ## Script Options
 
 ### Basic Options
-- `--name`: EFS filesystem name (default: `sbd-operator-shared-storage`)
-- `--pv-name`: Persistent Volume name (default: `sbd-shared-pv`)
-- `--pvc-name`: PVC name (default: `sbd-shared-pvc`)
+- `--name`: EFS filesystem name (default: `sbr-operator-shared-storage`)
+- `--pv-name`: Persistent Volume name (default: `sbr-shared-pv`)
+- `--pvc-name`: PVC name (default: `sbr-shared-pvc`)
 - `--size`: Storage size (default: `10Gi`)
-- `--namespace`: Kubernetes namespace (default: `sbd-system`)
+- `--namespace`: Kubernetes namespace (default: `sbr-system`)
 
 ### Advanced Options
 - `--performance-mode`: EFS performance (`generalPurpose` or `maxIO`)
@@ -101,29 +101,29 @@ oc logs job/verify-rwx-storage -n sbd-system
 
 ## Usage Examples
 
-### Example 1: SBDConfig with Shared Storage
+### Example 1: StorageBasedRemediationConfig with Shared Storage
 
 ```yaml
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
-kind: SBDConfig
+kind: StorageBasedRemediationConfig
 metadata:
-  name: sbd-config-with-shared-storage
-  namespace: sbd-system
+  name: sbr-config-with-shared-storage
+  namespace: sbr-system
 spec:
-  # SBD agent image configuration
-  image: "quay.io/medik8s/sbd-agent:latest"
+  # SBR agent image configuration
+  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
   imagePullPolicy: "IfNotPresent"
   
   # Watchdog configuration
-  sbdWatchdogPath: "/dev/watchdog"
+  watchdogPath: "/dev/watchdog"
   watchdogTimeout: "60s"
   petIntervalMultiple: 4
-  
+
   # Node management
   staleNodeTimeout: "1h"
-  
+
   # Note: Additional volumes for shared storage would require
-  # extending the SBDConfig CRD to support custom volumes
+  # extending the StorageBasedRemediationConfig CRD to support custom volumes
 ```
 
 ### Example 2: Coordination Between Agents
@@ -143,12 +143,12 @@ cat /shared/nodes/*/status.json
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: sbd-shared-config
+  name: sbr-shared-config
 data:
-  sbd.conf: |
-    SBD_DEVICE="/dev/disk/by-id/scsi-36001405example"
-    SBD_WATCHDOG_DEV="/dev/watchdog"
-    SBD_WATCHDOG_TIMEOUT="30"
+  sbr.conf: |
+    SBR_DEVICE="/dev/disk/by-id/scsi-36001405example"
+    SBR_WATCHDOG_DEV="/dev/watchdog"
+    SBR_WATCHDOG_TIMEOUT="30"
 ```
 
 ## Performance Considerations
@@ -218,13 +218,13 @@ data:
    oc get pods -n kube-system | grep efs
    
    # Check PVC events
-   oc describe pvc sbd-shared-pvc -n sbd-system
+   oc describe pvc sbr-shared-pvc -n sbr-system
    ```
 
 3. **Mount failures in pods**
    ```bash
    # Check pod events
-   oc describe pod <pod-name> -n sbd-system
+   oc describe pod <pod-name> -n sbr-system
    
    # Check EFS mount targets
    aws efs describe-mount-targets --file-system-id fs-xxx
@@ -255,8 +255,8 @@ oc logs -n kube-system -l app=efs-csi-controller
 ./scripts/setup-shared-storage.sh --cleanup
 
 # Manual cleanup if needed
-oc delete pvc sbd-shared-pvc -n sbd-system
-oc delete pv sbd-shared-pv
+oc delete pvc sbr-shared-pvc -n sbr-system
+oc delete pv sbr-shared-pv
 oc delete storageclass efs-sc
 aws efs delete-file-system --file-system-id fs-xxx
 ```
@@ -265,8 +265,8 @@ aws efs delete-file-system --file-system-id fs-xxx
 
 ```bash
 # Remove only Kubernetes resources (keep EFS)
-oc delete pvc sbd-shared-pvc -n sbd-system
-oc delete pv sbd-shared-pv
+oc delete pvc sbr-shared-pvc -n sbr-system
+oc delete pv sbr-shared-pv
 
 # Remove only test resources
 oc delete -f examples/rwx-shared-storage-example.yaml
@@ -299,51 +299,51 @@ aws cloudwatch get-metric-statistics \
   --statistics Sum
 ```
 
-## Integration with SBD Operator
+## Integration with SBR Operator
 
-The RWX storage can be integrated with the SBD operator for:
+The RWX storage can be integrated with the SBR operator for:
 
 1. **Slot coordination**: Share slot assignment data between agents
 2. **Status reporting**: Centralized status collection
-3. **Configuration distribution**: Share SBD device configurations
+3. **Configuration distribution**: Share SBR device configurations
 4. **Log aggregation**: Collect logs from all nodes
 
 ### Current Integration
 
-The SBDConfig CRD now supports shared storage through the following fields:
+The StorageBasedRemediationConfig CRD now supports shared storage through the following fields:
 
 ```yaml
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
-kind: SBDConfig
+kind: StorageBasedRemediationConfig
 metadata:
-  name: sbd-config-with-shared-storage
+  name: sbr-config-with-shared-storage
 spec:
-  # Standard SBD configuration
-  sbdWatchdogPath: "/dev/watchdog"
+  # Standard SBR configuration
+  watchdogPath: "/dev/watchdog"
   watchdogTimeout: "60s"
   petIntervalMultiple: 4
   staleNodeTimeout: "1h"
   
   # Shared storage configuration
-  sharedStoragePVC: "sbd-shared-pvc"           # Name of RWX PVC
+  sharedStoragePVC: "sbr-shared-pvc"           # Name of RWX PVC
   
 ```
 
 ### Implementation in Controller
 
-The SBD operator controller automatically:
+The SBR operator controller automatically:
 
 1. **Detects shared storage configuration** when `sharedStoragePVC` is specified
 2. **Validates PVC name** follows Kubernetes naming conventions
 3. **Validates mount path** is absolute and doesn't conflict with system paths
 4. **Adds PVC volume to DaemonSet** template
 5. **Mounts shared storage** at the specified path in all agent pods
-6. **Configures sbd-agent** with `--shared-storage` command line argument
+6. **Configures sbr-agent** with `--shared-storage` command line argument
 7. **Enables coordination features** for cross-node communication
 
 ### Benefits of Integration
 
-- **Simplified deployment**: Single SBDConfig resource configures everything
+- **Simplified deployment**: Single StorageBasedRemediationConfig resource configures everything
 - **Automatic validation**: Controller ensures storage configuration is valid
 - **Seamless integration**: Shared storage is automatically mounted when configured
 - **Consistent configuration**: All agents use same shared storage settings

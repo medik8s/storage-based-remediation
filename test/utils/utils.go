@@ -393,7 +393,7 @@ func GetProjectImage() string {
 
 	org := os.Getenv("QUAY_ORG")
 	if org == "" {
-		org = "sbd-operator"
+		org = "sbr-operator"
 	}
 
 	version := os.Getenv("TAG")
@@ -401,7 +401,7 @@ func GetProjectImage() string {
 		version = "smoke-test"
 	}
 
-	return fmt.Sprintf("%s/%s/sbd-operator:%s", registry, org, version)
+	return fmt.Sprintf("%s/%s/sbr-operator:%s", registry, org, version)
 }
 
 // getAgentImage returns the agent image name based on environment variables.
@@ -419,7 +419,7 @@ func GetAgentImage() string {
 
 	org := os.Getenv("QUAY_ORG")
 	if org == "" {
-		org = "sbd-operator"
+		org = "sbr-operator"
 	}
 
 	version := os.Getenv("TAG")
@@ -427,7 +427,7 @@ func GetAgentImage() string {
 		version = "smoke-test"
 	}
 
-	return fmt.Sprintf("%s/%s/sbd-agent:%s", registry, org, version)
+	return fmt.Sprintf("%s/%s/sbr-agent:%s", registry, org, version)
 }
 
 // GetAWSInstanceIDForNode finds the AWS EC2 instance ID for a given Kubernetes node name

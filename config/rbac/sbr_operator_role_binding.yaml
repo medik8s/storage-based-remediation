@@ -1,0 +1,18 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sbr-operator-manager-rolebinding
+  labels:
+    app.kubernetes.io/name: sbr-operator
+    app.kubernetes.io/component: manager
+    app.kubernetes.io/part-of: sbr-operator
+    app.kubernetes.io/managed-by: kustomize
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sbr-operator-manager-role
+subjects:
+- kind: ServiceAccount
+  name: sbr-operator-controller-manager
+  namespace: system 

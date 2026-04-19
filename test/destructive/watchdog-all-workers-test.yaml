@@ -4,19 +4,19 @@ metadata:
   name: watchdog-all-workers-test
   namespace: default
   labels:
-    app: sbd-destructive-test
+    app: sbr-destructive-test
     test-type: watchdog-all-workers
   annotations:
     description: "DESTRUCTIVE TEST: This DaemonSet will cause ALL WORKER NODES to REBOOT simultaneously"
 spec:
   selector:
     matchLabels:
-      app: sbd-destructive-test
+      app: sbr-destructive-test
       test-type: watchdog-all-workers
   template:
     metadata:
       labels:
-        app: sbd-destructive-test
+        app: sbr-destructive-test
         test-type: watchdog-all-workers
     spec:
       restartPolicy: Always
@@ -30,7 +30,7 @@ spec:
       
       initContainers:
       - name: watchdog-all-workers-init
-        image: quay.io/medik8s/sbd-destructive-tests:latest
+        image: quay.io/medik8s/sbr-destructive-tests:latest
         imagePullPolicy: Always
         
         command:

@@ -1,0 +1,71 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: '[]'
+    capabilities: Basic Install
+    categories: OpenShift Optional
+    containerImage: quay.io/medik8s/storage-based-remediation-operator:latest
+    createdAt: ""
+    description: Storage-Based Remediation Operator for remediating nodes using storage-based fencing (SBD/STONITH).
+    olm.skipRange: '>=0.0.1'
+    operatorframework.io/suggested-namespace: openshift-workload-availability
+    operatorframework.io/suggested-namespace-template: '{"kind":"Namespace","apiVersion":"v1","metadata":{"name":"openshift-workload-availability","annotations":{"openshift.io/node-selector":""}}}'
+    repository: https://github.com/medik8s/storage-based-remediation
+    support: Medik8s
+  name: storage-based-remediation.v0.0.0
+  namespace: placeholder
+spec:
+  apiservicedefinitions: {}
+  customresourcedefinitions:
+    owned:
+    - description: StorageBasedRemediationConfig is the Schema for the storagebasedremediationconfigs API.
+      displayName: StorageBasedRemediationConfig
+      kind: StorageBasedRemediationConfig
+      name: storagebasedremediationconfigs.storage-based-remediation.medik8s.io
+      version: v1alpha1
+    - description: StorageBasedRemediation is the Schema for the storagebasedremediations API.
+      displayName: StorageBasedRemediation
+      kind: StorageBasedRemediation
+      name: storagebasedremediations.storage-based-remediation.medik8s.io
+      version: v1alpha1
+    - description: StorageBasedRemediationTemplate is the Schema for the storagebasedremediationtemplates
+        API.
+      displayName: StorageBasedRemediation Template
+      kind: StorageBasedRemediationTemplate
+      name: storagebasedremediationtemplates.storage-based-remediation.medik8s.io
+      version: v1alpha1
+  description: Storage-Based Remediation operator for remediating nodes using storage-based fencing (SBD/STONITH).
+  displayName: Storage-Based Remediation
+  icon:
+  - base64data: "base64EncodedIcon"
+    mediatype: "image/png"
+  install:
+    spec:
+      deployments: null
+    strategy: ""
+  installModes:
+  - supported: false
+    type: OwnNamespace
+  - supported: false
+    type: SingleNamespace
+  - supported: false
+    type: MultiNamespace
+  - supported: true
+    type: AllNamespaces
+  keywords:
+  - sbr
+  - storage
+  - remediation
+  links:
+  - name: Storage-Based Remediation
+    url: https://medik8s.io
+  maintainers:
+  - email: medik8s@googlegroups.com
+    name: Medik8s Team
+  maturity: alpha
+  minKubeVersion: 1.26.0
+  provider:
+     name: medik8s
+     url: https://github.com/medik8s
+  version: 0.0.0

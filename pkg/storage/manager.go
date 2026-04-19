@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/medik8s/sbd-operator/pkg/storage/k8s"
+	"github.com/medik8s/storage-based-remediation/pkg/storage/k8s"
 )
 
 // Config holds all configuration for storage setup
@@ -84,7 +84,7 @@ func (m *Manager) SetupSharedStorage(ctx context.Context) (*SetupResult, error) 
 	}
 
 	// Step 2: Create StorageClass for Standard NFS CSI
-	log.Println("💾 Creating Standard NFS StorageClass with SBD cache coherency options...")
+	log.Println("💾 Creating Standard NFS StorageClass with SBR cache coherency options...")
 	if err := m.k8sManager.CreateStandardNFSStorageClass(ctx, m.config.NFSServer, m.config.NFSShare); err != nil {
 		return nil, fmt.Errorf("failed to create Standard NFS StorageClass: %w", err)
 	}
@@ -137,7 +137,7 @@ func (m *Manager) dryRunSetup() (*SetupResult, error) {
 
 	log.Println("[DRY-RUN] 🔧 Would check Standard NFS CSI driver installation")
 	log.Println("[DRY-RUN] 📦 Would automatically install Standard NFS CSI driver if not present")
-	log.Println("[DRY-RUN] 💾 Would create Standard NFS StorageClass with SBD cache coherency options:")
+	log.Println("[DRY-RUN] 💾 Would create Standard NFS StorageClass with SBR cache coherency options:")
 	log.Printf("[DRY-RUN]   📡 NFS Server: %s", m.config.NFSServer)
 	log.Printf("[DRY-RUN]   📁 NFS Share: %s", m.config.NFSShare)
 	log.Printf("[DRY-RUN]   🔄 Mount Options: cache=none, sync, local_lock=none")
@@ -152,7 +152,7 @@ func (m *Manager) dryRunSetup() (*SetupResult, error) {
 // setDefaults sets default values for configuration
 func setDefaults(config *Config) {
 	if config.StorageClassName == "" {
-		config.StorageClassName = "sbd-nfs-coherent"
+		config.StorageClassName = "sbr-nfs-coherent"
 	}
 }
 

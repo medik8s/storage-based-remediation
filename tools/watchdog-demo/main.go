@@ -21,7 +21,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/medik8s/sbd-operator/pkg/watchdog"
+	"github.com/medik8s/storage-based-remediation/pkg/watchdog"
 )
 
 func main() {

@@ -141,7 +141,7 @@ spec:
                 x-kubernetes-list-type: map
               fenceMessageWritten:
                 description: FenceMessageWritten indicates if the fence message was
-                  successfully written to the SBD device
+                  successfully written to the SBR device
                 type: boolean
               lastUpdateTime:
                 description: LastUpdateTime is the time when this status was last
@@ -150,7 +150,7 @@ spec:
                 type: string
               nodeID:
                 description: NodeID is the numeric ID assigned to the target node
-                  for SBD operations
+                  for SBR operations
                 type: integer
               operatorInstance:
                 description: OperatorInstance identifies which operator instance is

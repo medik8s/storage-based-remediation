@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 // Package blockdevice provides utilities for interacting with raw block devices.
-// This package is designed specifically for SBD (Storage-Based Death) operations
+// This package is designed specifically for SBR (Storage-Based Remediation) operations
 // that require direct, synchronous access to block devices for reliable fencing.
 package blockdevice
 
@@ -28,7 +28,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/medik8s/sbd-operator/pkg/retry"
+	"github.com/medik8s/storage-based-remediation/pkg/retry"
 )
 
 // Retry configuration constants for block device operations
@@ -49,7 +49,7 @@ const (
 
 // Device represents a raw block device that can be read from and written to.
 // It implements the io.ReaderAt and io.WriterAt interfaces for positioned I/O operations.
-// All operations are performed synchronously to ensure data integrity for SBD operations.
+// All operations are performed synchronously to ensure data integrity for SBR operations.
 type Device struct {
 	// file is the underlying file handle to the block device
 	file *os.File
@@ -65,7 +65,7 @@ type Device struct {
 
 // Open opens a raw block device at the specified path for read/write operations.
 // The device is opened with O_RDWR and O_SYNC flags to ensure synchronous I/O,
-// which is critical for SBD operations where data must be immediately written to disk.
+// which is critical for SBR operations where data must be immediately written to disk.
 //
 // Parameters:
 //   - path: The filesystem path to the block device (e.g., "/dev/sdb1")
@@ -387,7 +387,7 @@ func (d *Device) WriteAt(p []byte, off int64) (n int, err error) {
 // While the device is opened with O_SYNC flag (meaning writes should be
 // synchronous), calling Sync() provides an additional guarantee that all
 // data has been written to persistent storage. This is particularly important
-// for SBD operations where data integrity is critical.
+// for SBR operations where data integrity is critical.
 // It includes retry logic for transient errors.
 //
 // Returns:

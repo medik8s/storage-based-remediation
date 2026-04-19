@@ -41,7 +41,7 @@ test_local_watchdog() {
     fi
     
     # Create temp directory for testing
-    local temp_dir="/tmp/sbd-watchdog-test-$$"
+    local temp_dir="/tmp/sbr-watchdog-test-$$"
     mkdir -p "${temp_dir}"
     
     # Copy and compile the debug tool
@@ -122,7 +122,7 @@ INSTRUCTIONS
 }
 
 main() {
-    echo "=== SBD Watchdog Debug Tool - Local Test ==="
+    echo "=== SBR Watchdog Debug Tool - Local Test ==="
     echo ""
     
     test_local_watchdog

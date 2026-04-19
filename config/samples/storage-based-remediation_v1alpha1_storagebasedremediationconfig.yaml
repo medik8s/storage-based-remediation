@@ -1,0 +1,163 @@
+# StorageBasedRemediationConfig Sample Configuration
+#
+# This is a sample configuration for the Storage Based Remediation operator.
+# The SBR operator provides watchdog-based fencing for Kubernetes clusters
+# to ensure high availability through automatic node remediation.
+#
+# For comprehensive documentation, see: docs/storagebasedremediationconfig-user-guide.md
+
+apiVersion: storage-based-remediation.medik8s.io/v1alpha1
+kind: StorageBasedRemediationConfig
+metadata:
+  labels:
+    app.kubernetes.io/name: sbr-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: storagebasedremediationconfig-sample
+spec:
+  # Example configuration using shared storage for multi-node clusters
+  sharedStorageClass: "shared-storage-class"
+  
+  # Watchdog configuration
+  watchdogPath: "/dev/watchdog"
+  watchdogTimeout: "60s"
+  petIntervalMultiple: 4
+
+  # Node selection - run on worker nodes only
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+
+  # Timing configuration
+  staleNodeTimeout: "2h"
+  iotimeout: "5s"
+  rebootMethod: "systemctl-reboot"
+  sbrTimeoutSeconds: 45
+  sbrUpdateInterval: "3s"
+  peerCheckInterval: "4s"
+  
+  # Container configuration
+  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
+  imagePullPolicy: "IfNotPresent"
+  
+  # Logging
+  logLevel: "info"
+  
+  # ========================================================================
+  # MULTIPLE STORAGEBASEDREMEDIATIONCONFIG SUPPORT (NEW in v1.1+)
+  # ========================================================================
+  #
+  # The SBR operator now supports multiple StorageBasedRemediationConfig resources in the same namespace!
+  # This enables advanced deployment scenarios like A/B testing, gradual rollouts,
+  # and different configurations for different teams.
+  #
+  # KEY FEATURES:
+  # - Shared service account across all StorageBasedRemediationConfigs in a namespace
+  # - Separate DaemonSets with unique names for each StorageBasedRemediationConfig
+  # - Independent configurations (images, timeouts, node selectors, etc.)
+  # - Automatic cleanup when StorageBasedRemediationConfigs are deleted
+  #
+  # RESOURCE NAMING:
+  # - Service Account: sbr-agent (shared across all StorageBasedRemediationConfigs in namespace)
+  # - DaemonSet: sbr-agent-{storagebasedremediationconfig-name} (unique per StorageBasedRemediationConfig)
+  # - ClusterRoleBinding: sbr-agent-{namespace}-{storagebasedremediationconfig-name} (globally unique)
+  #
+  # EXAMPLE USAGE:
+  # kubectl apply -f production-sbr.yaml -f canary-sbr.yaml
+  # kubectl get storagebasedremediationconfig -n my-app
+  # kubectl get daemonset -n my-app -l app=sbr-agent
+  #
+  # ========================================================================
+  # CONFIGURATION EXAMPLES
+  # ========================================================================
+  #
+  # Basic Production Configuration (image auto-derived from operator):
+  # -------------------------------------------------------------------
+  # spec:
+  #   staleNodeTimeout: "30m"
+  #
+  # Production with Custom Image:
+  # -----------------------------
+  # spec:
+  #   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
+  #   staleNodeTimeout: "30m"
+  #
+  # Multiple Configurations in Same Namespace:
+  # ------------------------------------------
+  # # Production config
+  # metadata:
+  #   name: production-sbr
+  #   namespace: my-app
+  # spec:
+  #   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
+  #   imagePullPolicy: "IfNotPresent"
+  # ---
+  # # Canary config  
+  # metadata:
+  #   name: canary-sbr
+  #   namespace: my-app
+  # spec:
+  #   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
+  #   imagePullPolicy: "Always"
+  #   nodeSelector:
+  #     canary: "true"
+  #
+  # High-Availability Configuration:
+  # --------------------------------
+  # spec:
+  #   watchdogPath: "/dev/watchdog1"
+  #   staleNodeTimeout: "2h"
+  #
+  # Development/Testing Configuration:
+  # ----------------------------------
+  # spec:
+  #   imagePullPolicy: "Always"
+  #   staleNodeTimeout: "5m"
+  #
+  # Note: Each StorageBasedRemediationConfig creates its own DaemonSet in the specified namespace.
+  # Multiple StorageBasedRemediationConfigs in the same namespace share the service account but
+  # have separate DaemonSets and configurations.
+  #
+  # ========================================================================
+  # DEPLOYMENT COMMANDS
+  # ========================================================================
+  #
+  # Apply configuration:
+  #   kubectl apply -f storage-based-remediation_v1alpha1_storagebasedremediationconfig.yaml
+  #
+  # Check status:
+  #   kubectl get storagebasedremediationconfig
+  #   kubectl describe storagebasedremediationconfig storagebasedremediationconfig-sample
+  #
+  # Monitor deployment:
+  #   kubectl get pods -n <namespace>
+  #   kubectl logs -n <namespace> -l app=sbr-agent
+  #   (Replace <namespace> with the namespace where you created the StorageBasedRemediationConfig)
+  #
+  # ========================================================================
+  # OPENSHIFT SECURITY CONTEXT CONSTRAINTS (SCC) MANAGEMENT
+  # ========================================================================
+  #
+  # The SBR operator automatically manages OpenShift SecurityContextConstraints
+  # when deployed on OpenShift clusters. The controller will:
+  #
+  # 1. Detect if running on OpenShift platform
+  # 2. Check for the required SCC: sbr-operator-sbr-agent-privileged
+  # 3. Automatically update the SCC to grant permissions to service accounts
+  #    in any namespace where StorageBasedRemediationConfig resources are deployed
+  #
+  # Example: If you create an StorageBasedRemediationConfig in namespace "my-app", the operator
+  # will automatically add "system:serviceaccount:my-app:sbr-agent" to the
+  # SCC users list, allowing pods to start with required privileges.
+  #
+  # Manual SCC management (if needed):
+  #   # Check SCC status
+  #   oc get scc sbr-operator-sbr-agent-privileged -o yaml
+  #   
+  #   # Manually add service account (normally automatic)
+  #   oc adm policy add-scc-to-user sbr-operator-sbr-agent-privileged \
+  #     system:serviceaccount:my-namespace:sbr-agent
+  #
+  # Note: The base SCC must be installed via the OpenShift installer:
+  #   make build-openshift-installer
+  #   kubectl apply -f dist/install-openshift.yaml
+  #
+  # ========================================================================

@@ -38,9 +38,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
-	"github.com/medik8s/sbd-operator/pkg/controller"
-	"github.com/medik8s/sbd-operator/pkg/version"
+	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/pkg/controller"
+	"github.com/medik8s/storage-based-remediation/pkg/version"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -71,12 +71,12 @@ func main() {
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	// Leader election is ENABLED BY DEFAULT for SBD operator since fencing operations
+	// Leader election is ENABLED BY DEFAULT for SBR operator since fencing operations
 	// must be performed by exactly one instance to avoid conflicts and ensure safety
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager. "+
-			"CRITICAL for SBD fencing operations - disabling this can cause data corruption or split-brain scenarios!")
+			"CRITICAL for SBR fencing operations - disabling this can cause data corruption or split-brain scenarios!")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
@@ -89,7 +89,7 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.BoolVar(&enableWebhooks, "enable-webhooks", true,
-		"If set, admission webhooks will be enabled for SBDConfig validation")
+		"If set, admission webhooks will be enabled for StorageBasedRemediationConfig validation")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -99,24 +99,24 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	// Log build information at startup
-	setupLog.Info("SBD Operator starting", "buildInfo", version.GetFormattedBuildInfo())
+	setupLog.Info("SBR Operator starting", "buildInfo", version.GetFormattedBuildInfo())
 
 	/*
-	 * LEADER ELECTION IS CRITICAL FOR SBD FENCING OPERATIONS
+	 * LEADER ELECTION IS CRITICAL FOR SBR FENCING OPERATIONS
 	 *
-	 * The SBD (Storage-Based Death) operator performs fencing operations by writing
+	 * The SBR (Storage-Based Remediation) operator performs fencing operations by writing
 	 * fence messages to shared storage devices. These operations are inherently
 	 * destructive and must be performed by exactly one operator instance to prevent:
 	 *
 	 * 1. Race conditions: Multiple operators writing fence messages simultaneously
 	 * 2. Split-brain scenarios: Conflicting fencing decisions
-	 * 3. Data corruption: Overlapping writes to SBD device slots
+	 * 3. Data corruption: Overlapping writes to SBR device slots
 	 * 4. Operational chaos: Multiple agents attempting to fence the same node
 	 *
 	 * Leader election ensures that only the elected leader can:
-	 * - Write fence messages to the shared SBD storage device
+	 * - Write fence messages to the shared SBR storage device
 	 * - Make fencing decisions for unhealthy nodes
-	 * - Coordinate with SBD agents across the cluster
+	 * - Coordinate with SBR agents across the cluster
 	 *
 	 * When leadership changes, the old leader immediately stops all fencing
 	 * operations, and the new leader takes over responsibility for cluster health.
@@ -125,10 +125,10 @@ func main() {
 	// Log leadership configuration prominently
 	if enableLeaderElection {
 		setupLog.Info("Leader election ENABLED - this operator instance will participate in " +
-			"leader election for SBD fencing operations")
+			"leader election for SBR fencing operations")
 	} else {
 		setupLog.Error(nil, "WARNING: Leader election DISABLED - this is unsafe for production "+
-			"SBD deployments and may cause data corruption!")
+			"SBR deployments and may cause data corruption!")
 	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
@@ -232,14 +232,14 @@ func main() {
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "sbd-operator-leader-election",
+		LeaderElectionID:       "sbr-operator-leader-election",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
 		// speeds up voluntary leader transitions as the new leader don't have to wait
 		// LeaseDuration time first.
 		//
-		// For SBD operator, we enable this to ensure fast failover between operator instances
+		// For SBR operator, we enable this to ensure fast failover between operator instances
 		// when performing critical fencing operations.
 		LeaderElectionReleaseOnCancel: true,
 	})
@@ -249,34 +249,34 @@ func main() {
 	}
 
 	// Create controllers with EventRecorder
-	// Note: SBD fencing is now handled by agents directly via integrated SBDRemediationReconciler
+	// Note: SBR fencing is now handled by agents directly via integrated SBRRemediationReconciler
 
 	// Set up leadership tracking
 	if enableLeaderElection {
-		setupLog.Info("Leader election ENABLED - SBD config controller will be performed by the elected leader")
+		setupLog.Info("Leader election ENABLED - SBR config controller will be performed by the elected leader")
 	} else {
-		setupLog.Info("Leader election DISABLED - this instance will handle SBD config controller")
+		setupLog.Info("Leader election DISABLED - this instance will handle SBR config controller")
 	}
 
-	if err := (&controller.SBDConfigReconciler{
+	if err := (&controller.StorageBasedRemediationConfigReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("sbd-config-controller"),
+		Recorder: mgr.GetEventRecorderFor("sbr-config-controller"),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "SBDConfig")
+		setupLog.Error(err, "unable to create controller", "controller", "StorageBasedRemediationConfig")
 		os.Exit(1)
 	}
 
-	// Note: SBDRemediationReconciler is now run as part of the SBD agent, not the main operator
+	// Note: SBRRemediationReconciler is now run as part of the SBR agent, not the main operator
 
 	// Set up admission webhooks (only if enabled)
 	if enableWebhooks {
-		sbdConfigValidator := &medik8sv1alpha1.SBDConfigValidator{}
-		if err := sbdConfigValidator.SetupWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create webhook", "webhook", "SBDConfig")
+		sbrConfigValidator := &medik8sv1alpha1.StorageBasedRemediationConfigValidator{}
+		if err := sbrConfigValidator.SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "StorageBasedRemediationConfig")
 			os.Exit(1)
 		}
-		setupLog.Info("Admission webhooks enabled for SBDConfig validation")
+		setupLog.Info("Admission webhooks enabled for StorageBasedRemediationConfig validation")
 	} else {
 		setupLog.Info("Admission webhooks disabled - validation will be skipped")
 	}

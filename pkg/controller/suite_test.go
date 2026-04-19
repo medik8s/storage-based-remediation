@@ -32,7 +32,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
+	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -45,7 +45,7 @@ var (
 	testEnv    *envtest.Environment
 	cfg        *rest.Config
 	k8sClient  client.Client
-	reconciler *SBDRemediationReconciler
+	reconciler *SBRRemediationReconciler
 )
 
 func TestControllers(t *testing.T) {

@@ -59,13 +59,13 @@ This directory contains standalone tests that validate node self-fencing mechani
 
 ```bash
 # Build the UBI-based image with test binaries
-podman build -t sbd-destructive-tests:latest -f test/destructive/Dockerfile .
+podman build -t sbr-destructive-tests:latest -f test/destructive/Dockerfile .
 
 # Tag for your registry
-podman tag sbd-destructive-tests:latest your-registry.com/sbd-destructive-tests:latest
+podman tag sbr-destructive-tests:latest your-registry.com/sbr-destructive-tests:latest
 
 # Push to registry
-podman push your-registry.com/sbd-destructive-tests:latest
+podman push your-registry.com/sbr-destructive-tests:latest
 ```
 
 ### 2. Update Manifests
@@ -110,7 +110,7 @@ kubectl apply -f test/destructive/watchdog-reboot-test.yaml
 # 1. Build and push your image using Podman (see Setup section)
 
 # 2. Update image references in YAML files
-sed -i 's|registry.redhat.io/ubi9/ubi:latest|your-registry.com/sbd-destructive-tests:latest|g' test/destructive/*.yaml
+sed -i 's|registry.redhat.io/ubi9/ubi:latest|your-registry.com/sbr-destructive-tests:latest|g' test/destructive/*.yaml
 
 # 3. Set target node name
 sed -i 's/TARGET_NODE_NAME_HERE/your-target-node/g' test/destructive/*.yaml
@@ -206,7 +206,7 @@ oc debug node/TARGET_NODE_NAME -- chroot /host lsmod | grep watchdog
 oc debug node/TARGET_NODE_NAME -- chroot /host timeout 5 sh -c 'echo 1 > /dev/watchdog'
 
 # Check container image contents
-kubectl run debug-image --rm -i --tty --image=your-registry.com/sbd-destructive-tests:latest -- /bin/bash
+kubectl run debug-image --rm -i --tty --image=your-registry.com/sbr-destructive-tests:latest -- /bin/bash
 ```
 
 ## Cleanup
@@ -230,11 +230,11 @@ kubectl delete pods --field-selector=status.phase=Failed
 - Tests have `SYS_BOOT` and `SYS_ADMIN` capabilities
 - **Never run these tests in production environments**
 
-## Integration with SBD Operator
+## Integration with SBR Operator
 
-These tests validate the same self-fencing mechanisms used by the SBD operator:
+These tests validate the same self-fencing mechanisms used by the SBR operator:
 
-- **Panic test** validates the `rebootMethod: panic` setting in SBD agent
+- **Panic test** validates the `rebootMethod: panic` setting in SBR agent
 - **Watchdog test** validates the watchdog petting and timeout logic
 - Both tests confirm that node reboots work as expected for self-fencing
 
@@ -250,6 +250,6 @@ When modifying these tests:
 
 ## Support
 
-These are **destructive tests** intended for validation only. For production SBD operator issues, see the main project documentation.
+These are **destructive tests** intended for validation only. For production SBR operator issues, see the main project documentation.
 
 **Remember: These tests WILL reboot nodes. Use with extreme caution!** 

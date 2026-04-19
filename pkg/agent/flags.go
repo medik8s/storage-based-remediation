@@ -16,8 +16,8 @@ limitations under the License.
 
 package agent
 
-// SBD Agent command line flag constants
-// These constants define the command line flags accepted by the sbd-agent.
+// SBR Agent command line flag constants
+// These constants define the command line flags accepted by the sbr-agent.
 // They are shared between the agent implementation and the controller
 // to ensure consistency and prevent mismatches.
 const (
@@ -30,11 +30,11 @@ const (
 	// FlagPetInterval specifies the pet interval (how often to pet the watchdog)
 	FlagPetInterval = "pet-interval"
 
-	// FlagSBDDevice specifies the path to the SBD block device
-	FlagSBDDevice = "sbd-device"
+	// FlagSBRDevice specifies the path to the SBR block device
+	FlagSBRDevice = "sbr-device"
 
-	// FlagSBDFileLocking enables file locking for SBD device operations
-	FlagSBDFileLocking = "sbd-file-locking"
+	// FlagSBRFileLocking enables file locking for SBR device operations
+	FlagSBRFileLocking = "sbr-file-locking"
 
 	// FlagNodeName specifies the name of this Kubernetes node
 	FlagNodeName = "node-name"
@@ -45,11 +45,11 @@ const (
 	// FlagNodeID specifies the unique numeric ID for this node (deprecated)
 	FlagNodeID = "node-id"
 
-	// FlagSBDTimeoutSeconds specifies the SBD timeout in seconds
-	FlagSBDTimeoutSeconds = "sbd-timeout-seconds"
+	// FlagSBRTimeoutSeconds specifies the SBR timeout in seconds
+	FlagSBRTimeoutSeconds = "sbr-timeout-seconds"
 
-	// FlagSBDUpdateInterval specifies the interval for updating SBD device with node status
-	FlagSBDUpdateInterval = "sbd-update-interval"
+	// FlagSBRUpdateInterval specifies the interval for updating SBR device with node status
+	FlagSBRUpdateInterval = "sbr-update-interval"
 
 	// FlagPeerCheckInterval specifies the interval for checking peer heartbeats
 	FlagPeerCheckInterval = "peer-check-interval"
@@ -70,8 +70,8 @@ const (
 	FlagDetectOnlyMode = "detect-only-mode"
 )
 
-// Default values for SBD Agent flags
-// These constants define the default values used by the sbd-agent
+// Default values for SBR Agent flags
+// These constants define the default values used by the sbr-agent
 const (
 	// DefaultWatchdogPath is the default path to the watchdog device
 	DefaultWatchdogPath = "/dev/watchdog"
@@ -82,11 +82,11 @@ const (
 	// DefaultPetInterval is the default pet interval
 	DefaultPetInterval = "15s"
 
-	// DefaultSBDDevice is the default SBD device path (empty means no SBD device)
-	DefaultSBDDevice = ""
+	// DefaultSBRDevice is the default SBR device path (empty means no SBR device)
+	DefaultSBRDevice = ""
 
-	// DefaultSBDFileLocking is the default SBD file locking setting
-	DefaultSBDFileLocking = true
+	// DefaultSBRFileLocking is the default SBR file locking setting
+	DefaultSBRFileLocking = true
 
 	// DefaultNodeName is the default node name (empty means get from environment)
 	DefaultNodeName = ""
@@ -97,11 +97,11 @@ const (
 	// DefaultNodeID is the default node ID (0 means use hash-based mapping)
 	DefaultNodeID = 0
 
-	// DefaultSBDTimeoutSeconds is the default SBD timeout in seconds
-	DefaultSBDTimeoutSeconds = 30
+	// DefaultSBRTimeoutSeconds is the default SBR timeout in seconds
+	DefaultSBRTimeoutSeconds = 30
 
-	// DefaultSBDUpdateInterval is the default SBD update interval
-	DefaultSBDUpdateInterval = "5s"
+	// DefaultSBRUpdateInterval is the default SBR update interval
+	DefaultSBRUpdateInterval = "5s"
 
 	// DefaultPeerCheckInterval is the default peer check interval
 	DefaultPeerCheckInterval = "5s"
@@ -121,8 +121,8 @@ const (
 
 // Shared storage constants
 const (
-	// SharedStorageSBDDeviceFile is the filename for the SBD device within shared storage
-	SharedStorageSBDDeviceFile = "sbd-device"
+	// SharedStorageSBRDeviceFile is the filename for the SBR device within shared storage
+	SharedStorageSBRDeviceFile = "sbr-device"
 
 	// SharedStorageFenceDeviceFile is the filename for the fence device within shared storage
 	SharedStorageFenceDeviceSuffix = "-fence"
@@ -130,6 +130,6 @@ const (
 	// SharedStorageNodeMappingFile is the filename for the node mapping within shared storage
 	SharedStorageNodeMappingSuffix = "-nodemap"
 
-	// SharedStorageSBDDeviceDirectory is the directory for the SBD device within shared storage
-	SharedStorageSBDDeviceDirectory = "/dev/sbd"
+	// SharedStorageSBRDeviceDirectory is the directory for the SBR device within shared storage
+	SharedStorageSBRDeviceDirectory = "/dev/sbr"
 )

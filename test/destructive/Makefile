@@ -2,7 +2,7 @@
 # WARNING: These tests will reboot OpenShift nodes!
 
 # Configuration
-IMAGE_NAME ?= sbd-destructive-tests
+IMAGE_NAME ?= sbr-destructive-tests
 IMAGE_TAG ?= latest
 REGISTRY ?= quay.io/medik8s
 FULL_IMAGE = $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
@@ -73,7 +73,7 @@ endif
 	@echo "Updating manifests for target node: $(TARGET_NODE)"
 	@echo "Updating manifests for registry: $(FULL_IMAGE)"
 	sed -i.bak 's|TARGET_NODE_NAME_HERE|$(TARGET_NODE)|g' *.yaml
-	sed -i.bak 's|sbd-destructive-tests:latest|$(FULL_IMAGE)|g' *.yaml
+	sed -i.bak 's|sbr-destructive-tests:latest|$(FULL_IMAGE)|g' *.yaml
 	@echo "✅ Updated manifests (backups saved as *.yaml.bak)"
 
 # Verify target node has required capabilities

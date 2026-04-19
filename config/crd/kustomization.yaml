@@ -4,7 +4,7 @@
 resources:
 - bases/storage-based-remediation.medik8s.io_storagebasedremediations.yaml
 - bases/storage-based-remediation.medik8s.io_storagebasedremediationtemplates.yaml
-- bases/storage-based-remediation.medik8s.io_sbdconfigs.yaml
+- bases/storage-based-remediation.medik8s.io_storagebasedremediationconfigs.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

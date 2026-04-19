@@ -1,4 +1,4 @@
-module github.com/medik8s/sbd-operator
+module github.com/medik8s/storage-based-remediation
 
 go 1.24.4
 

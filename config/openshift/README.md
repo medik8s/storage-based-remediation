@@ -1,10 +1,10 @@
-# OpenShift SecurityContextConstraints for SBD Operator
+# OpenShift SecurityContextConstraints for SBR Operator
 
-This directory contains OpenShift-specific resources required for the SBD Operator to function properly on OpenShift clusters.
+This directory contains OpenShift-specific resources required for the SBR Operator to function properly on OpenShift clusters.
 
 ## SecurityContextConstraints (SCC)
 
-The SBD Agent requires privileged access to hardware watchdog devices and block devices. The `sbd-agent-scc.yaml` file defines a custom SecurityContextConstraints that allows the SBD Agent pods to:
+The SBR Agent requires privileged access to hardware watchdog devices and block devices. The `sbr-agent-scc.yaml` file defines a custom SecurityContextConstraints that allows the SBR Agent pods to:
 
 - Run with privileged containers
 - Access host devices (`/dev`, `/sys`, `/proc`)
@@ -40,41 +40,41 @@ kubectl apply -k config/openshift-default/
 
 ## Service Account Binding
 
-The SCC is automatically bound to the `sbd-agent` service account in the `sbd-system` namespace through:
-1. A ClusterRole (`sbd-agent-scc-user`) that grants permission to use the SCC
+The SCC is automatically bound to the `sbr-agent` service account in the `sbr-system` namespace through:
+1. A ClusterRole (`sbr-agent-scc-user`) that grants permission to use the SCC
 2. A ClusterRoleBinding that binds the service account to the ClusterRole
-3. Direct user reference in the SCC (`system:serviceaccount:sbd-system:sbd-agent`)
+3. Direct user reference in the SCC (`system:serviceaccount:sbr-system:sbr-agent`)
 
 ## Security Considerations
 
-The SBD Agent requires these elevated privileges because it needs to:
+The SBR Agent requires these elevated privileges because it needs to:
 - Access hardware watchdog devices (`/dev/watchdog*`)
-- Read/write SBD (STONITH Block Device) devices
+- Read/write SBR (Storage Based Remediation) block devices
 - Monitor system health and perform emergency reboots
 - Interact with low-level system components
 
-These permissions are necessary for the SBD Agent to function as a cluster fencing mechanism in high-availability environments.
+These permissions are necessary for the SBR Agent to function as a cluster fencing mechanism in high-availability environments.
 
 ## Troubleshooting
 
-If SBD Agent pods fail to start with permission errors:
+If SBR Agent pods fail to start with permission errors:
 
 1. Verify the SCC is created:
    ```bash
-   oc get scc sbd-agent-privileged
+   oc get scc sbr-agent-privileged
    ```
 
 2. Check if the service account can use the SCC:
    ```bash
-   oc adm policy who-can use scc sbd-agent-privileged
+   oc adm policy who-can use scc sbr-agent-privileged
    ```
 
 3. Verify the service account has the SCC assigned:
    ```bash
-   oc describe scc sbd-agent-privileged
+   oc describe scc sbr-agent-privileged
    ```
 
 4. Check pod security context:
    ```bash
-   kubectl describe pod <sbd-agent-pod-name> -n sbd-system
-   ``` 
+   kubectl describe pod <sbr-agent-pod-name> -n sbr-system
+   ```

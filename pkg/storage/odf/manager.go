@@ -150,7 +150,7 @@ func (m *Manager) SetupODFStorage(ctx context.Context) (*SetupResult, error) {
 	}
 
 	// Step 5: Create CephFS StorageClass
-	log.Println("💾 Creating CephFS StorageClass with SBD cache coherency options...")
+	log.Println("💾 Creating CephFS StorageClass with SBR cache coherency options...")
 	if err := m.createCephFSStorageClass(ctx); err != nil {
 		return nil, fmt.Errorf("failed to create CephFS StorageClass: %w", err)
 	}
@@ -523,7 +523,7 @@ func (m *Manager) createStorageCluster(ctx context.Context) error {
 				"name":      m.config.ClusterName,
 				"namespace": m.config.Namespace,
 				"labels": map[string]interface{}{
-					"app.kubernetes.io/managed-by": "sbd-operator",
+					"app.kubernetes.io/managed-by": "sbr-operator",
 				},
 			},
 			"spec": map[string]interface{}{
@@ -642,7 +642,7 @@ func (m *Manager) waitForStorageCluster(ctx context.Context) error {
 	}
 }
 
-// createCephFSStorageClass creates a CephFS StorageClass optimized for SBD
+// createCephFSStorageClass creates a CephFS StorageClass optimized for SBR
 func (m *Manager) createCephFSStorageClass(ctx context.Context) error {
 	// Check if StorageClass already exists
 	_, err := m.clientset.StorageV1().StorageClasses().Get(ctx, m.config.StorageClassName, metav1.GetOptions{})
@@ -656,7 +656,7 @@ func (m *Manager) createCephFSStorageClass(ctx context.Context) error {
 	var mountOptionsDesc string
 
 	if m.config.AggressiveCoherency {
-		// Aggressive cache coherency mount options for strict SBD coordination
+		// Aggressive cache coherency mount options for strict SBR coordination
 		mountOptions = []string{
 			"cache=strict",          // Disable client-side caching for real-time updates
 			"recover_session=clean", // Clean session recovery for reliability
@@ -677,11 +677,11 @@ func (m *Manager) createCephFSStorageClass(ctx context.Context) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: m.config.StorageClassName,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "sbd-operator",
+				"app.kubernetes.io/managed-by": "sbr-operator",
 				"storage.medik8s.io/type":      "shared-cephfs",
 			},
 			Annotations: map[string]string{
-				"description": "CephFS StorageClass optimized for SBD coordination with POSIX file locking",
+				"description": "CephFS StorageClass optimized for SBR coordination with POSIX file locking",
 			},
 		},
 		Provisioner: "openshift-storage.cephfs.csi.ceph.com",
@@ -701,7 +701,7 @@ func (m *Manager) createCephFSStorageClass(ctx context.Context) error {
 		return fmt.Errorf("failed to create StorageClass: %w", err)
 	}
 
-	log.Printf("✅ CephFS StorageClass '%s' created with SBD cache coherency options:", m.config.StorageClassName)
+	log.Printf("✅ CephFS StorageClass '%s' created with SBR cache coherency options:", m.config.StorageClassName)
 	log.Printf("   🗄️ CephFS: ocs-storagecluster-cephfilesystem")
 	log.Printf("   🔄 Mount Options: %s", mountOptionsDesc)
 
@@ -719,7 +719,7 @@ func (m *Manager) testCephFSStorage(ctx context.Context, storageClassName string
 			Name:      testPVCName,
 			Namespace: testNamespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "sbd-operator",
+				"app.kubernetes.io/managed-by": "sbr-operator",
 				"storage.medik8s.io/test":      "true",
 			},
 		},
@@ -870,7 +870,7 @@ func (m *Manager) dryRunSetup() (*SetupResult, error) {
 	log.Printf("[DRY-RUN]   📊 Storage Size: %s", m.config.StorageSize)
 	log.Printf("[DRY-RUN]   🔄 Replica Count: %d", m.config.ReplicaCount)
 	log.Printf("[DRY-RUN]   🔐 Encryption: %t", m.config.EnableEncryption)
-	log.Println("[DRY-RUN] 💾 Would create CephFS StorageClass with SBD cache coherency options:")
+	log.Println("[DRY-RUN] 💾 Would create CephFS StorageClass with SBR cache coherency options:")
 	if m.config.AggressiveCoherency {
 		log.Println("[DRY-RUN]   🔄 Mount Options: cache=strict, sync, recover_session=clean")
 	} else {
@@ -1045,7 +1045,7 @@ func buildKubernetesClients() (*kubernetes.Clientset, dynamic.Interface, error) 
 // setDefaults sets default values for configuration
 func setDefaults(config *Config) {
 	if config.StorageClassName == "" {
-		config.StorageClassName = "sbd-cephfs"
+		config.StorageClassName = "sbr-cephfs"
 	}
 	if config.ClusterName == "" {
 		config.ClusterName = "ocs-storagecluster"

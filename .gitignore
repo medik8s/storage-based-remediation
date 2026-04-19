@@ -47,4 +47,4 @@ cluster/
 # Generated manifests and test-specific configurations
 dist/
 config/manager/kustomization.yaml
-deploy/sbd-agent-daemonset-*.yaml
+deploy/sbr-agent-daemonset-*.yaml

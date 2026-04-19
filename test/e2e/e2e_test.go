@@ -42,8 +42,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
-	medik8sv1alpha1 "github.com/medik8s/sbd-operator/api/v1alpha1"
-	"github.com/medik8s/sbd-operator/test/utils"
+	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/test/utils"
 )
 
 // ClusterInfo holds information about the test cluster
@@ -89,7 +89,7 @@ var (
 // http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
 
 var testNamespace *utils.TestNamespace
-var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
+var _ = Describe("SBR Operator", Ordered, Label("e2e"), func() {
 	BeforeAll(func() {
 		By(fmt.Sprintf("Running e2e tests on cluster with %d total nodes (%d workers, %d control plane)",
 			clusterInfo.TotalNodes, len(clusterInfo.WorkerNodes), len(clusterInfo.ControlNodes)))
@@ -101,16 +101,16 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 	AfterEach(func() {
 	})
 
-	Context("SBD E2E Failure Simulation Tests", func() {
+	Context("SBR E2E Failure Simulation Tests", func() {
 		BeforeEach(func() {
 			// Select and store the target node for remediation tests
 			selected = selectWorkerNode(clusterInfo)
 			pinnedWorkloadPod = &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      fmt.Sprintf("sbd-e2e-workload-%d", time.Now().Unix()),
+					Name:      fmt.Sprintf("sbr-e2e-workload-%d", time.Now().Unix()),
 					Namespace: testNamespace.Name,
 					Labels: map[string]string{
-						"app": "sbd-e2e-workload",
+						"app": "sbr-e2e-workload",
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -128,12 +128,12 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 			testKubeletCommunicationFailure(clusterInfo)
 		})
 
-		It("should handle basic SBD configuration and agent deployment", func() {
-			testBasicSBDConfiguration()
+		It("should handle basic SBR configuration and agent deployment", func() {
+			testBasicStorageBasedRemediationConfiguration()
 		})
 
-		It("should inspect SBD node mapping and device state", func() {
-			testSBDInspection()
+		It("should inspect SBR node mapping and device state", func() {
+			testSBRInspection()
 		})
 
 		It("should handle fake remediation CRs", func() {
@@ -148,15 +148,15 @@ var _ = Describe("SBD Operator", Ordered, Label("e2e"), func() {
 			testNodeRemediation(clusterInfo)
 		})
 
-		It("should handle SBD agent crash and recovery", func() {
-			testSBDAgentCrash(clusterInfo)
+		It("should handle SBR agent crash and recovery", func() {
+			testSBRAgentCrash(clusterInfo)
 		})
 
 		It("should handle non-fencing failures gracefully", func() {
 			testNonFencingFailure(clusterInfo)
 		})
 
-		It("should trigger fencing when SBD agent loses storage access", func() {
+		It("should trigger fencing when SBR agent loses storage access", func() {
 			testStorageAccessInterruption(clusterInfo)
 		})
 	})
@@ -261,8 +261,8 @@ func selectWorkerNode(cluster ClusterInfo) NodeInfo {
 	return selectedNode
 }
 
-func testBasicSBDConfiguration() {
-	By("Creating SBDConfig with proper agent deployment")
+func testBasicStorageBasedRemediationConfiguration() {
+	By("Creating StorageBasedRemediationConfig with proper agent deployment")
 
 	// Look for a storage class that supports RWX (ReadWriteMany) access mode
 	By("Looking for RWX-compatible storage class")
@@ -287,23 +287,23 @@ func testBasicSBDConfiguration() {
 	testStorageClassName := rwxStorageClass.Name
 	GinkgoWriter.Printf("Selected storage class for testing: %s\n", testStorageClassName)
 
-	name := fmt.Sprintf("test-sbd-config-%d", time.Now().UnixNano()/1000000000)
-	sbdConfig, err := testNamespace.CreateSBDConfig(name, func(config *medik8sv1alpha1.SBDConfig) {
-		config.Spec.SbdWatchdogPath = "/dev/watchdog"
+	name := fmt.Sprintf("test-sbr-config-%d", time.Now().UnixNano()/1000000000)
+	sbrConfig, err := testNamespace.CreateStorageBasedRemediationConfig(name, func(config *medik8sv1alpha1.StorageBasedRemediationConfig) {
+		config.Spec.WatchdogPath = "/dev/watchdog"
 		config.Spec.SharedStorageClass = testStorageClassName
 		config.Spec.StaleNodeTimeout = &metav1.Duration{Duration: 2 * time.Hour}
 		config.Spec.WatchdogTimeout = &metav1.Duration{Duration: 90 * time.Second}
 	})
-	Expect(err).NotTo(HaveOccurred(), "SBDConfig creation failed")
+	Expect(err).NotTo(HaveOccurred(), "StorageBasedRemediationConfig creation failed")
 
-	validator := testNamespace.NewSBDAgentValidator()
-	opts := utils.DefaultValidateAgentDeploymentOptions(sbdConfig.Name)
+	validator := testNamespace.NewSBRAgentValidator()
+	opts := utils.DefaultValidateAgentDeploymentOptions(sbrConfig.Name)
 	opts.ExpectedArgs = []string{
 		"--watchdog-path=/dev/watchdog",
 		"--watchdog-timeout=1m30s",
 	}
 	err = validator.ValidateAgentDeployment(opts)
-	Expect(err).NotTo(HaveOccurred(), "SBD agent deployment failed")
+	Expect(err).NotTo(HaveOccurred(), "SBR agent deployment failed")
 
 	time.Sleep(time.Second * 30)
 }
@@ -342,7 +342,7 @@ func isRWXCompatibleProvisioner(provisioner string) bool {
 }
 
 func testIncompatibleStorageClass() {
-	By("Testing SBD controller rejection of incompatible storage classes")
+	By("Testing SBR controller rejection of incompatible storage classes")
 
 	// First, create a gp3-csi storage class (EBS - ReadWriteOnce only)
 	By("Creating a gp3-csi storage class that only supports ReadWriteOnce")
@@ -369,15 +369,15 @@ func testIncompatibleStorageClass() {
 		}
 	}()
 
-	By("Creating SBDConfig with incompatible storage class")
-	sbdConfig, err := testNamespace.CreateSBDConfig("test-bad-storage-class", func(config *medik8sv1alpha1.SBDConfig) {
-		config.Spec.SbdWatchdogPath = "/dev/watchdog"
+	By("Creating StorageBasedRemediationConfig with incompatible storage class")
+	sbrConfig, err := testNamespace.CreateStorageBasedRemediationConfig("test-bad-storage-class", func(config *medik8sv1alpha1.StorageBasedRemediationConfig) {
+		config.Spec.WatchdogPath = "/dev/watchdog"
 		config.Spec.SharedStorageClass = gp3StorageClass.Name
 		config.Spec.StaleNodeTimeout = &metav1.Duration{Duration: 2 * time.Hour}
 		config.Spec.WatchdogTimeout = &metav1.Duration{Duration: 90 * time.Second}
 	})
 
-	By("Expecting SBDConfig creation to succeed initially")
+	By("Expecting StorageBasedRemediationConfig creation to succeed initially")
 	Expect(err).NotTo(HaveOccurred())
 
 	By("Waiting for controller to detect storage class incompatibility")
@@ -404,7 +404,7 @@ func testIncompatibleStorageClass() {
 	By("Verifying PVC was not created due to storage class incompatibility")
 	// The PVC should not be created because the storage class validation failed
 	pvc := &corev1.PersistentVolumeClaim{}
-	pvcName := sbdConfig.Spec.GetSharedStoragePVCName(sbdConfig.Name)
+	pvcName := sbrConfig.Spec.GetSharedStoragePVCName(sbrConfig.Name)
 	err = k8sClient.Get(ctx, types.NamespacedName{
 		Name:      pvcName,
 		Namespace: testNamespace.Name,
@@ -419,10 +419,10 @@ func testIncompatibleStorageClass() {
 		Expect(pvc.Status.Phase).To(Equal(corev1.ClaimPending))
 	}
 
-	By("Verifying SBD agents are not deployed due to storage validation failure")
+	By("Verifying SBR agents are not deployed due to storage validation failure")
 	// The DaemonSet should not be created or should have 0 ready replicas
 	daemonSet := &appsv1.DaemonSet{}
-	daemonSetName := fmt.Sprintf("sbd-agent-%s", sbdConfig.Name)
+	daemonSetName := fmt.Sprintf("sbr-agent-%s", sbrConfig.Name)
 	err = k8sClient.Get(ctx, types.NamespacedName{
 		Name:      daemonSetName,
 		Namespace: testNamespace.Name,
@@ -567,14 +567,14 @@ func checkNodeReboot(nodeName, reason, originalBootTime string, timeout time.Dur
 }
 
 func cleanupRemediatedWorkloads(testNamespace *utils.TestNamespace, nodeName string) {
-	// Force-Delete any SBD agent pods from the node, since they will be left in a terminating state due to the reboot
+	// Force-Delete any SBR agent pods from the node, since they will be left in a terminating state due to the reboot
 	pods := &corev1.PodList{}
-	err := k8sClient.List(ctx, pods, client.InNamespace(testNamespace.Name), client.MatchingLabels{"app": "sbd-agent"})
-	Expect(err).NotTo(HaveOccurred(), "Failed to list SBD agent pods")
+	err := k8sClient.List(ctx, pods, client.InNamespace(testNamespace.Name), client.MatchingLabels{"app": "sbr-agent"})
+	Expect(err).NotTo(HaveOccurred(), "Failed to list SBR agent pods")
 
 	for _, pod := range pods.Items {
 		if pod.Spec.NodeName == nodeName {
-			By(fmt.Sprintf("Force-deleting SBD agent pod %s from node %s", pod.Name, nodeName))
+			By(fmt.Sprintf("Force-deleting SBR agent pod %s from node %s", pod.Name, nodeName))
 
 			zero := int64(0)
 			policy := metav1.DeletePropagationBackground
@@ -583,13 +583,13 @@ func cleanupRemediatedWorkloads(testNamespace *utils.TestNamespace, nodeName str
 					GracePeriodSeconds: &zero,
 					PropagationPolicy:  &policy,
 				})
-			Expect(err).NotTo(HaveOccurred(), "Failed to force-delete SBD agent pod %s", pod.Name)
+			Expect(err).NotTo(HaveOccurred(), "Failed to force-delete SBR agent pod %s", pod.Name)
 
 			// Wait for the pod to be deleted
 			Eventually(func() bool {
 				_, err := testNamespace.Clients.Clientset.CoreV1().Pods(testNamespace.Name).Get(ctx, pod.Name, metav1.GetOptions{})
 				return err != nil
-			}, time.Minute*5, time.Second*10).Should(BeTrue(), "SBD agent pod %s was not removed", pod.Name)
+			}, time.Minute*5, time.Second*10).Should(BeTrue(), "SBR agent pod %s was not removed", pod.Name)
 		}
 	}
 
@@ -600,13 +600,13 @@ func cleanupRemediatedWorkloads(testNamespace *utils.TestNamespace, nodeName str
 		ctx,
 		operatorPods,
 		client.InNamespace(testNamespace.Name),
-		client.MatchingLabels{"app": "sbd-operator"},
+		client.MatchingLabels{"app": "sbr-operator"},
 	)
-	Expect(err).NotTo(HaveOccurred(), "Failed to list SBD operator pods")
+	Expect(err).NotTo(HaveOccurred(), "Failed to list SBR operator pods")
 
 	for _, pod := range operatorPods.Items {
 		if pod.Spec.NodeName == nodeName {
-			By(fmt.Sprintf("Force-deleting SBD operator pod %s from node %s", pod.Name, nodeName))
+			By(fmt.Sprintf("Force-deleting SBR operator pod %s from node %s", pod.Name, nodeName))
 
 			zero := int64(0)
 			policy := metav1.DeletePropagationBackground
@@ -615,13 +615,13 @@ func cleanupRemediatedWorkloads(testNamespace *utils.TestNamespace, nodeName str
 					GracePeriodSeconds: &zero,
 					PropagationPolicy:  &policy,
 				})
-			Expect(err).NotTo(HaveOccurred(), "Failed to force-delete SBD operator pod %s", pod.Name)
+			Expect(err).NotTo(HaveOccurred(), "Failed to force-delete SBR operator pod %s", pod.Name)
 
 			// Wait for the pod to be deleted
 			Eventually(func() bool {
 				_, err := testNamespace.Clients.Clientset.CoreV1().Pods(testNamespace.Name).Get(ctx, pod.Name, metav1.GetOptions{})
 				return err != nil
-			}, time.Minute*5, time.Second*10).Should(BeTrue(), "SBD operator pod %s was not removed", pod.Name)
+			}, time.Minute*5, time.Second*10).Should(BeTrue(), "SBR operator pod %s was not removed", pod.Name)
 		}
 	}
 }
@@ -657,8 +657,8 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 	Expect(testClients.AWSInitialized).To(BeTrue(),
 		"AWS must be initialized for storage access interruption test")
 
-	By("Setting up SBD configuration for storage access test")
-	testBasicSBDConfiguration()
+	By("Setting up SBR configuration for storage access test")
+	testBasicStorageBasedRemediationConfiguration()
 
 	// Select a random actual worker node for testing (not control plane)
 	targetNode := selectWorkerNode(cluster)
@@ -698,17 +698,17 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 
 	By("Simulating NHC: creating StorageBasedRemediation for the node")
 	remediationName := targetNode.Metadata.Name
-	sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{
+	sbrRemediation := &medik8sv1alpha1.StorageBasedRemediation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      remediationName,
 			Namespace: testNamespace.Name,
 		},
 		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
-			Reason:         medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
+			Reason:         medik8sv1alpha1.SBRRemediationReasonHeartbeatTimeout,
 			TimeoutSeconds: 300,
 		},
 	}
-	err = k8sClient.Create(ctx, sbdRemediation)
+	err = k8sClient.Create(ctx, sbrRemediation)
 	Expect(err).NotTo(HaveOccurred())
 	By(fmt.Sprintf("Created StorageBasedRemediation CR for node %s", targetNode.Metadata.Name))
 
@@ -725,7 +725,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 		Expect(err).NotTo(HaveOccurred())
 	}
 
-	// Wait for node to reboot (controller fences the node via SBD)
+	// Wait for node to reboot (controller fences the node via SBR)
 	checkNodeReboot(targetNode.Metadata.Name, "due to remediation CR",
 		originalBootTimes[targetNode.Metadata.Name], time.Minute*10, true)
 
@@ -743,7 +743,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 	Expect(ready).To(BeTrue(), "Node %s should be Ready after reboot", targetNode.Metadata.Name)
 
 	By("Simulating NHC: deleting StorageBasedRemediation to trigger cleanup")
-	Expect(k8sClient.Delete(ctx, sbdRemediation)).To(Succeed())
+	Expect(k8sClient.Delete(ctx, sbrRemediation)).To(Succeed())
 
 	By("Verifying node has fully recovered after fencing and shared storage restoration")
 	time.Sleep(30 * time.Second)
@@ -763,8 +763,8 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 
 func testKubeletCommunicationFailure(cluster ClusterInfo) {
 
-	By("Setting up SBD configuration for kubelet communication test")
-	testBasicSBDConfiguration()
+	By("Setting up SBR configuration for kubelet communication test")
+	testBasicStorageBasedRemediationConfiguration()
 
 	// Select a random actual worker node for testing (not control plane)
 	targetNode := selectWorkerNode(cluster)
@@ -806,22 +806,22 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 	// Node name is now derived from the remediation name
 	By("Creating StorageBasedRemediation CR to simulate external operator behavior")
 	remediationName := targetNode.Metadata.Name
-	sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{
+	sbrRemediation := &medik8sv1alpha1.StorageBasedRemediation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      remediationName,
 			Namespace: testNamespace.Name,
 		},
 		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
-			Reason:         medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
+			Reason:         medik8sv1alpha1.SBRRemediationReasonHeartbeatTimeout,
 			TimeoutSeconds: 300, // 5 minutes timeout for fencing
 		},
 	}
-	err = k8sClient.Create(ctx, sbdRemediation)
+	err = k8sClient.Create(ctx, sbrRemediation)
 	Expect(err).NotTo(HaveOccurred())
 	By(fmt.Sprintf("Created StorageBasedRemediation CR for node %s", targetNode.Metadata.Name))
 
-	// Verify SBD remediation is triggered and processed
-	By("Verifying SBD remediation is triggered and processed for the disrupted node")
+	// Verify SBR remediation is triggered and processed
+	By("Verifying SBR remediation is triggered and processed for the disrupted node")
 	Eventually(func() bool {
 		remediations := &medik8sv1alpha1.StorageBasedRemediationList{}
 		err := k8sClient.List(ctx, remediations, client.InNamespace(testNamespace.Name))
@@ -831,14 +831,14 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 
 		for _, remediation := range remediations.Items {
 			if remediation.Name == targetNode.Metadata.Name {
-				By(fmt.Sprintf("SBD remediation found for node %s: %+v", targetNode.Metadata.Name, remediation.Status))
+				By(fmt.Sprintf("SBR remediation found for node %s: %+v", targetNode.Metadata.Name, remediation.Status))
 				return true
 			}
 		}
 		return false
 	}, time.Minute*5, time.Second*30).Should(BeTrue())
 
-	// Wait for node to actually panic/reboot (the actual SBD fencing)
+	// Wait for node to actually panic/reboot (the actual SBR fencing)
 	checkNodeReboot(targetNode.Metadata.Name, "due to remediation CR",
 		originalBootTimes[targetNode.Metadata.Name], time.Minute*10, true)
 
@@ -860,30 +860,30 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 }
 
 func testFakeRemediation() {
-	By("Setting up SBD configuration for remediation loop test")
-	testBasicSBDConfiguration()
+	By("Setting up SBR configuration for remediation loop test")
+	testBasicStorageBasedRemediationConfiguration()
 
 	// Create StorageBasedRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
 	By("Creating StorageBasedRemediation CR to simulate external operator behavior")
 	fakeNodeName := "fake-node"
-	sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{
+	sbrRemediation := &medik8sv1alpha1.StorageBasedRemediation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fakeNodeName,
 			Namespace: testNamespace.Name,
 		},
 		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
-			Reason:         medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
+			Reason:         medik8sv1alpha1.SBRRemediationReasonHeartbeatTimeout,
 			TimeoutSeconds: 300, // 5 minutes timeout for fencing
 		},
 	}
-	err := k8sClient.Create(ctx, sbdRemediation)
+	err := k8sClient.Create(ctx, sbrRemediation)
 	Expect(err).NotTo(HaveOccurred())
 	By(fmt.Sprintf("Created StorageBasedRemediation CR for node %s", fakeNodeName))
 }
 
 func testNodeRemediation(cluster ClusterInfo) {
-	By("Setting up SBD configuration for node remediation test")
-	testBasicSBDConfiguration()
+	By("Setting up SBR configuration for node remediation test")
+	testBasicStorageBasedRemediationConfiguration()
 	// Determine target node for remediation (set in BeforeEach or fallback to random worker)
 	var nodeName string
 	if selected.Metadata.Name != "" {
@@ -909,17 +909,17 @@ func testNodeRemediation(cluster ClusterInfo) {
 
 	// Create StorageBasedRemediation CR to simulate external operator (e.g., Node Healthcheck Operator)
 	By("Creating StorageBasedRemediation CR to simulate external operator behavior")
-	sbdRemediation := &medik8sv1alpha1.StorageBasedRemediation{
+	sbrRemediation := &medik8sv1alpha1.StorageBasedRemediation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      nodeName,
 			Namespace: testNamespace.Name,
 		},
 		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
-			Reason:         medik8sv1alpha1.SBDRemediationReasonHeartbeatTimeout,
+			Reason:         medik8sv1alpha1.SBRRemediationReasonHeartbeatTimeout,
 			TimeoutSeconds: 300, // 5 minutes timeout for fencing
 		},
 	}
-	err := k8sClient.Create(ctx, sbdRemediation)
+	err := k8sClient.Create(ctx, sbrRemediation)
 	Expect(err).NotTo(HaveOccurred())
 	By(fmt.Sprintf("Created StorageBasedRemediation CR for node %s", nodeName))
 
@@ -942,8 +942,8 @@ func testNodeRemediation(cluster ClusterInfo) {
 		return false
 	}, time.Minute*2, time.Second*10).Should(BeTrue(), "unschedulable was not applied prior to fencing")
 
-	// Verify SBD remediation is triggered and processed
-	By("Verifying SBD remediation is triggered and processed for the disrupted node")
+	// Verify SBR remediation is triggered and processed
+	By("Verifying SBR remediation is triggered and processed for the disrupted node")
 	Eventually(func() bool {
 		remediations := &medik8sv1alpha1.StorageBasedRemediationList{}
 		err := k8sClient.List(ctx, remediations, client.InNamespace(testNamespace.Name))
@@ -953,14 +953,14 @@ func testNodeRemediation(cluster ClusterInfo) {
 
 		for _, remediation := range remediations.Items {
 			if remediation.Name == nodeName {
-				By(fmt.Sprintf("SBD remediation found for node %s: %+v", nodeName, remediation.Status))
+				By(fmt.Sprintf("SBR remediation found for node %s: %+v", nodeName, remediation.Status))
 				return true
 			}
 		}
 		return false
 	}, time.Minute*5, time.Second*30).Should(BeTrue())
 
-	// Wait for node to actually panic/reboot (the actual SBD fencing)
+	// Wait for node to actually panic/reboot (the actual SBR fencing)
 	checkNodeReboot(nodeName, "due to remediation CR",
 		originalBootTimes[nodeName], time.Minute*10, true)
 
@@ -969,14 +969,14 @@ func testNodeRemediation(cluster ClusterInfo) {
 	Eventually(func() bool {
 		cur := &medik8sv1alpha1.StorageBasedRemediation{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{
-			Namespace: sbdRemediation.Namespace,
-			Name:      sbdRemediation.Name,
+			Namespace: sbrRemediation.Namespace,
+			Name:      sbrRemediation.Name,
 		}, cur); err != nil {
 			return false
 		}
 		for i := range cur.Status.Conditions {
 			c := cur.Status.Conditions[i]
-			if c.Type == string(medik8sv1alpha1.SBDRemediationConditionFencingSucceeded) &&
+			if c.Type == string(medik8sv1alpha1.SBRRemediationConditionFencingSucceeded) &&
 				c.Status == metav1.ConditionTrue {
 				return true
 			}
@@ -1004,14 +1004,14 @@ func testNodeRemediation(cluster ClusterInfo) {
 	Eventually(func() bool {
 		cur := &medik8sv1alpha1.StorageBasedRemediation{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{
-			Namespace: sbdRemediation.Namespace,
-			Name:      sbdRemediation.Name,
+			Namespace: sbrRemediation.Namespace,
+			Name:      sbrRemediation.Name,
 		}, cur); err != nil {
 			return false
 		}
 		for i := range cur.Status.Conditions {
 			c := cur.Status.Conditions[i]
-			if c.Type == string(medik8sv1alpha1.SBDRemediationConditionReady) &&
+			if c.Type == string(medik8sv1alpha1.SBRRemediationConditionReady) &&
 				c.Status == metav1.ConditionTrue {
 				return true
 			}
@@ -1039,7 +1039,7 @@ func testNodeRemediation(cluster ClusterInfo) {
 
 	// Delete the StorageBasedRemediation CR to trigger cleanup (uncordon + OOS removal)
 	By("Deleting StorageBasedRemediation CR to trigger cleanup")
-	Expect(k8sClient.Delete(ctx, sbdRemediation)).To(Succeed())
+	Expect(k8sClient.Delete(ctx, sbrRemediation)).To(Succeed())
 
 	// Verify unschedulable is removed and node is schedulable again
 	By("Waiting for node to become schedulable (unschedulable cleared)")
@@ -1077,34 +1077,34 @@ func testNodeRemediation(cluster ClusterInfo) {
 	GinkgoWriter.Printf("node remediation test completed successfully\n")
 }
 
-func testSBDInspection() {
-	By("Setting up SBD configuration for inspection test")
-	testBasicSBDConfiguration()
+func testSBRInspection() {
+	By("Setting up SBR configuration for inspection test")
+	testBasicStorageBasedRemediationConfiguration()
 
-	// Find an SBD agent pod to inspect
-	By("Finding SBD agent pod for inspection")
+	// Find an SBR agent pod to inspect
+	By("Finding SBR agent pod for inspection")
 	pods := &corev1.PodList{}
 	err := k8sClient.List(ctx, pods,
 		client.InNamespace(testNamespace.Name),
-		client.MatchingLabels{"app": "sbd-agent"})
+		client.MatchingLabels{"app": "sbr-agent"})
 	Expect(err).NotTo(HaveOccurred())
-	Expect(pods.Items).ToNot(BeEmpty(), "Should find at least one SBD agent pod")
+	Expect(pods.Items).ToNot(BeEmpty(), "Should find at least one SBR agent pod")
 
 	time.Sleep(1 * time.Minute)
 
 	// Use the first available pod
 	podName := pods.Items[0].Name
-	By(fmt.Sprintf("Using SBD agent pod %s for inspection", podName))
+	By(fmt.Sprintf("Using SBR agent pod %s for inspection", podName))
 
 	// Inspect node mapping
-	By("Inspecting node mapping from SBD agent")
+	By("Inspecting node mapping from SBR agent")
 	err = testNamespace.Clients.NodeMapSummary(podName, testNamespace.Name, "")
 	Expect(err).NotTo(HaveOccurred(), "Failed to retrieve node mapping")
 
-	// Try to inspect SBD device if available
-	By("Attempting to inspect SBD device")
-	err = testNamespace.Clients.SBDDeviceSummary(podName, testNamespace.Name, "")
-	Expect(err).NotTo(HaveOccurred(), "Failed to retrieve SBD device info")
+	// Try to inspect SBR device if available
+	By("Attempting to inspect SBR device")
+	err = testNamespace.Clients.SBRDeviceSummary(podName, testNamespace.Name, "")
+	Expect(err).NotTo(HaveOccurred(), "Failed to retrieve SBR device info")
 
 	// Try to inspect fence device if available
 	By("Attempting to inspect fence device")
@@ -1117,40 +1117,40 @@ func testSBDInspection() {
 		fmt.Sprintf("%s/node-mapping-debug.txt", testNamespace.ArtifactsDir))
 	Expect(err).NotTo(HaveOccurred(), "Failed to save node mapping")
 
-	err = testNamespace.Clients.SBDDeviceSummary(podName, testNamespace.Name,
-		fmt.Sprintf("%s/sbd-device-debug.txt", testNamespace.ArtifactsDir))
-	Expect(err).NotTo(HaveOccurred(), "Failed to save SBD device info")
+	err = testNamespace.Clients.SBRDeviceSummary(podName, testNamespace.Name,
+		fmt.Sprintf("%s/sbr-device-debug.txt", testNamespace.ArtifactsDir))
+	Expect(err).NotTo(HaveOccurred(), "Failed to save SBR device info")
 
 	err = testNamespace.Clients.FenceDeviceSummary(podName, testNamespace.Name,
 		fmt.Sprintf("%s/fence-device-debug.txt", testNamespace.ArtifactsDir))
 	Expect(err).NotTo(HaveOccurred(), "Failed to save fence device info")
 
-	// Compare the SBD device summary from all agent pods in the namespace
-	By("Comparing SBD device summaries across all agent pods")
+	// Compare the SBR device summary from all agent pods in the namespace
+	By("Comparing SBR device summaries across all agent pods")
 
-	// List all SBD agent pods in the test namespace
+	// List all SBR agent pods in the test namespace
 	allPods := &corev1.PodList{}
 	err = k8sClient.List(ctx, allPods,
 		client.InNamespace(testNamespace.Name),
-		client.MatchingLabels{"app": "sbd-agent"})
+		client.MatchingLabels{"app": "sbr-agent"})
 	Expect(err).NotTo(HaveOccurred())
-	Expect(allPods.Items).ToNot(BeEmpty(), "Should find at least one SBD agent pod")
+	Expect(allPods.Items).ToNot(BeEmpty(), "Should find at least one SBR agent pod")
 
 	type podDeviceSummary struct {
 		PodName string
-		Slots   []utils.SBDNodeSummary
+		Slots   []utils.SBRNodeSummary
 	}
 
 	summaries := make([]podDeviceSummary, 0, len(allPods.Items))
 
 	for _, pod := range allPods.Items {
-		slots, err := testNamespace.Clients.GetSBDDeviceInfoFromPod(pod.Name, testNamespace.Name)
-		GinkgoWriter.Printf("Pod %s SBD device slots:\n", pod.Name)
+		slots, err := testNamespace.Clients.GetSBRDeviceInfoFromPod(pod.Name, testNamespace.Name)
+		GinkgoWriter.Printf("Pod %s SBR device slots:\n", pod.Name)
 		for _, slot := range slots {
 			GinkgoWriter.Printf("  - NodeID: %v, Type: %v, Sequence: %v, Timestamp: %v\n",
 				slot.NodeID, slot.Type, slot.Sequence, slot.Timestamp)
 		}
-		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Failed to get SBD device info from pod %s", pod.Name))
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Failed to get SBR device info from pod %s", pod.Name))
 		summaries = append(summaries, podDeviceSummary{
 			PodName: pod.Name,
 			Slots:   slots,
@@ -1166,9 +1166,9 @@ func testSBDInspection() {
 
 		// Compare length first
 		if len(reference) != len(other) {
-			GinkgoWriter.Printf("SBD device slot count mismatch between pods %s (%d slots) and %s (%d slots)\n",
+			GinkgoWriter.Printf("SBR device slot count mismatch between pods %s (%d slots) and %s (%d slots)\n",
 				referencePod, len(reference), otherPod, len(other))
-			Fail(fmt.Sprintf("SBD device slot count mismatch between pods %s and %s", referencePod, otherPod))
+			Fail(fmt.Sprintf("SBR device slot count mismatch between pods %s and %s", referencePod, otherPod))
 		}
 
 		// Compare slot contents
@@ -1178,55 +1178,55 @@ func testSBDInspection() {
 			if refSlot.NodeID != otherSlot.NodeID ||
 				refSlot.Type != otherSlot.Type ||
 				refSlot.HasData != otherSlot.HasData {
-				GinkgoWriter.Printf("SBD device slot %d mismatch between pods %s and %s:\n  %s: %+v\n  %s: %+v\n",
+				GinkgoWriter.Printf("SBR device slot %d mismatch between pods %s and %s:\n  %s: %+v\n  %s: %+v\n",
 					j, referencePod, otherPod, referencePod, refSlot, otherPod, otherSlot)
-				Fail(fmt.Sprintf("SBD device slot %d mismatch between pods %s and %s", j, referencePod, otherPod))
+				Fail(fmt.Sprintf("SBR device slot %d mismatch between pods %s and %s", j, referencePod, otherPod))
 			} else if // Adding some tolerance to reduce flakiness: in case one slot has 1 more sequence and later timestamp don't fail
 			refSlot.Sequence == otherSlot.Sequence && !refSlot.Timestamp.Equal(otherSlot.Timestamp) ||
 				refSlot.Sequence != otherSlot.Sequence && refSlot.Timestamp.Equal(otherSlot.Timestamp) ||
 				refSlot.Sequence == otherSlot.Sequence+1 && otherSlot.Timestamp.After(refSlot.Timestamp) ||
 				refSlot.Sequence+1 == otherSlot.Sequence && otherSlot.Timestamp.Before(refSlot.Timestamp) {
-				GinkgoWriter.Printf("Warning: SBD device slot Sequence %d mismatch (most likely due to timing) between pods %s and %s:\n  %s: %+v\n  %s: %+v\n",
+				GinkgoWriter.Printf("Warning: SBR device slot Sequence %d mismatch (most likely due to timing) between pods %s and %s:\n  %s: %+v\n  %s: %+v\n",
 					j, referencePod, otherPod, referencePod, refSlot, otherPod, otherSlot)
 			}
 		}
 	}
 
-	GinkgoWriter.Printf("SBD device summaries are consistent across all agent pods\n")
+	GinkgoWriter.Printf("SBR device summaries are consistent across all agent pods\n")
 
-	GinkgoWriter.Printf("SBD inspection test completed\n")
+	GinkgoWriter.Printf("SBR inspection test completed\n")
 }
 
-func testSBDAgentCrash(cluster ClusterInfo) {
-	By("Setting up SBD configuration for agent crash test")
-	testBasicSBDConfiguration()
+func testSBRAgentCrash(cluster ClusterInfo) {
+	By("Setting up SBR configuration for agent crash test")
+	testBasicStorageBasedRemediationConfiguration()
 
 	targetNode := selectWorkerNode(cluster)
-	By(fmt.Sprintf("Testing SBD agent crash and recovery on verified worker node %s", targetNode.Metadata.Name))
+	By(fmt.Sprintf("Testing SBR agent crash and recovery on verified worker node %s", targetNode.Metadata.Name))
 
-	// Get the SBD agent pod on the target node
+	// Get the SBR agent pod on the target node
 	pods := &corev1.PodList{}
 	err := k8sClient.List(ctx, pods,
 		client.InNamespace(testNamespace.Name),
-		client.MatchingLabels{"app": "sbd-agent"},
+		client.MatchingLabels{"app": "sbr-agent"},
 		client.MatchingFields{"spec.nodeName": targetNode.Metadata.Name})
 	Expect(err).NotTo(HaveOccurred())
-	Expect(pods.Items).ToNot(BeEmpty(), "Should find SBD agent pod on target node")
+	Expect(pods.Items).ToNot(BeEmpty(), "Should find SBR agent pod on target node")
 
 	podName := pods.Items[0].Name
 	targetPod := &pods.Items[0]
 
-	By(fmt.Sprintf("Crashing SBD agent pod %s", podName))
+	By(fmt.Sprintf("Crashing SBR agent pod %s", podName))
 	// Delete the pod to simulate a crash - TODO this does not simulate a crash, it just kills the pod
 	err = k8sClient.Delete(ctx, targetPod)
 	Expect(err).NotTo(HaveOccurred())
 
-	By("Verifying SBD agent pod is recreated by DaemonSet")
+	By("Verifying SBR agent pod is recreated by DaemonSet")
 	Eventually(func() bool {
 		newPods := &corev1.PodList{}
 		err := k8sClient.List(ctx, newPods,
 			client.InNamespace(testNamespace.Name),
-			client.MatchingLabels{"app": "sbd-agent"},
+			client.MatchingLabels{"app": "sbr-agent"},
 			client.MatchingFields{"spec.nodeName": targetNode.Metadata.Name})
 		if err != nil {
 			return false
@@ -1235,7 +1235,7 @@ func testSBDAgentCrash(cluster ClusterInfo) {
 		// Check for a new running pod (different name)
 		for _, pod := range newPods.Items {
 			if pod.Name != podName && pod.Status.Phase == corev1.PodRunning {
-				GinkgoWriter.Printf("New SBD agent pod %s is running on node %s\n",
+				GinkgoWriter.Printf("New SBR agent pod %s is running on node %s\n",
 					pod.Name, targetNode.Metadata.Name)
 				return true
 			}
@@ -1260,12 +1260,12 @@ func testSBDAgentCrash(cluster ClusterInfo) {
 		return false
 	}, time.Minute*2, time.Second*30).Should(BeTrue())
 
-	GinkgoWriter.Printf("SBD agent crash and recovery test completed\n")
+	GinkgoWriter.Printf("SBR agent crash and recovery test completed\n")
 }
 
 func testNonFencingFailure(cluster ClusterInfo) {
 	By("Testing non-fencing failure scenario")
-	testBasicSBDConfiguration()
+	testBasicStorageBasedRemediationConfiguration()
 
 	By("Creating a temporary resource constraint that should not trigger fencing")
 	// Create a pod that uses resources but doesn't cause critical failure
@@ -1355,10 +1355,10 @@ spec:
 		return false
 	}, time.Minute*2, time.Second*30).Should(BeTrue())
 
-	By("Verifying SBD agents continue running normally")
+	By("Verifying SBR agents continue running normally")
 	Consistently(func() bool {
 		pods := &corev1.PodList{}
-		err := k8sClient.List(ctx, pods, client.InNamespace(testNamespace.Name), client.MatchingLabels{"app": "sbd-agent"})
+		err := k8sClient.List(ctx, pods, client.InNamespace(testNamespace.Name), client.MatchingLabels{"app": "sbr-agent"})
 		if err != nil {
 			return false
 		}
@@ -1384,7 +1384,7 @@ func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 	storageDisruptorPods := &corev1.PodList{}
 	err := testNamespace.Clients.Client.List(
 		testNamespace.Clients.Context, storageDisruptorPods, client.InNamespace("default"),
-		client.MatchingLabels{"app": "sbd-e2e-storage-disruptor"})
+		client.MatchingLabels{"app": "sbr-e2e-storage-disruptor"})
 	if err == nil {
 		for _, pod := range storageDisruptorPods.Items {
 			_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, &pod)
@@ -1396,7 +1396,7 @@ func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 	cephStorageDisruptorPods := &corev1.PodList{}
 	err = testNamespace.Clients.Client.List(
 		testNamespace.Clients.Context, cephStorageDisruptorPods, client.InNamespace("default"),
-		client.MatchingLabels{"app": "sbd-e2e-ceph-storage-disruptor"})
+		client.MatchingLabels{"app": "sbr-e2e-ceph-storage-disruptor"})
 	if err == nil {
 		for _, pod := range cephStorageDisruptorPods.Items {
 			_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, &pod)
@@ -1408,7 +1408,7 @@ func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 	awsStorageDisruptorPods := &corev1.PodList{}
 	err = testNamespace.Clients.Client.List(
 		testNamespace.Clients.Context, awsStorageDisruptorPods, client.InNamespace("default"),
-		client.MatchingLabels{"app": "sbd-e2e-aws-storage-disruptor"})
+		client.MatchingLabels{"app": "sbr-e2e-aws-storage-disruptor"})
 	if err == nil {
 		for _, pod := range awsStorageDisruptorPods.Items {
 			_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, &pod)
@@ -1420,7 +1420,7 @@ func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 	kubeletDisruptorPods := &corev1.PodList{}
 	err = testNamespace.Clients.Client.List(
 		testNamespace.Clients.Context, kubeletDisruptorPods, client.InNamespace("default"),
-		client.MatchingLabels{"app": "sbd-e2e-kubelet-disruptor"})
+		client.MatchingLabels{"app": "sbr-e2e-kubelet-disruptor"})
 	if err == nil {
 		for _, pod := range kubeletDisruptorPods.Items {
 			_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, &pod)
@@ -1431,7 +1431,7 @@ func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 	storageCleanupPods := &corev1.PodList{}
 	err = testNamespace.Clients.Client.List(
 		testNamespace.Clients.Context, storageCleanupPods, client.InNamespace("default"),
-		client.MatchingLabels{"app": "sbd-e2e-storage-cleanup"})
+		client.MatchingLabels{"app": "sbr-e2e-storage-cleanup"})
 	if err == nil {
 		for _, pod := range storageCleanupPods.Items {
 			_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, &pod)
@@ -1442,7 +1442,7 @@ func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 	storageValidationPods := &corev1.PodList{}
 	err = testNamespace.Clients.Client.List(
 		testNamespace.Clients.Context, storageValidationPods, client.InNamespace("default"),
-		client.MatchingLabels{"app": "sbd-e2e-storage-validator"})
+		client.MatchingLabels{"app": "sbr-e2e-storage-validator"})
 	if err == nil {
 		for _, pod := range storageValidationPods.Items {
 			_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, &pod)
@@ -1453,7 +1453,7 @@ func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 	cephValidationPods := &corev1.PodList{}
 	err = testNamespace.Clients.Client.List(
 		testNamespace.Clients.Context, cephValidationPods, client.InNamespace("default"),
-		client.MatchingLabels{"app": "sbd-e2e-ceph-storage-validator"})
+		client.MatchingLabels{"app": "sbr-e2e-ceph-storage-validator"})
 	if err == nil {
 		for _, pod := range cephValidationPods.Items {
 			_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, &pod)
@@ -1464,7 +1464,7 @@ func cleanupDisruptionPods(testNamespace *utils.TestNamespace) {
 	awsValidationPods := &corev1.PodList{}
 	err = testNamespace.Clients.Client.List(
 		testNamespace.Clients.Context, awsValidationPods, client.InNamespace("default"),
-		client.MatchingLabels{"app": "sbd-e2e-aws-storage-validator"})
+		client.MatchingLabels{"app": "sbr-e2e-aws-storage-validator"})
 	if err == nil {
 		for _, pod := range awsValidationPods.Items {
 			_ = testNamespace.Clients.Client.Delete(testNamespace.Clients.Context, &pod)
@@ -1557,11 +1557,11 @@ func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 
 	// Clean up StorageBasedRemediation CRs to prevent namespace deletion issues
 	By("Cleaning up StorageBasedRemediation CRs from test namespace")
-	sbdRemediations := &medik8sv1alpha1.StorageBasedRemediationList{}
+	sbrRemediations := &medik8sv1alpha1.StorageBasedRemediationList{}
 	err := testNamespace.Clients.Client.List(
-		testNamespace.Clients.Context, sbdRemediations, client.InNamespace(testNamespace.Name))
+		testNamespace.Clients.Context, sbrRemediations, client.InNamespace(testNamespace.Name))
 	if err == nil {
-		for _, remediation := range sbdRemediations.Items {
+		for _, remediation := range sbrRemediations.Items {
 			// Remove finalizers first to prevent stuck resources
 			if len(remediation.Finalizers) > 0 {
 				remediation.Finalizers = nil
@@ -1573,7 +1573,7 @@ func cleanupTestArtifacts(testNamespace *utils.TestNamespace) {
 	}
 
 	// Clean up temporary SCCs that might be left over from failed tests
-	tempSCCs := []string{"sbd-e2e-network-test", "sbd-e2e-storage-test"}
+	tempSCCs := []string{"sbr-e2e-network-test", "sbr-e2e-storage-test"}
 	for _, sccName := range tempSCCs {
 		err := testNamespace.Clients.Clientset.RESTClient().
 			Delete().
@@ -1784,7 +1784,7 @@ func getInstanceIDFromNode(nodeName string) (string, error) {
 // createNetworkDisruption creates targeted disruption by stopping kubelet service on the target node
 func createNetworkDisruption(nodeName string) (*string, error) {
 	// Create a unique pod name for this disruption
-	disruptorPodName := fmt.Sprintf("sbd-e2e-kubelet-disruptor-%d", time.Now().Unix())
+	disruptorPodName := fmt.Sprintf("sbr-e2e-kubelet-disruptor-%d", time.Now().Unix())
 
 	// Create privileged pod that stops kubelet service
 	// nolint:lll
@@ -1794,7 +1794,7 @@ metadata:
   name: %s
   namespace: default
   labels:
-    app: sbd-e2e-kubelet-disruptor
+    app: sbr-e2e-kubelet-disruptor
 spec:
   hostNetwork: true
   hostPID: true
@@ -1807,7 +1807,7 @@ spec:
     - /bin/sh
     - -c
     - |
-      echo "SBD e2e kubelet disruptor starting..."
+      echo "SBR e2e kubelet disruptor starting..."
       echo "Target: Stop kubelet service to simulate node failure"
       
       echo "Stopping kubelet service..."
@@ -1935,7 +1935,7 @@ func createCephStorageDisruption(nodeName string) ([]string, error) {
 	By(fmt.Sprintf("Creating Ceph storage disruption for node %s", nodeName))
 
 	// Create a unique pod name for this disruption
-	disruptorPodName := fmt.Sprintf("sbd-e2e-ceph-storage-disruptor-%d", time.Now().Unix())
+	disruptorPodName := fmt.Sprintf("sbr-e2e-ceph-storage-disruptor-%d", time.Now().Unix())
 
 	// Create privileged pod that disrupts Ceph storage access
 	// nolint:lll
@@ -1945,7 +1945,7 @@ metadata:
   name: %s
   namespace: default
   labels:
-    app: sbd-e2e-ceph-storage-disruptor
+    app: sbr-e2e-ceph-storage-disruptor
 spec:
   automountServiceAccountToken: false
   hostNetwork: true
@@ -1959,7 +1959,7 @@ spec:
     - /bin/bash
     - -c
     - |
-      echo "SBD e2e Ceph storage disruptor starting..."
+      echo "SBR e2e Ceph storage disruptor starting..."
       echo "Target: Block access to Ceph storage services"
       
       # Get the shared storage mount info from the host
@@ -2045,7 +2045,7 @@ spec:
       fi
       
       echo "Ceph storage disruption rules applied successfully. Found $rule_count blocking rules."
-      echo "This will cause SBD agents to lose access to Ceph coordination storage."
+      echo "This will cause SBR agents to lose access to Ceph coordination storage."
       
       # Set up signal handlers for graceful cleanup
       trap 'echo "Received signal, cleaning up..."; exit 0' TERM INT
@@ -2103,7 +2103,7 @@ spec:
 
 	// VALIDATION: Verify that Ceph-specific iptables rules are actually applied
 	By("Validating that Ceph storage disruption rules are successfully applied...")
-	validationPodName := fmt.Sprintf("sbd-e2e-ceph-storage-validator-%d", time.Now().Unix())
+	validationPodName := fmt.Sprintf("sbr-e2e-ceph-storage-validator-%d", time.Now().Unix())
 
 	validationPodYAML := fmt.Sprintf(`apiVersion: v1
 kind: Pod
@@ -2111,7 +2111,7 @@ metadata:
   name: %s
   namespace: default
   labels:
-    app: sbd-e2e-ceph-storage-validator
+    app: sbr-e2e-ceph-storage-validator
 spec:
   automountServiceAccountToken: false
   hostNetwork: true
@@ -2247,7 +2247,7 @@ func createAWSStorageDisruption(nodeName string) ([]string, error) {
 	By(fmt.Sprintf("Creating AWS/EFS storage disruption for node %s", nodeName))
 
 	// Create a unique pod name for this disruption
-	disruptorPodName := fmt.Sprintf("sbd-e2e-aws-storage-disruptor-%d", time.Now().Unix())
+	disruptorPodName := fmt.Sprintf("sbr-e2e-aws-storage-disruptor-%d", time.Now().Unix())
 
 	// Create privileged pod that disrupts shared storage access
 	// nolint:lll
@@ -2257,7 +2257,7 @@ metadata:
   name: %s
   namespace: default
   labels:
-    app: sbd-e2e-aws-storage-disruptor
+    app: sbr-e2e-aws-storage-disruptor
 spec:
   automountServiceAccountToken: false
   hostNetwork: true
@@ -2271,7 +2271,7 @@ spec:
     - /bin/bash
     - -c
     - |
-      echo "SBD e2e storage disruptor starting..."
+      echo "SBR e2e storage disruptor starting..."
       echo "Target: Block access to shared storage services"
       
       # Get the shared storage mount info from the host
@@ -2319,7 +2319,7 @@ spec:
       fi
       
       echo "Storage disruption rules applied successfully. Found $rule_count blocking rules."
-      echo "This will cause SBD agents to lose access to coordination storage."
+      echo "This will cause SBR agents to lose access to coordination storage."
       
       # Set up signal handlers for graceful cleanup
       trap 'echo "Received signal, cleaning up..."; exit 0' TERM INT
@@ -2376,7 +2376,7 @@ spec:
 
 	// VALIDATION: Verify that iptables rules are actually applied
 	By("Validating that storage disruption rules are successfully applied...")
-	validationPodName := fmt.Sprintf("sbd-e2e-aws-storage-validator-%d", time.Now().Unix())
+	validationPodName := fmt.Sprintf("sbr-e2e-aws-storage-validator-%d", time.Now().Unix())
 
 	//nolint:lll
 	validationPodYAML := fmt.Sprintf(`apiVersion: v1
@@ -2385,7 +2385,7 @@ metadata:
   name: %s
   namespace: default
   labels:
-    app: sbd-e2e-aws-storage-validator
+    app: sbr-e2e-aws-storage-validator
 spec:
   automountServiceAccountToken: false
   hostNetwork: true
@@ -2526,7 +2526,7 @@ func removeStorageDisruption(nodeName string) error {
 	By(fmt.Sprintf("Cleaning up storage disruption for backend: %s", storageBackend))
 
 	// Create a cleanup pod to remove the iptables rules
-	cleanupPodName := fmt.Sprintf("sbd-e2e-storage-cleanup-%d", time.Now().Unix())
+	cleanupPodName := fmt.Sprintf("sbr-e2e-storage-cleanup-%d", time.Now().Unix())
 	//nolint:lll
 	cleanupPodYAML := fmt.Sprintf(`apiVersion: v1
 kind: Pod
@@ -2534,7 +2534,7 @@ metadata:
   name: %s
   namespace: default
   labels:
-    app: sbd-e2e-storage-cleanup
+    app: sbr-e2e-storage-cleanup
 spec:
   automountServiceAccountToken: false
   hostNetwork: true
@@ -2548,7 +2548,7 @@ spec:
     - /bin/bash
     - -c
     - |
-      echo "SBD e2e storage cleanup starting..."
+      echo "SBR e2e storage cleanup starting..."
       echo "Target: Remove storage disruption iptables rules (comprehensive cleanup)"
       
       # Remove AWS/EFS-specific iptables rules

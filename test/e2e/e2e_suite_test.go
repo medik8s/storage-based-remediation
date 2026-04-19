@@ -27,7 +27,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/medik8s/sbd-operator/test/utils"
+	"github.com/medik8s/storage-based-remediation/test/utils"
 )
 
 var (
@@ -54,7 +54,7 @@ func TestE2E(t *testing.T) {
 	}
 
 	RegisterFailHandler(Fail)
-	GinkgoWriter.Print("Starting sbd-operator e2e test suite\n")
+	GinkgoWriter.Print("Starting sbr-operator e2e test suite\n")
 	RunSpecs(t, "e2e suite")
 }
 
@@ -69,7 +69,7 @@ var _ = BeforeSuite(func() {
 	}
 
 	var err error
-	testNamespace, err = utils.SuiteSetup("sbd-test-e2e")
+	testNamespace, err = utils.SuiteSetup("sbr-test-e2e")
 	Expect(err).NotTo(HaveOccurred(), "Failed to setup test clients")
 
 	testClients = testNamespace.Clients
@@ -92,7 +92,7 @@ var _ = BeforeSuite(func() {
 	By("Cleaning up previous test attempts")
 	cleanupTestArtifacts(testNamespace)
 	utils.WaitForNodesReady(testNamespace, "10m", "30s", true)
-	utils.CleanupSBDConfigs(testNamespace)
+	utils.CleanupStorageBasedRemediationConfigs(testNamespace)
 
 	By("Complete: Cleaning up previous test attempts")
 })
@@ -117,7 +117,7 @@ var _ = AfterEach(func() {
 	utils.WaitForNodesReady(testNamespace, "10m", "30s", false)
 	debugCollector := testClients.NewDebugCollector(testNamespace.ArtifactsDir)
 	debugCollector.CollectAgentLogs(testNamespace.Name)
-	utils.CleanupSBDConfigs(testNamespace)
+	utils.CleanupStorageBasedRemediationConfigs(testNamespace)
 })
 
 func createReportAndCleanUp() {

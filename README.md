@@ -1,17 +1,17 @@
-# SBD Operator
+# Storage Based Remediation Operator
 
 A Kubernetes operator for managing STONITH Block Device (SBD) configurations and remediations for high-availability clustering. The operator provides automated node remediation when nodes become unresponsive by leveraging shared block storage for fencing operations.
 
 ## Overview
 
-The SBD operator implements a cloud-native approach to Storage-Based Death (SBD) for Kubernetes environments where traditional out-of-band management (IPMI, iDRAC) is unavailable. It uses shared block storage to provide reliable node fencing capabilities, ensuring data consistency and preventing split-brain scenarios in stateful workloads.
+The Storage-based remediator operator implements a cloud-native approach to Storage-Based Death (SBD) for Kubernetes environments where traditional out-of-band management (IPMI, iDRAC) is unavailable. It uses shared block storage to provide reliable node fencing capabilities, ensuring data consistency and preventing split-brain scenarios in stateful workloads.
 
 ## Architecture
 
 The operator consists of two main components:
 
-- **SBD Operator**: Manages `SBDConfig` and `SBDRemediation` custom resources and deploys the SBD agent
-- **SBD Agent**: Runs as a DaemonSet on cluster nodes, handling local watchdog operations and shared storage communication
+- **SBR Operator**: Manages `StorageBasedRemediationConfig` and `StorageBasedRemediation` custom resources and deploys the SBR agent
+- **SBR Agent**: Runs as a DaemonSet on cluster nodes, handling local watchdog operations and shared storage communication
 
 ### Key Features
 
@@ -23,15 +23,15 @@ The operator consists of two main components:
 
 ## Custom Resources
 
-### SBDConfig
-Defines the SBD configuration for the cluster:
+### StorageBasedRemediationConfig
+Defines the SBR configuration for the cluster:
 - Shared block device PVC name
 - Timeout settings
 - Watchdog device path
 - Node exclusion lists
 - Reboot methods
 
-### SBDRemediation
+### StorageBasedRemediation
 Triggers node remediation operations:
 - Target node specification
 - Remediation status tracking
@@ -51,9 +51,9 @@ Triggers node remediation operations:
 make deploy
 ```
 
-2. Create an SBDConfig:
+2. Create a StorageBasedRemediationConfig:
 ```bash
-kubectl apply -f config/samples/storage-based-remediation_v1alpha1_sbdconfig.yaml
+kubectl apply -f config/samples/storage-based-remediation_v1alpha1_storagebasedremediationconfig.yaml
 ```
 
 ### Development
@@ -70,7 +70,7 @@ make test
 make test-e2e
 
 # Build and push images
-make docker-build docker-push IMG=<your-registry>/sbd-operator:tag
+make docker-build docker-push IMG=<your-registry>/sbr-operator:tag
 ```
 
 ## Documentation
@@ -79,7 +79,7 @@ Comprehensive documentation is available in the `docs/` directory:
 
 - [Design Document](docs/design.md) - Architecture and design principles
 - [Blueprint](docs/blueprint.md) - Detailed implementation blueprint
-- [User Guide](docs/sbdconfig-user-guide.md) - Configuration and usage
+- [User Guide](docs/sbr-config-user-guide.md) - Configuration and usage
 - [Webhook Requirements](docs/WEBHOOK-REQUIREMENTS.md) - Admission webhook setup
 
 ## Testing

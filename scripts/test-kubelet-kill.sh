@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # test-kubelet-kill.sh
-# Direct kubelet termination to test SBD fencing behavior
+# Direct kubelet termination to test SBR fencing behavior
 # This bypasses all network complexity and directly simulates kubelet failure
 
 set -euo pipefail
 
-echo "=== SBD Kubelet Kill Test ==="
+echo "=== SBR Kubelet Kill Test ==="
 echo
 
 # Test node
@@ -39,7 +39,7 @@ spec:
     - /bin/sh
     - -c
     - |
-      echo "SBD kubelet kill test starting..."
+      echo "SBR kubelet kill test starting..."
       echo "Target: Stop kubelet service on host"
       
       echo "Current kubelet status:"
@@ -143,4 +143,4 @@ echo "Cleanup - deleting killer pod:"
 kubectl delete pod $KILLER_POD --wait=false
 
 echo
-echo "=== SBD Kubelet Kill Test Complete ===" 
+echo "=== SBR Kubelet Kill Test Complete ===" 

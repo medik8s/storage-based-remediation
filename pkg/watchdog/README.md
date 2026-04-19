@@ -22,7 +22,7 @@ Hardware watchdog devices are used to automatically reset the system if the soft
 package main
 
 import (
-    "github.com/medik8s/sbd-operator/pkg/watchdog"
+    "github.com/medik8s/storage-based-remediation/pkg/watchdog"
     "github.com/go-logr/logr"
 )
 
@@ -130,9 +130,9 @@ if err != nil {
 }
 ```
 
-## Integration with SBD Operator
+## Integration with SBR Operator
 
-In the SBD operator context, the watchdog is used for:
+In the SBR operator context, the watchdog is used for:
 
 - **System Fencing**: Ensuring unhealthy nodes reset themselves via watchdog timeout
 - **Heartbeat Monitoring**: Regular watchdog petting as a liveness indicator
@@ -149,7 +149,7 @@ spec:
   template:
     spec:
       containers:
-      - name: sbd-agent
+      - name: sbr-agent
         securityContext:
           privileged: true
           capabilities:

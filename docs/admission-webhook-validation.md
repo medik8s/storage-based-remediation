@@ -1,19 +1,19 @@
 # Admission Webhook Validation
 
-The SBD Operator includes a ValidatingAdmissionWebhook that performs validation checks on SBDConfig resources at admission time (when they are created or updated via the Kubernetes API).
+The SBR Operator includes a ValidatingAdmissionWebhook that performs validation checks on StorageBasedRemediationConfig resources at admission time (when they are created or updated via the Kubernetes API).
 
 ## Features
 
 ### Node Selector Overlap Prevention
 
-The webhook prevents multiple SBDConfigs from having overlapping node selectors, which could cause conflicts in slot assignment and SBD device management.
+The webhook prevents multiple StorageBasedRemediationConfigs from having overlapping node selectors, which could cause conflicts in slot assignment and SBD device management.
 
 #### Why This Validation Is Important
 
-In SBD (STONITH Block Device) coordination, each node must be assigned a unique slot ID in the shared storage device. If multiple SBDConfigs select the same nodes, this could lead to:
+In SBD (STONITH Block Device) coordination, each node must be assigned a unique slot ID in the shared storage device. If multiple StorageBasedRemediationConfigs select the same nodes, this could lead to:
 
-- **Slot assignment conflicts**: Multiple SBDConfigs trying to assign different slot IDs to the same node
-- **Split-brain scenarios**: Conflicting remediation decisions from different SBDConfigs
+- **Slot assignment conflicts**: Multiple StorageBasedRemediationConfigs trying to assign different slot IDs to the same node
+- **Split-brain scenarios**: Conflicting remediation decisions from different StorageBasedRemediationConfigs
 - **Data corruption**: Overlapping writes to SBD device slots
 
 #### Validation Logic
@@ -29,47 +29,47 @@ The webhook considers two node selectors as overlapping if they could potentiall
 
 **✅ Non-overlapping (allowed):**
 ```yaml
-# SBDConfig 1
+# StorageBasedRemediationConfig 1
 nodeSelector:
   node-role.kubernetes.io/worker: ""
 
-# SBDConfig 2  
+# StorageBasedRemediationConfig 2  
 nodeSelector:
   node-role.kubernetes.io/control-plane: ""
 ```
 
 **❌ Overlapping (rejected):**
 ```yaml
-# SBDConfig 1
+# StorageBasedRemediationConfig 1
 nodeSelector:
   node-role.kubernetes.io/worker: ""
 
-# SBDConfig 2
+# StorageBasedRemediationConfig 2
 nodeSelector:
   node-role.kubernetes.io/worker: ""
 ```
 
 **❌ Overlapping with empty selector (rejected):**
 ```yaml
-# SBDConfig 1
+# StorageBasedRemediationConfig 1
 nodeSelector: {}  # Empty = matches all nodes
 
-# SBDConfig 2
+# StorageBasedRemediationConfig 2
 nodeSelector:
   zone: "us-west-2a"
 ```
 
 ### Spec Validation
 
-The webhook also validates the SBDConfig spec fields, ensuring:
-- Required fields are present (e.g., `sbdWatchdogPath`)
+The webhook also validates the StorageBasedRemediationConfig spec fields, ensuring:
+- Required fields are present (e.g., `watchdogPath`)
 - Field values are within valid ranges
 - Configuration consistency
 
 ## Benefits of Admission-Time Validation
 
 1. **Immediate Feedback**: Users get validation errors immediately when applying configurations
-2. **Prevents Invalid State**: Invalid SBDConfigs never enter the cluster
+2. **Prevents Invalid State**: Invalid StorageBasedRemediationConfigs never enter the cluster
 3. **Better UX**: Clear error messages via `kubectl apply` rather than checking controller logs
 4. **API Consistency**: Validation happens before storage, maintaining data integrity
 
@@ -78,10 +78,10 @@ The webhook also validates the SBDConfig spec fields, ensuring:
 When validation fails, you'll see descriptive error messages:
 
 ```bash
-$ kubectl apply -f overlapping-sbdconfig.yaml
-error validating data: ValidationError(SBDConfig): 
-node selector validation failed: SBDConfig node selector overlaps with existing SBDConfig 'existing-config' in namespace 'sbd-operator-system'. 
-Each node can only be managed by one SBDConfig to prevent slot assignment conflicts. 
+$ kubectl apply -f overlapping-storagebasedremediationconfig.yaml
+error validating data: ValidationError(StorageBasedRemediationConfig): 
+node selector validation failed: StorageBasedRemediationConfig node selector overlaps with existing StorageBasedRemediationConfig 'existing-config' in namespace 'sbr-operator-system'. 
+Each node can only be managed by one StorageBasedRemediationConfig to prevent slot assignment conflicts. 
 Current selector: map[node-role.kubernetes.io/worker:], Conflicting selector: map[node-role.kubernetes.io/worker:]
 ```
 
@@ -89,7 +89,7 @@ Current selector: map[node-role.kubernetes.io/worker:], Conflicting selector: ma
 
 The webhook is automatically deployed with the operator. The webhook configuration includes:
 
-- **Path**: `/validate-medik8s-medik8s-io-v1alpha1-sbdconfig`
+- **Path**: `/validate-storage-based-remediation-medik8s-io-v1alpha1-storagebasedremediationconfig`
 - **Operations**: CREATE, UPDATE
 - **Failure Policy**: Fail (rejects on webhook failures)
 - **Side Effects**: None
@@ -110,7 +110,7 @@ See the [cert-manager documentation](https://cert-manager.io/) for production ce
 
 1. Check webhook pod is running:
    ```bash
-   kubectl get pods -n sbd-operator-system
+   kubectl get pods -n sbr-operator-system
    ```
 
 2. Check webhook configuration:
@@ -120,19 +120,19 @@ See the [cert-manager documentation](https://cert-manager.io/) for production ce
 
 3. Check webhook logs:
    ```bash
-   kubectl logs -n sbd-operator-system deployment/sbd-operator-controller-manager
+   kubectl logs -n sbr-operator-system deployment/sbr-operator-controller-manager
    ```
 
 ### Certificate Issues
 
 1. Verify webhook service exists:
    ```bash
-   kubectl get service -n sbd-operator-system webhook-service
+   kubectl get service -n sbr-operator-system webhook-service
    ```
 
 2. Check certificate secret:
    ```bash
-   kubectl get secret -n sbd-operator-system webhook-server-certs
+   kubectl get secret -n sbr-operator-system webhook-server-certs
    ```
 
 ### Bypassing Validation (Emergency)
@@ -140,7 +140,7 @@ See the [cert-manager documentation](https://cert-manager.io/) for production ce
 If the webhook is preventing legitimate operations, you can temporarily disable it:
 
 ```bash
-kubectl delete validatingwebhookconfiguration vsbdconfig.kb.io
+kubectl delete validatingwebhookconfiguration vstoragebasedremediationconfig.kb.io
 ```
 
 **⚠️ Warning**: This disables validation entirely. Re-enable as soon as possible.
@@ -148,8 +148,8 @@ kubectl delete validatingwebhookconfiguration vsbdconfig.kb.io
 ## Implementation Details
 
 The webhook is implemented in:
-- `api/v1alpha1/sbdconfig_webhook.go` - Webhook validation logic
+- `api/v1alpha1/storagebasedremediationconfig_webhook.go` - Webhook validation logic
 - `config/webhook/` - Kubernetes webhook configuration
 - `cmd/main.go` - Webhook registration with manager
 
-The validation uses the same business logic as the SBD agent for consistent slot assignment behavior. 
+The validation uses the same business logic as the SBR agent for consistent slot assignment behavior. 

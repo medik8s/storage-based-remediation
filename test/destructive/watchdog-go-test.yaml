@@ -4,19 +4,19 @@ metadata:
   name: watchdog-go-test
   namespace: default
   labels:
-    app: sbd-destructive-test
+    app: sbr-destructive-test
     test-type: watchdog-go
   annotations:
     description: "DESTRUCTIVE TEST: This DaemonSet will cause the target node to REBOOT using Go watchdog binary"
 spec:
   selector:
     matchLabels:
-      app: sbd-destructive-test
+      app: sbr-destructive-test
       test-type: watchdog-go
   template:
     metadata:
       labels:
-        app: sbd-destructive-test
+        app: sbr-destructive-test
         test-type: watchdog-go
     spec:
       restartPolicy: Always
@@ -30,7 +30,7 @@ spec:
       
       initContainers:
       - name: watchdog-go-init
-        image: quay.io/medik8s/sbd-destructive-tests:latest
+        image: quay.io/medik8s/sbr-destructive-tests:latest
         imagePullPolicy: Always
         
         command:
@@ -140,7 +140,7 @@ data:
     5. Should trigger an immediate reboot when watchdog times out
     
     ## Advantages of Go binary:
-    - More realistic test (matches actual SBD agent behavior)
+    - More realistic test (matches actual SBR agent behavior)
     - Better error handling and logging
     - Configurable parameters
     - Matches production Go code patterns

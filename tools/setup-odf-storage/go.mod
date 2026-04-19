@@ -1,11 +1,11 @@
-module github.com/medik8s/sbd-operator/tools/setup-odf-storage
+module github.com/medik8s/storage-based-remediation/tools/setup-odf-storage
 
 go 1.24.4
 
 // Replace directive to use the parent project's modules
-replace github.com/medik8s/sbd-operator => ../..
+replace github.com/medik8s/storage-based-remediation => ../..
 
-require github.com/medik8s/sbd-operator v0.0.0-00010101000000-000000000000
+require github.com/medik8s/storage-based-remediation v0.0.0-00010101000000-000000000000
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.39.6 // indirect

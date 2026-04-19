@@ -1,4 +1,4 @@
-# OpenShift Data Foundation Setup Tool for SBD
+# OpenShift Data Foundation Setup Tool for Storage-Based remediation (SBR)
 
 This tool automates the deployment and configuration of OpenShift Data Foundation (ODF) with CephFS storage optimized for SBD (STONITH Block Device) coordination.
 
@@ -8,7 +8,7 @@ The `setup-odf-storage` tool provides:
 - **Automated ODF Deployment**: Installs OpenShift Data Foundation operator and creates storage cluster
 - **CephFS Configuration**: Sets up CephFS with ReadWriteMany (RWX) support for SBD coordination  
 - **Cache Coherency**: Configures mount options for reliable inter-node coordination
-- **SBD Integration**: Creates StorageClass ready for use with SBDConfig resources
+- **SBR Integration**: Creates StorageClass ready for use with StorageBasedRemediationConfig resources
 
 ## Features
 
@@ -52,7 +52,7 @@ The `setup-odf-storage` tool provides:
 # This creates:
 # - ODF operator installation
 # - StorageCluster with 3 replicas and 2Ti storage
-# - CephFS StorageClass named 'sbd-cephfs'
+# - CephFS StorageClass named 'sbr-cephfs'
 ```
 
 ### Custom Configuration
@@ -79,7 +79,7 @@ The `setup-odf-storage` tool provides:
 ## Command Line Options
 
 ### Core Configuration
-- `--storage-class-name`: CephFS StorageClass name (default: "sbd-cephfs")
+- `--storage-class-name`: CephFS StorageClass name (default: "sbr-cephfs")
 - `--cluster-name`: ODF StorageCluster name (default: "ocs-storagecluster")
 - `--namespace`: Installation namespace (default: "openshift-storage")
 
@@ -151,17 +151,17 @@ The `setup-odf-storage` tool provides:
 
 ## Integration with SBD
 
-### SBDConfig Example
-Once the tool completes, use the created StorageClass in your SBDConfig:
+### StorageBasedRemediationConfig Example
+Once the tool completes, use the created StorageClass in your StorageBasedRemediationConfig:
 
 ```yaml
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
-kind: SBDConfig
+kind: StorageBasedRemediationConfig
 metadata:
-  name: sbd-with-odf
+  name: sbr-with-odf
 spec:
-  sharedStorageClass: "sbd-cephfs"  # StorageClass created by this tool
-  sbdWatchdogPath: "/dev/watchdog"
+  sharedStorageClass: "sbr-cephfs"  # StorageClass created by this tool
+  watchdogPath: "/dev/watchdog"
   watchdogTimeout: "60s"
   staleNodeTimeout: "1h"
 ```
@@ -169,11 +169,11 @@ spec:
 ### Verification
 ```bash
 # Check StorageClass
-kubectl get storageclass sbd-cephfs
+kubectl get storageclass sbr-cephfs
 
-# Check SBD integration
-kubectl apply -f your-sbdconfig.yaml
-kubectl get sbdconfig -o wide
+# Check SBR integration
+kubectl apply -f your-sbrconfig.yaml
+kubectl get storagebasedremediationconfig -o wide
 ```
 
 ## Troubleshooting
@@ -331,7 +331,7 @@ spec:
   resources:
     requests:
       storage: 1Gi
-  storageClassName: sbd-cephfs
+  storageClassName: sbr-cephfs
 EOF
 ```
 
@@ -359,7 +359,7 @@ aws sts get-caller-identity
 
 # Force cleanup if stuck
 kubectl delete storagecluster ocs-storagecluster -n openshift-storage
-kubectl delete storageclass sbd-cephfs
+kubectl delete storageclass sbr-cephfs
 
 # Manual operator cleanup
 kubectl delete subscription odf-operator -n openshift-storage
@@ -419,7 +419,7 @@ kubectl get events -n openshift-storage --sort-by='.lastTimestamp'
 ### Access Control
 - StorageClass uses Kubernetes RBAC for access control
 - PVCs inherit namespace-level permissions
-- SBD agents run with restricted service accounts
+- SBR agents run with restricted service accounts
 
 ## Performance Tuning
 
@@ -457,13 +457,13 @@ kubectl get pods -n openshift-storage | grep csi
 
 For issues with:
 - **ODF Installation**: Check OpenShift Data Foundation documentation
-- **SBD Integration**: Refer to SBD operator documentation  
+- **SBR Integration**: Refer to SBR operator documentation  
 - **Storage Performance**: Monitor Ceph cluster health and logs
-- **Tool Bugs**: Submit issues to sbd-operator repository
+- **Tool Bugs**: Submit issues to storage-based remediation repository
 
 ## Related Documentation
 
-- [SBD Operator User Guide](../docs/sbdconfig-user-guide.md)
+- [SBR Operator User Guide](../docs/sbr-config-user-guide.md)
 - [Storage Class Validation](../docs/storage-class-validation.md)
 - [OpenShift Data Foundation Documentation](https://access.redhat.com/documentation/en-us/red_hat_openshift_data_foundation)
 - [Ceph Documentation](https://docs.ceph.com/) 

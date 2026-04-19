@@ -11,7 +11,7 @@ set -euo pipefail
 # Usage examples:
 #   cat app.log | scripts/extract-structured-logs.sh
 #   kubectl logs -n ns pod | scripts/extract-structured-logs.sh
-#   cat app.log | scripts/extract-structured-logs.sh controllerKind=SBDRemediation controller="sbdconfig-controller"
+#   cat app.log | scripts/extract-structured-logs.sh controllerKind=StorageBasedRemediation controller="storagebasedremediationconfig-controller"
 
 if ! command -v jq >/dev/null 2>&1; then
 	echo "Error: jq is required on PATH" >&2

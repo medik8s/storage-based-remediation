@@ -31,7 +31,7 @@ Create an IAM policy with the following permissions:
 ## Setup Options
 
 ### Option 1: IAM User with Policy
-1. Create an IAM user for SBD operations
+1. Create an IAM user for SBR operations
 2. Attach the above policy to the user
 3. Generate access keys
 4. Configure AWS CLI: `aws configure`
@@ -39,7 +39,7 @@ Create an IAM policy with the following permissions:
 ### Option 2: IAM Role (Recommended for Production)
 1. Create an IAM role with the above policy
 2. Attach the role to:
-   - SBD operator pods (using IRSA)
+   - SBR operator pods (using IRSA)
    - OpenShift cluster instances 
    - EC2 instances running the script
 
@@ -53,7 +53,7 @@ For multi-account setups, create a cross-account role:
         {
             "Effect": "Allow",
             "Principal": {
-                "AWS": "arn:aws:iam::OPERATOR-ACCOUNT:role/SBDOperatorRole"
+                "AWS": "arn:aws:iam::OPERATOR-ACCOUNT:role/SBROperatorRole"
             },
             "Action": "sts:AssumeRole"
         }
@@ -66,7 +66,7 @@ For multi-account setups, create a cross-account role:
 ⚠️ **Principle of Least Privilege**: The policy above restricts reboots to instances tagged with the cluster name.
 
 ✅ **Recommended**: Use instance tags to further restrict access:
-- Only instances with specific tags (e.g., `sbd-fencing-enabled=true`)
+- Only instances with specific tags (e.g., `sbr-fencing-enabled=true`)
 - Only instances in specific subnets or VPCs
 - Time-based conditions for emergency-only access
 
@@ -100,10 +100,10 @@ aws ec2 reboot-instances --instance-ids i-1234567890abcdef0 --dry-run
 - Check resource-level permissions
 - Verify cluster tagging is correct
 
-## Integration with SBD Operator
+## Integration with SBR Operator
 
-For automated SBD fencing, ensure:
-1. SBD operator pods have the IAM role attached
+For automated SBR fencing, ensure:
+1. SBR operator pods have the IAM role attached
 2. The role includes the emergency reboot permissions
 3. Cluster nodes are properly tagged
 4. Network connectivity allows AWS API access 

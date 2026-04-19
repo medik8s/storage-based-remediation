@@ -4,7 +4,7 @@ metadata:
   name: watchdog-reboot-test
   namespace: default
   labels:
-    app: sbd-destructive-test
+    app: sbr-destructive-test
     test-type: watchdog-reboot
   annotations:
     description: "DESTRUCTIVE TEST: This DaemonSet will cause the target node to REBOOT via watchdog timeout"
@@ -12,12 +12,12 @@ spec:
   # DaemonSet will create one pod per matching node
   selector:
     matchLabels:
-      app: sbd-destructive-test
+      app: sbr-destructive-test
       test-type: watchdog-reboot
   template:
     metadata:
       labels:
-        app: sbd-destructive-test
+        app: sbr-destructive-test
         test-type: watchdog-reboot
     spec:
       # WARNING: This pod will cause the node to REBOOT!
@@ -34,7 +34,7 @@ spec:
       # Use init container for one-time execution (like medik8s pattern)
       initContainers:
       - name: watchdog-reboot-init
-        image: quay.io/medik8s/sbd-destructive-tests:latest
+        image: quay.io/medik8s/sbr-destructive-tests:latest
         imagePullPolicy: Always
         
         # Use nsenter to access host mount namespace and run watchdog commands directly
