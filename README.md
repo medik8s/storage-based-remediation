@@ -77,10 +77,10 @@ make docker-build docker-push IMG=<your-registry>/sbr-operator:tag
 
 Comprehensive documentation is available in the `docs/` directory:
 
-- [Design Document](docs/design.md) - Architecture and design principles
-- [Blueprint](docs/blueprint.md) - Detailed implementation blueprint
+- [Design Document](docs/archive/design.md) - Architecture and design principles
+- [Blueprint](docs/archive/blueprint.md) - Detailed implementation blueprint
 - [User Guide](docs/sbr-config-user-guide.md) - Configuration and usage
-- [Webhook Requirements](docs/WEBHOOK-REQUIREMENTS.md) - Admission webhook setup
+- [Webhook Requirements](docs/admission-webhook-validation.md) - Admission webhook setup
 
 ## Testing
 
