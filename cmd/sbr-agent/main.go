@@ -2402,7 +2402,7 @@ func main() {
 		*ioTimeout,
 		k8sClient,
 		nil,
-		"",
+		os.Getenv("POD_NAMESPACE"),
 		*detectOnlyMode,
 	)
 	if err != nil {
