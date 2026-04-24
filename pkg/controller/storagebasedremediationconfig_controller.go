@@ -1023,7 +1023,7 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 	// Get the operator image first for logging and DaemonSet creation
 	operatorImage := r.getOperatorImage(ctx, logger)
 
-	agentImage, err := sbrConfig.Spec.GetImageWithOperatorImage(operatorImage)
+	agentImage, err := medik8sv1alpha1.DeriveAgentImageFromOperator(operatorImage)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	}
@@ -1448,7 +1448,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 						{
 							Name:            "sbr-agent",
 							Image:           agentImage,
-							ImagePullPolicy: corev1.PullPolicy(sbrConfig.Spec.GetImagePullPolicy()),
+							ImagePullPolicy: corev1.PullAlways,
 							SecurityContext: &corev1.SecurityContext{
 								Privileged:               &[]bool{true}[0],
 								RunAsUser:                &[]int64{0}[0],

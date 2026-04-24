@@ -32,10 +32,7 @@ metadata:
             "name": "storagebasedremediationconfig-sample"
           },
           "spec": {
-            "image": "quay.io/medik8s/storage-based-remediation-agent:latest",
-            "imagePullPolicy": "IfNotPresent",
             "iotimeout": "5s",
-            "logLevel": "info",
             "nodeSelector": {
               "node-role.kubernetes.io/worker": ""
             },
@@ -65,7 +62,7 @@ metadata:
     capabilities: Basic Install
     categories: OpenShift Optional
     containerImage: quay.io/medik8s/storage-based-remediation-operator:latest
-    createdAt: ""
+    createdAt: "2026-04-24T15:48:08Z"
     description: Storage-Based Remediation Operator for remediating nodes using storage-based
       fencing (SBD/STONITH).
     olm.skipRange: '>=0.0.1'

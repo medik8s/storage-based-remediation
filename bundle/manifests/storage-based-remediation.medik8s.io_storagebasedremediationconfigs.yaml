@@ -50,22 +50,6 @@ spec:
                 - Disabled
                 - Enabled
                 type: string
-              image:
-                description: |-
-                  Image is the container image for the SBR agent DaemonSet
-                  If not specified, defaults to sbr-agent from the same registry/org/tag as the operator
-                type: string
-              imagePullPolicy:
-                default: IfNotPresent
-                description: |-
-                  ImagePullPolicy defines the pull policy for the SBR agent container image.
-                  Valid values are Always, Never, and IfNotPresent.
-                  Defaults to IfNotPresent for production stability.
-                enum:
-                - Always
-                - Never
-                - IfNotPresent
-                type: string
               iotimeout:
                 default: 2s
                 description: |-

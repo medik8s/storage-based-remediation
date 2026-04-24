@@ -676,177 +676,50 @@ func TestWatchdogConstants(t *testing.T) {
 	}
 }
 
-func TestGetImagePullPolicy(t *testing.T) {
-	tests := []struct {
-		name     string
-		spec     StorageBasedRemediationConfigSpec
-		expected string
-	}{
-		{
-			name:     "default value",
-			spec:     StorageBasedRemediationConfigSpec{},
-			expected: "IfNotPresent",
-		},
-		{
-			name: "explicit Always",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "Always",
-			},
-			expected: "Always",
-		},
-		{
-			name: "explicit Never",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "Never",
-			},
-			expected: "Never",
-		},
-		{
-			name: "explicit IfNotPresent",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "IfNotPresent",
-			},
-			expected: "IfNotPresent",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetImagePullPolicy()
-			if result != tt.expected {
-				t.Errorf("GetImagePullPolicy() = %v, expected %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestValidateImagePullPolicy(t *testing.T) {
-	tests := []struct {
-		name      string
-		spec      StorageBasedRemediationConfigSpec
-		wantError bool
-		errorMsg  string
-	}{
-		{
-			name:      "default value (valid)",
-			spec:      StorageBasedRemediationConfigSpec{},
-			wantError: false,
-		},
-		{
-			name: "Always (valid)",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "Always",
-			},
-			wantError: false,
-		},
-		{
-			name: "Never (valid)",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "Never",
-			},
-			wantError: false,
-		},
-		{
-			name: "IfNotPresent (valid)",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "IfNotPresent",
-			},
-			wantError: false,
-		},
-		{
-			name: "invalid value",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "InvalidPolicy",
-			},
-			wantError: true,
-			errorMsg:  "invalid image pull policy \"InvalidPolicy\"",
-		},
-		{
-			name: "empty string (should use default)",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "",
-			},
-			wantError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.spec.ValidateImagePullPolicy()
-			if tt.wantError {
-				if err == nil {
-					t.Errorf("ValidateImagePullPolicy() expected error but got none")
-				} else if !strings.Contains(err.Error(), tt.errorMsg) {
-					t.Errorf("ValidateImagePullPolicy() error = %v, expected to contain %v", err, tt.errorMsg)
-				}
-			} else {
-				if err != nil {
-					t.Errorf("ValidateImagePullPolicy() unexpected error = %v", err)
-				}
-			}
-		})
-	}
-}
-
-func TestGetImageWithOperatorImage(t *testing.T) {
+func TestDeriveAgentImageFromOperator(t *testing.T) {
 	tests := []struct {
 		name          string
-		spec          StorageBasedRemediationConfigSpec
 		operatorImage string
 		expected      string
 		wantErr       bool
 	}{
 		{
-			name:          "explicit image specified",
-			spec:          StorageBasedRemediationConfigSpec{Image: "custom-registry.com/custom-org/custom-agent:v1.0.0"},
-			operatorImage: "quay.io/medik8s/sbr-operator:v1.2.3",
-			expected:      "custom-registry.com/custom-org/custom-agent:v1.0.0",
-		},
-		{
-			name:          "no image specified - derive from operator image with tag",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "derive from operator image with tag",
 			operatorImage: "quay.io/medik8s/sbr-operator:v1.2.3",
 			expected:      "quay.io/medik8s/sbr-agent:v1.2.3",
 		},
 		{
-			name:          "no image specified - derive from operator image without tag",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "derive from operator image without tag",
 			operatorImage: "quay.io/medik8s/sbr-operator",
 			expected:      "quay.io/medik8s/sbr-agent:latest",
 		},
 		{
-			name:          "no image specified - simple operator image with tag",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "simple operator image with tag",
 			operatorImage: "sbr-operator:v1.0.0",
 			expected:      "sbr-agent:v1.0.0",
 		},
 		{
-			name:          "no image specified - simple operator image without tag",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "simple operator image without tag",
 			operatorImage: "sbr-operator",
 			expected:      "sbr-agent:latest",
 		},
 		{
-			name:          "no image specified - empty operator image",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "empty operator image",
 			operatorImage: "",
 			wantErr:       true,
 		},
 		{
-			name:          "no image specified - complex registry path",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "complex registry path",
 			operatorImage: "registry.example.com:5000/my-org/my-project/sbr-operator:dev-123",
 			expected:      "registry.example.com:5000/my-org/my-project/sbr-agent:dev-123",
 		},
 		{
-			name:          "no image specified - storage-based-remediation operator image (RH naming)",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "storage-based-remediation operator image (RH naming)",
 			operatorImage: "registry.redhat.io/workload-availability/storage-based-remediation-rhel9-operator:v0.1.0",
 			expected:      "registry.redhat.io/workload-availability/storage-based-remediation-agent-rhel9:v0.1.0",
 		},
 		{
-			name:          "no image specified - already agent image (e.g. controller fallback)",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "already agent image (e.g. controller fallback)",
 			operatorImage: "sbr-agent:latest",
 			expected:      "sbr-agent:latest",
 		},
@@ -854,19 +727,19 @@ func TestGetImageWithOperatorImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := tt.spec.GetImageWithOperatorImage(tt.operatorImage)
+			result, err := DeriveAgentImageFromOperator(tt.operatorImage)
 			if tt.wantErr {
 				if err == nil {
-					t.Errorf("GetImageWithOperatorImage() expected error for operator image %q", tt.operatorImage)
+					t.Errorf("DeriveAgentImageFromOperator() expected error for operator image %q", tt.operatorImage)
 				}
 				return
 			}
 			if err != nil {
-				t.Errorf("GetImageWithOperatorImage() unexpected error: %v", err)
+				t.Errorf("DeriveAgentImageFromOperator() unexpected error: %v", err)
 				return
 			}
 			if result != tt.expected {
-				t.Errorf("GetImageWithOperatorImage() = %v, expected %v", result, tt.expected)
+				t.Errorf("DeriveAgentImageFromOperator() = %v, expected %v", result, tt.expected)
 			}
 		})
 	}

@@ -13,10 +13,6 @@ metadata:
   annotations:
     description: "SBR configuration using OpenShift Data Foundation CephFS for shared storage coordination"
 spec:
-  # SBR agent image configuration
-  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  imagePullPolicy: "IfNotPresent"
-  
   # Watchdog configuration
   watchdogPath: "/dev/watchdog"
   watchdogTimeout: "60s"
@@ -57,10 +53,6 @@ metadata:
   annotations:
     description: "SBR configuration with strict cache coherency for mission-critical environments"
 spec:
-  # SBR agent image configuration
-  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  imagePullPolicy: "IfNotPresent"
-  
   # Watchdog configuration with shorter timeout for faster response
   watchdogPath: "/dev/watchdog"
   watchdogTimeout: "30s"
@@ -118,7 +110,6 @@ metadata:
     description: "Development SBR configuration for testing and validation"
 spec:
   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  imagePullPolicy: "Always"  # Always pull for development
   
   # Shorter timeouts for faster testing cycles
   watchdogPath: "/dev/watchdog"

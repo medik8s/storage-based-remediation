@@ -35,7 +35,6 @@ metadata:
   name: test-sbr-aggressive-coherency
   namespace: default
 spec:
-  imagePullPolicy: Always
   iotimeout: 5s
   logLevel: debug
   peerCheckInterval: 5s

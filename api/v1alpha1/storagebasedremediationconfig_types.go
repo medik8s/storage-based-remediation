@@ -107,19 +107,6 @@ type StorageBasedRemediationConfigSpec struct {
 	// +optional
 	WatchdogPath string `json:"watchdogPath,omitempty"`
 
-	// Image is the container image for the SBR agent DaemonSet
-	// If not specified, defaults to sbr-agent from the same registry/org/tag as the operator
-	// +optional
-	Image string `json:"image,omitempty"`
-
-	// ImagePullPolicy defines the pull policy for the SBR agent container image.
-	// Valid values are Always, Never, and IfNotPresent.
-	// Defaults to IfNotPresent for production stability.
-	// +kubebuilder:validation:Enum=Always;Never;IfNotPresent
-	// +kubebuilder:default="IfNotPresent"
-	// +optional
-	ImagePullPolicy string `json:"imagePullPolicy,omitempty"`
-
 	// SharedStorageClass is the name of a StorageClass to use for creating shared storage.
 	// When specified, the controller will create a PVC using this StorageClass and mount it
 	// in the agent DaemonSet for cross-node coordination, slot assignment, and shared configuration data.
@@ -224,23 +211,6 @@ func (s *StorageBasedRemediationConfigSpec) GetWatchdogPath() string {
 		return s.WatchdogPath
 	}
 	return DefaultWatchdogPath
-}
-
-// GetImageWithOperatorImage returns the agent image with default fallback
-// The default is constructed from the operator's image by replacing the image name with sbr-agent
-func (s *StorageBasedRemediationConfigSpec) GetImageWithOperatorImage(operatorImage string) (string, error) {
-	if s.Image != "" {
-		return s.Image, nil
-	}
-	return deriveAgentImageFromOperator(operatorImage)
-}
-
-// GetImagePullPolicy returns the image pull policy with default fallback
-func (s *StorageBasedRemediationConfigSpec) GetImagePullPolicy() string {
-	if s.ImagePullPolicy != "" {
-		return s.ImagePullPolicy
-	}
-	return "IfNotPresent"
 }
 
 // GetStaleNodeTimeout returns the stale node timeout with default fallback
@@ -381,18 +351,6 @@ func (s *StorageBasedRemediationConfigSpec) ValidateIOTimeout() error {
 	return nil
 }
 
-// ValidateImagePullPolicy validates the image pull policy value
-func (s *StorageBasedRemediationConfigSpec) ValidateImagePullPolicy() error {
-	policy := s.GetImagePullPolicy()
-
-	switch policy {
-	case "Always", "Never", "IfNotPresent":
-		return nil
-	default:
-		return fmt.Errorf("invalid image pull policy %q. Valid values are: Always, Never, IfNotPresent", policy)
-	}
-}
-
 // ValidateSharedStorageClass validates the shared storage class configuration
 func (s *StorageBasedRemediationConfigSpec) ValidateSharedStorageClass() error {
 	storageClassName := s.SharedStorageClass
@@ -493,10 +451,6 @@ func (s *StorageBasedRemediationConfigSpec) ValidateAll() error {
 		return fmt.Errorf("I/O timeout validation failed: %w", err)
 	}
 
-	if err := s.ValidateImagePullPolicy(); err != nil {
-		return fmt.Errorf("image pull policy validation failed: %w", err)
-	}
-
 	if err := s.ValidateSharedStorageClass(); err != nil {
 		return fmt.Errorf("shared storage PVC validation failed: %w", err)
 	}
@@ -520,8 +474,8 @@ func (s *StorageBasedRemediationConfigSpec) ValidateAll() error {
 	return nil
 }
 
-// deriveAgentImageFromOperator derives the sbr-agent image from the operator image
-func deriveAgentImageFromOperator(operatorImage string) (string, error) {
+// DeriveAgentImageFromOperator derives the sbr-agent image from the operator image
+func DeriveAgentImageFromOperator(operatorImage string) (string, error) {
 	// Handle empty operator image
 	if operatorImage == "" {
 		return "", fmt.Errorf("invalid empty operator image")
