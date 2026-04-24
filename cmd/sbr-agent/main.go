@@ -35,6 +35,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
 	// Kubernetes imports for StorageBasedRemediation CR watching
 
 	corev1 "k8s.io/api/core/v1"
@@ -2402,7 +2403,7 @@ func main() {
 		*ioTimeout,
 		k8sClient,
 		nil,
-		"",
+		os.Getenv("POD_NAMESPACE"),
 		*detectOnlyMode,
 	)
 	if err != nil {
