@@ -80,7 +80,7 @@ ENTRYPOINT ["/usr/local/bin/sbr-agent"]
 
 # Default command arguments
 # These can be overridden when running the container
-CMD ["--watchdog-path=/dev/watchdog", "--watchdog-timeout=30s", "--log-level=info"]
+CMD ["--watchdog-path=/dev/watchdog", "--log-level=info"]
 
 # ==============================================================================
 # Container Usage Instructions
@@ -96,7 +96,6 @@ CMD ["--watchdog-path=/dev/watchdog", "--watchdog-timeout=30s", "--log-level=inf
 #              --volume=/path/to/sbr/device:/dev/sbr \
 #              sbr-agent:latest \
 #              --sbr-device=/dev/sbr \
-#              --watchdog-timeout=15s
 #
 # For Kubernetes deployment, ensure the pod has:
 #   securityContext:

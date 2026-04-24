@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/medik8s/storage-based-remediation/pkg/sbdprotocol"
 )
@@ -41,6 +42,7 @@ type WatchdogInterface interface {
 	Pet() error
 	Close() error
 	Path() string
+	Timeout() time.Duration
 }
 
 // MockBlockDevice is a mock implementation of BlockDevice for testing
@@ -258,6 +260,10 @@ func (m *MockWatchdog) Close() error {
 
 func (m *MockWatchdog) Path() string {
 	return m.path
+}
+
+func (m *MockWatchdog) Timeout() time.Duration {
+	return 60 * time.Second
 }
 
 // GetPetCount returns the number of times Pet() was called

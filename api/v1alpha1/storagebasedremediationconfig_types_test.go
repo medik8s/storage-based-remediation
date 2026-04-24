@@ -314,144 +314,6 @@ func TestStorageBasedRemediationConfigSpec_GetWatchdogPath(t *testing.T) {
 	}
 }
 
-func TestStorageBasedRemediationConfigSpec_GetWatchdogTimeout(t *testing.T) {
-	tests := []struct {
-		name     string
-		spec     StorageBasedRemediationConfigSpec
-		expected time.Duration
-	}{
-		{
-			name: "nil timeout returns default",
-			spec: StorageBasedRemediationConfigSpec{
-				WatchdogTimeout: nil,
-			},
-			expected: DefaultWatchdogTimeout,
-		},
-		{
-			name: "explicit timeout is returned",
-			spec: StorageBasedRemediationConfigSpec{
-				WatchdogTimeout: &metav1.Duration{Duration: 30 * time.Second},
-			},
-			expected: 30 * time.Second,
-		},
-		{
-			name: "custom timeout is returned",
-			spec: StorageBasedRemediationConfigSpec{
-				WatchdogTimeout: &metav1.Duration{Duration: 120 * time.Second},
-			},
-			expected: 120 * time.Second,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetWatchdogTimeout()
-			if result != tt.expected {
-				t.Errorf("Expected %v, got %v", tt.expected, result)
-			}
-		})
-	}
-}
-
-func TestStorageBasedRemediationConfigSpec_GetPetInterval(t *testing.T) {
-	longWatchdogTimeout := time.Duration(120)
-	shortWatchdogTimeout := time.Duration(10)
-
-	tests := []struct {
-		name     string
-		spec     StorageBasedRemediationConfigSpec
-		expected time.Duration
-	}{
-		{
-			name:     "default values",
-			spec:     StorageBasedRemediationConfigSpec{},
-			expected: DefaultWatchdogTimeout / time.Duration(agent.PetIntervalMultiple),
-		},
-		{
-			name: "custom watchdog timeout",
-			spec: StorageBasedRemediationConfigSpec{
-				WatchdogTimeout: &metav1.Duration{Duration: longWatchdogTimeout * time.Second},
-			},
-			expected: longWatchdogTimeout * time.Second / time.Duration(agent.PetIntervalMultiple),
-		},
-		{
-			name: "short watchdog timeout",
-			spec: StorageBasedRemediationConfigSpec{
-				WatchdogTimeout: &metav1.Duration{Duration: shortWatchdogTimeout * time.Second},
-			},
-			expected: shortWatchdogTimeout * time.Second / time.Duration(agent.PetIntervalMultiple),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetPetInterval()
-			if result != tt.expected {
-				t.Errorf("Expected %v, got %v", tt.expected, result)
-			}
-		})
-	}
-}
-
-func TestStorageBasedRemediationConfigSpec_ValidateWatchdogTimeout(t *testing.T) {
-	tests := createTimeoutValidationTests(
-		func(spec *StorageBasedRemediationConfigSpec, d *metav1.Duration) { spec.WatchdogTimeout = d },
-		30*time.Second,
-		5*time.Second,
-		400*time.Second,
-		MinWatchdogTimeout,
-		MaxWatchdogTimeout,
-	)
-
-	runValidationTests(t, "ValidateWatchdogTimeout()", tests, func(spec StorageBasedRemediationConfigSpec) error {
-		return spec.ValidateWatchdogTimeout()
-	})
-}
-
-func TestStorageBasedRemediationConfigSpec_ValidatePetIntervalTiming(t *testing.T) {
-	tests := []struct {
-		name      string
-		spec      StorageBasedRemediationConfigSpec
-		wantError bool
-	}{
-		{
-			name:      "default values are valid",
-			spec:      StorageBasedRemediationConfigSpec{},
-			wantError: false,
-		},
-		{
-			name: "safe watchdog timeout configuration",
-			spec: StorageBasedRemediationConfigSpec{
-				WatchdogTimeout: &metav1.Duration{Duration: 60 * time.Second},
-			},
-			wantError: false,
-		},
-		{
-			name: "short watchdog timeout",
-			spec: StorageBasedRemediationConfigSpec{
-				WatchdogTimeout: &metav1.Duration{Duration: 10 * time.Second},
-			},
-			wantError: false,
-		},
-		{
-			name: "longer watchdog timeout",
-			spec: StorageBasedRemediationConfigSpec{
-				WatchdogTimeout: &metav1.Duration{Duration: 120 * time.Second},
-			},
-			wantError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.spec.ValidatePetIntervalTiming()
-			if (err != nil) != tt.wantError {
-				t.Errorf("ValidatePetIntervalTiming() error = %v, wantError %v", err, tt.wantError)
-			}
-		})
-	}
-}
-
 func TestStorageBasedRemediationConfigSpec_GetRebootMethod(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -762,7 +624,6 @@ func TestStorageBasedRemediationConfigSpec_ValidateAll(t *testing.T) {
 			name: "all valid custom values",
 			spec: StorageBasedRemediationConfigSpec{
 				StaleNodeTimeout: &metav1.Duration{Duration: 2 * time.Hour},
-				WatchdogTimeout:  &metav1.Duration{Duration: 90 * time.Second},
 			},
 			wantError: false,
 		},
@@ -770,14 +631,6 @@ func TestStorageBasedRemediationConfigSpec_ValidateAll(t *testing.T) {
 			name: "invalid stale node timeout",
 			spec: StorageBasedRemediationConfigSpec{
 				StaleNodeTimeout: &metav1.Duration{Duration: 30 * time.Second}, // Too small
-				WatchdogTimeout:  &metav1.Duration{Duration: 60 * time.Second},
-			},
-			wantError: true,
-		},
-		{
-			name: "invalid watchdog timeout",
-			spec: StorageBasedRemediationConfigSpec{
-				WatchdogTimeout: &metav1.Duration{Duration: 5 * time.Second}, // Too small
 			},
 			wantError: true,
 		},
@@ -816,29 +669,6 @@ func TestStorageBasedRemediationConfigSpec_ValidateAll(t *testing.T) {
 
 func TestWatchdogConstants(t *testing.T) {
 	// Verify that constants have expected values
-	if DefaultWatchdogTimeout != 60*time.Second {
-		t.Errorf("DefaultWatchdogTimeout = %v, expected 60s", DefaultWatchdogTimeout)
-	}
-
-	if MinWatchdogTimeout != 10*time.Second {
-		t.Errorf("MinWatchdogTimeout = %v, expected 10s", MinWatchdogTimeout)
-	}
-
-	if MaxWatchdogTimeout != 300*time.Second {
-		t.Errorf("MaxWatchdogTimeout = %v, expected 300s", MaxWatchdogTimeout)
-	}
-
-	// Verify logical relationships
-	if MinWatchdogTimeout >= DefaultWatchdogTimeout {
-		t.Errorf("MinWatchdogTimeout (%v) should be less than DefaultWatchdogTimeout (%v)",
-			MinWatchdogTimeout, DefaultWatchdogTimeout)
-	}
-
-	if DefaultWatchdogTimeout >= MaxWatchdogTimeout {
-		t.Errorf("DefaultWatchdogTimeout (%v) should be less than MaxWatchdogTimeout (%v)",
-			DefaultWatchdogTimeout, MaxWatchdogTimeout)
-	}
-
 	// Verify PetIntervalMultiple constant in agent package is defined
 	// (specific value is an implementation detail)
 	if agent.PetIntervalMultiple < 1 || agent.PetIntervalMultiple > 100 {

@@ -1032,9 +1032,7 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 		"spec.image", agentImage,
 		"namespace", sbrConfig.Namespace,
 		"spec.sbrWatchdogPath", sbrConfig.Spec.GetWatchdogPath(),
-		"spec.staleNodeTimeout", sbrConfig.Spec.GetStaleNodeTimeout(),
-		"spec.watchdogTimeout", sbrConfig.Spec.GetWatchdogTimeout(),
-		"spec.calculatedPetInterval", sbrConfig.Spec.GetPetInterval())
+		"spec.staleNodeTimeout", sbrConfig.Spec.GetStaleNodeTimeout())
 
 	// Validate the StorageBasedRemediationConfig spec
 	if err := sbrConfig.Spec.ValidateAll(); err != nil {
@@ -1145,8 +1143,7 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 		"operation", "daemonset-create-or-update",
 		"desired.image", desiredDaemonSet.Spec.Template.Spec.Containers[0].Image)
 	daemonSetLogger.Info("SBR agent DaemonSet watchdog configuration",
-		"watchdogPath", sbrConfig.Spec.GetWatchdogPath(),
-		"watchdogTimeout", sbrConfig.Spec.GetWatchdogTimeout().String())
+		"watchdogPath", sbrConfig.Spec.GetWatchdogPath())
 
 	action, err = controllerutil.CreateOrUpdate(ctx, r.Client, actualDaemonSet, func() error {
 		// Update the DaemonSet spec with the desired configuration
@@ -1558,9 +1555,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 
 // buildSBRAgentArgs builds the command line arguments for the sbr-agent container
 func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig) []string {
-	// Get configured watchdog timeout and calculate pet interval
-	watchdogTimeout := sbrConfig.Spec.GetWatchdogTimeout()
-	petInterval := sbrConfig.Spec.GetPetInterval()
+	// Note: watchdog timeout is now discovered at runtime via ioctl, not passed via CLI
 	ioTimeout := sbrConfig.Spec.GetIOTimeout()
 	rebootMethod := sbrConfig.Spec.GetRebootMethod()
 	sbrTimeoutSeconds := sbrConfig.Spec.GetSBRTimeoutSeconds()
@@ -1570,8 +1565,6 @@ func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *m
 	// Base arguments using shared flag constants
 	args := []string{
 		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, sbrConfig.Spec.GetWatchdogPath()),
-		fmt.Sprintf("--%s=%s", agent.FlagWatchdogTimeout, watchdogTimeout.String()),
-		fmt.Sprintf("--%s=%s", agent.FlagPetInterval, petInterval.String()),
 		fmt.Sprintf("--%s=%s", agent.FlagLogLevel, sbrConfig.Spec.GetLogLevel()),
 		fmt.Sprintf("--%s=%s", agent.FlagClusterName, sbrConfig.Name),
 		fmt.Sprintf("--%s=%s", agent.FlagStaleNodeTimeout, sbrConfig.Spec.GetStaleNodeTimeout().String()),

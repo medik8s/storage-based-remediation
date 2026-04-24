@@ -292,7 +292,6 @@ func testBasicStorageBasedRemediationConfiguration() {
 		config.Spec.WatchdogPath = "/dev/watchdog"
 		config.Spec.SharedStorageClass = testStorageClassName
 		config.Spec.StaleNodeTimeout = &metav1.Duration{Duration: 2 * time.Hour}
-		config.Spec.WatchdogTimeout = &metav1.Duration{Duration: 90 * time.Second}
 	})
 	Expect(err).NotTo(HaveOccurred(), "StorageBasedRemediationConfig creation failed")
 
@@ -300,7 +299,6 @@ func testBasicStorageBasedRemediationConfiguration() {
 	opts := utils.DefaultValidateAgentDeploymentOptions(sbrConfig.Name)
 	opts.ExpectedArgs = []string{
 		"--watchdog-path=/dev/watchdog",
-		"--watchdog-timeout=1m30s",
 	}
 	err = validator.ValidateAgentDeployment(opts)
 	Expect(err).NotTo(HaveOccurred(), "SBR agent deployment failed")
@@ -374,7 +372,6 @@ func testIncompatibleStorageClass() {
 		config.Spec.WatchdogPath = "/dev/watchdog"
 		config.Spec.SharedStorageClass = gp3StorageClass.Name
 		config.Spec.StaleNodeTimeout = &metav1.Duration{Duration: 2 * time.Hour}
-		config.Spec.WatchdogTimeout = &metav1.Duration{Duration: 90 * time.Second}
 	})
 
 	By("Expecting StorageBasedRemediationConfig creation to succeed initially")

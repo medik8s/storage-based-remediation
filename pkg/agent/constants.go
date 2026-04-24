@@ -16,12 +16,16 @@ limitations under the License.
 
 package agent
 
+import "time"
+
 // Package-level constants for hardcoded configuration values.
 // These values are no longer configurable via the StorageBasedRemediationConfig CR.
 
 const (
 	// PetIntervalMultiple defines the hardcoded multiple used to calculate the pet interval
 	// from the watchdog timeout: pet interval = watchdog timeout / pet interval multiple.
-	// Value of 4 provides a good balance of safety and efficiency.
 	PetIntervalMultiple = 4
+
+	// WatchdogTimeoutDefault is the default timeout when watchdog timeout discovery fails
+	WatchdogTimeoutDefault = 60 * time.Second
 )

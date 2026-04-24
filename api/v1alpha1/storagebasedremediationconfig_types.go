@@ -44,12 +44,6 @@ const (
 	MaxStaleNodeTimeout = 24 * time.Hour
 	// DefaultWatchdogPath is the default path to the watchdog device
 	DefaultWatchdogPath = "/dev/watchdog"
-	// DefaultWatchdogTimeout is the default watchdog timeout duration
-	DefaultWatchdogTimeout = 60 * time.Second
-	// MinWatchdogTimeout is the minimum allowed watchdog timeout
-	MinWatchdogTimeout = 10 * time.Second
-	// MaxWatchdogTimeout is the maximum allowed watchdog timeout
-	MaxWatchdogTimeout = 300 * time.Second
 	// DefaultIOTimeout is the default timeout for I/O operations
 	DefaultIOTimeout = 2 * time.Second
 	// MinIOTimeout is the minimum allowed I/O timeout
@@ -149,16 +143,6 @@ type StorageBasedRemediationConfigSpec struct {
 	// +kubebuilder:default="1h"
 	// +optional
 	StaleNodeTimeout *metav1.Duration `json:"staleNodeTimeout,omitempty"`
-
-	// WatchdogTimeout defines the watchdog timeout duration for the hardware/software watchdog device.
-	// This determines how long the system will wait before triggering a reboot if the watchdog is not pet.
-	// The pet interval is calculated as watchdog timeout divided by the pet interval multiple.
-	// The value must be between 10 seconds and 300 seconds (5 minutes).
-	// +kubebuilder:validation:Type=string
-	// +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(s|m|h))+$"
-	// +kubebuilder:default="60s"
-	// +optional
-	WatchdogTimeout *metav1.Duration `json:"watchdogTimeout,omitempty"`
 
 	// LogLevel defines the logging level for the SBR agent pods.
 	// Valid values are debug, info, warn, and error.
@@ -265,27 +249,6 @@ func (s *StorageBasedRemediationConfigSpec) GetStaleNodeTimeout() time.Duration 
 		return s.StaleNodeTimeout.Duration
 	}
 	return DefaultStaleNodeTimeout
-}
-
-// GetWatchdogTimeout returns the watchdog timeout with default fallback
-func (s *StorageBasedRemediationConfigSpec) GetWatchdogTimeout() time.Duration {
-	if s.WatchdogTimeout != nil {
-		return s.WatchdogTimeout.Duration
-	}
-	return DefaultWatchdogTimeout
-}
-
-// GetPetInterval calculates the pet interval based on watchdog timeout and the hardcoded multiple
-func (s *StorageBasedRemediationConfigSpec) GetPetInterval() time.Duration {
-	watchdogTimeout := s.GetWatchdogTimeout()
-	petInterval := watchdogTimeout / time.Duration(agent.PetIntervalMultiple)
-
-	// Ensure minimum pet interval of 1 second
-	if petInterval < time.Second {
-		petInterval = time.Second
-	}
-
-	return petInterval
 }
 
 // GetLogLevel returns the log level with default fallback
@@ -400,47 +363,6 @@ func (s *StorageBasedRemediationConfigSpec) ValidateStaleNodeTimeout() error {
 		return fmt.Errorf("stale node timeout %v is greater than maximum %v", timeout, MaxStaleNodeTimeout)
 	}
 
-	return nil
-}
-
-// ValidateWatchdogTimeout validates the watchdog timeout value
-func (s *StorageBasedRemediationConfigSpec) ValidateWatchdogTimeout() error {
-	timeout := s.GetWatchdogTimeout()
-
-	if timeout < MinWatchdogTimeout {
-		return fmt.Errorf("watchdog timeout %v is less than minimum %v", timeout, MinWatchdogTimeout)
-	}
-
-	if timeout > MaxWatchdogTimeout {
-		return fmt.Errorf("watchdog timeout %v is greater than maximum %v", timeout, MaxWatchdogTimeout)
-	}
-
-	return nil
-}
-
-// ValidatePetIntervalTiming validates that the calculated pet interval is appropriate
-func (s *StorageBasedRemediationConfigSpec) ValidatePetIntervalTiming() error {
-	watchdogTimeout := s.GetWatchdogTimeout()
-	petInterval := s.GetPetInterval()
-
-	// Pet interval must be shorter than watchdog timeout
-	if petInterval >= watchdogTimeout {
-		return fmt.Errorf("pet interval %v must be shorter than watchdog timeout %v", petInterval, watchdogTimeout)
-	}
-
-	// Pet interval should be at least 3 times shorter than watchdog timeout for safety
-	maxPetInterval := watchdogTimeout / 3
-	if petInterval > maxPetInterval {
-		return fmt.Errorf("pet interval %v is too long for watchdog timeout %v. "+
-			"Pet interval should be at least 3 times shorter than watchdog timeout. "+
-			"Maximum recommended pet interval: %v",
-			petInterval, watchdogTimeout, maxPetInterval)
-	}
-
-	// Pet interval should be at least 1 second
-	if petInterval < time.Second {
-		return fmt.Errorf("pet interval %v is too short. Minimum recommended: 1s", petInterval)
-	}
 	return nil
 }
 
@@ -565,14 +487,6 @@ func (s *StorageBasedRemediationConfigSpec) ValidatePeerCheckInterval() error {
 func (s *StorageBasedRemediationConfigSpec) ValidateAll() error {
 	if err := s.ValidateStaleNodeTimeout(); err != nil {
 		return fmt.Errorf("stale node timeout validation failed: %w", err)
-	}
-
-	if err := s.ValidateWatchdogTimeout(); err != nil {
-		return fmt.Errorf("watchdog timeout validation failed: %w", err)
-	}
-
-	if err := s.ValidatePetIntervalTiming(); err != nil {
-		return fmt.Errorf("pet interval timing validation failed: %w", err)
 	}
 
 	if err := s.ValidateIOTimeout(); err != nil {

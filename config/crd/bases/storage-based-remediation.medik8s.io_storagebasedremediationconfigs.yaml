@@ -160,15 +160,6 @@ spec:
                   WatchdogPath is the path to the watchdog device on the host
                   If not specified, defaults to "/dev/watchdog"
                 type: string
-              watchdogTimeout:
-                default: 60s
-                description: |-
-                  WatchdogTimeout defines the watchdog timeout duration for the hardware/software watchdog device.
-                  This determines how long the system will wait before triggering a reboot if the watchdog is not pet.
-                  The pet interval is calculated as watchdog timeout divided by the pet interval multiple.
-                  The value must be between 10 seconds and 300 seconds (5 minutes).
-                pattern: ^([0-9]+(\.[0-9]+)?(s|m|h))+$
-                type: string
             type: object
           status:
             description: StorageBasedRemediationConfigStatus defines the observed
