@@ -28,17 +28,12 @@ metadata:
   name: sbr-config-with-shared-storage
   namespace: sbr-system
 spec:
-  # SBR agent image configuration
-  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  imagePullPolicy: "IfNotPresent"
-  
   # Watchdog configuration
   watchdogPath: "/dev/watchdog"
   watchdogTimeout: "60s"
   petIntervalMultiple: 4
   
   # Node management
-  staleNodeTimeout: "1h"
   
   # ✅ SHARED STORAGE CONFIGURATION ✅
   # This field enables automatic shared storage integration

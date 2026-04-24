@@ -63,7 +63,6 @@ func defaultStorageBasedRemediationConfig(resourceName, namespace string) *medik
 		Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
 			WatchdogPath:       "/dev/watchdog",
 			SharedStorageClass: validSharedStorageClass,
-			Image:              "test-sbr-agent:latest",
 		},
 	}
 }
@@ -372,7 +371,7 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 			By("verifying the DaemonSet pod template has correct configuration")
 			container := daemonSet.Spec.Template.Spec.Containers[0]
 			Expect(container.Name).To(Equal("sbr-agent"))
-			Expect(container.Image).To(Equal("test-sbr-agent:latest"))
+			Expect(container.Image).To(Equal("sbr-agent:latest"))
 			Expect(container.Args).To(ContainElement("--watchdog-path=/dev/watchdog"))
 
 			By("verifying the DaemonSet has correct volume mounts")
@@ -399,14 +398,13 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 		It("should update DaemonSet when StorageBasedRemediationConfig is modified", func() {
 			By("creating the StorageBasedRemediationConfig resource")
 			sbrConfig := defaultStorageBasedRemediationConfig(resourceName, namespace)
-			sbrConfig.Spec.Image = "test-sbr-agent:v1.0.0"
 			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
 
 			By("reconciling the StorageBasedRemediationConfig multiple times for finalizer and resource creation")
 			counter, result, err := reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
 			checkForDefaultReconcile(counter, result, err)
 
-			By("verifying the DaemonSet was created with initial image")
+			By("verifying the DaemonSet was created")
 			expectedDaemonSetName := fmt.Sprintf("sbr-agent-%s", resourceName)
 			daemonSet := &appsv1.DaemonSet{}
 			Eventually(func() error {
@@ -415,13 +413,11 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 					Namespace: namespace,
 				}, daemonSet)
 			}, timeout, interval).Should(Succeed())
-			Expect(daemonSet.Spec.Template.Spec.Containers[0].Image).To(Equal("test-sbr-agent:v1.0.0"))
 
-			By("updating the StorageBasedRemediationConfig image")
+			By("updating the StorageBasedRemediationConfig watchdog path")
 			// Fetch the latest version to avoid conflicts
 			err = k8sClient.Get(ctx, typeNamespacedName, sbrConfig)
 			Expect(err).NotTo(HaveOccurred())
-			sbrConfig.Spec.Image = "test-sbr-agent:v2.0.0"
 			sbrConfig.Spec.WatchdogPath = "/dev/watchdog1"
 			Expect(k8sClient.Update(ctx, sbrConfig)).To(Succeed())
 
@@ -431,18 +427,7 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 			Expect(result).To(Equal(reconcile.Result{}))
 			Expect(counter).To(BeNumerically("==", 1))
 
-			By("verifying the DaemonSet was updated with new image and watchdog path")
-			Eventually(func() string {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      expectedDaemonSetName,
-					Namespace: namespace,
-				}, daemonSet)
-				if err != nil {
-					return ""
-				}
-				return daemonSet.Spec.Template.Spec.Containers[0].Image
-			}, timeout, interval).Should(Equal("test-sbr-agent:v2.0.0"))
-
+			By("verifying the DaemonSet was updated with new watchdog path")
 			Eventually(func() []string {
 				err := k8sClient.Get(ctx, types.NamespacedName{
 					Name:      expectedDaemonSetName,
@@ -507,7 +492,6 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 		It("should handle default values correctly", func() {
 			By("creating the StorageBasedRemediationConfig resource with minimal spec")
 			sbrConfig := defaultStorageBasedRemediationConfig(resourceName, namespace)
-			sbrConfig.Spec.Image = "" // no image specified - should use defaults
 			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
 
 			By("reconciling the StorageBasedRemediationConfig multiple times for finalizer and resource creation")
@@ -764,7 +748,6 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 				},
 				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
 					SharedStorageClass: "gp3-csi",
-					Image:              "test-sbr-agent:latest",
 				},
 			}
 			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
@@ -804,7 +787,6 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 				},
 				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
 					SharedStorageClass: "non-existent-storage-class",
-					Image:              "test-sbr-agent:latest",
 				},
 			}
 			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
@@ -839,7 +821,6 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 					Namespace: validationNamespace,
 				},
 				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
-					Image: "test-sbr-agent:latest",
 					// No SharedStorageClass specified
 				},
 			}
@@ -927,7 +908,6 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 					},
 					Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
 						SharedStorageClass: "custom-unknown-provisioner",
-						Image:              "test-sbr-agent:latest",
 					},
 				}
 				Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())

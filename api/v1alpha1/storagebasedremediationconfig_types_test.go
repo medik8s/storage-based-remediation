@@ -188,86 +188,6 @@ func createIntervalValidationTests(
 	}
 }
 
-func TestStorageBasedRemediationConfigSpec_GetStaleNodeTimeout(t *testing.T) {
-	tests := []struct {
-		name     string
-		spec     StorageBasedRemediationConfigSpec
-		expected time.Duration
-	}{
-		{
-			name: "nil timeout returns default",
-			spec: StorageBasedRemediationConfigSpec{
-				StaleNodeTimeout: nil,
-			},
-			expected: DefaultStaleNodeTimeout,
-		},
-		{
-			name: "explicit timeout is returned",
-			spec: StorageBasedRemediationConfigSpec{
-				StaleNodeTimeout: &metav1.Duration{Duration: 5 * time.Minute},
-			},
-			expected: 5 * time.Minute,
-		},
-		{
-			name: "zero timeout returns zero",
-			spec: StorageBasedRemediationConfigSpec{
-				StaleNodeTimeout: &metav1.Duration{Duration: 0},
-			},
-			expected: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetStaleNodeTimeout()
-			if result != tt.expected {
-				t.Errorf("Expected %v, got %v", tt.expected, result)
-			}
-		})
-	}
-}
-
-func TestStorageBasedRemediationConfigSpec_ValidateStaleNodeTimeout(t *testing.T) {
-	tests := createTimeoutValidationTests(
-		func(spec *StorageBasedRemediationConfigSpec, d *metav1.Duration) { spec.StaleNodeTimeout = d },
-		5*time.Minute,
-		30*time.Second,
-		25*time.Hour,
-		MinStaleNodeTimeout,
-		MaxStaleNodeTimeout,
-	)
-
-	runValidationTests(t, "ValidateStaleNodeTimeout()", tests, func(spec StorageBasedRemediationConfigSpec) error {
-		return spec.ValidateStaleNodeTimeout()
-	})
-}
-
-func TestConstants(t *testing.T) {
-	// Verify that constants have expected values
-	if DefaultStaleNodeTimeout != 1*time.Hour {
-		t.Errorf("DefaultStaleNodeTimeout = %v, expected 1h", DefaultStaleNodeTimeout)
-	}
-
-	if MinStaleNodeTimeout != 1*time.Minute {
-		t.Errorf("MinStaleNodeTimeout = %v, expected 1m", MinStaleNodeTimeout)
-	}
-
-	if MaxStaleNodeTimeout != 24*time.Hour {
-		t.Errorf("MaxStaleNodeTimeout = %v, expected 24h", MaxStaleNodeTimeout)
-	}
-
-	// Verify logical relationships
-	if MinStaleNodeTimeout >= DefaultStaleNodeTimeout {
-		t.Errorf("MinStaleNodeTimeout (%v) should be less than DefaultStaleNodeTimeout (%v)",
-			MinStaleNodeTimeout, DefaultStaleNodeTimeout)
-	}
-
-	if DefaultStaleNodeTimeout >= MaxStaleNodeTimeout {
-		t.Errorf("DefaultStaleNodeTimeout (%v) should be less than MaxStaleNodeTimeout (%v)",
-			DefaultStaleNodeTimeout, MaxStaleNodeTimeout)
-	}
-}
-
 func TestStorageBasedRemediationConfigSpec_GetWatchdogPath(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -314,301 +234,6 @@ func TestStorageBasedRemediationConfigSpec_GetWatchdogPath(t *testing.T) {
 	}
 }
 
-func TestStorageBasedRemediationConfigSpec_GetRebootMethod(t *testing.T) {
-	tests := []struct {
-		name     string
-		spec     StorageBasedRemediationConfigSpec
-		expected string
-	}{
-		{
-			name: "empty reboot method returns default",
-			spec: StorageBasedRemediationConfigSpec{
-				RebootMethod: "",
-			},
-			expected: DefaultRebootMethod,
-		},
-		{
-			name: "explicit panic method is returned",
-			spec: StorageBasedRemediationConfigSpec{
-				RebootMethod: "panic",
-			},
-			expected: "panic",
-		},
-		{
-			name: "explicit systemctl-reboot method is returned",
-			spec: StorageBasedRemediationConfigSpec{
-				RebootMethod: "systemctl-reboot",
-			},
-			expected: "systemctl-reboot",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetRebootMethod()
-			if result != tt.expected {
-				t.Errorf("GetRebootMethod() = %v, expected %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestStorageBasedRemediationConfigSpec_GetSBRTimeoutSeconds(t *testing.T) {
-	tests := []struct {
-		name     string
-		spec     StorageBasedRemediationConfigSpec
-		expected int32
-	}{
-		{
-			name: "nil timeout returns default",
-			spec: StorageBasedRemediationConfigSpec{
-				SBRTimeoutSeconds: nil,
-			},
-			expected: DefaultSBRTimeoutSeconds,
-		},
-		{
-			name: "explicit timeout is returned",
-			spec: StorageBasedRemediationConfigSpec{
-				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(60),
-			},
-			expected: 60,
-		},
-		{
-			name: "minimum timeout is returned",
-			spec: StorageBasedRemediationConfigSpec{
-				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(10),
-			},
-			expected: 10,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetSBRTimeoutSeconds()
-			if result != tt.expected {
-				t.Errorf("GetSBRTimeoutSeconds() = %v, expected %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestStorageBasedRemediationConfigSpec_GetSBRUpdateInterval(t *testing.T) {
-	tests := []struct {
-		name     string
-		spec     StorageBasedRemediationConfigSpec
-		expected time.Duration
-	}{
-		{
-			name: "nil interval returns default",
-			spec: StorageBasedRemediationConfigSpec{
-				SBRUpdateInterval: nil,
-			},
-			expected: DefaultSBRUpdateInterval,
-		},
-		{
-			name: "explicit interval is returned",
-			spec: StorageBasedRemediationConfigSpec{
-				SBRUpdateInterval: &metav1.Duration{Duration: 10 * time.Second},
-			},
-			expected: 10 * time.Second,
-		},
-		{
-			name: "minimum interval is returned",
-			spec: StorageBasedRemediationConfigSpec{
-				SBRUpdateInterval: &metav1.Duration{Duration: 1 * time.Second},
-			},
-			expected: 1 * time.Second,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetSBRUpdateInterval()
-			if result != tt.expected {
-				t.Errorf("GetSBRUpdateInterval() = %v, expected %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestStorageBasedRemediationConfigSpec_GetPeerCheckInterval(t *testing.T) {
-	tests := []struct {
-		name     string
-		spec     StorageBasedRemediationConfigSpec
-		expected time.Duration
-	}{
-		{
-			name: "nil interval returns default",
-			spec: StorageBasedRemediationConfigSpec{
-				PeerCheckInterval: nil,
-			},
-			expected: DefaultPeerCheckInterval,
-		},
-		{
-			name: "explicit interval is returned",
-			spec: StorageBasedRemediationConfigSpec{
-				PeerCheckInterval: &metav1.Duration{Duration: 3 * time.Second},
-			},
-			expected: 3 * time.Second,
-		},
-		{
-			name: "maximum interval is returned",
-			spec: StorageBasedRemediationConfigSpec{
-				PeerCheckInterval: &metav1.Duration{Duration: 60 * time.Second},
-			},
-			expected: 60 * time.Second,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetPeerCheckInterval()
-			if result != tt.expected {
-				t.Errorf("GetPeerCheckInterval() = %v, expected %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestStorageBasedRemediationConfigSpec_ValidateRebootMethod(t *testing.T) {
-	tests := []struct {
-		name    string
-		spec    StorageBasedRemediationConfigSpec
-		wantErr bool
-	}{
-		{
-			name: "valid panic method",
-			spec: StorageBasedRemediationConfigSpec{
-				RebootMethod: "panic",
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid systemctl-reboot method",
-			spec: StorageBasedRemediationConfigSpec{
-				RebootMethod: "systemctl-reboot",
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid none method",
-			spec: StorageBasedRemediationConfigSpec{
-				RebootMethod: "none",
-			},
-			wantErr: false,
-		},
-		{
-			name: "empty method uses default (valid)",
-			spec: StorageBasedRemediationConfigSpec{
-				RebootMethod: "",
-			},
-			wantErr: false,
-		},
-		{
-			name: "invalid method",
-			spec: StorageBasedRemediationConfigSpec{
-				RebootMethod: "invalid-method",
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.spec.ValidateRebootMethod()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateRebootMethod() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestStorageBasedRemediationConfigSpec_ValidateSBRTimeoutSeconds(t *testing.T) {
-	tests := []struct {
-		name    string
-		spec    StorageBasedRemediationConfigSpec
-		wantErr bool
-	}{
-		{
-			name: "nil timeout uses default (valid)",
-			spec: StorageBasedRemediationConfigSpec{
-				SBRTimeoutSeconds: nil,
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid timeout",
-			spec: StorageBasedRemediationConfigSpec{
-				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(60),
-			},
-			wantErr: false,
-		},
-		{
-			name: "minimum timeout",
-			spec: StorageBasedRemediationConfigSpec{
-				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(10),
-			},
-			wantErr: false,
-		},
-		{
-			name: "maximum timeout",
-			spec: StorageBasedRemediationConfigSpec{
-				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(300),
-			},
-			wantErr: false,
-		},
-		{
-			name: "too small timeout",
-			spec: StorageBasedRemediationConfigSpec{
-				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(5),
-			},
-			wantErr: true,
-		},
-		{
-			name: "too large timeout",
-			spec: StorageBasedRemediationConfigSpec{
-				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(400),
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.spec.ValidateSBRTimeoutSeconds()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateSBRTimeoutSeconds() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestStorageBasedRemediationConfigSpec_ValidateSBRUpdateInterval(t *testing.T) {
-	tests := createIntervalValidationTests(
-		func(spec *StorageBasedRemediationConfigSpec, d *metav1.Duration) { spec.SBRUpdateInterval = d },
-		10*time.Second,
-		500*time.Millisecond,
-		120*time.Second,
-	)
-
-	runIntervalTests(t, "ValidateSBRUpdateInterval()", tests, func(spec StorageBasedRemediationConfigSpec) error {
-		return spec.ValidateSBRUpdateInterval()
-	})
-}
-
-func TestStorageBasedRemediationConfigSpec_ValidatePeerCheckInterval(t *testing.T) {
-	tests := createIntervalValidationTests(
-		func(spec *StorageBasedRemediationConfigSpec, d *metav1.Duration) { spec.PeerCheckInterval = d },
-		5*time.Second,
-		500*time.Millisecond,
-		90*time.Second,
-	)
-
-	runIntervalTests(t, "ValidatePeerCheckInterval()", tests, func(spec StorageBasedRemediationConfigSpec) error {
-		return spec.ValidatePeerCheckInterval()
-	})
-}
-
 func TestStorageBasedRemediationConfigSpec_ValidateAll(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -621,38 +246,8 @@ func TestStorageBasedRemediationConfigSpec_ValidateAll(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name: "all valid custom values",
-			spec: StorageBasedRemediationConfigSpec{
-				StaleNodeTimeout: &metav1.Duration{Duration: 2 * time.Hour},
-			},
-			wantError: false,
-		},
-		{
-			name: "invalid stale node timeout",
-			spec: StorageBasedRemediationConfigSpec{
-				StaleNodeTimeout: &metav1.Duration{Duration: 30 * time.Second}, // Too small
-			},
-			wantError: true,
-		},
-		{
-			name: "invalid I/O timeout - too small",
-			spec: StorageBasedRemediationConfigSpec{
-				IOTimeout: &metav1.Duration{Duration: 50 * time.Millisecond}, // Too small
-			},
-			wantError: true,
-		},
-		{
-			name: "invalid I/O timeout - too large",
-			spec: StorageBasedRemediationConfigSpec{
-				IOTimeout: &metav1.Duration{Duration: 10 * time.Minute}, // Too large
-			},
-			wantError: true,
-		},
-		{
-			name: "valid I/O timeout",
-			spec: StorageBasedRemediationConfigSpec{
-				IOTimeout: &metav1.Duration{Duration: 5 * time.Second}, // Valid
-			},
+			name:      "all valid custom values",
+			spec:      StorageBasedRemediationConfigSpec{},
 			wantError: false,
 		},
 	}
@@ -676,177 +271,50 @@ func TestWatchdogConstants(t *testing.T) {
 	}
 }
 
-func TestGetImagePullPolicy(t *testing.T) {
-	tests := []struct {
-		name     string
-		spec     StorageBasedRemediationConfigSpec
-		expected string
-	}{
-		{
-			name:     "default value",
-			spec:     StorageBasedRemediationConfigSpec{},
-			expected: "IfNotPresent",
-		},
-		{
-			name: "explicit Always",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "Always",
-			},
-			expected: "Always",
-		},
-		{
-			name: "explicit Never",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "Never",
-			},
-			expected: "Never",
-		},
-		{
-			name: "explicit IfNotPresent",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "IfNotPresent",
-			},
-			expected: "IfNotPresent",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetImagePullPolicy()
-			if result != tt.expected {
-				t.Errorf("GetImagePullPolicy() = %v, expected %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestValidateImagePullPolicy(t *testing.T) {
-	tests := []struct {
-		name      string
-		spec      StorageBasedRemediationConfigSpec
-		wantError bool
-		errorMsg  string
-	}{
-		{
-			name:      "default value (valid)",
-			spec:      StorageBasedRemediationConfigSpec{},
-			wantError: false,
-		},
-		{
-			name: "Always (valid)",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "Always",
-			},
-			wantError: false,
-		},
-		{
-			name: "Never (valid)",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "Never",
-			},
-			wantError: false,
-		},
-		{
-			name: "IfNotPresent (valid)",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "IfNotPresent",
-			},
-			wantError: false,
-		},
-		{
-			name: "invalid value",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "InvalidPolicy",
-			},
-			wantError: true,
-			errorMsg:  "invalid image pull policy \"InvalidPolicy\"",
-		},
-		{
-			name: "empty string (should use default)",
-			spec: StorageBasedRemediationConfigSpec{
-				ImagePullPolicy: "",
-			},
-			wantError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.spec.ValidateImagePullPolicy()
-			if tt.wantError {
-				if err == nil {
-					t.Errorf("ValidateImagePullPolicy() expected error but got none")
-				} else if !strings.Contains(err.Error(), tt.errorMsg) {
-					t.Errorf("ValidateImagePullPolicy() error = %v, expected to contain %v", err, tt.errorMsg)
-				}
-			} else {
-				if err != nil {
-					t.Errorf("ValidateImagePullPolicy() unexpected error = %v", err)
-				}
-			}
-		})
-	}
-}
-
-func TestGetImageWithOperatorImage(t *testing.T) {
+func TestDeriveAgentImageFromOperator(t *testing.T) {
 	tests := []struct {
 		name          string
-		spec          StorageBasedRemediationConfigSpec
 		operatorImage string
 		expected      string
 		wantErr       bool
 	}{
 		{
-			name:          "explicit image specified",
-			spec:          StorageBasedRemediationConfigSpec{Image: "custom-registry.com/custom-org/custom-agent:v1.0.0"},
-			operatorImage: "quay.io/medik8s/sbr-operator:v1.2.3",
-			expected:      "custom-registry.com/custom-org/custom-agent:v1.0.0",
-		},
-		{
-			name:          "no image specified - derive from operator image with tag",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "derive from operator image with tag",
 			operatorImage: "quay.io/medik8s/sbr-operator:v1.2.3",
 			expected:      "quay.io/medik8s/sbr-agent:v1.2.3",
 		},
 		{
-			name:          "no image specified - derive from operator image without tag",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "derive from operator image without tag",
 			operatorImage: "quay.io/medik8s/sbr-operator",
 			expected:      "quay.io/medik8s/sbr-agent:latest",
 		},
 		{
-			name:          "no image specified - simple operator image with tag",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "simple operator image with tag",
 			operatorImage: "sbr-operator:v1.0.0",
 			expected:      "sbr-agent:v1.0.0",
 		},
 		{
-			name:          "no image specified - simple operator image without tag",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "simple operator image without tag",
 			operatorImage: "sbr-operator",
 			expected:      "sbr-agent:latest",
 		},
 		{
-			name:          "no image specified - empty operator image",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "empty operator image",
 			operatorImage: "",
 			wantErr:       true,
 		},
 		{
-			name:          "no image specified - complex registry path",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "complex registry path",
 			operatorImage: "registry.example.com:5000/my-org/my-project/sbr-operator:dev-123",
 			expected:      "registry.example.com:5000/my-org/my-project/sbr-agent:dev-123",
 		},
 		{
-			name:          "no image specified - storage-based-remediation operator image (RH naming)",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "storage-based-remediation operator image (RH naming)",
 			operatorImage: "registry.redhat.io/workload-availability/storage-based-remediation-rhel9-operator:v0.1.0",
 			expected:      "registry.redhat.io/workload-availability/storage-based-remediation-agent-rhel9:v0.1.0",
 		},
 		{
-			name:          "no image specified - already agent image (e.g. controller fallback)",
-			spec:          StorageBasedRemediationConfigSpec{},
+			name:          "already agent image (e.g. controller fallback)",
 			operatorImage: "sbr-agent:latest",
 			expected:      "sbr-agent:latest",
 		},
@@ -854,19 +322,19 @@ func TestGetImageWithOperatorImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := tt.spec.GetImageWithOperatorImage(tt.operatorImage)
+			result, err := DeriveAgentImageFromOperator(tt.operatorImage)
 			if tt.wantErr {
 				if err == nil {
-					t.Errorf("GetImageWithOperatorImage() expected error for operator image %q", tt.operatorImage)
+					t.Errorf("DeriveAgentImageFromOperator() expected error for operator image %q", tt.operatorImage)
 				}
 				return
 			}
 			if err != nil {
-				t.Errorf("GetImageWithOperatorImage() unexpected error: %v", err)
+				t.Errorf("DeriveAgentImageFromOperator() unexpected error: %v", err)
 				return
 			}
 			if result != tt.expected {
-				t.Errorf("GetImageWithOperatorImage() = %v, expected %v", result, tt.expected)
+				t.Errorf("DeriveAgentImageFromOperator() = %v, expected %v", result, tt.expected)
 			}
 		})
 	}

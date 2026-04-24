@@ -80,7 +80,7 @@ ENTRYPOINT ["/usr/local/bin/sbr-agent"]
 
 # Default command arguments
 # These can be overridden when running the container
-CMD ["--watchdog-path=/dev/watchdog", "--log-level=info"]
+CMD ["--watchdog-path=/dev/watchdog", "--log-level=debug"]
 
 # ==============================================================================
 # Container Usage Instructions

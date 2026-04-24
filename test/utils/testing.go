@@ -198,11 +198,7 @@ func (tn *TestNamespace) CreateStorageBasedRemediationConfig(name string,
 			Namespace: tn.Name,
 		},
 		Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
-			IOTimeout:       &metav1.Duration{Duration: 5 * time.Second},
-			ImagePullPolicy: string(corev1.PullAlways),
-			WatchdogPath:    "/dev/watchdog",
-			LogLevel:        "debug",
-			RebootMethod:    "none", // Always use "none" for testing to prevent actual reboots
+			WatchdogPath: "/dev/watchdog",
 		},
 	}
 

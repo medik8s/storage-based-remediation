@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 	"unicode"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,40 +35,8 @@ var typesLog = logf.Log.WithName("sbrconfig-types")
 
 // Constants for StorageBasedRemediationConfig validation and defaults
 const (
-	// DefaultStaleNodeTimeout is the default timeout for considering nodes stale
-	DefaultStaleNodeTimeout = 1 * time.Hour
-	// MinStaleNodeTimeout is the minimum allowed stale node timeout
-	MinStaleNodeTimeout = 1 * time.Minute
-	// MaxStaleNodeTimeout is the maximum allowed stale node timeout
-	MaxStaleNodeTimeout = 24 * time.Hour
 	// DefaultWatchdogPath is the default path to the watchdog device
 	DefaultWatchdogPath = "/dev/watchdog"
-	// DefaultIOTimeout is the default timeout for I/O operations
-	DefaultIOTimeout = 2 * time.Second
-	// MinIOTimeout is the minimum allowed I/O timeout
-	MinIOTimeout = 100 * time.Millisecond
-	// MaxIOTimeout is the maximum allowed I/O timeout
-	MaxIOTimeout = 5 * time.Minute
-	// DefaultRebootMethod is the default reboot method for self-fencing
-	DefaultRebootMethod = "systemctl-reboot"
-	// DefaultSBRTimeoutSeconds is the default SBR timeout in seconds
-	DefaultSBRTimeoutSeconds = 30
-	// MinSBRTimeoutSeconds is the minimum allowed SBR timeout in seconds
-	MinSBRTimeoutSeconds = 10
-	// MaxSBRTimeoutSeconds is the maximum allowed SBR timeout in seconds
-	MaxSBRTimeoutSeconds = 300
-	// DefaultSBRUpdateInterval is the default interval for SBR device updates
-	DefaultSBRUpdateInterval = 5 * time.Second
-	// MinSBRUpdateInterval is the minimum allowed SBR update interval
-	MinSBRUpdateInterval = 1 * time.Second
-	// MaxSBRUpdateInterval is the maximum allowed SBR update interval
-	MaxSBRUpdateInterval = 60 * time.Second
-	// DefaultPeerCheckInterval is the default interval for peer check operations
-	DefaultPeerCheckInterval = 5 * time.Second
-	// MinPeerCheckInterval is the minimum allowed peer check interval
-	MinPeerCheckInterval = 1 * time.Second
-	// MaxPeerCheckInterval is the maximum allowed peer check interval
-	MaxPeerCheckInterval = 60 * time.Second
 	// DefaultMaxConsecutiveFailures is the runtime default when maxConsecutiveFailures is unset on the CR (no OpenAPI default).
 	DefaultMaxConsecutiveFailures = 7
 	// RelatedImageSbrAgent when this env is set it contains the image of SBR agent
@@ -109,19 +76,6 @@ type StorageBasedRemediationConfigSpec struct {
 	// +optional
 	WatchdogPath string `json:"watchdogPath,omitempty"`
 
-	// Image is the container image for the SBR agent DaemonSet
-	// If not specified, defaults to sbr-agent from the same registry/org/tag as the operator
-	// +optional
-	Image string `json:"image,omitempty"`
-
-	// ImagePullPolicy defines the pull policy for the SBR agent container image.
-	// Valid values are Always, Never, and IfNotPresent.
-	// Defaults to IfNotPresent for production stability.
-	// +kubebuilder:validation:Enum=Always;Never;IfNotPresent
-	// +kubebuilder:default="IfNotPresent"
-	// +optional
-	ImagePullPolicy string `json:"imagePullPolicy,omitempty"`
-
 	// SharedStorageClass is the name of a StorageClass to use for creating shared storage.
 	// When specified, the controller will create a PVC using this StorageClass and mount it
 	// in the agent DaemonSet for cross-node coordination, slot assignment, and shared configuration data.
@@ -136,54 +90,6 @@ type StorageBasedRemediationConfigSpec struct {
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
-	// StaleNodeTimeout defines how long to wait before considering a node stale and removing it from slot mapping
-	// This timeout determines when inactive nodes are cleaned up from the shared SBR device slot assignments.
-	// Nodes that haven't updated their heartbeat within this duration will be considered stale and their slots
-	// will be freed for reuse by new nodes. The value must be at least 1 minute.
-	// +kubebuilder:validation:Type=string
-	// +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(s|m|h))+$"
-	// +kubebuilder:default="1h"
-	// +optional
-	StaleNodeTimeout *metav1.Duration `json:"staleNodeTimeout,omitempty"`
-
-	// LogLevel defines the logging level for the SBR agent pods.
-	// Valid values are debug, info, warn, and error.
-	// Debug provides the most verbose logging, while error only logs error messages.
-	// +kubebuilder:validation:Enum=debug;info;warn;error
-	// +kubebuilder:default="info"
-	// +optional
-	LogLevel string `json:"logLevel,omitempty"`
-
-	// IOTimeout defines the timeout for SBR I/O operations.
-	// This determines how long the system will wait for SBR I/O operations to complete.
-	// The value must be between 100 milliseconds and 5 minutes.
-	// +kubebuilder:validation:Type=string
-	// +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(ms|s|m|h))+$"
-	// +kubebuilder:default="2s"
-	// +optional
-	IOTimeout *metav1.Duration `json:"iotimeout,omitempty"`
-
-	// RebootMethod defines the method to use for self-fencing when a node needs to be rebooted.
-	// Valid values are "panic" (immediate kernel panic), "systemctl-reboot" (graceful systemctl reboot),
-	// and "none" (disable self-fencing, rely only on watchdog hardware timeout).
-	// Panic provides the fastest failover but less graceful shutdown, while systemctl-reboot allows
-	// for graceful service shutdown but may be slower. The "none" option disables agent-initiated
-	// self-fencing and relies solely on hardware watchdog timeout for node fencing.
-	// +kubebuilder:validation:Enum=panic;systemctl-reboot;none
-	// +kubebuilder:default="panic"
-	// +optional
-	RebootMethod string `json:"rebootMethod,omitempty"`
-
-	// SBRTimeoutSeconds defines the SBR timeout in seconds, which determines the heartbeat interval.
-	// The heartbeat interval is calculated as SBR timeout divided by 2.
-	// This value controls how quickly the cluster can detect and respond to node failures.
-	// The value must be between 10 and 300 seconds.
-	// +kubebuilder:validation:Minimum=10
-	// +kubebuilder:validation:Maximum=300
-	// +kubebuilder:default=30
-	// +optional
-	SBRTimeoutSeconds *int32 `json:"sbrTimeoutSeconds,omitempty"`
-
 	// MaxConsecutiveFailures is the maximum number of consecutive failures (SBR device, watchdog, or local
 	// heartbeat writes) before the agent treats the node as failed and performs self-fencing (when not in
 	// detect-only or otherwise disarmed). The same threshold scales how many peer heartbeat gaps are
@@ -195,26 +101,6 @@ type StorageBasedRemediationConfigSpec struct {
 	// +kubebuilder:validation:Maximum=32
 	// +optional
 	MaxConsecutiveFailures *int32 `json:"maxConsecutiveFailures,omitempty"`
-
-	// SBRUpdateInterval defines the interval for updating the SBR device with node status information.
-	// This determines how frequently each node writes its status to the shared SBR device.
-	// More frequent updates provide faster failure detection but increase I/O load on the shared storage.
-	// The value must be between 1 second and 60 seconds.
-	// +kubebuilder:validation:Type=string
-	// +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(s|m))+$"
-	// +kubebuilder:default="5s"
-	// +optional
-	SBRUpdateInterval *metav1.Duration `json:"sbrUpdateInterval,omitempty"`
-
-	// PeerCheckInterval defines the interval for checking peer node heartbeats in the SBR device.
-	// This determines how frequently each node reads and processes heartbeats from other nodes.
-	// More frequent checks provide faster peer failure detection but increase I/O load on the shared storage.
-	// The value must be between 1 second and 60 seconds.
-	// +kubebuilder:validation:Type=string
-	// +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(s|m))+$"
-	// +kubebuilder:default="5s"
-	// +optional
-	PeerCheckInterval *metav1.Duration `json:"peerCheckInterval,omitempty"`
 
 	// DetectOnlyMode when set to Enabled disables all remediation: the agent disarms the watchdog (no reboot)
 	// and the controller does not write fence messages. SBR still sets node conditions (e.g. SBRStorageUnhealthy)
@@ -240,85 +126,12 @@ func (s *StorageBasedRemediationConfigSpec) GetWatchdogPath() string {
 	return DefaultWatchdogPath
 }
 
-// GetImageWithOperatorImage returns the agent image with default fallback
-// The default is constructed from the operator's image by replacing the image name with sbr-agent
-func (s *StorageBasedRemediationConfigSpec) GetImageWithOperatorImage(operatorImage string) (string, error) {
-	if s.Image != "" {
-		return s.Image, nil
-	}
-	return deriveAgentImageFromOperator(operatorImage)
-}
-
-// GetImagePullPolicy returns the image pull policy with default fallback
-func (s *StorageBasedRemediationConfigSpec) GetImagePullPolicy() string {
-	if s.ImagePullPolicy != "" {
-		return s.ImagePullPolicy
-	}
-	return "IfNotPresent"
-}
-
-// GetStaleNodeTimeout returns the stale node timeout with default fallback
-func (s *StorageBasedRemediationConfigSpec) GetStaleNodeTimeout() time.Duration {
-	if s.StaleNodeTimeout != nil {
-		return s.StaleNodeTimeout.Duration
-	}
-	return DefaultStaleNodeTimeout
-}
-
-// GetLogLevel returns the log level with default fallback
-func (s *StorageBasedRemediationConfigSpec) GetLogLevel() string {
-	if s.LogLevel != "" {
-		return s.LogLevel
-	}
-	return "warn"
-}
-
-// GetIOTimeout returns the SBR I/O timeout with default fallback
-func (s *StorageBasedRemediationConfigSpec) GetIOTimeout() time.Duration {
-	if s.IOTimeout != nil {
-		return s.IOTimeout.Duration
-	}
-	return DefaultIOTimeout
-}
-
-// GetRebootMethod returns the reboot method with default fallback
-func (s *StorageBasedRemediationConfigSpec) GetRebootMethod() string {
-	if s.RebootMethod != "" {
-		return s.RebootMethod
-	}
-	return DefaultRebootMethod
-}
-
-// GetSBRTimeoutSeconds returns the SBR timeout in seconds with default fallback
-func (s *StorageBasedRemediationConfigSpec) GetSBRTimeoutSeconds() int32 {
-	if s.SBRTimeoutSeconds != nil {
-		return *s.SBRTimeoutSeconds
-	}
-	return DefaultSBRTimeoutSeconds
-}
-
 // GetMaxConsecutiveFailures returns max consecutive failures when unset uses DefaultMaxConsecutiveFailures.
 func (s *StorageBasedRemediationConfigSpec) GetMaxConsecutiveFailures() int32 {
 	if s.MaxConsecutiveFailures != nil {
 		return *s.MaxConsecutiveFailures
 	}
 	return int32(DefaultMaxConsecutiveFailures)
-}
-
-// GetSBRUpdateInterval returns the SBR update interval with default fallback
-func (s *StorageBasedRemediationConfigSpec) GetSBRUpdateInterval() time.Duration {
-	if s.SBRUpdateInterval != nil {
-		return s.SBRUpdateInterval.Duration
-	}
-	return DefaultSBRUpdateInterval
-}
-
-// GetPeerCheckInterval returns the peer check interval with default fallback
-func (s *StorageBasedRemediationConfigSpec) GetPeerCheckInterval() time.Duration {
-	if s.PeerCheckInterval != nil {
-		return s.PeerCheckInterval.Duration
-	}
-	return DefaultPeerCheckInterval
 }
 
 // GetSharedStoragePVCName returns the generated PVC name for shared storage
@@ -373,48 +186,6 @@ func (s *StorageBasedRemediationConfigSpec) GetNodeSelector() map[string]string 
 	}
 }
 
-// ValidateStaleNodeTimeout validates the stale node timeout value
-func (s *StorageBasedRemediationConfigSpec) ValidateStaleNodeTimeout() error {
-	timeout := s.GetStaleNodeTimeout()
-
-	if timeout < MinStaleNodeTimeout {
-		return fmt.Errorf("stale node timeout %v is less than minimum %v", timeout, MinStaleNodeTimeout)
-	}
-
-	if timeout > MaxStaleNodeTimeout {
-		return fmt.Errorf("stale node timeout %v is greater than maximum %v", timeout, MaxStaleNodeTimeout)
-	}
-
-	return nil
-}
-
-// ValidateIOTimeout validates the SBR I/O timeout value
-func (s *StorageBasedRemediationConfigSpec) ValidateIOTimeout() error {
-	timeout := s.GetIOTimeout()
-
-	if timeout < MinIOTimeout {
-		return fmt.Errorf("I/O timeout %v is less than minimum %v", timeout, MinIOTimeout)
-	}
-
-	if timeout > MaxIOTimeout {
-		return fmt.Errorf("I/O timeout %v is greater than maximum %v", timeout, MaxIOTimeout)
-	}
-
-	return nil
-}
-
-// ValidateImagePullPolicy validates the image pull policy value
-func (s *StorageBasedRemediationConfigSpec) ValidateImagePullPolicy() error {
-	policy := s.GetImagePullPolicy()
-
-	switch policy {
-	case "Always", "Never", "IfNotPresent":
-		return nil
-	default:
-		return fmt.Errorf("invalid image pull policy %q. Valid values are: Always, Never, IfNotPresent", policy)
-	}
-}
-
 // ValidateSharedStorageClass validates the shared storage class configuration
 func (s *StorageBasedRemediationConfigSpec) ValidateSharedStorageClass() error {
 	storageClassName := s.SharedStorageClass
@@ -448,102 +219,17 @@ func (s *StorageBasedRemediationConfigSpec) ValidateSharedStorageClass() error {
 	return nil
 }
 
-// ValidateRebootMethod validates the reboot method value
-func (s *StorageBasedRemediationConfigSpec) ValidateRebootMethod() error {
-	method := s.GetRebootMethod()
-
-	switch method {
-	case "panic", "systemctl-reboot", "none":
-		return nil
-	default:
-		return fmt.Errorf("invalid reboot method %q. Valid values are: panic, systemctl-reboot, none", method)
-	}
-}
-
-// ValidateSBRTimeoutSeconds validates the SBR timeout value
-func (s *StorageBasedRemediationConfigSpec) ValidateSBRTimeoutSeconds() error {
-	timeout := s.GetSBRTimeoutSeconds()
-
-	if timeout < MinSBRTimeoutSeconds {
-		return fmt.Errorf("SBR timeout %d seconds is less than minimum %d seconds", timeout, MinSBRTimeoutSeconds)
-	}
-
-	if timeout > MaxSBRTimeoutSeconds {
-		return fmt.Errorf("SBR timeout %d seconds is greater than maximum %d seconds", timeout, MaxSBRTimeoutSeconds)
-	}
-
-	return nil
-}
-
-// ValidateSBRUpdateInterval validates the SBR update interval value
-func (s *StorageBasedRemediationConfigSpec) ValidateSBRUpdateInterval() error {
-	interval := s.GetSBRUpdateInterval()
-
-	if interval < MinSBRUpdateInterval {
-		return fmt.Errorf("SBR update interval %v is less than minimum %v", interval, MinSBRUpdateInterval)
-	}
-
-	if interval > MaxSBRUpdateInterval {
-		return fmt.Errorf("SBR update interval %v is greater than maximum %v", interval, MaxSBRUpdateInterval)
-	}
-
-	return nil
-}
-
-// ValidatePeerCheckInterval validates the peer check interval value
-func (s *StorageBasedRemediationConfigSpec) ValidatePeerCheckInterval() error {
-	interval := s.GetPeerCheckInterval()
-
-	if interval < MinPeerCheckInterval {
-		return fmt.Errorf("peer check interval %v is less than minimum %v", interval, MinPeerCheckInterval)
-	}
-
-	if interval > MaxPeerCheckInterval {
-		return fmt.Errorf("peer check interval %v is greater than maximum %v", interval, MaxPeerCheckInterval)
-	}
-
-	return nil
-}
-
 // ValidateAll validates all configuration values
 func (s *StorageBasedRemediationConfigSpec) ValidateAll() error {
-	if err := s.ValidateStaleNodeTimeout(); err != nil {
-		return fmt.Errorf("stale node timeout validation failed: %w", err)
-	}
-
-	if err := s.ValidateIOTimeout(); err != nil {
-		return fmt.Errorf("I/O timeout validation failed: %w", err)
-	}
-
-	if err := s.ValidateImagePullPolicy(); err != nil {
-		return fmt.Errorf("image pull policy validation failed: %w", err)
-	}
-
 	if err := s.ValidateSharedStorageClass(); err != nil {
 		return fmt.Errorf("shared storage PVC validation failed: %w", err)
 	}
 
-	if err := s.ValidateRebootMethod(); err != nil {
-		return fmt.Errorf("reboot method validation failed: %w", err)
-	}
-
-	if err := s.ValidateSBRTimeoutSeconds(); err != nil {
-		return fmt.Errorf("SBR timeout seconds validation failed: %w", err)
-	}
-
-	if err := s.ValidateSBRUpdateInterval(); err != nil {
-		return fmt.Errorf("SBR update interval validation failed: %w", err)
-	}
-
-	if err := s.ValidatePeerCheckInterval(); err != nil {
-		return fmt.Errorf("peer check interval validation failed: %w", err)
-	}
-
 	return nil
 }
 
-// deriveAgentImageFromOperator derives the sbr-agent image from the operator image
-func deriveAgentImageFromOperator(operatorImage string) (string, error) {
+// DeriveAgentImageFromOperator derives the sbr-agent image from the operator image
+func DeriveAgentImageFromOperator(operatorImage string) (string, error) {
 	// Handle empty operator image
 	if operatorImage == "" {
 		return "", fmt.Errorf("invalid empty operator image")
@@ -608,12 +294,6 @@ type StorageBasedRemediationConfigStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
-
-	// ReadyNodes is the number of nodes where the SBR agent is ready
-	ReadyNodes int32 `json:"readyNodes,omitempty"`
-
-	// TotalNodes is the total number of nodes where the SBR agent should be deployed
-	TotalNodes int32 `json:"totalNodes,omitempty"`
 }
 
 // +kubebuilder:object:root=true
