@@ -4,7 +4,7 @@
 # The SBR operator provides watchdog-based fencing for Kubernetes clusters
 # to ensure high availability through automatic node remediation.
 #
-# For comprehensive documentation, see: docs/storagebasedremediationconfig-user-guide.md
+# For comprehensive documentation, see: docs/sbr-config-user-guide.md
 
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
 kind: StorageBasedRemediationConfig

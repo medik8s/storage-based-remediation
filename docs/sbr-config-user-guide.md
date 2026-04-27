@@ -621,5 +621,5 @@ For complete API documentation, see:
 
 - [SBR Coordination Strategies](sbr-coordination-strategies.md)
 - [SBR Agent Prometheus Metrics](sbr-agent-prometheus-metrics.md)
-- [Design Documentation](design.md)
+- [Design Documentation](archive/design.md)
 - [OpenShift Configuration](../config/openshift/README.md) 
