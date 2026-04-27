@@ -92,6 +92,11 @@ const (
 
 	// I/O timeout is hardcoded to 2 seconds (valid range was 100ms-5min)
 	ioTimeout = 2 * time.Second
+	// SBR timeout is hardcoded to 30s (valid range was 10-300s)
+	sbrTimeoutSeconds = 30
+	// Update and peer check intervals are derived from SBR timeout: 30s / 6 = 5s
+	sbrUpdateInterval = 5 * time.Second
+	peerCheckInterval = 5 * time.Second
 )
 
 // StorageBasedRemediationConfigReconciler reconciles a StorageBasedRemediationConfig object
@@ -1560,12 +1565,8 @@ func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *m
 	// Note: watchdog timeout is now discovered at runtime via ioctl, not passed via CLI
 
 	rebootMethod := sbrConfig.Spec.GetRebootMethod()
-	sbrTimeoutSeconds := sbrConfig.Spec.GetSBRTimeoutSeconds()
-	sbrUpdateInterval := sbrConfig.Spec.GetSBRUpdateInterval()
-	peerCheckInterval := sbrConfig.Spec.GetPeerCheckInterval()
 
 	// Base arguments using shared flag constants
-	// Stale node timeout is hardcoded to 1h (valid range was 1min-24h)
 	const staleNodeTimeout = 1 * time.Hour
 	args := []string{
 		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, sbrConfig.Spec.GetWatchdogPath()),

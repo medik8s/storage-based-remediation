@@ -25,11 +25,8 @@ spec:
   nodeSelector:
     node-role.kubernetes.io/worker: ""
 
-  # Timing configuration
+  # Reboot configuration
   rebootMethod: "systemctl-reboot"
-  sbrTimeoutSeconds: 45
-  sbrUpdateInterval: "3s"
-  peerCheckInterval: "4s"
   
   # ========================================================================
   # MULTIPLE STORAGEBASEDREMEDIATIONCONFIG SUPPORT (NEW in v1.1+)

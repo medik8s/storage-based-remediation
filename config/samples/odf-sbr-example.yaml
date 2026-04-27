@@ -15,7 +15,6 @@ metadata:
 spec:
   # Watchdog configuration
   watchdogPath: "/dev/watchdog"
-  watchdogTimeout: "60s"
 
   # Node management settings
   
@@ -52,13 +51,9 @@ metadata:
   annotations:
     description: "SBR configuration with strict cache coherency for mission-critical environments"
 spec:
-  # Watchdog configuration with shorter timeout for faster response
+  # Watchdog configuration
   watchdogPath: "/dev/watchdog"
-  watchdogTimeout: "30s"
-  petIntervalMultiple: 3
-  
-  # Faster stale node detection
-  
+
   # StorageClass created with --aggressive-coherency flag
   # This should be created by: ./setup-odf-storage --aggressive-coherency --storage-class-name=sbr-cephfs-strict
   sharedStorageClass: "sbr-cephfs-strict"
@@ -81,9 +76,7 @@ metadata:
     tenant: "tenant-a"
     storage.medik8s.io/type: cephfs
 spec:
-  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
   watchdogPath: "/dev/watchdog"
-  watchdogTimeout: "60s"
   sharedStorageClass: "sbr-cephfs"
   
   # Target specific nodes for tenant A
@@ -107,13 +100,8 @@ metadata:
   annotations:
     description: "Development SBR configuration for testing and validation"
 spec:
-  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  
-  # Shorter timeouts for faster testing cycles
+  # Watchdog configuration
   watchdogPath: "/dev/watchdog"
-  watchdogTimeout: "30s"
-  petIntervalMultiple: 2
-  
   sharedStorageClass: "sbr-cephfs"
   
   # Target development nodes only

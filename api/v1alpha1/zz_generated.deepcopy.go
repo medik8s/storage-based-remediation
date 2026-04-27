@@ -121,21 +121,6 @@ func (in *StorageBasedRemediationConfigSpec) DeepCopyInto(out *StorageBasedRemed
 			(*out)[key] = val
 		}
 	}
-	if in.SBRTimeoutSeconds != nil {
-		in, out := &in.SBRTimeoutSeconds, &out.SBRTimeoutSeconds
-		*out = new(int32)
-		**out = **in
-	}
-	if in.SBRUpdateInterval != nil {
-		in, out := &in.SBRUpdateInterval, &out.SBRUpdateInterval
-		*out = new(v1.Duration)
-		**out = **in
-	}
-	if in.PeerCheckInterval != nil {
-		in, out := &in.PeerCheckInterval, &out.PeerCheckInterval
-		*out = new(v1.Duration)
-		**out = **in
-	}
 	if in.DetectOnlyMode != nil {
 		in, out := &in.DetectOnlyMode, &out.DetectOnlyMode
 		*out = new(DetectOnlyModeType)
