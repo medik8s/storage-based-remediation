@@ -1034,8 +1034,7 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 	logger.V(1).Info("Starting StorageBasedRemediationConfig reconciliation",
 		"spec.image", agentImage,
 		"namespace", sbrConfig.Namespace,
-		"spec.sbrWatchdogPath", sbrConfig.Spec.GetWatchdogPath(),
-		"spec.staleNodeTimeout", sbrConfig.Spec.GetStaleNodeTimeout())
+		"spec.sbrWatchdogPath", sbrConfig.Spec.GetWatchdogPath())
 
 	// Validate the StorageBasedRemediationConfig spec
 	if err := sbrConfig.Spec.ValidateAll(); err != nil {
@@ -1566,11 +1565,13 @@ func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *m
 	peerCheckInterval := sbrConfig.Spec.GetPeerCheckInterval()
 
 	// Base arguments using shared flag constants
+	// Stale node timeout is hardcoded to 1h (valid range was 1min-24h)
+	const staleNodeTimeout = 1 * time.Hour
 	args := []string{
 		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, sbrConfig.Spec.GetWatchdogPath()),
 		fmt.Sprintf("--%s=%s", agent.FlagLogLevel, sbrConfig.Spec.GetLogLevel()),
 		fmt.Sprintf("--%s=%s", agent.FlagClusterName, sbrConfig.Name),
-		fmt.Sprintf("--%s=%s", agent.FlagStaleNodeTimeout, sbrConfig.Spec.GetStaleNodeTimeout().String()),
+		fmt.Sprintf("--%s=%s", agent.FlagStaleNodeTimeout, staleNodeTimeout.String()),
 		fmt.Sprintf("--io-timeout=%s", ioTimeout.String()),
 		fmt.Sprintf("--%s=%s", agent.FlagRebootMethod, rebootMethod),
 		fmt.Sprintf("--%s=%d", agent.FlagSBRTimeoutSeconds, sbrTimeoutSeconds),

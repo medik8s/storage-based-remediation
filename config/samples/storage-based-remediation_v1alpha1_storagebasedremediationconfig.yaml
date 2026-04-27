@@ -26,7 +26,6 @@ spec:
     node-role.kubernetes.io/worker: ""
 
   # Timing configuration
-  staleNodeTimeout: "2h"
   rebootMethod: "systemctl-reboot"
   sbrTimeoutSeconds: 45
   sbrUpdateInterval: "3s"
@@ -63,13 +62,12 @@ spec:
   # Basic Production Configuration (image auto-derived from operator):
   # -------------------------------------------------------------------
   # spec:
-  #   staleNodeTimeout: "30m"
+  #   watchdogPath: "/dev/watchdog"
   #
-  # Production with Custom Image:
-  # -----------------------------
+  # Production Configuration:
+  # -------------------------
   # spec:
-  #   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  #   staleNodeTimeout: "30m"
+  #   watchdogPath: "/dev/watchdog"
   #
   # Multiple Configurations in Same Namespace:
   # ------------------------------------------
@@ -78,16 +76,12 @@ spec:
   #   name: production-sbr
   #   namespace: my-app
   # spec:
-  #   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  #   imagePullPolicy: "IfNotPresent"
   # ---
-  # # Canary config  
+  # # Canary config
   # metadata:
   #   name: canary-sbr
   #   namespace: my-app
   # spec:
-  #   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  #   imagePullPolicy: "Always"
   #   nodeSelector:
   #     canary: "true"
   #
@@ -95,13 +89,11 @@ spec:
   # --------------------------------
   # spec:
   #   watchdogPath: "/dev/watchdog1"
-  #   staleNodeTimeout: "2h"
   #
   # Development/Testing Configuration:
   # ----------------------------------
   # spec:
-  #   imagePullPolicy: "Always"
-  #   staleNodeTimeout: "5m"
+  #   watchdogPath: "/dev/watchdog"
   #
   # Note: Each StorageBasedRemediationConfig creates its own DaemonSet in the specified namespace.
   # Multiple StorageBasedRemediationConfigs in the same namespace share the service account but

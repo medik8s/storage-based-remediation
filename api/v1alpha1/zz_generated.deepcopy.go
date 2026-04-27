@@ -121,11 +121,6 @@ func (in *StorageBasedRemediationConfigSpec) DeepCopyInto(out *StorageBasedRemed
 			(*out)[key] = val
 		}
 	}
-	if in.StaleNodeTimeout != nil {
-		in, out := &in.StaleNodeTimeout, &out.StaleNodeTimeout
-		*out = new(v1.Duration)
-		**out = **in
-	}
 	if in.SBRTimeoutSeconds != nil {
 		in, out := &in.SBRTimeoutSeconds, &out.SBRTimeoutSeconds
 		*out = new(int32)

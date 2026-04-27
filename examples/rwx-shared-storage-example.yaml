@@ -34,7 +34,6 @@ spec:
   petIntervalMultiple: 4
   
   # Node management
-  staleNodeTimeout: "1h"
   
   # ✅ SHARED STORAGE CONFIGURATION ✅
   # This field enables automatic shared storage integration

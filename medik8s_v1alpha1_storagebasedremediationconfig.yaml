@@ -107,7 +107,6 @@ spec:
   # - Development/Testing: "5m" - "15m"
   # - Production (stable): "30m" - "2h"  
   # - Production (critical): "2h" - "6h"
-  staleNodeTimeout: "1h"
   
   # ========================================================================
   # SHARED STORAGE CONFIGURATION (OPTIONAL)
@@ -159,12 +158,12 @@ spec:
 # Basic Production Configuration (image auto-derived from operator):
 # -------------------------------------------------------------------
 # spec:
-#   staleNodeTimeout: "30m"
+#   watchdogPath: "/dev/watchdog"
 #
-# Production with Custom Image:
-# -----------------------------
+# Production Configuration:
+# -------------------------
 # spec:
-#   staleNodeTimeout: "30m"
+#   watchdogPath: "/dev/watchdog"
 #
 # Multiple Configurations in Same Namespace:
 # ------------------------------------------
@@ -186,12 +185,11 @@ spec:
 # --------------------------------
 # spec:
 #   watchdogPath: "/dev/watchdog1"
-#   staleNodeTimeout: "2h"
 #
 # Development/Testing Configuration:
 # ----------------------------------
 # spec:
-#   staleNodeTimeout: "5m"
+#   watchdogPath: "/dev/watchdog"
 #
 # Note: Each StorageBasedRemediationConfig creates its own DaemonSet in the specified namespace.
 # Multiple StorageBasedRemediationConfigs in the same namespace share the service account but

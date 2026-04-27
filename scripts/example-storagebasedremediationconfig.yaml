@@ -4,8 +4,5 @@ metadata:
   name: test-storagebasedremediationconfig
 spec:
   namespace: sbr-system
-  petIntervalMultiple: 4
   sbrWatchdogPath: /dev/watchdog
-  staleNodeTimeout: 1h
-  watchdogTimeout: 60s
 

@@ -291,7 +291,6 @@ func testBasicStorageBasedRemediationConfiguration() {
 	sbrConfig, err := testNamespace.CreateStorageBasedRemediationConfig(name, func(config *medik8sv1alpha1.StorageBasedRemediationConfig) {
 		config.Spec.WatchdogPath = "/dev/watchdog"
 		config.Spec.SharedStorageClass = testStorageClassName
-		config.Spec.StaleNodeTimeout = &metav1.Duration{Duration: 2 * time.Hour}
 	})
 	Expect(err).NotTo(HaveOccurred(), "StorageBasedRemediationConfig creation failed")
 
@@ -371,7 +370,6 @@ func testIncompatibleStorageClass() {
 	sbrConfig, err := testNamespace.CreateStorageBasedRemediationConfig("test-bad-storage-class", func(config *medik8sv1alpha1.StorageBasedRemediationConfig) {
 		config.Spec.WatchdogPath = "/dev/watchdog"
 		config.Spec.SharedStorageClass = gp3StorageClass.Name
-		config.Spec.StaleNodeTimeout = &metav1.Duration{Duration: 2 * time.Hour}
 	})
 
 	By("Expecting StorageBasedRemediationConfig creation to succeed initially")

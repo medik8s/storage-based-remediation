@@ -55,9 +55,6 @@ metadata:
   name: production-sbr
   namespace: my-app
 spec:
-  image: "quay.io/medik8s/storage-based-remediation-agent:v1.2.3"
-  imagePullPolicy: "IfNotPresent"
-  staleNodeTimeout: "1h"
 ---
 # Canary configuration for testing
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
@@ -66,9 +63,6 @@ metadata:
   name: canary-sbr
   namespace: my-app
 spec:
-  image: "quay.io/medik8s/storage-based-remediation-agent:v1.3.0-beta"
-  imagePullPolicy: "Always"
-  staleNodeTimeout: "30m"
   nodeSelector:
     canary: "true"
 ```
@@ -112,13 +106,6 @@ kubectl apply -f https://github.com/medik8s/storage-based-remediation/releases/l
 - **Default**: `sbr-operator-system`
 - **Description**: Namespace where the SBR agent DaemonSet will be deployed
 - **Notes**: Namespace will be created if it doesn't exist
-
-#### `staleNodeTimeout` (duration, optional)
-- **Default**: `1h`
-- **Range**: `1m` to `24h`
-- **Description**: Time before inactive nodes are cleaned up from slot mapping
-- **Purpose**: Determines when node slots in shared storage are freed for reuse
-- **Format**: Go duration format (e.g., `30m`, `2h`, `90s`)
 
 #### `sharedStorageClass` (string, optional)
 - **Default**: None (shared storage disabled)
@@ -178,8 +165,6 @@ spec:
   # Custom watchdog device
   watchdogPath: "/dev/watchdog1"
   
-  # Faster cleanup for dynamic environments
-  staleNodeTimeout: "30m"
 ```
 
 ### Development/Testing Configuration
@@ -194,9 +179,6 @@ metadata:
 spec:
   # Use latest for development
   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  
-  # Faster cleanup for rapid testing
-  staleNodeTimeout: "5m"
   
   # Default watchdog path (will use softdog if no hardware watchdog)
   watchdogPath: "/dev/watchdog"
@@ -214,7 +196,6 @@ metadata:
 spec:
   image: "quay.io/medik8s/storage-based-remediation-agent:v1.0.0"
   namespace: "sbr-cluster-west"
-  staleNodeTimeout: "45m"
 ---
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
 kind: StorageBasedRemediationConfig
@@ -223,7 +204,6 @@ metadata:
 spec:
   image: "quay.io/medik8s/storage-based-remediation-agent:v1.0.0"
   namespace: "sbr-cluster-east"
-  staleNodeTimeout: "45m"
 ```
 
 ## Deployment and Management
@@ -355,9 +335,6 @@ metadata:
 spec:
   # Use custom StorageClass with specific parameters
   sharedStorageClass: "custom-nfs-sc"
-  
-  # Faster cleanup for dynamic environments
-  staleNodeTimeout: "15m"
 ```
 
 ## Monitoring and Observability
@@ -472,27 +449,11 @@ kubectl logs -n sbr-operator-system -l app=sbr-agent | grep -i "coordination str
 
 **Symptoms**: Logs showing "all preferred slots are occupied"
 
-**Diagnosis**:
-```bash
-# Check number of active nodes
-kubectl get nodes
-
-# Review stale node timeout
-kubectl get storagebasedremediationconfig -o yaml | grep staleNodeTimeout
-```
-
 **Solutions**:
-- **Reduce timeout**: Lower `staleNodeTimeout` for faster cleanup
 - **Manual cleanup**: Remove stale node entries if needed
 - **Scale considerations**: STONITH Block Devices (SBD) support up to 255 nodes per cluster
 
 ### Performance Tuning
-
-#### Stale Node Timeout
-
-- **Fast environments**: `5m` - `15m` for rapid node turnover
-- **Stable environments**: `30m` - `2h` for long-running workloads
-- **Conservative**: `2h` - `24h` for critical production systems
 
 #### Resource Limits
 

@@ -18,7 +18,6 @@ spec:
   watchdogTimeout: "60s"
 
   # Node management settings
-  staleNodeTimeout: "1h"
   
   # ✅ OPENSHIFT DATA FOUNDATION CEPHFS STORAGE CONFIGURATION ✅
   # This StorageClass should be created by the setup-odf-storage tool
@@ -59,7 +58,6 @@ spec:
   petIntervalMultiple: 3
   
   # Faster stale node detection
-  staleNodeTimeout: "30m"
   
   # StorageClass created with --aggressive-coherency flag
   # This should be created by: ./setup-odf-storage --aggressive-coherency --storage-class-name=sbr-cephfs-strict
@@ -115,7 +113,6 @@ spec:
   watchdogPath: "/dev/watchdog"
   watchdogTimeout: "30s"
   petIntervalMultiple: 2
-  staleNodeTimeout: "10m"
   
   sharedStorageClass: "sbr-cephfs"
   

@@ -36,12 +36,6 @@ var typesLog = logf.Log.WithName("sbrconfig-types")
 
 // Constants for StorageBasedRemediationConfig validation and defaults
 const (
-	// DefaultStaleNodeTimeout is the default timeout for considering nodes stale
-	DefaultStaleNodeTimeout = 1 * time.Hour
-	// MinStaleNodeTimeout is the minimum allowed stale node timeout
-	MinStaleNodeTimeout = 1 * time.Minute
-	// MaxStaleNodeTimeout is the maximum allowed stale node timeout
-	MaxStaleNodeTimeout = 24 * time.Hour
 	// DefaultWatchdogPath is the default path to the watchdog device
 	DefaultWatchdogPath = "/dev/watchdog"
 	// DefaultRebootMethod is the default reboot method for self-fencing
@@ -115,16 +109,6 @@ type StorageBasedRemediationConfigSpec struct {
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
-	// StaleNodeTimeout defines how long to wait before considering a node stale and removing it from slot mapping
-	// This timeout determines when inactive nodes are cleaned up from the shared SBR device slot assignments.
-	// Nodes that haven't updated their heartbeat within this duration will be considered stale and their slots
-	// will be freed for reuse by new nodes. The value must be at least 1 minute.
-	// +kubebuilder:validation:Type=string
-	// +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(s|m|h))+$"
-	// +kubebuilder:default="1h"
-	// +optional
-	StaleNodeTimeout *metav1.Duration `json:"staleNodeTimeout,omitempty"`
-
 	// LogLevel defines the logging level for the SBR agent pods.
 	// Valid values are debug, info, warn, and error.
 	// Debug provides the most verbose logging, while error only logs error messages.
@@ -196,14 +180,6 @@ func (s *StorageBasedRemediationConfigSpec) GetWatchdogPath() string {
 		return s.WatchdogPath
 	}
 	return DefaultWatchdogPath
-}
-
-// GetStaleNodeTimeout returns the stale node timeout with default fallback
-func (s *StorageBasedRemediationConfigSpec) GetStaleNodeTimeout() time.Duration {
-	if s.StaleNodeTimeout != nil {
-		return s.StaleNodeTimeout.Duration
-	}
-	return DefaultStaleNodeTimeout
 }
 
 // GetLogLevel returns the log level with default fallback
@@ -298,21 +274,6 @@ func (s *StorageBasedRemediationConfigSpec) GetNodeSelector() map[string]string 
 	}
 }
 
-// ValidateStaleNodeTimeout validates the stale node timeout value
-func (s *StorageBasedRemediationConfigSpec) ValidateStaleNodeTimeout() error {
-	timeout := s.GetStaleNodeTimeout()
-
-	if timeout < MinStaleNodeTimeout {
-		return fmt.Errorf("stale node timeout %v is less than minimum %v", timeout, MinStaleNodeTimeout)
-	}
-
-	if timeout > MaxStaleNodeTimeout {
-		return fmt.Errorf("stale node timeout %v is greater than maximum %v", timeout, MaxStaleNodeTimeout)
-	}
-
-	return nil
-}
-
 // ValidateSharedStorageClass validates the shared storage class configuration
 func (s *StorageBasedRemediationConfigSpec) ValidateSharedStorageClass() error {
 	storageClassName := s.SharedStorageClass
@@ -405,10 +366,6 @@ func (s *StorageBasedRemediationConfigSpec) ValidatePeerCheckInterval() error {
 
 // ValidateAll validates all configuration values
 func (s *StorageBasedRemediationConfigSpec) ValidateAll() error {
-	if err := s.ValidateStaleNodeTimeout(); err != nil {
-		return fmt.Errorf("stale node timeout validation failed: %w", err)
-	}
-
 	if err := s.ValidateSharedStorageClass(); err != nil {
 		return fmt.Errorf("shared storage PVC validation failed: %w", err)
 	}

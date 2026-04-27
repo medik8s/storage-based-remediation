@@ -188,86 +188,6 @@ func createIntervalValidationTests(
 	}
 }
 
-func TestStorageBasedRemediationConfigSpec_GetStaleNodeTimeout(t *testing.T) {
-	tests := []struct {
-		name     string
-		spec     StorageBasedRemediationConfigSpec
-		expected time.Duration
-	}{
-		{
-			name: "nil timeout returns default",
-			spec: StorageBasedRemediationConfigSpec{
-				StaleNodeTimeout: nil,
-			},
-			expected: DefaultStaleNodeTimeout,
-		},
-		{
-			name: "explicit timeout is returned",
-			spec: StorageBasedRemediationConfigSpec{
-				StaleNodeTimeout: &metav1.Duration{Duration: 5 * time.Minute},
-			},
-			expected: 5 * time.Minute,
-		},
-		{
-			name: "zero timeout returns zero",
-			spec: StorageBasedRemediationConfigSpec{
-				StaleNodeTimeout: &metav1.Duration{Duration: 0},
-			},
-			expected: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.spec.GetStaleNodeTimeout()
-			if result != tt.expected {
-				t.Errorf("Expected %v, got %v", tt.expected, result)
-			}
-		})
-	}
-}
-
-func TestStorageBasedRemediationConfigSpec_ValidateStaleNodeTimeout(t *testing.T) {
-	tests := createTimeoutValidationTests(
-		func(spec *StorageBasedRemediationConfigSpec, d *metav1.Duration) { spec.StaleNodeTimeout = d },
-		5*time.Minute,
-		30*time.Second,
-		25*time.Hour,
-		MinStaleNodeTimeout,
-		MaxStaleNodeTimeout,
-	)
-
-	runValidationTests(t, "ValidateStaleNodeTimeout()", tests, func(spec StorageBasedRemediationConfigSpec) error {
-		return spec.ValidateStaleNodeTimeout()
-	})
-}
-
-func TestConstants(t *testing.T) {
-	// Verify that constants have expected values
-	if DefaultStaleNodeTimeout != 1*time.Hour {
-		t.Errorf("DefaultStaleNodeTimeout = %v, expected 1h", DefaultStaleNodeTimeout)
-	}
-
-	if MinStaleNodeTimeout != 1*time.Minute {
-		t.Errorf("MinStaleNodeTimeout = %v, expected 1m", MinStaleNodeTimeout)
-	}
-
-	if MaxStaleNodeTimeout != 24*time.Hour {
-		t.Errorf("MaxStaleNodeTimeout = %v, expected 24h", MaxStaleNodeTimeout)
-	}
-
-	// Verify logical relationships
-	if MinStaleNodeTimeout >= DefaultStaleNodeTimeout {
-		t.Errorf("MinStaleNodeTimeout (%v) should be less than DefaultStaleNodeTimeout (%v)",
-			MinStaleNodeTimeout, DefaultStaleNodeTimeout)
-	}
-
-	if DefaultStaleNodeTimeout >= MaxStaleNodeTimeout {
-		t.Errorf("DefaultStaleNodeTimeout (%v) should be less than MaxStaleNodeTimeout (%v)",
-			DefaultStaleNodeTimeout, MaxStaleNodeTimeout)
-	}
-}
-
 func TestStorageBasedRemediationConfigSpec_GetWatchdogPath(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -621,18 +541,9 @@ func TestStorageBasedRemediationConfigSpec_ValidateAll(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name: "all valid custom values",
-			spec: StorageBasedRemediationConfigSpec{
-				StaleNodeTimeout: &metav1.Duration{Duration: 2 * time.Hour},
-			},
+			name:      "all valid custom values",
+			spec:      StorageBasedRemediationConfigSpec{},
 			wantError: false,
-		},
-		{
-			name: "invalid stale node timeout",
-			spec: StorageBasedRemediationConfigSpec{
-				StaleNodeTimeout: &metav1.Duration{Duration: 30 * time.Second}, // Too small
-			},
-			wantError: true,
 		},
 	}
 

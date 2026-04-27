@@ -121,15 +121,6 @@ spec:
                   in the agent DaemonSet for cross-node coordination, slot assignment, and shared configuration data.
                   The StorageClass must support ReadWriteMany (RWX) access mode.
                 type: string
-              staleNodeTimeout:
-                default: 1h
-                description: |-
-                  StaleNodeTimeout defines how long to wait before considering a node stale and removing it from slot mapping
-                  This timeout determines when inactive nodes are cleaned up from the shared SBR device slot assignments.
-                  Nodes that haven't updated their heartbeat within this duration will be considered stale and their slots
-                  will be freed for reuse by new nodes. The value must be at least 1 minute.
-                pattern: ^([0-9]+(\.[0-9]+)?(s|m|h))+$
-                type: string
               watchdogPath:
                 default: /dev/watchdog
                 description: |-

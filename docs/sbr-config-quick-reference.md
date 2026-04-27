@@ -94,7 +94,6 @@ spec:
   image: "quay.io/medik8s/storage-based-remediation-agent:v1.2.3"
   namespace: "high-availability"
   watchdogPath: "/dev/watchdog1"
-  staleNodeTimeout: "30m"
 ```
 
 ### Development
@@ -105,7 +104,6 @@ metadata:
   name: dev-sbr
 spec:
   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  staleNodeTimeout: "5m"
 ```
 
 ## Field Reference
@@ -115,7 +113,6 @@ spec:
 | `image` | `sbr-agent:latest` | Container image for SBR agent |
 | `namespace` | `sbr-operator-system` | Deployment namespace |
 | `watchdogPath` | `/dev/watchdog` | Watchdog device path |
-| `staleNodeTimeout` | `1h` | Node cleanup timeout |
 
 ## Status Fields
 
@@ -159,7 +156,6 @@ spec:
 
 ### Production
 - Use specific image versions (not `latest`)
-- Set appropriate `staleNodeTimeout` for environment
 - Monitor key metrics with alerts
 - Test fencing scenarios regularly
 
@@ -170,7 +166,6 @@ spec:
 - Regular security updates
 
 ### Performance
-- Choose optimal `staleNodeTimeout`
 - Monitor resource usage
 - Use appropriate storage for coordination
 - Test under load conditions 
