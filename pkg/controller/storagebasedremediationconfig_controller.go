@@ -1694,10 +1694,6 @@ func (r *StorageBasedRemediationConfigReconciler) updateStatus(
 		return err
 	}
 
-	// Update numeric status fields
-	sbrConfig.Status.TotalNodes = latestDaemonSet.Status.DesiredNumberScheduled
-	sbrConfig.Status.ReadyNodes = latestDaemonSet.Status.NumberReady
-
 	// Determine DaemonSet readiness status
 	daemonSetReady := latestDaemonSet.Status.NumberReady == latestDaemonSet.Status.DesiredNumberScheduled &&
 		latestDaemonSet.Status.DesiredNumberScheduled > 0

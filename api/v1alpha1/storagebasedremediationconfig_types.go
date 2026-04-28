@@ -272,12 +272,6 @@ type StorageBasedRemediationConfigStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
-
-	// ReadyNodes is the number of nodes where the SBR agent is ready
-	ReadyNodes int32 `json:"readyNodes,omitempty"`
-
-	// TotalNodes is the total number of nodes where the SBR agent should be deployed
-	TotalNodes int32 `json:"totalNodes,omitempty"`
 }
 
 // +kubebuilder:object:root=true
