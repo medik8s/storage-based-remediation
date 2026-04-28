@@ -25,9 +25,7 @@ spec:
   nodeSelector:
     node-role.kubernetes.io/worker: ""
 
-  # Reboot configuration
-  rebootMethod: "systemctl-reboot"
-  
+
   # ========================================================================
   # MULTIPLE STORAGEBASEDREMEDIATIONCONFIG SUPPORT (NEW in v1.1+)
   # ========================================================================

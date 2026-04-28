@@ -99,6 +99,8 @@ const (
 	peerCheckInterval = 5 * time.Second
 	// Log level is hardcoded to debug
 	logLevel = "debug"
+	// Reboot method is hardcoded to systemctl-reboot
+	rebootMethod = "systemctl-reboot"
 )
 
 // StorageBasedRemediationConfigReconciler reconciles a StorageBasedRemediationConfig object
@@ -1565,8 +1567,6 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 // buildSBRAgentArgs builds the command line arguments for the sbr-agent container
 func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig) []string {
 	// Note: watchdog timeout is now discovered at runtime via ioctl, not passed via CLI
-
-	rebootMethod := sbrConfig.Spec.GetRebootMethod()
 
 	// Base arguments using shared flag constants
 	const staleNodeTimeout = 1 * time.Hour

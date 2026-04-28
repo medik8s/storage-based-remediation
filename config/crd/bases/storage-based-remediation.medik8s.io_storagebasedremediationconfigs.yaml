@@ -59,20 +59,6 @@ spec:
                   If not specified, defaults to worker nodes only (node-role.kubernetes.io/worker: "").
                   The selector is merged with the default requirement for kubernetes.io/os=linux.
                 type: object
-              rebootMethod:
-                default: panic
-                description: |-
-                  RebootMethod defines the method to use for self-fencing when a node needs to be rebooted.
-                  Valid values are "panic" (immediate kernel panic), "systemctl-reboot" (graceful systemctl reboot),
-                  and "none" (disable self-fencing, rely only on watchdog hardware timeout).
-                  Panic provides the fastest failover but less graceful shutdown, while systemctl-reboot allows
-                  for graceful service shutdown but may be slower. The "none" option disables agent-initiated
-                  self-fencing and relies solely on hardware watchdog timeout for node fencing.
-                enum:
-                - panic
-                - systemctl-reboot
-                - none
-                type: string
               sharedStorageClass:
                 description: |-
                   SharedStorageClass is the name of a StorageClass to use for creating shared storage.

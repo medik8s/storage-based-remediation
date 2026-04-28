@@ -35,10 +35,8 @@ metadata:
             "nodeSelector": {
               "node-role.kubernetes.io/worker": ""
             },
-            "rebootMethod": "systemctl-reboot",
             "sharedStorageClass": "shared-storage-class",
-            "watchdogPath": "/dev/watchdog",
-            "watchdogTimeout": "60s"
+            "watchdogPath": "/dev/watchdog"
           }
         },
         {
@@ -57,7 +55,7 @@ metadata:
     capabilities: Basic Install
     categories: OpenShift Optional
     containerImage: quay.io/medik8s/storage-based-remediation-operator:latest
-    createdAt: "2026-04-28T07:58:34Z"
+    createdAt: "2026-04-28T12:27:42Z"
     description: Storage-Based Remediation Operator for remediating nodes using storage-based
       fencing (SBD/STONITH).
     olm.skipRange: '>=0.0.1'

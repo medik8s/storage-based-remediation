@@ -37,8 +37,6 @@ var typesLog = logf.Log.WithName("sbrconfig-types")
 const (
 	// DefaultWatchdogPath is the default path to the watchdog device
 	DefaultWatchdogPath = "/dev/watchdog"
-	// DefaultRebootMethod is the default reboot method for self-fencing
-	DefaultRebootMethod = "systemctl-reboot"
 	// RelatedImageSbrAgent when this env is set it contains the image of SBR agent
 	RelatedImageSbrAgent = "RELATED_IMAGE_SBR_AGENT"
 )
@@ -90,17 +88,6 @@ type StorageBasedRemediationConfigSpec struct {
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
-	// RebootMethod defines the method to use for self-fencing when a node needs to be rebooted.
-	// Valid values are "panic" (immediate kernel panic), "systemctl-reboot" (graceful systemctl reboot),
-	// and "none" (disable self-fencing, rely only on watchdog hardware timeout).
-	// Panic provides the fastest failover but less graceful shutdown, while systemctl-reboot allows
-	// for graceful service shutdown but may be slower. The "none" option disables agent-initiated
-	// self-fencing and relies solely on hardware watchdog timeout for node fencing.
-	// +kubebuilder:validation:Enum=panic;systemctl-reboot;none
-	// +kubebuilder:default="panic"
-	// +optional
-	RebootMethod string `json:"rebootMethod,omitempty"`
-
 	// DetectOnlyMode when set to Enabled disables all remediation: the agent disarms the watchdog (no reboot)
 	// and the controller does not write fence messages. SBR still sets node conditions (e.g. SBRStorageUnhealthy)
 	// so NHC or other remediators can observe unhealthy nodes without SBR triggering a reboot.
@@ -123,14 +110,6 @@ func (s *StorageBasedRemediationConfigSpec) GetWatchdogPath() string {
 		return s.WatchdogPath
 	}
 	return DefaultWatchdogPath
-}
-
-// GetRebootMethod returns the reboot method with default fallback
-func (s *StorageBasedRemediationConfigSpec) GetRebootMethod() string {
-	if s.RebootMethod != "" {
-		return s.RebootMethod
-	}
-	return DefaultRebootMethod
 }
 
 // GetSharedStoragePVCName returns the generated PVC name for shared storage
@@ -218,26 +197,10 @@ func (s *StorageBasedRemediationConfigSpec) ValidateSharedStorageClass() error {
 	return nil
 }
 
-// ValidateRebootMethod validates the reboot method value
-func (s *StorageBasedRemediationConfigSpec) ValidateRebootMethod() error {
-	method := s.GetRebootMethod()
-
-	switch method {
-	case "panic", "systemctl-reboot", "none":
-		return nil
-	default:
-		return fmt.Errorf("invalid reboot method %q. Valid values are: panic, systemctl-reboot, none", method)
-	}
-}
-
 // ValidateAll validates all configuration values
 func (s *StorageBasedRemediationConfigSpec) ValidateAll() error {
 	if err := s.ValidateSharedStorageClass(); err != nil {
 		return fmt.Errorf("shared storage PVC validation failed: %w", err)
-	}
-
-	if err := s.ValidateRebootMethod(); err != nil {
-		return fmt.Errorf("reboot method validation failed: %w", err)
 	}
 
 	return nil
