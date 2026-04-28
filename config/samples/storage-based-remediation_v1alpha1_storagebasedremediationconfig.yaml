@@ -16,10 +16,9 @@ metadata:
 spec:
   # Example configuration using shared storage for multi-node clusters
   sharedStorageClass: "shared-storage-class"
-  
+
   # Watchdog configuration
   watchdogPath: "/dev/watchdog"
-  watchdogTimeout: "60s"
 
   # Node selection - run on worker nodes only
   nodeSelector:
@@ -54,15 +53,15 @@ spec:
   # CONFIGURATION EXAMPLES
   # ========================================================================
   #
-  # Basic Production Configuration (image auto-derived from operator):
-  # -------------------------------------------------------------------
+  # Basic Production Configuration:
+  # --------------------------------
   # spec:
   #   watchdogPath: "/dev/watchdog"
   #
-  # Production Configuration:
-  # -------------------------
+  # Production Configuration with Custom Watchdog:
+  # -----------------------------------------------
   # spec:
-  #   watchdogPath: "/dev/watchdog"
+  #   watchdogPath: "/dev/watchdog1"
   #
   # Multiple Configurations in Same Namespace:
   # ------------------------------------------

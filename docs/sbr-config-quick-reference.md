@@ -80,8 +80,7 @@ apiVersion: storage-based-remediation.medik8s.io/v1alpha1
 kind: StorageBasedRemediationConfig
 metadata:
   name: basic-sbr
-spec:
-  image: "quay.io/medik8s/storage-based-remediation-agent:v1.0.0"
+spec: {}
 ```
 
 ### Production
@@ -91,8 +90,6 @@ kind: StorageBasedRemediationConfig
 metadata:
   name: production-sbr
 spec:
-  image: "quay.io/medik8s/storage-based-remediation-agent:v1.2.3"
-  namespace: "high-availability"
   watchdogPath: "/dev/watchdog1"
 ```
 
@@ -103,24 +100,21 @@ kind: StorageBasedRemediationConfig
 metadata:
   name: dev-sbr
 spec:
-  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
+  watchdogPath: "/dev/watchdog"
 ```
 
 ## Field Reference
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `image` | `sbr-agent:latest` | Container image for SBR agent |
-| `namespace` | `sbr-operator-system` | Deployment namespace |
 | `watchdogPath` | `/dev/watchdog` | Watchdog device path |
+| `sharedStorageClass` | None | StorageClass for shared storage coordination |
 
 ## Status Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `daemonSetReady` | boolean | DaemonSet ready status |
-| `readyNodes` | int32 | Number of ready nodes |
-| `totalNodes` | int32 | Total target nodes |
 
 ## Key Metrics
 

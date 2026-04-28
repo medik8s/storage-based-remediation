@@ -96,17 +96,6 @@ kubectl apply -f https://github.com/medik8s/storage-based-remediation/releases/l
   - Must exist on all nodes or softdog will be used as fallback
   - Common paths: `/dev/watchdog`, `/dev/watchdog0`, `/dev/watchdog1`
 
-#### `image` (string, optional)
-- **Default**: `sbr-agent:latest`
-- **Description**: Container image for the SBR agent DaemonSet
-- **Recommended**: Use specific version tags for production
-- **Example**: `quay.io/medik8s/storage-based-remediation-agent:v1.0.0`
-
-#### `namespace` (string, optional)
-- **Default**: `sbr-operator-system`
-- **Description**: Namespace where the SBR agent DaemonSet will be deployed
-- **Notes**: Namespace will be created if it doesn't exist
-
 #### `sharedStorageClass` (string, optional)
 - **Default**: None (shared storage disabled)
 - **Description**: StorageClass name for automatic shared storage provisioning
@@ -123,12 +112,6 @@ The controller automatically chooses a sensible mount path (`/sbr-shared`) for s
 #### `daemonSetReady` (boolean)
 - **Description**: Indicates if the SBR agent DaemonSet is ready and running
 
-#### `readyNodes` (int32)
-- **Description**: Number of nodes where the SBR agent is ready and operational
-
-#### `totalNodes` (int32)
-- **Description**: Total number of nodes where the SBR agent should be deployed
-
 ## Configuration Examples
 
 ### Basic Watchdog-Only Configuration
@@ -141,14 +124,12 @@ kind: StorageBasedRemediationConfig
 metadata:
   name: basic-sbr
 spec:
-  # Use defaults for most settings
-  image: "quay.io/medik8s/storage-based-remediation-agent:v1.0.0"
-  namespace: "sbr-operator-system"
+  # Minimal configuration - use defaults for watchdog path
 ```
 
 ### Production Configuration
 
-For production environments with specific requirements:
+For production environments with specific watchdog settings:
 
 ```yaml
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
@@ -156,15 +137,8 @@ kind: StorageBasedRemediationConfig
 metadata:
   name: production-sbr
 spec:
-  # Specific image version for reproducibility
-  image: "quay.io/medik8s/storage-based-remediation-agent:v1.2.3"
-  
-  # Custom namespace
-  namespace: "high-availability"
-  
   # Custom watchdog device
   watchdogPath: "/dev/watchdog1"
-  
 ```
 
 ### Development/Testing Configuration
@@ -177,9 +151,6 @@ kind: StorageBasedRemediationConfig
 metadata:
   name: dev-sbr
 spec:
-  # Use latest for development
-  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  
   # Default watchdog path (will use softdog if no hardware watchdog)
   watchdogPath: "/dev/watchdog"
 ```
@@ -194,16 +165,14 @@ kind: StorageBasedRemediationConfig
 metadata:
   name: cluster-west-sbr
 spec:
-  image: "quay.io/medik8s/storage-based-remediation-agent:v1.0.0"
-  namespace: "sbr-cluster-west"
+  watchdogPath: "/dev/watchdog"
 ---
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
 kind: StorageBasedRemediationConfig
 metadata:
   name: cluster-east-sbr
 spec:
-  image: "quay.io/medik8s/storage-based-remediation-agent:v1.0.0"
-  namespace: "sbr-cluster-east"
+  watchdogPath: "/dev/watchdog"
 ```
 
 ## Deployment and Management
@@ -297,10 +266,6 @@ kind: StorageBasedRemediationConfig
 metadata:
   name: shared-storage-example
 spec:
-  # Basic configuration
-  image: "quay.io/medik8s/storage-based-remediation-agent:v1.0.0"
-  watchdogTimeout: "60s"
-  
   # Shared storage configuration
   sharedStorageClass: "efs-sc"              # Required: StorageClass name
 ```

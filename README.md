@@ -25,11 +25,9 @@ The operator consists of two main components:
 
 ### StorageBasedRemediationConfig
 Defines the SBR configuration for the cluster:
-- Shared block device PVC name
-- Timeout settings
+- Shared block device storage class
 - Watchdog device path
-- Node exclusion lists
-- Reboot methods
+- Node selection criteria
 
 ### StorageBasedRemediation
 Triggers node remediation operations:
