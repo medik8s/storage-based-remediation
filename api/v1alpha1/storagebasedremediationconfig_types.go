@@ -90,14 +90,6 @@ type StorageBasedRemediationConfigSpec struct {
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
-	// LogLevel defines the logging level for the SBR agent pods.
-	// Valid values are debug, info, warn, and error.
-	// Debug provides the most verbose logging, while error only logs error messages.
-	// +kubebuilder:validation:Enum=debug;info;warn;error
-	// +kubebuilder:default="info"
-	// +optional
-	LogLevel string `json:"logLevel,omitempty"`
-
 	// RebootMethod defines the method to use for self-fencing when a node needs to be rebooted.
 	// Valid values are "panic" (immediate kernel panic), "systemctl-reboot" (graceful systemctl reboot),
 	// and "none" (disable self-fencing, rely only on watchdog hardware timeout).
@@ -131,14 +123,6 @@ func (s *StorageBasedRemediationConfigSpec) GetWatchdogPath() string {
 		return s.WatchdogPath
 	}
 	return DefaultWatchdogPath
-}
-
-// GetLogLevel returns the log level with default fallback
-func (s *StorageBasedRemediationConfigSpec) GetLogLevel() string {
-	if s.LogLevel != "" {
-		return s.LogLevel
-	}
-	return "warn"
 }
 
 // GetRebootMethod returns the reboot method with default fallback

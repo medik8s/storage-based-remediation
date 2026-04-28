@@ -197,7 +197,6 @@ func (tn *TestNamespace) CreateStorageBasedRemediationConfig(name string,
 		},
 		Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
 			WatchdogPath: "/dev/watchdog",
-			LogLevel:     "debug",
 			RebootMethod: "none", // Always use "none" for testing to prevent actual reboots
 		},
 	}

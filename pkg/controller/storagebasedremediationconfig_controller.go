@@ -97,6 +97,8 @@ const (
 	// Update and peer check intervals are derived from SBR timeout: 30s / 6 = 5s
 	sbrUpdateInterval = 5 * time.Second
 	peerCheckInterval = 5 * time.Second
+	// Log level is hardcoded to debug
+	logLevel = "debug"
 )
 
 // StorageBasedRemediationConfigReconciler reconciles a StorageBasedRemediationConfig object
@@ -1570,7 +1572,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *m
 	const staleNodeTimeout = 1 * time.Hour
 	args := []string{
 		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, sbrConfig.Spec.GetWatchdogPath()),
-		fmt.Sprintf("--%s=%s", agent.FlagLogLevel, sbrConfig.Spec.GetLogLevel()),
+		fmt.Sprintf("--%s=%s", agent.FlagLogLevel, logLevel),
 		fmt.Sprintf("--%s=%s", agent.FlagClusterName, sbrConfig.Name),
 		fmt.Sprintf("--%s=%s", agent.FlagStaleNodeTimeout, staleNodeTimeout.String()),
 		fmt.Sprintf("--io-timeout=%s", ioTimeout.String()),
