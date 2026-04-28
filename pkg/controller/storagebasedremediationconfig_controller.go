@@ -90,6 +90,7 @@ const (
 	// StorageBasedRemediationConfigRetryBackoffFactor is the exponential backoff factor for StorageBasedRemediationConfig operation retries
 	StorageBasedRemediationConfigRetryBackoffFactor = 2.0
 
+	staleNodeTimeout = 1 * time.Hour
 	// I/O timeout is hardcoded to 2 seconds (valid range was 100ms-5min)
 	ioTimeout = 2 * time.Second
 	// SBR timeout is hardcoded to 30s (valid range was 10-300s)
@@ -1566,10 +1567,6 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 
 // buildSBRAgentArgs builds the command line arguments for the sbr-agent container
 func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig) []string {
-	// Note: watchdog timeout is now discovered at runtime via ioctl, not passed via CLI
-
-	// Base arguments using shared flag constants
-	const staleNodeTimeout = 1 * time.Hour
 	args := []string{
 		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, sbrConfig.Spec.GetWatchdogPath()),
 		fmt.Sprintf("--%s=%s", agent.FlagLogLevel, logLevel),
