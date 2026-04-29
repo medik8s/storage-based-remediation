@@ -19,20 +19,31 @@ package utils
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
-	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck
-	. "github.com/onsi/gomega"    //nolint:staticcheck
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+var logger = log.New(os.Stderr, "", log.LstdFlags)
+
+// SetLogger sets the output writer for the internal logger.
+// This can be used to redirect logs to GinkgoWriter or other writers.
+func SetLogger(w io.Writer) {
+	logger.SetOutput(w)
+}
 
 const (
 	prometheusOperatorVersion = "v0.77.1"
@@ -44,7 +55,7 @@ const (
 )
 
 func warnError(err error) {
-	_, _ = fmt.Fprintf(GinkgoWriter, "warning: %v\n", err)
+	logger.Printf("warning: %v\n", err)
 }
 
 // Run executes the provided command within this context
@@ -53,12 +64,12 @@ func Run(cmd *exec.Cmd) (string, error) {
 	cmd.Dir = dir
 
 	if err := os.Chdir(cmd.Dir); err != nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "chdir dir: %q\n", err)
+		logger.Printf("chdir dir: %q\n", err)
 	}
 
 	cmd.Env = append(os.Environ(), "GO111MODULE=on")
 	command := strings.Join(cmd.Args, " ")
-	_, _ = fmt.Fprintf(GinkgoWriter, "running: %q\n", command)
+	logger.Printf("running: %q\n", command)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(output), fmt.Errorf("%q failed with error %q: %w", command, string(output), err)
@@ -114,7 +125,7 @@ func IsPrometheusCRDsInstalled() bool {
 // UninstallCertManager uninstalls the cert manager
 func UninstallCertManager() {
 	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling CertManager...\n")
+		logger.Printf("Uninstalling CertManager...\n")
 		url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
 		cmd := exec.Command("kubectl", "delete", "-f", url)
 		if _, err := Run(cmd); err != nil {
@@ -269,7 +280,7 @@ func loadImageToCRCDocker(name string) error {
 	if _, err := Run(cmd); err != nil {
 		// If this fails, the image might already be available
 		// or we're in a different setup. Log and continue.
-		fmt.Printf("Warning: failed to load image to CRC docker daemon: %v\n", err)
+		logger.Printf("Warning: failed to load image to CRC docker daemon: %v\n", err)
 	}
 
 	return nil
@@ -329,8 +340,6 @@ func GetProjectDir() (string, error) {
 // UncommentCode searches for target in the file and remove the comment prefix
 // of the target content. The target content may span multiple lines.
 func UncommentCode(filename, target, prefix string) error {
-	// false positive
-	// nolint:gosec
 	content, err := os.ReadFile(filename)
 	if err != nil {
 		return fmt.Errorf("failed to read file %q: %w", filename, err)
@@ -369,8 +378,6 @@ func UncommentCode(filename, target, prefix string) error {
 		return fmt.Errorf("failed to write to output: %w", err)
 	}
 
-	// false positive
-	// nolint:gosec
 	if err = os.WriteFile(filename, out.Bytes(), 0644); err != nil {
 		return fmt.Errorf("failed to write file %q: %w", filename, err)
 	}
@@ -378,17 +385,15 @@ func UncommentCode(filename, target, prefix string) error {
 	return nil
 }
 
-// getProjectImage returns the project image name based on environment variables.
-// It uses the same pattern as the Makefile QUAY_* variables, with sensible defaults for local testing.
+// GetProjectImage returns the project image name based on environment variables.
 func GetProjectImage() string {
-	// Allow complete override via OPERATOR_IMG environment variable
 	if testImg := os.Getenv("OPERATOR_IMG"); testImg != "" {
 		return testImg
 	}
 
 	registry := os.Getenv("QUAY_REGISTRY")
 	if registry == "" {
-		registry = "localhost:5000" // Local registry for testing
+		registry = "localhost:5000"
 	}
 
 	org := os.Getenv("QUAY_ORG")
@@ -404,17 +409,15 @@ func GetProjectImage() string {
 	return fmt.Sprintf("%s/%s/sbr-operator:%s", registry, org, version)
 }
 
-// getAgentImage returns the agent image name based on environment variables.
-// It uses the same pattern as the Makefile QUAY_* variables, with sensible defaults for local testing.
+// GetAgentImage returns the agent image name based on environment variables.
 func GetAgentImage() string {
-	// Allow complete override via AGENT_IMG environment variable
 	if agentImg := os.Getenv("AGENT_IMG"); agentImg != "" {
 		return agentImg
 	}
 
 	registry := os.Getenv("QUAY_REGISTRY")
 	if registry == "" {
-		registry = "localhost:5000" // Local registry for testing
+		registry = "localhost:5000"
 	}
 
 	org := os.Getenv("QUAY_ORG")
@@ -432,14 +435,12 @@ func GetAgentImage() string {
 
 // GetAWSInstanceIDForNode finds the AWS EC2 instance ID for a given Kubernetes node name
 func GetAWSInstanceIDForNode(tc *TestClients, nodeName string) (string, error) {
-	// Get the node details from Kubernetes
 	node := &corev1.Node{}
 	err := tc.Client.Get(tc.Context, client.ObjectKey{Name: nodeName}, node)
 	if err != nil {
 		return "", fmt.Errorf("failed to get node %s: %w", nodeName, err)
 	}
 
-	// Extract the internal IP address from the node
 	var internalIP string
 	for _, address := range node.Status.Addresses {
 		if address.Type == corev1.NodeInternalIP {
@@ -452,18 +453,16 @@ func GetAWSInstanceIDForNode(tc *TestClients, nodeName string) (string, error) {
 		return "", fmt.Errorf("no internal IP found for node %s", nodeName)
 	}
 
-	GinkgoWriter.Printf("Looking up AWS instance for node %s with internal IP %s\n", nodeName, internalIP)
+	logger.Printf("Looking up AWS instance for node %s with internal IP %s\n", nodeName, internalIP)
 
-	// Use AWS CLI to find the instance by internal IP
 	cmd := exec.Command("aws", "ec2", "describe-instances",
 		"--filters", fmt.Sprintf("Name=private-ip-address,Values=%s", internalIP),
 		"--query", "Reservations[*].Instances[*].InstanceId",
 		"--output", "text")
 
-	// Set AWS_PAGER to prevent paging
 	cmd.Env = append(os.Environ(), "AWS_PAGER=")
 
-	GinkgoWriter.Printf("Executing AWS CLI command to find instance for IP %s\n", internalIP)
+	logger.Printf("Executing AWS CLI command to find instance for IP %s\n", internalIP)
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -475,24 +474,23 @@ func GetAWSInstanceIDForNode(tc *TestClients, nodeName string) (string, error) {
 		return "", fmt.Errorf("no AWS instance found for node %s with IP %s", nodeName, internalIP)
 	}
 
-	GinkgoWriter.Printf("Found AWS instance ID %s for node %s\n", instanceID, nodeName)
+	logger.Printf("Found AWS instance ID %s for node %s\n", instanceID, nodeName)
 	return instanceID, nil
 }
 
 // RebootAWSInstanceForNode finds and reboots the AWS EC2 instance for a given Kubernetes node name
 func RebootAWSInstanceForNode(tc *TestClients, nodeName string) error {
 	if !tc.AWSInitialized {
-		GinkgoWriter.Printf("AWS is not initialized")
+		logger.Printf("AWS is not initialized")
 		return nil
 	}
 
-	// First, get the AWS instance ID for the node
 	instanceID, err := GetAWSInstanceIDForNode(tc, nodeName)
 	if err != nil {
 		return fmt.Errorf("failed to find AWS instance for node %s: %w", nodeName, err)
 	}
 
-	GinkgoWriter.Printf("Rebooting AWS instance %s for node %s\n", instanceID, nodeName)
+	logger.Printf("Rebooting AWS instance %s for node %s\n", instanceID, nodeName)
 	_, err = tc.Ec2Client.RebootInstances(&ec2.RebootInstancesInput{
 		InstanceIds: []*string{aws.String(instanceID)},
 	})
@@ -500,23 +498,33 @@ func RebootAWSInstanceForNode(tc *TestClients, nodeName string) error {
 		return fmt.Errorf("failed to reboot instance %s: %w", instanceID, err)
 	}
 
-	GinkgoWriter.Printf("Successfully initiated reboot for AWS instance %s (node %s)\n", instanceID, nodeName)
+	logger.Printf("Successfully initiated reboot for AWS instance %s (node %s)\n", instanceID, nodeName)
 	return nil
 }
 
-func WaitForNodesReady(testNamespace *TestNamespace, timeout, interval string, attemptReboot bool) {
+// WaitForNodesReady waits for all cluster nodes to be Ready.
+func WaitForNodesReady(testNamespace *TestNamespace, timeoutStr, intervalStr string, attemptReboot bool) error {
+	timeout, err := time.ParseDuration(timeoutStr)
+	if err != nil {
+		return fmt.Errorf("invalid timeout duration %s: %w", timeoutStr, err)
+	}
+	interval, err := time.ParseDuration(intervalStr)
+	if err != nil {
+		return fmt.Errorf("invalid interval duration %s: %w", intervalStr, err)
+	}
+
 	firstPass := attemptReboot
-	By("Waiting for all cluster nodes to be Ready")
-	Eventually(func() bool {
-		nodeList, err := testNamespace.Clients.Clientset.CoreV1().Nodes().List(
-			testNamespace.Clients.Context, metav1.ListOptions{})
+	logger.Println("Waiting for all cluster nodes to be Ready")
+
+	err = wait.PollUntilContextTimeout(testNamespace.Clients.Context, interval, timeout, true, func(ctx context.Context) (bool, error) {
+		nodeList, err := testNamespace.Clients.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 		if err != nil {
-			GinkgoWriter.Printf("Failed to list nodes: %v\n", err)
-			return false
+			logger.Printf("Failed to list nodes: %v\n", err)
+			return false, nil
 		}
 		if len(nodeList.Items) == 0 {
-			GinkgoWriter.Printf("No nodes found in cluster\n")
-			return false
+			logger.Printf("No nodes found in cluster\n")
+			return false, nil
 		}
 		allReady := true
 		for _, node := range nodeList.Items {
@@ -524,7 +532,7 @@ func WaitForNodesReady(testNamespace *TestNamespace, timeout, interval string, a
 				if cond.Type == "Ready" && cond.Status == "True" {
 					break
 				} else if cond.Type == "Ready" {
-					GinkgoWriter.Printf("Node %s has Ready status %s, message %s, reason %s\n",
+					logger.Printf("Node %s has Ready status %s, message %s, reason %s\n",
 						node.Name, cond.Status, cond.Message, cond.Reason)
 					if firstPass {
 						// Best-effort: reboot instance to recover; ignore error in readiness poll
@@ -535,7 +543,12 @@ func WaitForNodesReady(testNamespace *TestNamespace, timeout, interval string, a
 			}
 		}
 		firstPass = false
-		return allReady
-	}, timeout, interval).Should(BeTrue(), "expected all nodes to be Ready")
-	GinkgoWriter.Printf("All nodes are Ready\n")
+		return allReady, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("expected all nodes to be Ready: %w", err)
+	}
+	logger.Printf("All nodes are Ready\n")
+	return nil
 }

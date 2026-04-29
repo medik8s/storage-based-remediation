@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/test/utils"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -58,6 +59,9 @@ func TestControllers(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
+
+	// Also set the test utils logger to GinkgoWriter
+	utils.SetLogger(GinkgoWriter)
 
 	ctx, cancel = context.WithCancel(context.TODO())
 
