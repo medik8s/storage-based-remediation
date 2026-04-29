@@ -28,6 +28,8 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,7 +46,7 @@ const (
 )
 
 func warnError(err error) {
-	_, _ = fmt.Fprintf(GinkgoWriter, "warning: %v\n", err)
+	_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "warning: %v\n", err)
 }
 
 // Run executes the provided command within this context
@@ -53,12 +55,12 @@ func Run(cmd *exec.Cmd) (string, error) {
 	cmd.Dir = dir
 
 	if err := os.Chdir(cmd.Dir); err != nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "chdir dir: %q\n", err)
+		_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "chdir dir: %q\n", err)
 	}
 
 	cmd.Env = append(os.Environ(), "GO111MODULE=on")
 	command := strings.Join(cmd.Args, " ")
-	_, _ = fmt.Fprintf(GinkgoWriter, "running: %q\n", command)
+	_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "running: %q\n", command)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(output), fmt.Errorf("%q failed with error %q: %w", command, string(output), err)
@@ -114,7 +116,7 @@ func IsPrometheusCRDsInstalled() bool {
 // UninstallCertManager uninstalls the cert manager
 func UninstallCertManager() {
 	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling CertManager...\n")
+		_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Uninstalling CertManager...\n")
 		url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
 		cmd := exec.Command("kubectl", "delete", "-f", url)
 		if _, err := Run(cmd); err != nil {
@@ -452,7 +454,7 @@ func GetAWSInstanceIDForNode(tc *TestClients, nodeName string) (string, error) {
 		return "", fmt.Errorf("no internal IP found for node %s", nodeName)
 	}
 
-	GinkgoWriter.Printf("Looking up AWS instance for node %s with internal IP %s\n", nodeName, internalIP)
+	ginkgo.GinkgoWriter.Printf("Looking up AWS instance for node %s with internal IP %s\n", nodeName, internalIP)
 
 	// Use AWS CLI to find the instance by internal IP
 	cmd := exec.Command("aws", "ec2", "describe-instances",
@@ -463,7 +465,7 @@ func GetAWSInstanceIDForNode(tc *TestClients, nodeName string) (string, error) {
 	// Set AWS_PAGER to prevent paging
 	cmd.Env = append(os.Environ(), "AWS_PAGER=")
 
-	GinkgoWriter.Printf("Executing AWS CLI command to find instance for IP %s\n", internalIP)
+	ginkgo.GinkgoWriter.Printf("Executing AWS CLI command to find instance for IP %s\n", internalIP)
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -475,14 +477,14 @@ func GetAWSInstanceIDForNode(tc *TestClients, nodeName string) (string, error) {
 		return "", fmt.Errorf("no AWS instance found for node %s with IP %s", nodeName, internalIP)
 	}
 
-	GinkgoWriter.Printf("Found AWS instance ID %s for node %s\n", instanceID, nodeName)
+	ginkgo.GinkgoWriter.Printf("Found AWS instance ID %s for node %s\n", instanceID, nodeName)
 	return instanceID, nil
 }
 
 // RebootAWSInstanceForNode finds and reboots the AWS EC2 instance for a given Kubernetes node name
 func RebootAWSInstanceForNode(tc *TestClients, nodeName string) error {
 	if !tc.AWSInitialized {
-		GinkgoWriter.Printf("AWS is not initialized")
+		ginkgo.GinkgoWriter.Printf("AWS is not initialized")
 		return nil
 	}
 
@@ -492,7 +494,7 @@ func RebootAWSInstanceForNode(tc *TestClients, nodeName string) error {
 		return fmt.Errorf("failed to find AWS instance for node %s: %w", nodeName, err)
 	}
 
-	GinkgoWriter.Printf("Rebooting AWS instance %s for node %s\n", instanceID, nodeName)
+	ginkgo.GinkgoWriter.Printf("Rebooting AWS instance %s for node %s\n", instanceID, nodeName)
 	_, err = tc.Ec2Client.RebootInstances(&ec2.RebootInstancesInput{
 		InstanceIds: []*string{aws.String(instanceID)},
 	})
@@ -500,22 +502,22 @@ func RebootAWSInstanceForNode(tc *TestClients, nodeName string) error {
 		return fmt.Errorf("failed to reboot instance %s: %w", instanceID, err)
 	}
 
-	GinkgoWriter.Printf("Successfully initiated reboot for AWS instance %s (node %s)\n", instanceID, nodeName)
+	ginkgo.GinkgoWriter.Printf("Successfully initiated reboot for AWS instance %s (node %s)\n", instanceID, nodeName)
 	return nil
 }
 
 func WaitForNodesReady(testNamespace *TestNamespace, timeout, interval string, attemptReboot bool) {
 	firstPass := attemptReboot
-	By("Waiting for all cluster nodes to be Ready")
-	Eventually(func() bool {
+	ginkgo.By("Waiting for all cluster nodes to be Ready")
+	gomega.Eventually(func() bool {
 		nodeList, err := testNamespace.Clients.Clientset.CoreV1().Nodes().List(
 			testNamespace.Clients.Context, metav1.ListOptions{})
 		if err != nil {
-			GinkgoWriter.Printf("Failed to list nodes: %v\n", err)
+			ginkgo.GinkgoWriter.Printf("Failed to list nodes: %v\n", err)
 			return false
 		}
 		if len(nodeList.Items) == 0 {
-			GinkgoWriter.Printf("No nodes found in cluster\n")
+			ginkgo.GinkgoWriter.Printf("No nodes found in cluster\n")
 			return false
 		}
 		allReady := true
@@ -524,7 +526,7 @@ func WaitForNodesReady(testNamespace *TestNamespace, timeout, interval string, a
 				if cond.Type == "Ready" && cond.Status == "True" {
 					break
 				} else if cond.Type == "Ready" {
-					GinkgoWriter.Printf("Node %s has Ready status %s, message %s, reason %s\n",
+					ginkgo.GinkgoWriter.Printf("Node %s has Ready status %s, message %s, reason %s\n",
 						node.Name, cond.Status, cond.Message, cond.Reason)
 					if firstPass {
 						// Best-effort: reboot instance to recover; ignore error in readiness poll
@@ -536,6 +538,6 @@ func WaitForNodesReady(testNamespace *TestNamespace, timeout, interval string, a
 		}
 		firstPass = false
 		return allReady
-	}, timeout, interval).Should(BeTrue(), "expected all nodes to be Ready")
-	GinkgoWriter.Printf("All nodes are Ready\n")
+	}, timeout, interval).Should(gomega.BeTrue(), "expected all nodes to be Ready")
+	ginkgo.GinkgoWriter.Printf("All nodes are Ready\n")
 }

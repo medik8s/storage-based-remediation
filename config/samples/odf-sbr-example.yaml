@@ -13,17 +13,10 @@ metadata:
   annotations:
     description: "SBR configuration using OpenShift Data Foundation CephFS for shared storage coordination"
 spec:
-  # SBR agent image configuration
-  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  imagePullPolicy: "IfNotPresent"
-  
   # Watchdog configuration
   watchdogPath: "/dev/watchdog"
-  watchdogTimeout: "60s"
-  petIntervalMultiple: 4
-  
+
   # Node management settings
-  staleNodeTimeout: "1h"
   
   # ✅ OPENSHIFT DATA FOUNDATION CEPHFS STORAGE CONFIGURATION ✅
   # This StorageClass should be created by the setup-odf-storage tool
@@ -58,18 +51,9 @@ metadata:
   annotations:
     description: "SBR configuration with strict cache coherency for mission-critical environments"
 spec:
-  # SBR agent image configuration
-  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  imagePullPolicy: "IfNotPresent"
-  
-  # Watchdog configuration with shorter timeout for faster response
+  # Watchdog configuration
   watchdogPath: "/dev/watchdog"
-  watchdogTimeout: "30s"
-  petIntervalMultiple: 3
-  
-  # Faster stale node detection
-  staleNodeTimeout: "30m"
-  
+
   # StorageClass created with --aggressive-coherency flag
   # This should be created by: ./setup-odf-storage --aggressive-coherency --storage-class-name=sbr-cephfs-strict
   sharedStorageClass: "sbr-cephfs-strict"
@@ -92,9 +76,7 @@ metadata:
     tenant: "tenant-a"
     storage.medik8s.io/type: cephfs
 spec:
-  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
   watchdogPath: "/dev/watchdog"
-  watchdogTimeout: "60s"
   sharedStorageClass: "sbr-cephfs"
   
   # Target specific nodes for tenant A
@@ -118,15 +100,8 @@ metadata:
   annotations:
     description: "Development SBR configuration for testing and validation"
 spec:
-  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  imagePullPolicy: "Always"  # Always pull for development
-  
-  # Shorter timeouts for faster testing cycles
+  # Watchdog configuration
   watchdogPath: "/dev/watchdog"
-  watchdogTimeout: "30s"
-  petIntervalMultiple: 2
-  staleNodeTimeout: "10m"
-  
   sharedStorageClass: "sbr-cephfs"
   
   # Target development nodes only

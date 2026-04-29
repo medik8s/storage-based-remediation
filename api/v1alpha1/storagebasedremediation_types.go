@@ -74,18 +74,6 @@ type StorageBasedRemediationStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
-
-	// LastUpdateTime is the time when this status was last updated
-	LastUpdateTime *metav1.Time `json:"lastUpdateTime,omitempty"`
-
-	// NodeID is the numeric ID assigned to the target node for SBR operations
-	NodeID *uint16 `json:"nodeID,omitempty"`
-
-	// FenceMessageWritten indicates if the fence message was successfully written to the SBR device
-	FenceMessageWritten bool `json:"fenceMessageWritten,omitempty"`
-
-	// OperatorInstance identifies which operator instance is handling this remediation
-	OperatorInstance string `json:"operatorInstance,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -93,7 +81,6 @@ type StorageBasedRemediationStatus struct {
 // +kubebuilder:printcolumn:name="Node",type="string",JSONPath=".metadata.name"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
 // +kubebuilder:printcolumn:name="Fencing Succeeded",type="string",JSONPath=".status.conditions[?(@.type=='FencingSucceeded')].status"
-// +kubebuilder:printcolumn:name="NodeID",type="integer",JSONPath=".status.nodeID"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // StorageBasedRemediation is the Schema for the storagebasedremediations API.

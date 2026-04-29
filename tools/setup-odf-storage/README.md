@@ -162,8 +162,6 @@ metadata:
 spec:
   sharedStorageClass: "sbr-cephfs"  # StorageClass created by this tool
   watchdogPath: "/dev/watchdog"
-  watchdogTimeout: "60s"
-  staleNodeTimeout: "1h"
 ```
 
 ### Verification

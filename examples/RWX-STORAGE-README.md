@@ -112,15 +112,8 @@ metadata:
 spec:
   # SBR agent image configuration
   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  imagePullPolicy: "IfNotPresent"
-  
   # Watchdog configuration
   watchdogPath: "/dev/watchdog"
-  watchdogTimeout: "60s"
-  petIntervalMultiple: 4
-
-  # Node management
-  staleNodeTimeout: "1h"
 
   # Note: Additional volumes for shared storage would require
   # extending the StorageBasedRemediationConfig CRD to support custom volumes
@@ -322,8 +315,6 @@ spec:
   watchdogPath: "/dev/watchdog"
   watchdogTimeout: "60s"
   petIntervalMultiple: 4
-  staleNodeTimeout: "1h"
-  
   # Shared storage configuration
   sharedStoragePVC: "sbr-shared-pvc"           # Name of RWX PVC
   

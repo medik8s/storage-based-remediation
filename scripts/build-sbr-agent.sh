@@ -120,7 +120,6 @@ test_run() {
         ${IMAGE_NAME}:${IMAGE_TAG} \
         --watchdog-path=/tmp/mock/watchdog \
         --sbr-device=/tmp/mock/sbr \
-        --watchdog-timeout=5s \
         --log-level=info || true
     
     # Cleanup

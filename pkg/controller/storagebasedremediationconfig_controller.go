@@ -89,6 +89,19 @@ const (
 	MaxStorageBasedRemediationConfigRetryDelay = 10 * time.Second
 	// StorageBasedRemediationConfigRetryBackoffFactor is the exponential backoff factor for StorageBasedRemediationConfig operation retries
 	StorageBasedRemediationConfigRetryBackoffFactor = 2.0
+
+	staleNodeTimeout = 1 * time.Hour
+	// I/O timeout is hardcoded to 2 seconds (valid range was 100ms-5min)
+	ioTimeout = 2 * time.Second
+	// SBR timeout is hardcoded to 30s (valid range was 10-300s)
+	sbrTimeoutSeconds = 30
+	// Update and peer check intervals are derived from SBR timeout: 30s / 6 = 5s
+	sbrUpdateInterval = 5 * time.Second
+	peerCheckInterval = 5 * time.Second
+	// Log level is hardcoded to debug
+	logLevel = "debug"
+	// Reboot method is hardcoded to systemctl-reboot
+	rebootMethod = "systemctl-reboot"
 )
 
 // StorageBasedRemediationConfigReconciler reconciles a StorageBasedRemediationConfig object
@@ -1023,7 +1036,7 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 	// Get the operator image first for logging and DaemonSet creation
 	operatorImage := r.getOperatorImage(ctx, logger)
 
-	agentImage, err := sbrConfig.Spec.GetImageWithOperatorImage(operatorImage)
+	agentImage, err := medik8sv1alpha1.DeriveAgentImageFromOperator(operatorImage)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	}
@@ -1031,11 +1044,7 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 	logger.V(1).Info("Starting StorageBasedRemediationConfig reconciliation",
 		"spec.image", agentImage,
 		"namespace", sbrConfig.Namespace,
-		"spec.sbrWatchdogPath", sbrConfig.Spec.GetWatchdogPath(),
-		"spec.staleNodeTimeout", sbrConfig.Spec.GetStaleNodeTimeout(),
-		"spec.watchdogTimeout", sbrConfig.Spec.GetWatchdogTimeout(),
-		"spec.petIntervalMultiple", sbrConfig.Spec.GetPetIntervalMultiple(),
-		"spec.calculatedPetInterval", sbrConfig.Spec.GetPetInterval())
+		"spec.sbrWatchdogPath", sbrConfig.Spec.GetWatchdogPath())
 
 	// Validate the StorageBasedRemediationConfig spec
 	if err := sbrConfig.Spec.ValidateAll(); err != nil {
@@ -1146,8 +1155,7 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 		"operation", "daemonset-create-or-update",
 		"desired.image", desiredDaemonSet.Spec.Template.Spec.Containers[0].Image)
 	daemonSetLogger.Info("SBR agent DaemonSet watchdog configuration",
-		"watchdogPath", sbrConfig.Spec.GetWatchdogPath(),
-		"watchdogTimeout", sbrConfig.Spec.GetWatchdogTimeout().String())
+		"watchdogPath", sbrConfig.Spec.GetWatchdogPath())
 
 	action, err = controllerutil.CreateOrUpdate(ctx, r.Client, actualDaemonSet, func() error {
 		// Update the DaemonSet spec with the desired configuration
@@ -1452,7 +1460,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 						{
 							Name:            "sbr-agent",
 							Image:           agentImage,
-							ImagePullPolicy: corev1.PullPolicy(sbrConfig.Spec.GetImagePullPolicy()),
+							ImagePullPolicy: corev1.PullAlways,
 							SecurityContext: &corev1.SecurityContext{
 								Privileged:               &[]bool{true}[0],
 								RunAsUser:                &[]int64{0}[0],
@@ -1559,23 +1567,11 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 
 // buildSBRAgentArgs builds the command line arguments for the sbr-agent container
 func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig) []string {
-	// Get configured watchdog timeout and calculate pet interval
-	watchdogTimeout := sbrConfig.Spec.GetWatchdogTimeout()
-	petInterval := sbrConfig.Spec.GetPetInterval()
-	ioTimeout := sbrConfig.Spec.GetIOTimeout()
-	rebootMethod := sbrConfig.Spec.GetRebootMethod()
-	sbrTimeoutSeconds := sbrConfig.Spec.GetSBRTimeoutSeconds()
-	sbrUpdateInterval := sbrConfig.Spec.GetSBRUpdateInterval()
-	peerCheckInterval := sbrConfig.Spec.GetPeerCheckInterval()
-
-	// Base arguments using shared flag constants
 	args := []string{
 		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, sbrConfig.Spec.GetWatchdogPath()),
-		fmt.Sprintf("--%s=%s", agent.FlagWatchdogTimeout, watchdogTimeout.String()),
-		fmt.Sprintf("--%s=%s", agent.FlagPetInterval, petInterval.String()),
-		fmt.Sprintf("--%s=%s", agent.FlagLogLevel, sbrConfig.Spec.GetLogLevel()),
+		fmt.Sprintf("--%s=%s", agent.FlagLogLevel, logLevel),
 		fmt.Sprintf("--%s=%s", agent.FlagClusterName, sbrConfig.Name),
-		fmt.Sprintf("--%s=%s", agent.FlagStaleNodeTimeout, sbrConfig.Spec.GetStaleNodeTimeout().String()),
+		fmt.Sprintf("--%s=%s", agent.FlagStaleNodeTimeout, staleNodeTimeout.String()),
 		fmt.Sprintf("--io-timeout=%s", ioTimeout.String()),
 		fmt.Sprintf("--%s=%s", agent.FlagRebootMethod, rebootMethod),
 		fmt.Sprintf("--%s=%d", agent.FlagSBRTimeoutSeconds, sbrTimeoutSeconds),
@@ -1694,10 +1690,6 @@ func (r *StorageBasedRemediationConfigReconciler) updateStatus(
 	if err != nil {
 		return err
 	}
-
-	// Update numeric status fields
-	sbrConfig.Status.TotalNodes = latestDaemonSet.Status.DesiredNumberScheduled
-	sbrConfig.Status.ReadyNodes = latestDaemonSet.Status.NumberReady
 
 	// Determine DaemonSet readiness status
 	daemonSetReady := latestDaemonSet.Status.NumberReady == latestDaemonSet.Status.DesiredNumberScheduled &&

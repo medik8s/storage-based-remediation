@@ -45,6 +45,7 @@ import (
 	"github.com/medik8s/storage-based-remediation/pkg/blockdevice"
 	mocks "github.com/medik8s/storage-based-remediation/pkg/mocks"
 	"github.com/medik8s/storage-based-remediation/pkg/sbdprotocol"
+	"github.com/medik8s/storage-based-remediation/pkg/watchdog"
 	testutils "github.com/medik8s/storage-based-remediation/test/utils"
 )
 
@@ -1233,43 +1234,43 @@ func TestValidateWatchdogTiming(t *testing.T) {
 			name:        "invalid pet interval - too long (21s)",
 			petInterval: 21 * time.Second,
 			wantErr:     true,
-			errContains: "too close to watchdog timeout",
+			errContains: "too long",
 		},
 		{
 			name:        "invalid pet interval - too long (25s)",
 			petInterval: 25 * time.Second,
 			wantErr:     true,
-			errContains: "too close to watchdog timeout",
+			errContains: "too long",
 		},
 		{
 			name:        "invalid pet interval - exactly at watchdog timeout (60s)",
 			petInterval: 60 * time.Second,
 			wantErr:     true,
-			errContains: "too close to watchdog timeout",
+			errContains: "too long",
 		},
 		{
 			name:        "invalid pet interval - longer than watchdog timeout (90s)",
 			petInterval: 90 * time.Second,
 			wantErr:     true,
-			errContains: "too close to watchdog timeout",
+			errContains: "too long",
 		},
 		{
 			name:        "invalid pet interval - too short (500ms)",
 			petInterval: 500 * time.Millisecond,
 			wantErr:     true,
-			errContains: "very short",
+			errContains: "too short",
 		},
 		{
 			name:        "invalid pet interval - too short (100ms)",
 			petInterval: 100 * time.Millisecond,
 			wantErr:     true,
-			errContains: "very short",
+			errContains: "too short",
 		},
 		{
 			name:        "invalid pet interval - zero",
 			petInterval: 0,
 			wantErr:     true,
-			errContains: "very short",
+			errContains: "too short",
 		},
 	}
 
@@ -1277,7 +1278,7 @@ func TestValidateWatchdogTiming(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Use 60 second watchdog timeout (the hardcoded value the tests were based on)
 			watchdogTimeout := 60 * time.Second
-			valid, warning := validateWatchdogTiming(tt.petInterval, watchdogTimeout)
+			valid, warning := watchdog.ValidateTimeoutWithPetInterval(watchdogTimeout, tt.petInterval)
 
 			if tt.wantErr {
 				if valid {

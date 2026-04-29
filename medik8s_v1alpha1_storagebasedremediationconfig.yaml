@@ -71,16 +71,7 @@ spec:
   # Examples:
   # - If operator image is "quay.io/medik8s/sbr-operator:v1.2.3"
   #   then agent image becomes "quay.io/medik8s/storage-based-remediation-agent:v1.2.3"
-  # - Override with custom image if needed:
-  # image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  
-  # Image pull policy for the SBR Agent container
-  # - Always: Always pull the image, useful for development with "latest" tags
-  # - IfNotPresent: Pull only if image not present locally (default, production-safe)
-  # - Never: Never pull, only use local images
-  # Default: "IfNotPresent" for production stability
-  imagePullPolicy: "IfNotPresent"
-  
+
   # ========================================================================
   # DEPLOYMENT CONFIGURATION
   # ========================================================================
@@ -116,7 +107,6 @@ spec:
   # - Development/Testing: "5m" - "15m"
   # - Production (stable): "30m" - "2h"  
   # - Production (critical): "2h" - "6h"
-  staleNodeTimeout: "1h"
   
   # ========================================================================
   # SHARED STORAGE CONFIGURATION (OPTIONAL)
@@ -168,13 +158,12 @@ spec:
 # Basic Production Configuration (image auto-derived from operator):
 # -------------------------------------------------------------------
 # spec:
-#   staleNodeTimeout: "30m"
+#   watchdogPath: "/dev/watchdog"
 #
-# Production with Custom Image:
-# -----------------------------
+# Production Configuration:
+# -------------------------
 # spec:
-#   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-#   staleNodeTimeout: "30m"
+#   watchdogPath: "/dev/watchdog"
 #
 # Multiple Configurations in Same Namespace:
 # ------------------------------------------
@@ -183,16 +172,12 @@ spec:
 #   name: production-sbr
 #   namespace: my-app
 # spec:
-#   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-#   imagePullPolicy: "IfNotPresent"
 # ---
 # # Canary config
 # metadata:
 #   name: canary-sbr
 #   namespace: my-app
 # spec:
-#   image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-#   imagePullPolicy: "Always"
 #   nodeSelector:
 #     canary: "true"
 #
@@ -200,13 +185,11 @@ spec:
 # --------------------------------
 # spec:
 #   watchdogPath: "/dev/watchdog1"
-#   staleNodeTimeout: "2h"
 #
 # Development/Testing Configuration:
 # ----------------------------------
 # spec:
-#   imagePullPolicy: "Always"
-#   staleNodeTimeout: "5m"
+#   watchdogPath: "/dev/watchdog"
 #
 # Note: Each StorageBasedRemediationConfig creates its own DaemonSet in the specified namespace.
 # Multiple StorageBasedRemediationConfigs in the same namespace share the service account but

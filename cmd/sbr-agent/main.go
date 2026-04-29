@@ -72,10 +72,8 @@ import (
 // +kubebuilder:rbac:groups="",resources=nodes/status,verbs=get;patch;update
 
 var (
-	watchdogPath    = flag.String(agent.FlagWatchdogPath, agent.DefaultWatchdogPath, "Path to the watchdog device")
-	watchdogTimeout = flag.Duration(agent.FlagWatchdogTimeout, 60*time.Second,
-		"Watchdog timeout duration (how long before watchdog triggers reboot)")
-	petInterval = flag.Duration(agent.FlagPetInterval, 15*time.Second,
+	watchdogPath = flag.String(agent.FlagWatchdogPath, agent.DefaultWatchdogPath, "Path to the watchdog device")
+	petInterval  = flag.Duration(agent.FlagPetInterval, 15*time.Second,
 		"Pet interval (how often to pet the watchdog)")
 	sbrDevice      = flag.String(agent.FlagSBRDevice, agent.DefaultSBRDevice, "Path to the SBR block device")
 	sbrFileLocking = flag.Bool(agent.FlagSBRFileLocking, agent.DefaultSBRFileLocking,
@@ -1090,6 +1088,11 @@ func (s *SBRAgent) StartWithContext(ctx context.Context) error {
 		"heartbeatInterval", s.heartbeatInterval,
 		"peerCheckInterval", s.peerCheckInterval)
 
+	// Validate watchdog timing with discovered timeout
+	if valid, warning := watchdog.ValidateTimeoutWithPetInterval(s.watchdog.Timeout(), s.petInterval); !valid {
+		return fmt.Errorf("invalid pet interval for watchdog timing: %s", warning)
+	}
+
 	// Start node manager periodic sync if using hash mapping
 	if s.nodeManager != nil {
 		s.nodeManagerStop = s.nodeManager.StartPeriodicSync()
@@ -2100,30 +2103,6 @@ func checkNodeIDNameResolution(nodeName string, nodeID uint16) error {
 	return nil
 }
 
-// validateWatchdogTiming validates the relationship between pet interval and watchdog timeout
-func validateWatchdogTiming(petInterval, watchdogTimeout time.Duration) (bool, string) {
-	// Check for minimum pet interval (should be at least 1 second)
-	minimumPetInterval := 1 * time.Second
-	if petInterval < minimumPetInterval {
-		return false, fmt.Sprintf("pet interval (%v) is very short, minimum recommended is %v",
-			petInterval, minimumPetInterval)
-	}
-
-	// Pet interval should be significantly less than watchdog timeout
-	// Recommended ratio is at least 3:1 (timeout:interval)
-	minimumRatio := 3.0
-	actualRatio := float64(watchdogTimeout) / float64(petInterval)
-
-	if actualRatio < minimumRatio {
-		return false, fmt.Sprintf("pet interval (%v) is too close to watchdog timeout (%v). "+
-			"Pet interval should be at least %.1fx shorter than timeout (recommended ratio 3:1 or higher). "+
-			"Current ratio: %.1f:1",
-			petInterval, watchdogTimeout, minimumRatio, actualRatio)
-	}
-
-	return true, ""
-}
-
 // initializeKubernetesClients creates Kubernetes clients for StorageBasedRemediation CR watching
 func initializeKubernetesClients(kubeconfigPath string) (client.Client, kubernetes.Interface, error) {
 	var config *rest.Config
@@ -2258,9 +2237,9 @@ func main() {
 	// Log build information at startup
 	logger.Info("SBR Agent build information", "buildInfo", version.GetFormattedBuildInfo())
 
-	// Validate watchdog timing early using the configured values
-	if valid, warning := validateWatchdogTiming(*petInterval, *watchdogTimeout); !valid {
-		logger.Error(nil, "Watchdog timing validation failed", "error", warning)
+	// Validate pet interval early (actual timeout validation happens at runtime)
+	if *petInterval < 1*time.Second {
+		logger.Error(nil, "Pet interval must be at least 1 second", "petInterval", *petInterval)
 		os.Exit(1)
 	}
 
