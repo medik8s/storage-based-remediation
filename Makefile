@@ -669,7 +669,7 @@ bundle-validate: operator-sdk ## Validate bundle directory
 	$(OPERATOR_SDK) bundle validate ./bundle --select-optional suite=operatorframework
 
 .PHONY: bundle-build
-bundle-build: bundle ## Build bundle image
+bundle-build: bundle bundle-update ## Build bundle image
 	@echo "Building bundle image: ${BUNDLE_IMG}"
 	$(CONTAINER_TOOL) build -f bundle.Dockerfile -t ${BUNDLE_IMG} .
 
