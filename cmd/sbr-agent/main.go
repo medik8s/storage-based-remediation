@@ -1299,13 +1299,23 @@ func (s *SBRAgent) heartbeatLoop() {
 			} else {
 				// Success - reset failure count and update status
 				s.resetFailureCount("heartbeat")
-				// Only mark as healthy if it was previously unhealthy
+				// Only mark as healthy if it was previously unhealthy AND no remediation CR exists
 				// The regular SBR device loop will also update this
 				if !s.isSBRHealthy() {
-					logger.Info("SBR device recovered during heartbeat write", "devicePath", s.heartbeatDevicePath)
-					s.setSBRHealthy(true)
-					// Update agent health status
-					agentHealthyGauge.Set(1)
+					remediationExists, err := s.remediationExistsForThisNode()
+					if err != nil {
+						logger.Info("warning: could not verify if CR exists: set SBR healthy for safety", "error", err)
+						remediationExists = false
+					}
+					if remediationExists {
+						logger.Info("SBR device heartbeat succeeded but remediation CR active; staying unhealthy",
+							"devicePath", s.heartbeatDevicePath, "nodeName", s.nodeName)
+					} else {
+						logger.Info("SBR device recovered during heartbeat write", "devicePath", s.heartbeatDevicePath)
+						s.setSBRHealthy(true)
+						// Update agent health status
+						agentHealthyGauge.Set(1)
+					}
 				}
 			}
 		}
