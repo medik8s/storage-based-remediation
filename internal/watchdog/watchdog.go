@@ -24,13 +24,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/go-logr/logr"
 
-	"github.com/medik8s/storage-based-remediation/internal/agent"
 	"github.com/medik8s/storage-based-remediation/internal/retry"
 )
 
@@ -38,6 +35,8 @@ import (
 var (
 	// ErrIoctlNotSupported indicates that the watchdog driver doesn't support ioctl operations
 	ErrIoctlNotSupported = errors.New("ioctl not supported by watchdog driver")
+	// ErrSysfsNotAvailable indicates that sysfs is not available on this platform
+	ErrSysfsNotAvailable = errors.New("sysfs not available on this platform")
 )
 
 // Linux watchdog ioctl constants
@@ -80,6 +79,16 @@ const (
 	NsenterCommand = "nsenter"
 	// HostPID is the PID of the host init process
 	HostPID = "1"
+)
+
+// Sysfs watchdog paths for timeout discovery
+const (
+	// SysfsWatchdogClass is the sysfs path containing watchdog devices
+	SysfsWatchdogClass = "/sys/class/watchdog"
+	// SysfsWatchdog0 is the primary watchdog device name
+	SysfsWatchdog0 = "watchdog0"
+	// SysfsTimeoutFile is the timeout file name in watchdog sysfs directories
+	SysfsTimeoutFile = "timeout"
 )
 
 // Watchdog represents a Linux kernel watchdog device interface.
@@ -492,54 +501,34 @@ func (w *Watchdog) Path() string {
 	return w.path
 }
 
-// Timeout queries the watchdog device timeout using WDIOC_GETTIMEOUT ioctl.
-// Returns the timeout in seconds, or the default if discovery fails.
-func (w *Watchdog) Timeout() time.Duration {
-	if !w.isOpen || w.file == nil {
-		w.logger.V(1).Info("Watchdog device not open, using default timeout", "default", agent.WatchdogTimeoutDefault)
-		return agent.WatchdogTimeoutDefault
+// GetTimeout reads the actual watchdog timeout from the hardware device.
+// It tries multiple methods in order:
+// 1. WDIOC_GETTIMEOUT ioctl (preferred method)
+// 2. Sysfs reading from /sys/class/watchdog (fallback method)
+// Returns the hardware timeout or an error if it cannot be read.
+// The caller should handle errors and fall back to configured timeout if needed.
+func (w *Watchdog) GetTimeout() (time.Duration, error) {
+	if !w.isOpen {
+		return 0, fmt.Errorf("watchdog device is not open")
 	}
 
-	// Attempt to get timeout via ioctl
-	var timeout int32
-	err := w.ioctlGetTimeout(&timeout)
-	if err != nil {
-		w.logger.V(1).Info("Failed to discover watchdog timeout via ioctl, using default", "error", err, "default", agent.WatchdogTimeoutDefault)
-		return agent.WatchdogTimeoutDefault
+	if w.file == nil {
+		return 0, fmt.Errorf("watchdog file descriptor is nil")
 	}
 
-	// Convert to time.Duration (timeout is in seconds)
-	if timeout <= 0 {
-		w.logger.V(1).Info("Watchdog returned invalid timeout, using default", "returned", timeout, "default", agent.WatchdogTimeoutDefault)
-		return agent.WatchdogTimeoutDefault
+	// Try ioctl first (preferred method)
+	timeout, err := w.getTimeoutIoctl()
+	if err == nil {
+		return timeout, nil
 	}
 
-	duration := time.Duration(timeout) * time.Second
-	w.logger.V(1).Info("Discovered watchdog timeout", "seconds", timeout, "duration", duration)
-	return duration
-}
-
-// ioctlGetTimeout performs the WDIOC_GETTIMEOUT ioctl call on the watchdog device
-func (w *Watchdog) ioctlGetTimeout(timeout *int32) error {
-	// WDIOC_GETTIMEOUT is a read ioctl that returns the current timeout in seconds
-	r1, _, errno := syscall.Syscall(
-		syscall.SYS_IOCTL,
-		w.file.Fd(),
-		uintptr(WDIOC_GETTIMEOUT),
-		uintptr(unsafe.Pointer(timeout)),
-	)
-
-	if errno != 0 {
-		// ENOTTY means ioctl is not supported by this device
-		if errno == syscall.ENOTTY {
-			return ErrIoctlNotSupported
-		}
-		return fmt.Errorf("ioctl WDIOC_GETTIMEOUT failed: %w", errno)
+	// If ioctl fails, try sysfs fallback
+	w.logger.V(2).Info("WDIOC_GETTIMEOUT ioctl failed, trying sysfs fallback", "ioctlError", err.Error())
+	timeout, sysfsErr := w.getTimeoutSysfs()
+	if sysfsErr == nil {
+		return timeout, nil
 	}
 
-	if r1 != 0 {
-		return fmt.Errorf("ioctl WDIOC_GETTIMEOUT returned non-zero: %d", r1)
-	}
-
-	return nil
+	// Both methods failed
+	return 0, fmt.Errorf("failed to get watchdog timeout (ioctl: %w, sysfs: %v)", err, sysfsErr)
 }

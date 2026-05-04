@@ -639,6 +639,101 @@ func TestNewWithSoftdogFallbackAndTestMode(t *testing.T) {
 	t.Logf("Successfully created softdog watchdog in test mode at path: %s", wd.Path())
 }
 
+// TestGetTimeout tests the GetTimeout method with various scenarios
+func TestGetTimeout(t *testing.T) {
+	tests := []struct {
+		name        string
+		setup       func() *Watchdog
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "get timeout on closed watchdog",
+			setup: func() *Watchdog {
+				tmpDir := t.TempDir()
+				tmpFile := filepath.Join(tmpDir, "mock_watchdog")
+				file, err := os.Create(tmpFile)
+				if err != nil {
+					t.Fatalf("Failed to create mock file: %v", err)
+				}
+				_ = file.Close()
+
+				wd, err := New(tmpFile)
+				if err != nil {
+					t.Fatalf("Failed to create watchdog: %v", err)
+				}
+
+				// Close the watchdog to test getting timeout on closed device
+				_ = wd.Close()
+				return wd
+			},
+			expectError: true,
+			errorMsg:    "watchdog device is not open",
+		},
+		{
+			name: "get timeout with nil file descriptor",
+			setup: func() *Watchdog {
+				// Create a watchdog with nil file descriptor
+				return &Watchdog{
+					file:   nil,
+					path:   "/test/path",
+					isOpen: true, // Mark as open but with nil file
+				}
+			},
+			expectError: true,
+			errorMsg:    "watchdog file descriptor is nil",
+		},
+		{
+			name: "get timeout on valid watchdog (ioctl expected to fail on regular file)",
+			setup: func() *Watchdog {
+				tmpDir := t.TempDir()
+				tmpFile := filepath.Join(tmpDir, "mock_watchdog")
+				file, err := os.Create(tmpFile)
+				if err != nil {
+					t.Fatalf("Failed to create mock file: %v", err)
+				}
+				_ = file.Close()
+
+				wd, err := New(tmpFile)
+				if err != nil {
+					t.Fatalf("Failed to create watchdog: %v", err)
+				}
+				return wd
+			},
+			expectError: true, // Regular files don't support WDIOC_GETTIMEOUT, or ioctl not supported on non-Linux
+			errorMsg:    "ioctl",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wd := tt.setup()
+			defer func() {
+				if wd.IsOpen() {
+					_ = wd.Close()
+				}
+			}()
+
+			timeout, err := wd.GetTimeout()
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none, timeout: %v", timeout)
+				} else if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Expected error message to contain '%s', got: %s", tt.errorMsg, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+				if timeout <= 0 {
+					t.Errorf("Expected positive timeout, got: %v", timeout)
+				}
+			}
+		})
+	}
+}
+
 // TestBuildNsenterArgs tests the nsenter argument construction
 func TestBuildNsenterArgs(t *testing.T) {
 	// Test with simple command
