@@ -24,9 +24,6 @@ const (
 	// FlagWatchdogPath specifies the path to the watchdog device
 	FlagWatchdogPath = "watchdog-path"
 
-	// FlagWatchdogTimeout specifies the watchdog timeout duration
-	FlagWatchdogTimeout = "watchdog-timeout"
-
 	// FlagSBRDevice specifies the path to the SBR block device
 	FlagSBRDevice = "sbr-device"
 
@@ -75,9 +72,6 @@ const (
 const (
 	// DefaultWatchdogPath is the default path to the watchdog device
 	DefaultWatchdogPath = "/dev/watchdog"
-
-	// DefaultWatchdogTimeout is the default watchdog timeout duration
-	DefaultWatchdogTimeout = "60s"
 
 	// DefaultSBRDevice is the default SBR device path (empty means no SBR device)
 	DefaultSBRDevice = ""
