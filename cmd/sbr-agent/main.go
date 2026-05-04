@@ -2228,6 +2228,43 @@ func (s *SBRAgent) addSBRRemediationController() error {
 	return nil
 }
 
+// adjustPetIntervalFromHardware reads the hardware watchdog timeout and adjusts the pet interval
+// if the hardware timeout differs from the spec timeout. Returns the adjusted pet interval.
+func adjustPetIntervalFromHardware(wd mocks.WatchdogInterface, specTimeout, petInterval time.Duration, logger logr.Logger) time.Duration {
+	hardwareTimeout, err := wd.GetTimeout()
+	if err != nil {
+		logger.Info("Could not read hardware watchdog timeout, using spec timeout",
+			"error", err.Error(),
+			"specTimeout", specTimeout)
+		return petInterval
+	}
+
+	if hardwareTimeout != specTimeout {
+		logger.Info("Hardware timeout differs from spec! Adjusting to use hardware timeout.",
+			"hardwareTimeout", hardwareTimeout,
+			"specTimeout", specTimeout,
+			"oldPetInterval", petInterval)
+
+		// Calculate the multiple from current values
+		multiple := specTimeout / petInterval
+
+		// Recalculate pet interval with hardware timeout
+		newPetInterval := hardwareTimeout / multiple
+		if newPetInterval < time.Second {
+			newPetInterval = time.Second
+		}
+
+		logger.Info("Adjusted pet interval based on hardware timeout",
+			"newPetInterval", newPetInterval,
+			"multiple", multiple)
+
+		return newPetInterval
+	}
+
+	logger.Info("Hardware timeout matches spec", "timeout", hardwareTimeout)
+	return petInterval
+}
+
 func main() {
 	flag.Parse()
 	MaxConsecutiveFailures = *maxConsecutiveFailuresFlag
@@ -2362,6 +2399,9 @@ func main() {
 			os.Exit(1)
 		}
 		wd = realWd
+
+		// Try to read actual hardware timeout and adjust pet interval if needed
+		*petInterval = adjustPetIntervalFromHardware(realWd, *watchdogTimeout, *petInterval, logger)
 	}
 
 	// Derive petInterval from discovered watchdog timeout

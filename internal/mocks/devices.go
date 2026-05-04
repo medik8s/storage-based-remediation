@@ -42,7 +42,7 @@ type WatchdogInterface interface {
 	Pet() error
 	Close() error
 	Path() string
-	Timeout() time.Duration
+	GetTimeout() (time.Duration, error)
 }
 
 // MockBlockDevice is a mock implementation of BlockDevice for testing
@@ -215,12 +215,14 @@ func (m *MockBlockDevice) WriteFenceMessage(nodeID, targetNodeID uint16, sequenc
 
 // MockWatchdog is a mock implementation of WatchdogInterface for testing
 type MockWatchdog struct {
-	path      string
-	petCount  int
-	closed    bool
-	failPet   bool
-	failClose bool
-	mutex     sync.RWMutex
+	path            string
+	petCount        int
+	closed          bool
+	failPet         bool
+	failClose       bool
+	timeout         time.Duration
+	getTimeoutError error
+	mutex           sync.RWMutex
 }
 
 // NewMockWatchdog creates a new mock watchdog
@@ -262,10 +264,6 @@ func (m *MockWatchdog) Path() string {
 	return m.path
 }
 
-func (m *MockWatchdog) Timeout() time.Duration {
-	return 60 * time.Second
-}
-
 // GetPetCount returns the number of times Pet() was called
 func (m *MockWatchdog) GetPetCount() int {
 	m.mutex.RLock()
@@ -297,6 +295,33 @@ func (m *MockWatchdog) IsClosed() bool {
 // IsOpen returns true if the watchdog is open (opposite of IsClosed)
 func (m *MockWatchdog) IsOpen() bool {
 	return !m.IsClosed()
+}
+
+// GetTimeout returns the configured timeout value for testing
+func (m *MockWatchdog) GetTimeout() (time.Duration, error) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	if m.getTimeoutError != nil {
+		return 0, m.getTimeoutError
+	}
+
+	// Return configured timeout, or 0 if not set
+	return m.timeout, nil
+}
+
+// SetTimeout configures the mock to return a specific timeout
+func (m *MockWatchdog) SetTimeout(timeout time.Duration) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.timeout = timeout
+}
+
+// SetGetTimeoutError configures the mock to fail GetTimeout operations
+func (m *MockWatchdog) SetGetTimeoutError(err error) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.getTimeoutError = err
 }
 
 // SharedMockDevices provides a thread-safe registry for shared mock devices

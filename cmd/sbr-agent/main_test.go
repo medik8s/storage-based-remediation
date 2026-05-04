@@ -1758,3 +1758,79 @@ func isConditionExist(conditions []corev1.NodeCondition, condType corev1.NodeCon
 	}
 	return false
 }
+
+// TestAdjustPetIntervalFromHardware tests the hardware timeout discovery and pet interval adjustment
+func TestAdjustPetIntervalFromHardware(t *testing.T) {
+	logger := logr.Discard()
+
+	tests := []struct {
+		name                string
+		hardwareTimeout     time.Duration
+		getTimeoutError     error
+		specTimeout         time.Duration
+		initialPetInterval  time.Duration
+		expectedPetInterval time.Duration
+	}{
+		{
+			name:                "hardware timeout differs - iTCO_wdt scenario (120s vs 60s spec)",
+			hardwareTimeout:     120 * time.Second,
+			specTimeout:         60 * time.Second,
+			initialPetInterval:  15 * time.Second,
+			expectedPetInterval: 30 * time.Second, // 120s / (60s/15s) = 120s / 4 = 30s
+		},
+		{
+			name:                "hardware timeout matches spec",
+			hardwareTimeout:     60 * time.Second,
+			specTimeout:         60 * time.Second,
+			initialPetInterval:  15 * time.Second,
+			expectedPetInterval: 15 * time.Second, // No change
+		},
+		{
+			name:                "GetTimeout fails - use spec timeout",
+			getTimeoutError:     fmt.Errorf("ioctl not supported"),
+			specTimeout:         60 * time.Second,
+			initialPetInterval:  15 * time.Second,
+			expectedPetInterval: 15 * time.Second, // No change on error
+		},
+		{
+			name:                "hardware timeout smaller than spec",
+			hardwareTimeout:     30 * time.Second,
+			specTimeout:         60 * time.Second,
+			initialPetInterval:  15 * time.Second,
+			expectedPetInterval: time.Duration(7.5 * float64(time.Second)), // 30s / (60s/15s) = 30s / 4 = 7.5s
+		},
+		{
+			name:                "adjustment would result in very short interval - clamped to 1s",
+			hardwareTimeout:     2 * time.Second,
+			specTimeout:         60 * time.Second,
+			initialPetInterval:  15 * time.Second,
+			expectedPetInterval: 1 * time.Second, // 2s / 4 = 0.5s, clamped to 1s minimum
+		},
+		{
+			name:                "hardware much longer than spec",
+			hardwareTimeout:     180 * time.Second,
+			specTimeout:         60 * time.Second,
+			initialPetInterval:  15 * time.Second,
+			expectedPetInterval: 45 * time.Second, // 180s / 4 = 45s
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockWatchdog := mocks.NewMockWatchdog("/dev/watchdog")
+
+			if tt.getTimeoutError != nil {
+				mockWatchdog.SetGetTimeoutError(tt.getTimeoutError)
+			} else {
+				mockWatchdog.SetTimeout(tt.hardwareTimeout)
+			}
+
+			result := adjustPetIntervalFromHardware(mockWatchdog, tt.specTimeout, tt.initialPetInterval, logger)
+
+			if result != tt.expectedPetInterval {
+				t.Errorf("Expected pet interval %v, got %v", tt.expectedPetInterval, result)
+			}
+		})
+	}
+}
+
