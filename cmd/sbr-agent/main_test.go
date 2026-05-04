@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/medik8s/storage-based-remediation/pkg/agent"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -44,6 +43,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/pkg/agent"
 	"github.com/medik8s/storage-based-remediation/pkg/blockdevice"
 	mocks "github.com/medik8s/storage-based-remediation/pkg/mocks"
 	"github.com/medik8s/storage-based-remediation/pkg/sbdprotocol"

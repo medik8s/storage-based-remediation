@@ -50,13 +50,6 @@ const (
 	ReasonFailed = "RemediationFailed"
 	// ReasonAgentDelegated indicates the remediation was delegated to agents
 	ReasonAgentDelegated = "RemediationAgentDelegated"
-	// SBRAgentAnnotationKey marks a remediation created by sbr
-	SBRAgentAnnotationKey = "medik8s.io/sbr-agent"
-	// SBRAgentOOSTaintTimestampAnnotation records when OOS taint was placed on the node for this remediation
-	SBRAgentOOSTaintTimestampAnnotation = "medik8s.io/sbr-oos-placed-at"
-
-	// SBRAgentRemediationRequeueDelay is the requeue delay for SBR agent remediations before placing OOS taint.
-	SBRAgentRemediationRequeueDelay = 10 * time.Second
 
 	// Status update retry configuration
 	MaxStatusUpdateRetries    = 10
@@ -285,41 +278,12 @@ func (r *SBRRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				"targetNode", nodeName)
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
-		// For fresh SBR-agent remediations, delay placing the OOS taint
-		freshOOSDelay, err := r.agentRemediationFreshOOSDelay(ctx, sbrRemediation.Namespace)
-		if err != nil {
-			logger.Error(err, "Failed to list StorageBasedRemediationConfig for agent remediation fresh window")
-			return ctrl.Result{}, err
-		}
-		if isSBRAgentRemediation(&sbrRemediation) && isRemediationFresh(&sbrRemediation, time.Now(), freshOOSDelay) {
-			logger.V(1).Info("Fresh SBR-agent remediation detected; delaying OutOfService taint",
-				"age", time.Since(sbrRemediation.CreationTimestamp.Time),
-				"requeueAfter", SBRAgentRemediationRequeueDelay,
-				"freshOOSDelay", freshOOSDelay)
-			return ctrl.Result{RequeueAfter: SBRAgentRemediationRequeueDelay}, nil
-		}
 
 		// Fencing completed successfully - apply OutOfService taint prior to success handling
 		if err := r.ensureOutOfServiceTaint(ctx, nodeName, logger); err != nil {
 			logger.Error(err, "Failed to ensure OutOfService taint on remediated node",
 				"node", nodeName)
 			return ctrl.Result{}, err
-		}
-
-		// If this is an SBR-agent remediation, stamp OOS placement time only once and requeue to avoid update conflicts
-		if isSBRAgentRemediation(&sbrRemediation) {
-			if sbrRemediation.Annotations == nil {
-				sbrRemediation.Annotations = map[string]string{}
-			}
-			if _, exists := sbrRemediation.Annotations[SBRAgentOOSTaintTimestampAnnotation]; !exists {
-				sbrRemediation.Annotations[SBRAgentOOSTaintTimestampAnnotation] = time.Now().UTC().Format(time.RFC3339Nano)
-				if err := r.Update(ctx, &sbrRemediation); err != nil {
-					logger.Error(err, "Failed to annotate remediation with OOS placement timestamp")
-					return ctrl.Result{}, err
-				}
-				// Requeue to proceed with success handling on a fresh ResourceVersion
-				return ctrl.Result{Requeue: true}, nil
-			}
 		}
 
 		// Proceed with successful fencing handling
@@ -670,35 +634,6 @@ func removeTaint(taints *[]corev1.Taint, target corev1.Taint) bool {
 		*taints = out
 	}
 	return removed
-}
-
-func isSBRAgentRemediation(rem *medik8sv1alpha1.StorageBasedRemediation) bool {
-	if rem.Annotations == nil {
-		return false
-	}
-	_, ok := rem.Annotations[SBRAgentAnnotationKey]
-	return ok
-}
-
-func isRemediationFresh(rem *medik8sv1alpha1.StorageBasedRemediation, now time.Time, freshWindow time.Duration) bool {
-	if rem.CreationTimestamp.IsZero() {
-		return false
-	}
-	return now.Sub(rem.CreationTimestamp.Time) < freshWindow
-}
-
-// agentRemediationFreshOOSDelay returns how long to treat agent-annotated remediations as fresh before OOS taint,
-// from StorageBasedRemediationConfig in the same namespace (first item), or API defaults if none exist.
-func (r *SBRRemediationReconciler) agentRemediationFreshOOSDelay(ctx context.Context, namespace string) (time.Duration, error) {
-	var list medik8sv1alpha1.StorageBasedRemediationConfigList
-	if err := r.List(ctx, &list, client.InNamespace(namespace)); err != nil {
-		return 0, err
-	}
-	var spec medik8sv1alpha1.StorageBasedRemediationConfigSpec
-	if len(list.Items) > 0 {
-		spec = list.Items[0].Spec
-	}
-	return medik8sv1alpha1.RemediationAgentFreshOOSDelay(spec.GetSBRTimeoutSeconds(), spec.GetMaxConsecutiveFailures()), nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

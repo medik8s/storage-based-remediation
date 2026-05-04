@@ -362,19 +362,6 @@ func (s *StorageBasedRemediationConfigSpec) GetMaxConsecutiveFailures() int32 {
 	return int32(DefaultMaxConsecutiveFailures)
 }
 
-// RemediationAgentFreshOOSDelay is how long agent-annotated remediations stay fresh before OutOfService taint timing.
-// Matches historic behavior: (sbrTimeoutSeconds/2) * maxConsecutiveFailures.
-func RemediationAgentFreshOOSDelay(sbrTimeoutSeconds, maxConsecutiveFailures int32) time.Duration {
-	if sbrTimeoutSeconds < 2 {
-		sbrTimeoutSeconds = 2
-	}
-	if maxConsecutiveFailures < 1 {
-		maxConsecutiveFailures = 1
-	}
-	heartbeat := time.Duration(sbrTimeoutSeconds/2) * time.Second
-	return heartbeat * time.Duration(maxConsecutiveFailures)
-}
-
 // GetSBRUpdateInterval returns the SBR update interval with default fallback
 func (s *StorageBasedRemediationConfigSpec) GetSBRUpdateInterval() time.Duration {
 	if s.SBRUpdateInterval != nil {
