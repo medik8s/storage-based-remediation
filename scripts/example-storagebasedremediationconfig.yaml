@@ -4,5 +4,5 @@ metadata:
   name: test-storagebasedremediationconfig
 spec:
   namespace: sbr-system
-  sbrWatchdogPath: /dev/watchdog
+  watchdogPath: /dev/watchdog
 
