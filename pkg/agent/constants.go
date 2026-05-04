@@ -22,9 +22,18 @@ import "time"
 // These values are no longer configurable via the StorageBasedRemediationConfig CR.
 
 const (
-	// PetIntervalMultiple defines the hardcoded multiple used to calculate the pet interval
+	// PetIntervalMultiple defines the multiple used to calculate the pet interval
 	// from the watchdog timeout: pet interval = watchdog timeout / pet interval multiple.
+	// The agent discovers the actual watchdog timeout at runtime and derives petInterval
+	// using this constant to ensure compatibility with the hardware configuration.
 	PetIntervalMultiple = 4
+
+	// MinPetInterval is the minimum allowed pet interval to prevent watchdog starvation
+	MinPetInterval = 1 * time.Second
+
+	// MinWatchdogTimeout is the minimum hardware watchdog timeout required to support
+	// the minimum pet interval with required 3:1 safety margin: timeout >= 3 * MinPetInterval
+	MinWatchdogTimeout = 3 * MinPetInterval
 
 	// WatchdogTimeoutDefault is the default timeout when watchdog timeout discovery fails
 	WatchdogTimeoutDefault = 60 * time.Second

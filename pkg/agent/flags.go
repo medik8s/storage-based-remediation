@@ -27,9 +27,6 @@ const (
 	// FlagWatchdogTimeout specifies the watchdog timeout duration
 	FlagWatchdogTimeout = "watchdog-timeout"
 
-	// FlagPetInterval specifies the pet interval (how often to pet the watchdog)
-	FlagPetInterval = "pet-interval"
-
 	// FlagSBRDevice specifies the path to the SBR block device
 	FlagSBRDevice = "sbr-device"
 
@@ -81,9 +78,6 @@ const (
 
 	// DefaultWatchdogTimeout is the default watchdog timeout duration
 	DefaultWatchdogTimeout = "60s"
-
-	// DefaultPetInterval is the default pet interval
-	DefaultPetInterval = "15s"
 
 	// DefaultSBRDevice is the default SBR device path (empty means no SBR device)
 	DefaultSBRDevice = ""

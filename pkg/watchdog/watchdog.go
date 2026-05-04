@@ -519,27 +519,6 @@ func (w *Watchdog) Timeout() time.Duration {
 	return duration
 }
 
-// ValidateTimeoutWithPetInterval checks if the watchdog timeout is compatible with the pet interval.
-// Pet interval should be significantly less than watchdog timeout to ensure the watchdog is pet
-// frequently enough. Recommended ratio is at least 3:1 (timeout:interval) for safety margin.
-// Logs a warning if there's a timing issue, but does not prevent the program from continuing.
-func ValidateTimeoutWithPetInterval(timeout, petInterval time.Duration) (valid bool, warning string) {
-	// Pet interval should be at least 3 times shorter than watchdog timeout for safety
-	maxPetInterval := timeout / 3
-	if petInterval > maxPetInterval {
-		return false, fmt.Sprintf("pet interval %v is too long for watchdog timeout %v. "+
-			"Pet interval should be at least 3 times shorter than watchdog timeout. "+
-			"Maximum recommended pet interval: %v",
-			petInterval, timeout, maxPetInterval)
-	}
-
-	// Pet interval should be at least 1 second
-	if petInterval < time.Second {
-		return false, fmt.Sprintf("pet interval %v is too short. Minimum recommended: 1s", petInterval)
-	}
-	return true, ""
-}
-
 // ioctlGetTimeout performs the WDIOC_GETTIMEOUT ioctl call on the watchdog device
 func (w *Watchdog) ioctlGetTimeout(timeout *int32) error {
 	// WDIOC_GETTIMEOUT is a read ioctl that returns the current timeout in seconds

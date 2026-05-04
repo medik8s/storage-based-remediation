@@ -47,7 +47,6 @@ import (
 	"github.com/medik8s/storage-based-remediation/pkg/blockdevice"
 	mocks "github.com/medik8s/storage-based-remediation/pkg/mocks"
 	"github.com/medik8s/storage-based-remediation/pkg/sbdprotocol"
-	"github.com/medik8s/storage-based-remediation/pkg/watchdog"
 	testutils "github.com/medik8s/storage-based-remediation/test/utils"
 )
 
@@ -1200,126 +1199,6 @@ func TestPerformSBRReadWriteTest(t *testing.T) {
 	if err == nil {
 		t.Error("Expected SBR read/write test to fail with sync failure, but it succeeded")
 	}
-}
-
-func TestValidateWatchdogTiming(t *testing.T) {
-	// Initialize logger for tests
-	logger = logr.Discard()
-
-	tests := []struct {
-		name        string
-		petInterval time.Duration
-		wantErr     bool
-		errContains string
-	}{
-		{
-			name:        "valid pet interval - 15s (4x safety margin)",
-			petInterval: 15 * time.Second,
-			wantErr:     false,
-		},
-		{
-			name:        "valid pet interval - 20s (3x safety margin, exactly at limit)",
-			petInterval: 20 * time.Second,
-			wantErr:     false,
-		},
-		{
-			name:        "valid pet interval - 10s (6x safety margin)",
-			petInterval: 10 * time.Second,
-			wantErr:     false,
-		},
-		{
-			name:        "valid pet interval - 1s (minimum allowed)",
-			petInterval: 1 * time.Second,
-			wantErr:     false,
-		},
-		{
-			name:        "invalid pet interval - too long (21s)",
-			petInterval: 21 * time.Second,
-			wantErr:     true,
-			errContains: "too long",
-		},
-		{
-			name:        "invalid pet interval - too long (25s)",
-			petInterval: 25 * time.Second,
-			wantErr:     true,
-			errContains: "too long",
-		},
-		{
-			name:        "invalid pet interval - exactly at watchdog timeout (60s)",
-			petInterval: 60 * time.Second,
-			wantErr:     true,
-			errContains: "too long",
-		},
-		{
-			name:        "invalid pet interval - longer than watchdog timeout (90s)",
-			petInterval: 90 * time.Second,
-			wantErr:     true,
-			errContains: "too long",
-		},
-		{
-			name:        "invalid pet interval - too short (500ms)",
-			petInterval: 500 * time.Millisecond,
-			wantErr:     true,
-			errContains: "too short",
-		},
-		{
-			name:        "invalid pet interval - too short (100ms)",
-			petInterval: 100 * time.Millisecond,
-			wantErr:     true,
-			errContains: "too short",
-		},
-		{
-			name:        "invalid pet interval - zero",
-			petInterval: 0,
-			wantErr:     true,
-			errContains: "too short",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Use 60 second watchdog timeout (the hardcoded value the tests were based on)
-			watchdogTimeout := 60 * time.Second
-			valid, warning := watchdog.ValidateTimeoutWithPetInterval(watchdogTimeout, tt.petInterval)
-
-			if tt.wantErr {
-				if valid {
-					t.Errorf("validateWatchdogTiming() expected error but got none")
-					return
-				}
-				if tt.errContains != "" && !contains(warning, tt.errContains) {
-					t.Errorf("validateWatchdogTiming() warning = %v, want warning containing %q", warning, tt.errContains)
-				}
-			} else {
-				if !valid {
-					t.Errorf("validateWatchdogTiming() unexpected warning = %v", warning)
-				}
-			}
-		})
-	}
-}
-
-// contains checks if a string contains a substring (helper function)
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > len(substr) && containsSubstring(s, substr)))
-}
-
-// containsSubstring is a simple substring search
-func containsSubstring(s, substr string) bool {
-	if len(substr) == 0 {
-		return true
-	}
-	if len(substr) > len(s) {
-		return false
-	}
-
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func TestSBRAgent_FileLockingConfiguration(t *testing.T) {

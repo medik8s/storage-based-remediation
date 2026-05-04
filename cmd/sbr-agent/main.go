@@ -35,6 +35,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
 	// Kubernetes imports for StorageBasedRemediation CR watching
 
 	corev1 "k8s.io/api/core/v1"
@@ -72,9 +73,7 @@ import (
 // +kubebuilder:rbac:groups="",resources=nodes/status,verbs=get;patch;update
 
 var (
-	watchdogPath = flag.String(agent.FlagWatchdogPath, agent.DefaultWatchdogPath, "Path to the watchdog device")
-	petInterval  = flag.Duration(agent.FlagPetInterval, 15*time.Second,
-		"Pet interval (how often to pet the watchdog)")
+	watchdogPath   = flag.String(agent.FlagWatchdogPath, agent.DefaultWatchdogPath, "Path to the watchdog device")
 	sbrDevice      = flag.String(agent.FlagSBRDevice, agent.DefaultSBRDevice, "Path to the SBR block device")
 	sbrFileLocking = flag.Bool(agent.FlagSBRFileLocking, agent.DefaultSBRFileLocking,
 		"Enable file locking for SBR device operations (recommended for shared storage)")
@@ -1088,11 +1087,6 @@ func (s *SBRAgent) StartWithContext(ctx context.Context) error {
 		"sbrUpdateInterval", s.sbrUpdateInterval,
 		"heartbeatInterval", s.heartbeatInterval,
 		"peerCheckInterval", s.peerCheckInterval)
-
-	// Validate watchdog timing with discovered timeout
-	if valid, warning := watchdog.ValidateTimeoutWithPetInterval(s.watchdog.Timeout(), s.petInterval); !valid {
-		return fmt.Errorf("invalid pet interval for watchdog timing: %s", warning)
-	}
 
 	// Start node manager periodic sync if using hash mapping
 	if s.nodeManager != nil {
@@ -2250,12 +2244,6 @@ func main() {
 	// Log build information at startup
 	logger.Info("SBR Agent build information", "buildInfo", version.GetFormattedBuildInfo())
 
-	// Validate pet interval early (actual timeout validation happens at runtime)
-	if *petInterval < 1*time.Second {
-		logger.Error(nil, "Pet interval must be at least 1 second", "petInterval", *petInterval)
-		os.Exit(1)
-	}
-
 	// Determine node name
 	nodeNameValue := *nodeName
 	if nodeNameValue == "" {
@@ -2376,13 +2364,38 @@ func main() {
 		}
 		wd = realWd
 	}
+
+	// Derive petInterval from discovered watchdog timeout
+	discoveredTimeout := wd.Timeout()
+	derivedPetInterval := discoveredTimeout / agent.PetIntervalMultiple
+
+	// Validate that watchdog timeout is large enough to support the minimum pet interval
+	// with required 3:1 safety margin: timeout >= 3 * MinPetInterval
+	if discoveredTimeout < agent.MinWatchdogTimeout {
+		logger.Error(nil, "Hardware watchdog timeout is too short",
+			"timeout", discoveredTimeout,
+			"minimum", agent.MinWatchdogTimeout,
+			"reason", "must be at least 3x MinPetInterval to maintain safety margin")
+		os.Exit(1)
+	}
+
+	// Apply floor check to ensure minimum pet interval
+	if derivedPetInterval < agent.MinPetInterval {
+		derivedPetInterval = agent.MinPetInterval
+	}
+
+	logger.Info("Derived petInterval from watchdog timeout",
+		"timeout", discoveredTimeout,
+		"multiple", agent.PetIntervalMultiple,
+		"petInterval", derivedPetInterval)
+
 	sbrAgent, err := NewSBRAgentWithWatchdog(
 		wd,
 		*sbrDevice,
 		nodeNameValue,
 		*clusterName,
 		nodeIDValue,
-		*petInterval,
+		derivedPetInterval,
 		*sbrUpdateInterval,
 		heartbeatInterval,
 		*peerCheckInterval,
