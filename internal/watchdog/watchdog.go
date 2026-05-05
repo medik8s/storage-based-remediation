@@ -416,12 +416,14 @@ func (w *Watchdog) Pet() error {
 		// Primary method: Use WDIOC_KEEPALIVE ioctl to reset the watchdog timer
 		err := w.petWatchdogIoctl()
 		if err == nil {
+			w.logger.Info("TEMPORARY DEBUG: Watchdog pet using ioctl WDIOC_KEEPALIVE")
 			return nil // Success with ioctl method
 		}
 
 		// Check if the error indicates ioctl is not supported
 		if errors.Is(err, ErrIoctlNotSupported) {
 			w.logger.V(2).Info("WDIOC_KEEPALIVE not supported, falling back to write-based keep-alive")
+			w.logger.Info("TEMPORARY DEBUG: Watchdog pet ioctl not supported, using write-based fallback")
 
 			// Fallback method: Use write-based keep-alive
 			// Many watchdog devices accept any write as a keep-alive signal
@@ -439,6 +441,7 @@ func (w *Watchdog) Pet() error {
 		}
 
 		// Other ioctl error - treat as retryable
+		w.logger.Info("TEMPORARY DEBUG: Watchdog pet ioctl failed, will retry", "error", err.Error())
 		return retry.NewRetryableError(err, retry.IsTransientError(err), "pet watchdog")
 	})
 
