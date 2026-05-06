@@ -91,7 +91,7 @@ var (
 		"Interval for updating SBR device with node status")
 	peerCheckInterval          = flag.Duration(agent.FlagPeerCheckInterval, 5*time.Second, "Interval for checking peer heartbeats")
 	maxConsecutiveFailuresFlag = flag.Int(agent.FlagMaxConsecutiveFailures, agent.DefaultMaxConsecutiveFailures,
-		"Max consecutive SBR/watchdog failures before self-fence; peer SBRStorageUnhealthy uses this many missed heartbeat buckets")
+		"Max consecutive SBR/watchdog failures before self-fence; peer will place SBRStorageUnhealthy condition on the node after that many missed heartbeat")
 	logLevel     = flag.String(agent.FlagLogLevel, agent.DefaultLogLevel, "Log level (debug, info, warn, error)")
 	rebootMethod = flag.String(agent.FlagRebootMethod, agent.DefaultRebootMethod,
 		"Method to use for self-fencing (panic, systemctl-reboot, none)")

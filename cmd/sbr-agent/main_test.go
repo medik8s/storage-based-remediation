@@ -1502,31 +1502,46 @@ var _ = Describe("Fence flow with real SBR agent", func() {
 		})
 	}
 
+	// deferFenceFlowPeerTestGlobals overrides package globals for the peer fence DescribeTable.
+	// DeferCleanup restores them when the table row (spec) finishes, not when this returns.
+	deferFenceFlowPeerTestGlobals := func(maxFailures int) (heartbeat, staleAgeForTest time.Duration) {
+		oldMax := MaxConsecutiveFailures
+		MaxConsecutiveFailures = maxFailures
+		DeferCleanup(func() { MaxConsecutiveFailures = oldMax })
+
+		// Match agent peer math: heartbeat = sbrTimeoutSeconds/2 (see peerMonitor.checkPeerLiveness).
+		heartbeat = time.Duration(fenceFlowSBRTimeout/2) * time.Second
+		staleAgeForTest = heartbeat * time.Duration(maxFailures+1)
+		oldStale := sbrUnhealthyConditionStaleAge
+		sbrUnhealthyConditionStaleAge = staleAgeForTest
+		DeferCleanup(func() { sbrUnhealthyConditionStaleAge = oldStale })
+		return heartbeat, staleAgeForTest
+	}
+
+	// fenceFlowPeerConditionTiming derives Consistently/Eventually windows from heartbeat and staleAgeForTest
+	// returned by deferFenceFlowPeerTestGlobals. peerCheckInterval must match NewSBRAgentWithWatchdog in the peer fence flow.
+	fenceFlowPeerConditionTiming := func(maxFailures int, heartbeat, staleAgeForTest time.Duration) (
+		notTrueMinDuration, waitConditionTrueMax, waitUnknownMax time.Duration,
+	) {
+		const peerCheckInterval = 1 * time.Second
+		buffer := time.Second
+		notTrueMinDuration = heartbeat*time.Duration(maxFailures-1) - buffer
+		waitConditionTrueMax = heartbeat*time.Duration(maxFailures+1) + buffer - notTrueMinDuration
+		waitUnknownMax = staleAgeForTest + 5*peerCheckInterval + 10*time.Second
+		return notTrueMinDuration, waitConditionTrueMax, waitUnknownMax
+	}
+
 	Context("when agent sets SBRStorageUnhealthy and controller reconciles", func() {
-		// DescribeTable leaves room to add Entry rows for other MaxConsecutiveFailures values later.
-		DescribeTable("should write fence message to device",
+		DescribeTable("peer heartbeat loss leads to HEARTBEAT_TIMEOUT fence on shared device",
 			func(maxFailures int) {
-
-				oldMax := MaxConsecutiveFailures
-				MaxConsecutiveFailures = maxFailures
-				DeferCleanup(func() {
-					MaxConsecutiveFailures = oldMax
-				})
-
-				// Match agent peer math: heartbeat = sbrTimeoutSeconds/2 (see peerMonitor.checkPeerLiveness).
-				heartbeat := time.Duration(fenceFlowSBRTimeout/2) * time.Second
-				peerCheckInterval := 1 * time.Second // must match NewSBRAgentWithWatchdog peer check arg below
+				// Override peer threshold and unhealthy stale-age for this table row; DeferCleanup restores both at spec end.
+				heartbeat, staleAgeForTest := deferFenceFlowPeerTestGlobals(maxFailures)
+				minDurationBeforePeerDownDetection, maxDurationForPeerDownDetection, maxDurationForStaleCondition :=
+					fenceFlowPeerConditionTiming(maxFailures, heartbeat, staleAgeForTest)
 
 				tmpDir, sbrPath, fencePath, worker1ID, worker2ID := setupFenceFlowBase()
 
-				// Stale age for this test: (maxFailures+1)*heartbeat (aligns with main startup formula scale).
-				staleAgeForTest := heartbeat * time.Duration(maxFailures+1)
-				oldStale := sbrUnhealthyConditionStaleAge
-				sbrUnhealthyConditionStaleAge = staleAgeForTest
-				DeferCleanup(func() { sbrUnhealthyConditionStaleAge = oldStale })
-
-				waitUnknownMax := staleAgeForTest + 5*peerCheckInterval + 10*time.Second
-
+				// Scenario: both peers appear healthy on the mock device before worker-1 observes them.
 				By("Writing initial heartbeats for worker-1 and worker-2 on mock devices")
 				mockHeartbeatDevice := mocks.NewMockBlockDevice("/tmp/fence-test-heartbeat", 1024*1024)
 				mockFenceDevice := mocks.NewMockBlockDevice("/tmp/fence-test-fence", 1024*1024)
@@ -1536,6 +1551,7 @@ var _ = Describe("Fence flow with real SBR agent", func() {
 					Expect(mockHeartbeatDevice.WritePeerHeartbeat(worker2ID, ts+uint64(round), uint64(round+1))).To(Succeed())
 				}
 
+				// Scenario: worker-1 runs with real peer loop; heartbeat interval matches fenceFlowSBRTimeout/2.
 				By("Creating real SBR agent and starting RunUntilShutdown")
 				mockWatchdog := mocks.NewMockWatchdog(filepath.Join(tmpDir, "watchdog"))
 				agent, err := NewSBRAgentWithWatchdog(mockWatchdog, sbrPath, "worker-1", "test-cluster", worker1ID,
@@ -1546,6 +1562,7 @@ var _ = Describe("Fence flow with real SBR agent", func() {
 				agent.setSBRDevices(mockHeartbeatDevice, mockFenceDevice)
 				startFenceFlowAgent(agent)
 
+				// Scenario: no remediation signal while peer heartbeats are still valid.
 				By("Letting agent run a few peer loops so it sees both workers")
 				Consistently(func(g Gomega) bool {
 					node := &corev1.Node{}
@@ -1553,36 +1570,30 @@ var _ = Describe("Fence flow with real SBR agent", func() {
 					return isConditionExist(node.Status.Conditions, medik8sv1alpha1.NodeConditionSBRStorageUnhealthy, corev1.ConditionTrue)
 				}, 3*time.Second, 500*time.Millisecond).Should(BeFalse(), "agent should not set SBRStorageUnhealthy on worker-2")
 
+				// Scenario: worker-2 disappears from the device; worker-1 should not flip True instantly.
 				By("Simulating worker-2 agent stopping (zero out its slot)")
 				slotOffset := int64(worker2ID) * sbdprotocol.SBD_SLOT_SIZE
 				_, err = mockHeartbeatDevice.WriteAt(make([]byte, sbdprotocol.SBD_SLOT_SIZE), slotOffset)
 				Expect(err).NotTo(HaveOccurred())
 
-				// buffer keeps Consistently/Eventually windows off the exact (maxFailures-1)*heartbeat gate edge
-				// (discrete peer ticks + integer missed-heartbeat counts).
-				buffer := time.Second
-				// Stay False until just before peer liveness marks unhealthy (> maxFailures*heartbeat; see checkPeerLiveness).
-				notTrueMinDuration := heartbeat*time.Duration(maxFailures-1) - buffer
-				// After notTrueMinDuration, allow two heartbeat-scale steps plus buffer for API/reconcile slack
-				// ((maxFailures+1) - (maxFailures-1) = 2 heartbeat-sized terms in the difference).
-				waitConditionTrueMax := heartbeat*time.Duration(maxFailures+1) + buffer - notTrueMinDuration
-
+				// Timing: buffer avoids racing checkPeerLiveness (> maxFailures*heartbeat); see fenceFlowPeerConditionTiming.
 				By("Peer should not report SBRStorageUnhealthy=True immediately (missed-heartbeat gate)")
 				Consistently(func(g Gomega) bool {
 					node := &corev1.Node{}
 					g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: fenceFlowTargetNode}, node)).To(Succeed())
 					return isConditionExist(node.Status.Conditions, medik8sv1alpha1.NodeConditionSBRStorageUnhealthy, corev1.ConditionTrue)
-				}, notTrueMinDuration, 500*time.Millisecond).Should(BeFalse(),
+				}, minDurationBeforePeerDownDetection, 500*time.Millisecond).Should(BeFalse(),
 					"condition True should not appear before enough heartbeats have been missed")
 
-				By(fmt.Sprintf("Waiting for SBRStorageUnhealthy=True (max=%d, sbrTimeoutSec=%d, hb=%v, cap=%v)",
-					maxFailures, fenceFlowSBRTimeout, heartbeat, waitConditionTrueMax))
+				// Scenario: after thresholds, worker-1 sets SBRStorageUnhealthy=True so NHC can create remediation.
+				By("Waiting for SBRStorageUnhealthy=True on worker-2 after peer-down thresholds")
 				Eventually(func(g Gomega) bool {
 					node := &corev1.Node{}
 					g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: fenceFlowTargetNode}, node)).To(Succeed())
 					return isConditionExist(node.Status.Conditions, medik8sv1alpha1.NodeConditionSBRStorageUnhealthy, corev1.ConditionTrue)
-				}, waitConditionTrueMax, 500*time.Millisecond).Should(BeTrue(), "agent should set SBRStorageUnhealthy on worker-2")
+				}, maxDurationForPeerDownDetection, 500*time.Millisecond).Should(BeTrue(), "agent should set SBRStorageUnhealthy on worker-2")
 
+				// Scenario: NHC creates StorageBasedRemediation named like the node once condition is True.
 				By("Simulating NHC creating StorageBasedRemediation after observing the condition")
 				sbr := &medik8sv1alpha1.StorageBasedRemediation{
 					ObjectMeta: metav1.ObjectMeta{Name: fenceFlowTargetNode, Namespace: "default"},
@@ -1596,6 +1607,7 @@ var _ = Describe("Fence flow with real SBR agent", func() {
 					_ = client.IgnoreNotFound(k8sClient.Delete(ctx, sbr))
 				})
 
+				// Scenario: controller writes fence message to device; test reads fencePath (controller uses temp devices).
 				By("Verifying controller wrote fence message (controller uses temp devices, so read from fencePath)")
 				fenceFile, err := os.Open(fencePath)
 				Expect(err).NotTo(HaveOccurred())
@@ -1619,13 +1631,15 @@ var _ = Describe("Fence flow with real SBR agent", func() {
 					return false
 				}, 15*time.Second, 500*time.Millisecond).Should(BeTrue(), "controller should write fence message with FENCE_REASON_HEARTBEAT_TIMEOUT")
 
-				By(fmt.Sprintf("Waiting for SBRStorageUnhealthy=Unknown after stale age (stale=%v, cap=%v)", staleAgeForTest, waitUnknownMax))
+				// Scenario: stale True becomes Unknown so NHC can drop remediation and agent can recover.
+				By("Waiting for SBRStorageUnhealthy=Unknown after stale age")
 				Eventually(func(g Gomega) bool {
 					node := &corev1.Node{}
 					g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: fenceFlowTargetNode}, node)).To(Succeed())
 					return isConditionExist(node.Status.Conditions, medik8sv1alpha1.NodeConditionSBRStorageUnhealthy, corev1.ConditionUnknown)
-				}, waitUnknownMax, 500*time.Millisecond).Should(BeTrue(), "agent should set SBRStorageUnhealthy to Unknown after stale age")
+				}, maxDurationForStaleCondition, 500*time.Millisecond).Should(BeTrue(), "agent should set SBRStorageUnhealthy to Unknown after stale age")
 
+				// Scenario: peer heartbeats return; condition should clear to False.
 				By("Simulating worker-2 recovering (write heartbeats again)")
 				ts2 := uint64(time.Now().UnixNano())
 				for round := 0; round < 3; round++ {
@@ -1639,6 +1653,7 @@ var _ = Describe("Fence flow with real SBR agent", func() {
 					return isConditionExist(node.Status.Conditions, medik8sv1alpha1.NodeConditionSBRStorageUnhealthy, corev1.ConditionFalse)
 				}, 15*time.Second, 500*time.Millisecond).Should(BeTrue(), "agent should set SBRStorageUnhealthy to False when peer recovers")
 
+				// Scenario: remove CR before next table row reuses the same name.
 				By("Deleting StorageBasedRemediation and waiting for removal so the next DescribeTable row can Create the same name")
 				Expect(k8sClient.Delete(ctx, sbr)).To(Succeed())
 				Eventually(func(g Gomega) {
@@ -1647,8 +1662,8 @@ var _ = Describe("Fence flow with real SBR agent", func() {
 					g.Expect(apierrors.IsNotFound(err)).To(BeTrue(), "remediation CR should be gone before the next table entry")
 				}, 30*time.Second, 500*time.Millisecond).Should(Succeed())
 			},
-			Entry("minimum max consecutive failures", 3),
-			Entry("default max consecutive failures (package default)", agent.DefaultMaxConsecutiveFailures),
+			Entry("writes FENCE_REASON_HEARTBEAT_TIMEOUT fence when max consecutive failures is 3", 3),
+			Entry("writes FENCE_REASON_HEARTBEAT_TIMEOUT fence when max consecutive failures is package default", agent.DefaultMaxConsecutiveFailures),
 		)
 	})
 

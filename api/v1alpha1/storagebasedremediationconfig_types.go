@@ -216,8 +216,13 @@ type StorageBasedRemediationConfigSpec struct {
 	// +optional
 	SBRTimeoutSeconds *int32 `json:"sbrTimeoutSeconds,omitempty"`
 
-	// MaxConsecutiveFailures caps consecutive SBR/watchdog/heartbeat failures before self-fence and scales peer timing.
-	// If omitted, GetMaxConsecutiveFailures uses DefaultMaxConsecutiveFailures at runtime.
+	// MaxConsecutiveFailures is the maximum number of consecutive failures (SBR device, watchdog, or local
+	// heartbeat writes) before the agent treats the node as failed and performs self-fencing (when not in
+	// detect-only or otherwise disarmed). The same threshold scales how many peer heartbeat gaps are
+	// required before a peer is considered unhealthy.
+	// Increasing MaxConsecutiveFailures will increase time-to-detection proportionally to (maxConsecutiveFailures × heartbeatInterval) for both local and peer failures.
+	// If omitted, DefaultMaxConsecutiveFailures is used
+	// at runtime.
 	// +kubebuilder:validation:Minimum=2
 	// +kubebuilder:validation:Maximum=32
 	// +optional
