@@ -14,3 +14,10 @@ aliases:
       - slintes
       - beekhof
       - clobrano
+
+  # GitHub org team: https://github.com/orgs/medik8s/teams/qe (slug: qe)
+  qe-team:
+      - lyfofvipin
+      - maximunited
+      - ugreener
+      - mhabashrh
