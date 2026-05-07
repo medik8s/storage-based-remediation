@@ -28,23 +28,16 @@ metadata:
   name: sbr-config-with-shared-storage
   namespace: sbr-system
 spec:
-  # SBR agent image configuration
-  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  imagePullPolicy: "IfNotPresent"
-  
   # Watchdog configuration
   watchdogPath: "/dev/watchdog"
-  watchdogTimeout: "60s"
-  petIntervalMultiple: 4
-  
+
   # Node management
-  staleNodeTimeout: "1h"
-  
+
   # ✅ SHARED STORAGE CONFIGURATION ✅
   # This field enables automatic shared storage integration
   # The controller will create a PVC using this StorageClass and configure the sbr-agent accordingly
   sharedStorageClass: "efs-sc"                 # Required: Name of RWX StorageClass
-  
+
   # When shared storage is configured, the controller automatically:
   # 1. Creates a PVC using the specified StorageClass with RWX access mode
   # 2. Validates the StorageClass name and mount path
@@ -78,10 +71,10 @@ spec:
     - -c
     - |
       echo "Testing RWX storage from pod on node: $NODE_NAME"
-      
+
       # Create test directory
       mkdir -p /shared/test-data
-      
+
       # Write test data with timestamp and node info
       while true; do
         echo "$(date): Hello from $NODE_NAME" >> /shared/test-data/messages.log
@@ -89,23 +82,23 @@ spec:
         find /shared -type f | head -10
         sleep 30
       done
-    
+
     env:
     - name: NODE_NAME
       valueFrom:
         fieldRef:
           fieldPath: spec.nodeName
-    
+
     volumeMounts:
     - name: shared-storage
       mountPath: /shared
-  
+
   volumes:
   - name: shared-storage
     persistentVolumeClaim:
       # Use the auto-generated PVC name: {storagebasedremediationconfig-name}-shared-storage
       claimName: sbr-config-with-shared-storage-shared-storage
-  
+
   restartPolicy: Always
 
 ---
@@ -128,44 +121,44 @@ spec:
           echo "=== RWX Storage Verification ==="
           echo "Node: $NODE_NAME"
           echo "Shared storage contents:"
-          
+
           # List contents
           find /shared -type f -exec ls -la {} \; | head -20
-          
+
           # Test write access
           echo "Testing write access..."
           test_file="/shared/verification-$(date +%s)-$NODE_NAME.txt"
           echo "Verification test from $NODE_NAME at $(date)" > "$test_file"
-          
+
           if [[ -f "$test_file" ]]; then
             echo "✅ Write test successful: $test_file"
           else
             echo "❌ Write test failed"
             exit 1
           fi
-          
+
           # Test read access to files from other nodes
           echo "Testing read access to files from other nodes..."
           other_files=$(find /shared -name "verification-*" ! -name "*$NODE_NAME*" | wc -l)
           echo "Found $other_files files from other nodes"
-          
+
           echo "=== Verification Complete ==="
-        
+
         env:
         - name: NODE_NAME
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
-        
+
         volumeMounts:
         - name: shared-storage
           mountPath: /shared
-      
+
       volumes:
       - name: shared-storage
         persistentVolumeClaim:
           # Use the auto-generated PVC name: {storagebasedremediationconfig-name}-shared-storage
           claimName: sbr-config-with-shared-storage-shared-storage
-      
+
       restartPolicy: Never
-  backoffLimit: 3 
+  backoffLimit: 3

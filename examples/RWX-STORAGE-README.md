@@ -26,7 +26,7 @@ oc get csidriver efs.csi.aws.com
 ### 2. AWS Permissions
 Your AWS credentials must have the following permissions:
 - `efs:CreateFileSystem`
-- `efs:CreateMountTarget` 
+- `efs:CreateMountTarget`
 - `efs:DescribeFileSystems`
 - `efs:DescribeMountTargets`
 - `ec2:DescribeSubnets`
@@ -110,17 +110,8 @@ metadata:
   name: sbr-config-with-shared-storage
   namespace: sbr-system
 spec:
-  # SBR agent image configuration
-  image: "quay.io/medik8s/storage-based-remediation-agent:latest"
-  imagePullPolicy: "IfNotPresent"
-  
   # Watchdog configuration
   watchdogPath: "/dev/watchdog"
-  watchdogTimeout: "60s"
-  petIntervalMultiple: 4
-
-  # Node management
-  staleNodeTimeout: "1h"
 
   # Note: Additional volumes for shared storage would require
   # extending the StorageBasedRemediationConfig CRD to support custom volumes
@@ -207,7 +198,7 @@ data:
    ```bash
    # Check security groups
    aws ec2 describe-security-groups --group-ids sg-xxx
-   
+
    # Check subnets
    aws ec2 describe-subnets --subnet-ids subnet-xxx
    ```
@@ -216,7 +207,7 @@ data:
    ```bash
    # Check EFS CSI driver
    oc get pods -n kube-system | grep efs
-   
+
    # Check PVC events
    oc describe pvc sbr-shared-pvc -n sbr-system
    ```
@@ -225,7 +216,7 @@ data:
    ```bash
    # Check pod events
    oc describe pod <pod-name> -n sbr-system
-   
+
    # Check EFS mount targets
    aws efs describe-mount-targets --file-system-id fs-xxx
    ```
@@ -320,25 +311,21 @@ metadata:
 spec:
   # Standard SBR configuration
   watchdogPath: "/dev/watchdog"
-  watchdogTimeout: "60s"
-  petIntervalMultiple: 4
-  staleNodeTimeout: "1h"
-  
   # Shared storage configuration
-  sharedStoragePVC: "sbr-shared-pvc"           # Name of RWX PVC
-  
+  sharedStorageClass: "efs-sc"                 # Name of RWX StorageClass
+
 ```
 
 ### Implementation in Controller
 
 The SBR operator controller automatically:
 
-1. **Detects shared storage configuration** when `sharedStoragePVC` is specified
-2. **Validates PVC name** follows Kubernetes naming conventions
-3. **Validates mount path** is absolute and doesn't conflict with system paths
+1. **Detects shared storage configuration** when `sharedStorageClass` is specified
+2. **Creates a PVC** using the specified StorageClass (named `sbr-shared-{config-name}`)
+3. **Validates PVC creation** and waits for it to be bound
 4. **Adds PVC volume to DaemonSet** template
 5. **Mounts shared storage** at the specified path in all agent pods
-6. **Configures sbr-agent** with `--shared-storage` command line argument
+6. **Configures sbr-agent** with the shared storage path
 7. **Enables coordination features** for cross-node communication
 
 ### Benefits of Integration
@@ -349,4 +336,4 @@ The SBR operator controller automatically:
 - **Consistent configuration**: All agents use same shared storage settings
 - **Optional feature**: Existing deployments continue to work without changes
 
-See `rwx-shared-storage-example.yaml` for detailed integration examples and the generated DaemonSet structure. 
+See `rwx-shared-storage-example.yaml` for detailed integration examples and the generated DaemonSet structure.

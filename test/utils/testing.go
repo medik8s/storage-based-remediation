@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck
 	. "github.com/onsi/gomega"    //nolint:staticcheck
 
@@ -195,16 +196,7 @@ func (tn *TestNamespace) CreateStorageBasedRemediationConfig(name string,
 			Namespace: tn.Name,
 		},
 		Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
-			IOTimeout:       &metav1.Duration{Duration: 5 * time.Second},
-			ImagePullPolicy: string(corev1.PullAlways),
-			WatchdogPath:    "/dev/watchdog",
-			LogLevel:        "debug",
-			RebootMethod:    "none", // Always use "none" for testing to prevent actual reboots
-			WatchdogTimeout: &metav1.Duration{Duration: 60 * time.Second},
-			PetIntervalMultiple: func() *int32 {
-				val := int32(4)
-				return &val
-			}(),
+			WatchdogPath: "/dev/watchdog",
 		},
 	}
 
@@ -1247,7 +1239,6 @@ func DefaultValidateAgentDeploymentOptions(sbrConfigName string) ValidateAgentDe
 		StorageBasedRemediationConfigName: sbrConfigName,
 		ExpectedArgs: []string{
 			"--watchdog-path=/dev/watchdog",
-			"--watchdog-timeout=1m30s",
 		},
 		MinReadyPods:     3,
 		DaemonSetTimeout: time.Minute * 5,

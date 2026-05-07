@@ -35,6 +35,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
 	// Kubernetes imports for StorageBasedRemediation CR watching
 
 	corev1 "k8s.io/api/core/v1"
@@ -72,11 +73,7 @@ import (
 // +kubebuilder:rbac:groups="",resources=nodes/status,verbs=get;patch;update
 
 var (
-	watchdogPath    = flag.String(agent.FlagWatchdogPath, agent.DefaultWatchdogPath, "Path to the watchdog device")
-	watchdogTimeout = flag.Duration(agent.FlagWatchdogTimeout, 60*time.Second,
-		"Watchdog timeout duration (how long before watchdog triggers reboot)")
-	petInterval = flag.Duration(agent.FlagPetInterval, 15*time.Second,
-		"Pet interval (how often to pet the watchdog)")
+	watchdogPath   = flag.String(agent.FlagWatchdogPath, agent.DefaultWatchdogPath, "Path to the watchdog device")
 	sbrDevice      = flag.String(agent.FlagSBRDevice, agent.DefaultSBRDevice, "Path to the SBR block device")
 	sbrFileLocking = flag.Bool(agent.FlagSBRFileLocking, agent.DefaultSBRFileLocking,
 		"Enable file locking for SBR device operations (recommended for shared storage)")
@@ -1296,13 +1293,23 @@ func (s *SBRAgent) heartbeatLoop() {
 			} else {
 				// Success - reset failure count and update status
 				s.resetFailureCount("heartbeat")
-				// Only mark as healthy if it was previously unhealthy
+				// Only mark as healthy if it was previously unhealthy AND no remediation CR exists
 				// The regular SBR device loop will also update this
 				if !s.isSBRHealthy() {
-					logger.Info("SBR device recovered during heartbeat write", "devicePath", s.heartbeatDevicePath)
-					s.setSBRHealthy(true)
-					// Update agent health status
-					agentHealthyGauge.Set(1)
+					remediationExists, err := s.remediationExistsForThisNode()
+					if err != nil {
+						logger.Info("warning: could not verify if CR exists: set SBR healthy for safety", "error", err)
+						remediationExists = false
+					}
+					if remediationExists {
+						logger.Info("SBR device heartbeat succeeded but remediation CR active; staying unhealthy",
+							"devicePath", s.heartbeatDevicePath, "nodeName", s.nodeName)
+					} else {
+						logger.Info("SBR device recovered during heartbeat write", "devicePath", s.heartbeatDevicePath)
+						s.setSBRHealthy(true)
+						// Update agent health status
+						agentHealthyGauge.Set(1)
+					}
 				}
 			}
 		}
@@ -2102,30 +2109,6 @@ func checkNodeIDNameResolution(nodeName string, nodeID uint16) error {
 	return nil
 }
 
-// validateWatchdogTiming validates the relationship between pet interval and watchdog timeout
-func validateWatchdogTiming(petInterval, watchdogTimeout time.Duration) (bool, string) {
-	// Check for minimum pet interval (should be at least 1 second)
-	minimumPetInterval := 1 * time.Second
-	if petInterval < minimumPetInterval {
-		return false, fmt.Sprintf("pet interval (%v) is very short, minimum recommended is %v",
-			petInterval, minimumPetInterval)
-	}
-
-	// Pet interval should be significantly less than watchdog timeout
-	// Recommended ratio is at least 3:1 (timeout:interval)
-	minimumRatio := 3.0
-	actualRatio := float64(watchdogTimeout) / float64(petInterval)
-
-	if actualRatio < minimumRatio {
-		return false, fmt.Sprintf("pet interval (%v) is too close to watchdog timeout (%v). "+
-			"Pet interval should be at least %.1fx shorter than timeout (recommended ratio 3:1 or higher). "+
-			"Current ratio: %.1f:1",
-			petInterval, watchdogTimeout, minimumRatio, actualRatio)
-	}
-
-	return true, ""
-}
-
 // initializeKubernetesClients creates Kubernetes clients for StorageBasedRemediation CR watching
 func initializeKubernetesClients(kubeconfigPath string) (client.Client, kubernetes.Interface, error) {
 	var config *rest.Config
@@ -2261,12 +2244,6 @@ func main() {
 	// Log build information at startup
 	logger.Info("SBR Agent build information", "buildInfo", version.GetFormattedBuildInfo())
 
-	// Validate watchdog timing early using the configured values
-	if valid, warning := validateWatchdogTiming(*petInterval, *watchdogTimeout); !valid {
-		logger.Error(nil, "Watchdog timing validation failed", "error", warning)
-		os.Exit(1)
-	}
-
 	// Determine node name
 	nodeNameValue := *nodeName
 	if nodeNameValue == "" {
@@ -2387,13 +2364,38 @@ func main() {
 		}
 		wd = realWd
 	}
+
+	// Derive petInterval from discovered watchdog timeout
+	discoveredTimeout := wd.Timeout()
+	derivedPetInterval := discoveredTimeout / agent.PetIntervalMultiple
+
+	// Validate that watchdog timeout is large enough to support the minimum pet interval
+	// with required 3:1 safety margin: timeout >= 3 * MinPetInterval
+	if discoveredTimeout < agent.MinWatchdogTimeout {
+		logger.Error(nil, "Hardware watchdog timeout is too short",
+			"timeout", discoveredTimeout,
+			"minimum", agent.MinWatchdogTimeout,
+			"reason", "must be at least 3x MinPetInterval to maintain safety margin")
+		os.Exit(1)
+	}
+
+	// Apply floor check to ensure minimum pet interval
+	if derivedPetInterval < agent.MinPetInterval {
+		derivedPetInterval = agent.MinPetInterval
+	}
+
+	logger.Info("Derived petInterval from watchdog timeout",
+		"timeout", discoveredTimeout,
+		"multiple", agent.PetIntervalMultiple,
+		"petInterval", derivedPetInterval)
+
 	sbrAgent, err := NewSBRAgentWithWatchdog(
 		wd,
 		*sbrDevice,
 		nodeNameValue,
 		*clusterName,
 		nodeIDValue,
-		*petInterval,
+		derivedPetInterval,
 		*sbrUpdateInterval,
 		heartbeatInterval,
 		*peerCheckInterval,

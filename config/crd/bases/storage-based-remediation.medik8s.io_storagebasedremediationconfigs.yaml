@@ -50,42 +50,6 @@ spec:
                 - Disabled
                 - Enabled
                 type: string
-              image:
-                description: |-
-                  Image is the container image for the SBR agent DaemonSet
-                  If not specified, defaults to sbr-agent from the same registry/org/tag as the operator
-                type: string
-              imagePullPolicy:
-                default: IfNotPresent
-                description: |-
-                  ImagePullPolicy defines the pull policy for the SBR agent container image.
-                  Valid values are Always, Never, and IfNotPresent.
-                  Defaults to IfNotPresent for production stability.
-                enum:
-                - Always
-                - Never
-                - IfNotPresent
-                type: string
-              iotimeout:
-                default: 2s
-                description: |-
-                  IOTimeout defines the timeout for SBR I/O operations.
-                  This determines how long the system will wait for SBR I/O operations to complete.
-                  The value must be between 100 milliseconds and 5 minutes.
-                pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
-                type: string
-              logLevel:
-                default: info
-                description: |-
-                  LogLevel defines the logging level for the SBR agent pods.
-                  Valid values are debug, info, warn, and error.
-                  Debug provides the most verbose logging, while error only logs error messages.
-                enum:
-                - debug
-                - info
-                - warn
-                - error
-                type: string
               maxConsecutiveFailures:
                 description: |-
                   MaxConsecutiveFailures is the maximum number of consecutive failures (SBR device, watchdog, or local
@@ -108,60 +72,6 @@ spec:
                   If not specified, defaults to worker nodes only (node-role.kubernetes.io/worker: "").
                   The selector is merged with the default requirement for kubernetes.io/os=linux.
                 type: object
-              peerCheckInterval:
-                default: 5s
-                description: |-
-                  PeerCheckInterval defines the interval for checking peer node heartbeats in the SBR device.
-                  This determines how frequently each node reads and processes heartbeats from other nodes.
-                  More frequent checks provide faster peer failure detection but increase I/O load on the shared storage.
-                  The value must be between 1 second and 60 seconds.
-                pattern: ^([0-9]+(\.[0-9]+)?(s|m))+$
-                type: string
-              petIntervalMultiple:
-                default: 4
-                description: |-
-                  PetIntervalMultiple defines the multiple used to calculate the pet interval from the watchdog timeout.
-                  Pet interval = watchdog timeout / pet interval multiple.
-                  This ensures the pet interval is always shorter than the watchdog timeout with a safety margin.
-                  The value must be between 3.0 and 20.0, with 4.0 providing a good balance of safety and efficiency.
-                format: int32
-                maximum: 20
-                minimum: 3
-                type: integer
-              rebootMethod:
-                default: panic
-                description: |-
-                  RebootMethod defines the method to use for self-fencing when a node needs to be rebooted.
-                  Valid values are "panic" (immediate kernel panic), "systemctl-reboot" (graceful systemctl reboot),
-                  and "none" (disable self-fencing, rely only on watchdog hardware timeout).
-                  Panic provides the fastest failover but less graceful shutdown, while systemctl-reboot allows
-                  for graceful service shutdown but may be slower. The "none" option disables agent-initiated
-                  self-fencing and relies solely on hardware watchdog timeout for node fencing.
-                enum:
-                - panic
-                - systemctl-reboot
-                - none
-                type: string
-              sbrTimeoutSeconds:
-                default: 30
-                description: |-
-                  SBRTimeoutSeconds defines the SBR timeout in seconds, which determines the heartbeat interval.
-                  The heartbeat interval is calculated as SBR timeout divided by 2.
-                  This value controls how quickly the cluster can detect and respond to node failures.
-                  The value must be between 10 and 300 seconds.
-                format: int32
-                maximum: 300
-                minimum: 10
-                type: integer
-              sbrUpdateInterval:
-                default: 5s
-                description: |-
-                  SBRUpdateInterval defines the interval for updating the SBR device with node status information.
-                  This determines how frequently each node writes its status to the shared SBR device.
-                  More frequent updates provide faster failure detection but increase I/O load on the shared storage.
-                  The value must be between 1 second and 60 seconds.
-                pattern: ^([0-9]+(\.[0-9]+)?(s|m))+$
-                type: string
               sharedStorageClass:
                 description: |-
                   SharedStorageClass is the name of a StorageClass to use for creating shared storage.
@@ -169,29 +79,11 @@ spec:
                   in the agent DaemonSet for cross-node coordination, slot assignment, and shared configuration data.
                   The StorageClass must support ReadWriteMany (RWX) access mode.
                 type: string
-              staleNodeTimeout:
-                default: 1h
-                description: |-
-                  StaleNodeTimeout defines how long to wait before considering a node stale and removing it from slot mapping
-                  This timeout determines when inactive nodes are cleaned up from the shared SBR device slot assignments.
-                  Nodes that haven't updated their heartbeat within this duration will be considered stale and their slots
-                  will be freed for reuse by new nodes. The value must be at least 1 minute.
-                pattern: ^([0-9]+(\.[0-9]+)?(s|m|h))+$
-                type: string
               watchdogPath:
                 default: /dev/watchdog
                 description: |-
                   WatchdogPath is the path to the watchdog device on the host
                   If not specified, defaults to "/dev/watchdog"
-                type: string
-              watchdogTimeout:
-                default: 60s
-                description: |-
-                  WatchdogTimeout defines the watchdog timeout duration for the hardware/software watchdog device.
-                  This determines how long the system will wait before triggering a reboot if the watchdog is not pet.
-                  The pet interval is calculated as watchdog timeout divided by the pet interval multiple.
-                  The value must be between 10 seconds and 300 seconds (5 minutes).
-                pattern: ^([0-9]+(\.[0-9]+)?(s|m|h))+$
                 type: string
             type: object
           status:
@@ -259,16 +151,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              readyNodes:
-                description: ReadyNodes is the number of nodes where the SBR agent
-                  is ready
-                format: int32
-                type: integer
-              totalNodes:
-                description: TotalNodes is the total number of nodes where the SBR
-                  agent should be deployed
-                format: int32
-                type: integer
             type: object
         type: object
     served: true

@@ -121,44 +121,9 @@ func (in *StorageBasedRemediationConfigSpec) DeepCopyInto(out *StorageBasedRemed
 			(*out)[key] = val
 		}
 	}
-	if in.StaleNodeTimeout != nil {
-		in, out := &in.StaleNodeTimeout, &out.StaleNodeTimeout
-		*out = new(v1.Duration)
-		**out = **in
-	}
-	if in.WatchdogTimeout != nil {
-		in, out := &in.WatchdogTimeout, &out.WatchdogTimeout
-		*out = new(v1.Duration)
-		**out = **in
-	}
-	if in.PetIntervalMultiple != nil {
-		in, out := &in.PetIntervalMultiple, &out.PetIntervalMultiple
-		*out = new(int32)
-		**out = **in
-	}
-	if in.IOTimeout != nil {
-		in, out := &in.IOTimeout, &out.IOTimeout
-		*out = new(v1.Duration)
-		**out = **in
-	}
-	if in.SBRTimeoutSeconds != nil {
-		in, out := &in.SBRTimeoutSeconds, &out.SBRTimeoutSeconds
-		*out = new(int32)
-		**out = **in
-	}
 	if in.MaxConsecutiveFailures != nil {
 		in, out := &in.MaxConsecutiveFailures, &out.MaxConsecutiveFailures
 		*out = new(int32)
-		**out = **in
-	}
-	if in.SBRUpdateInterval != nil {
-		in, out := &in.SBRUpdateInterval, &out.SBRUpdateInterval
-		*out = new(v1.Duration)
-		**out = **in
-	}
-	if in.PeerCheckInterval != nil {
-		in, out := &in.PeerCheckInterval, &out.PeerCheckInterval
-		*out = new(v1.Duration)
 		**out = **in
 	}
 	if in.DetectOnlyMode != nil {
@@ -271,15 +236,6 @@ func (in *StorageBasedRemediationStatus) DeepCopyInto(out *StorageBasedRemediati
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
-	}
-	if in.LastUpdateTime != nil {
-		in, out := &in.LastUpdateTime, &out.LastUpdateTime
-		*out = (*in).DeepCopy()
-	}
-	if in.NodeID != nil {
-		in, out := &in.NodeID, &out.NodeID
-		*out = new(uint16)
-		**out = **in
 	}
 }
 

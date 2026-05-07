@@ -64,7 +64,6 @@ docker run --rm \
   --name sbr-agent \
   sbr-agent:latest \
   --watchdog-path=/tmp/mock/watchdog \
-  --watchdog-timeout=30s \
   --log-level=info
 ```
 
@@ -84,7 +83,6 @@ docker run -d \
   sbr-agent:latest \
   --watchdog-path=/dev/watchdog \
   --sbr-device=/dev/sbd \
-  --watchdog-timeout=15s \
   --log-level=info
 ```
 
@@ -104,7 +102,6 @@ docker run -d \
 | Argument | Description | Default | Example |
 |----------|-------------|---------|---------|
 | `--watchdog-path` | Path to watchdog device | `/dev/watchdog` | `--watchdog-path=/dev/watchdog0` |
-| `--watchdog-timeout` | Pet interval for watchdog | `30s` | `--watchdog-timeout=15s` |
 | `--sbr-device` | Path to SBD block device | (empty) | `--sbr-device=/dev/disk/by-id/sbr-device` |
 | `--log-level` | Logging level | `info` | `--log-level=debug` |
 
@@ -150,7 +147,6 @@ spec:
     args:
     - "--watchdog-path=/dev/watchdog"
     - "--sbr-device=/dev/disk/by-id/sbr-device"
-    - "--watchdog-timeout=30s"
   volumes:
   - name: dev
     hostPath:
@@ -306,7 +302,6 @@ IMAGE_TAG=dev ./scripts/build-sbr-agent.sh build
 # Run with debug logging
 docker run --rm sbr-agent:dev \
   --log-level=debug \
-  --watchdog-timeout=5s
 ```
 
 ### Testing with Mock Devices

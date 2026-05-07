@@ -24,10 +24,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/go-logr/logr"
 
+	"github.com/medik8s/storage-based-remediation/pkg/agent"
 	"github.com/medik8s/storage-based-remediation/pkg/retry"
 )
 
@@ -487,4 +490,56 @@ func (w *Watchdog) IsOpen() bool {
 // Path returns the filesystem path of the watchdog device.
 func (w *Watchdog) Path() string {
 	return w.path
+}
+
+// Timeout queries the watchdog device timeout using WDIOC_GETTIMEOUT ioctl.
+// Returns the timeout in seconds, or the default if discovery fails.
+func (w *Watchdog) Timeout() time.Duration {
+	if !w.isOpen || w.file == nil {
+		w.logger.V(1).Info("Watchdog device not open, using default timeout", "default", agent.WatchdogTimeoutDefault)
+		return agent.WatchdogTimeoutDefault
+	}
+
+	// Attempt to get timeout via ioctl
+	var timeout int32
+	err := w.ioctlGetTimeout(&timeout)
+	if err != nil {
+		w.logger.V(1).Info("Failed to discover watchdog timeout via ioctl, using default", "error", err, "default", agent.WatchdogTimeoutDefault)
+		return agent.WatchdogTimeoutDefault
+	}
+
+	// Convert to time.Duration (timeout is in seconds)
+	if timeout <= 0 {
+		w.logger.V(1).Info("Watchdog returned invalid timeout, using default", "returned", timeout, "default", agent.WatchdogTimeoutDefault)
+		return agent.WatchdogTimeoutDefault
+	}
+
+	duration := time.Duration(timeout) * time.Second
+	w.logger.V(1).Info("Discovered watchdog timeout", "seconds", timeout, "duration", duration)
+	return duration
+}
+
+// ioctlGetTimeout performs the WDIOC_GETTIMEOUT ioctl call on the watchdog device
+func (w *Watchdog) ioctlGetTimeout(timeout *int32) error {
+	// WDIOC_GETTIMEOUT is a read ioctl that returns the current timeout in seconds
+	r1, _, errno := syscall.Syscall(
+		syscall.SYS_IOCTL,
+		w.file.Fd(),
+		uintptr(WDIOC_GETTIMEOUT),
+		uintptr(unsafe.Pointer(timeout)),
+	)
+
+	if errno != 0 {
+		// ENOTTY means ioctl is not supported by this device
+		if errno == syscall.ENOTTY {
+			return ErrIoctlNotSupported
+		}
+		return fmt.Errorf("ioctl WDIOC_GETTIMEOUT failed: %w", errno)
+	}
+
+	if r1 != 0 {
+		return fmt.Errorf("ioctl WDIOC_GETTIMEOUT returned non-zero: %d", r1)
+	}
+
+	return nil
 }

@@ -24,9 +24,6 @@ spec:
     - jsonPath: .status.conditions[?(@.type=='FencingSucceeded')].status
       name: Fencing Succeeded
       type: string
-    - jsonPath: .status.nodeID
-      name: NodeID
-      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -139,23 +136,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              fenceMessageWritten:
-                description: FenceMessageWritten indicates if the fence message was
-                  successfully written to the SBR device
-                type: boolean
-              lastUpdateTime:
-                description: LastUpdateTime is the time when this status was last
-                  updated
-                format: date-time
-                type: string
-              nodeID:
-                description: NodeID is the numeric ID assigned to the target node
-                  for SBR operations
-                type: integer
-              operatorInstance:
-                description: OperatorInstance identifies which operator instance is
-                  handling this remediation
-                type: string
             type: object
         type: object
     served: true

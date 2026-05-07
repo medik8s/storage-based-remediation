@@ -59,6 +59,7 @@ func TestE2E(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
+	utils.SetLogger(GinkgoWriter)
 	Expect(utils.CheckClusterConnection()).To(Succeed(), "Kubernetes cluster connection required")
 
 	if testFlags.DebugMode {
@@ -91,7 +92,7 @@ var _ = BeforeSuite(func() {
 	// Clean up any leftover artifacts from previous test runs
 	By("Cleaning up previous test attempts")
 	cleanupTestArtifacts(testNamespace)
-	utils.WaitForNodesReady(testNamespace, "10m", "30s", true)
+	Expect(utils.WaitForNodesReady(testNamespace, "10m", "30s", true)).To(Succeed(), "expected all nodes to be Ready")
 	utils.CleanupStorageBasedRemediationConfigs(testNamespace)
 
 	By("Complete: Cleaning up previous test attempts")
@@ -114,7 +115,7 @@ var _ = BeforeEach(func() {
 
 var _ = AfterEach(func() {
 	createReportAndCleanUp()
-	utils.WaitForNodesReady(testNamespace, "10m", "30s", false)
+	Expect(utils.WaitForNodesReady(testNamespace, "10m", "30s", false)).To(Succeed(), "expected all nodes to be Ready")
 	debugCollector := testClients.NewDebugCollector(testNamespace.ArtifactsDir)
 	debugCollector.CollectAgentLogs(testNamespace.Name)
 	utils.CleanupStorageBasedRemediationConfigs(testNamespace)

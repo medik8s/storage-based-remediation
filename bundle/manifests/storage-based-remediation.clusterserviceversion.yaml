@@ -32,22 +32,11 @@ metadata:
             "name": "storagebasedremediationconfig-sample"
           },
           "spec": {
-            "image": "quay.io/medik8s/storage-based-remediation-agent:latest",
-            "imagePullPolicy": "IfNotPresent",
-            "iotimeout": "5s",
-            "logLevel": "info",
             "nodeSelector": {
               "node-role.kubernetes.io/worker": ""
             },
-            "peerCheckInterval": "4s",
-            "petIntervalMultiple": 4,
-            "rebootMethod": "systemctl-reboot",
-            "sbrTimeoutSeconds": 45,
-            "sbrUpdateInterval": "3s",
             "sharedStorageClass": "shared-storage-class",
-            "staleNodeTimeout": "2h",
-            "watchdogPath": "/dev/watchdog",
-            "watchdogTimeout": "60s"
+            "watchdogPath": "/dev/watchdog"
           }
         },
         {
