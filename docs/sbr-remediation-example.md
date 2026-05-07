@@ -23,37 +23,36 @@ When a node becomes unresponsive or requires manual fencing, create an `StorageB
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
 kind: StorageBasedRemediation
 metadata:
-  name: fence-worker-1
+  name: worker-1
   namespace: default
-spec:
-  nodeName: "worker-1"
-  reason: HeartbeatTimeout
-  timeoutSeconds: 60
+spec: {}
 ```
+
+The **node to fence** is **`metadata.name`** (it must match the Kubernetes node name). **`spec`** is empty; there is no per-CR `reason` or `timeoutSeconds`.
+
+Fencing completion is monitored for a fixed duration (60 seconds, matching the former omitted `timeoutSeconds` default) in the operator (`DefaultFencingMonitorTimeoutSeconds` in `pkg/controller/storagebasedremediation_controller.go`), not per-CR.
 
 ## Configuration Fields
 
 ### Spec Fields
 
-- **nodeName** (required): The name of the Kubernetes node to fence
-- **reason** (optional): Why the node needs fencing
-  - `HeartbeatTimeout`: Node stopped sending heartbeats
-  - `NodeUnresponsive`: Node is unresponsive to health checks
-  - `ManualFencing`: Operator-initiated manual fencing
-- **timeoutSeconds** (optional): Maximum time to wait before considering fencing failed (30-300 seconds, default: 60)
+- **`spec`** is intentionally empty for `StorageBasedRemediation`.
+
+### NHC, node conditions, and fencing
+
+- SBR agents may set the Node condition **`SBRStorageUnhealthy`** (with status, reason, and message) so remediators such as **NHC** can decide **whether** to create a **`StorageBasedRemediation`**.
+- That condition context is **pre-remediation** signaling; it is **not** copied into this CR's **`spec`** and is **not** read again from the Node when the operator writes the fence message.
+- The operator writes a **fixed** SBD fence reason on the wire (`FENCE_REASON_MANUAL`); see `writeFenceMessage` in `pkg/controller/storagebasedremediation_controller.go`.
 
 ### Status Fields
 
-- **phase**: Current state of the remediation
-  - `Pending`: Remediation queued for processing
-  - `WaitingForLeadership`: Waiting for operator to become leader
-  - `FencingInProgress`: Fence message being written to SBD device
-  - `FencedSuccessfully`: Node successfully fenced
-  - `Failed`: Remediation failed
-- **message**: Human-readable description of current state
-- **nodeID**: Numeric ID assigned to the target node
-- **fenceMessageWritten**: Whether fence message was successfully written
-- **operatorInstance**: Which operator instance handled the remediation
+Status is reported on **`status`** (not a single `phase` / `message` pair). Important fields:
+
+- **conditions**: Standard **`metav1.Condition`** entries (for example **`Ready`**, **`FencingSucceeded`**, **`FencingInProgress`**, **`LeadershipAcquired`**) with `status`, `reason`, `message`, and timestamps. Use `kubectl describe storagebasedremediation <name>` or `-o yaml` to inspect them.
+- **nodeID**: Numeric ID assigned to the target node for SBR operations
+- **fenceMessageWritten**: Whether the fence message was successfully written to the SBR device
+- **operatorInstance**: Which operator instance is handling this remediation
+- **lastUpdateTime**: When status was last updated
 
 ## Node Name to Node ID Mapping
 
@@ -87,7 +86,7 @@ kubectl get storagebasedremediation -o wide
 ### View Detailed Status
 
 ```bash
-kubectl describe storagebasedremediation fence-worker-1
+kubectl describe storagebasedremediation worker-1
 ```
 
 ### Common Issues

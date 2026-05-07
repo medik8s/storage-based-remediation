@@ -38,32 +38,19 @@ const (
 // NHC or other remediators watch this condition and create StorageBasedRemediation when True.
 const NodeConditionSBRStorageUnhealthy = "SBRStorageUnhealthy"
 
-// SBRRemediationReason represents the reason for the current remediation state
-type SBRRemediationReason string
-
-const (
-	// SBRRemediationReasonHeartbeatTimeout indicates the node stopped sending heartbeats
-	SBRRemediationReasonHeartbeatTimeout SBRRemediationReason = "HeartbeatTimeout"
-	// SBRRemediationReasonNodeUnresponsive indicates the node is unresponsive
-	SBRRemediationReasonNodeUnresponsive SBRRemediationReason = "NodeUnresponsive"
-	// SBRRemediationReasonManualFencing indicates manual fencing was requested
-	SBRRemediationReasonManualFencing SBRRemediationReason = "ManualFencing"
-	// SBRRemediationReasonNone indicates no fencing is required
-	SBRRemediationReasonNone SBRRemediationReason = "None"
-)
+// SBRStorageUnhealthyReasonHeartbeatTimeout is the Kubernetes Node condition.reason value
+// the SBR agent uses with condition type SBRStorageUnhealthy when a peer is unhealthy due to
+// heartbeat timeout (pre-remediation signaling for remediators such as NHC).
+const SBRStorageUnhealthyReasonHeartbeatTimeout = "HeartbeatTimeout"
 
 // StorageBasedRemediationSpec defines the desired state of StorageBasedRemediation.
+// It is intentionally empty: the node to remediate is identified by metadata.name.
+//
+// Before a StorageBasedRemediation exists, the SBR agent may set the Node condition
+// SBRStorageUnhealthy (including condition reason/message) so remediators such as NHC
+// can decide whether to create this CR. That condition context is not carried in spec
+// and is not re-read from the Node when the operator writes the fence message.
 type StorageBasedRemediationSpec struct {
-	// Reason specifies why this node needs to be fenced
-	// +kubebuilder:validation:Enum=HeartbeatTimeout;NodeUnresponsive;ManualFencing
-	// +kubebuilder:default=NodeUnresponsive
-	Reason SBRRemediationReason `json:"reason,omitempty"`
-
-	// TimeoutSeconds specifies how long to wait before considering the fencing failed
-	// +kubebuilder:validation:Minimum=30
-	// +kubebuilder:validation:Maximum=300
-	// +kubebuilder:default=60
-	TimeoutSeconds int32 `json:"timeoutSeconds,omitempty"`
 }
 
 // StorageBasedRemediationStatus defines the observed state of StorageBasedRemediation.
