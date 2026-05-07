@@ -12,14 +12,10 @@ metadata:
               "app.kubernetes.io/managed-by": "kustomize",
               "app.kubernetes.io/name": "sbr-operator"
             },
-            "name": "storagebasedremediation-sample",
+            "name": "worker-1",
             "namespace": "default"
           },
-          "spec": {
-            "nodeName": "worker-1",
-            "reason": "HeartbeatTimeout",
-            "timeoutSeconds": 120
-          }
+          "spec": {}
         },
         {
           "apiVersion": "storage-based-remediation.medik8s.io/v1alpha1",

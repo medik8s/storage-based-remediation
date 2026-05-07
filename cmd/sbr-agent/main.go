@@ -1414,7 +1414,7 @@ func (s *SBRAgent) peerMonitorLoop() {
 				// Condition is Unknown: after grace period set True again if still unhealthy
 				if currentStatus == corev1.ConditionUnknown {
 					if now.Sub(lastTransition) > SBRAgentRemediationGracePeriod {
-						if err := s.setNodeConditionSBRStorageUnhealthyStatus(peerNodeName, corev1.ConditionTrue, string(v1alpha1.SBRRemediationReasonHeartbeatTimeout), "SBR peer heartbeat timeout"); err != nil {
+						if err := s.setNodeConditionSBRStorageUnhealthyStatus(peerNodeName, corev1.ConditionTrue, v1alpha1.SBRStorageUnhealthyReasonHeartbeatTimeout, "SBR peer heartbeat timeout"); err != nil {
 							logger.Error(err, "Failed to set SBRStorageUnhealthy condition after grace period", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
 						} else {
 							logger.Info("Set SBRStorageUnhealthy condition after grace period (node still unhealthy)", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
@@ -1425,7 +1425,7 @@ func (s *SBRAgent) peerMonitorLoop() {
 
 				// Condition False or absent: set True so NHC can create remediation
 				if currentStatus == corev1.ConditionFalse || !hasCond {
-					if err := s.setNodeConditionSBRStorageUnhealthy(peerNodeName, true, string(v1alpha1.SBRRemediationReasonHeartbeatTimeout), "SBR peer heartbeat timeout"); err != nil {
+					if err := s.setNodeConditionSBRStorageUnhealthy(peerNodeName, true, v1alpha1.SBRStorageUnhealthyReasonHeartbeatTimeout, "SBR peer heartbeat timeout"); err != nil {
 						logger.Error(err, "Failed to set SBRStorageUnhealthy condition for unhealthy peer", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
 					} else {
 						logger.Info("Set SBRStorageUnhealthy condition for unhealthy peer", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)

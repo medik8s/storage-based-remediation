@@ -45,47 +45,6 @@ func createTestSBRRemediation() *StorageBasedRemediation {
 	}
 }
 
-func TestSBRRemediationSpec_TimeoutSecondsValidation(t *testing.T) {
-	tests := []struct {
-		name           string
-		timeoutSeconds int32
-		expectedValue  int32
-	}{
-		{
-			name:           "zero timeout uses default",
-			timeoutSeconds: 0,
-			expectedValue:  0, // In the actual CRD, default (60) would be applied by the API server
-		},
-		{
-			name:           "custom timeout is preserved",
-			timeoutSeconds: 120,
-			expectedValue:  120,
-		},
-		{
-			name:           "minimum timeout is valid",
-			timeoutSeconds: 30,
-			expectedValue:  30,
-		},
-		{
-			name:           "maximum timeout is valid",
-			timeoutSeconds: 300,
-			expectedValue:  300,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			spec := StorageBasedRemediationSpec{
-				TimeoutSeconds: tt.timeoutSeconds,
-			}
-
-			if spec.TimeoutSeconds != tt.expectedValue {
-				t.Errorf("Expected timeout %d, got %d", tt.expectedValue, spec.TimeoutSeconds)
-			}
-		})
-	}
-}
-
 func TestSBRRemediation_GetCondition(t *testing.T) {
 	remediation := &StorageBasedRemediation{
 		Status: StorageBasedRemediationStatus{
@@ -596,17 +555,8 @@ func TestSBRRemediationConstants(t *testing.T) {
 		}
 	}
 
-	// Test reason constants
-	expectedReasons := map[SBRRemediationReason]string{
-		SBRRemediationReasonHeartbeatTimeout: "HeartbeatTimeout",
-		SBRRemediationReasonNodeUnresponsive: "NodeUnresponsive",
-		SBRRemediationReasonManualFencing:    "ManualFencing",
-	}
-
-	for reason, expectedString := range expectedReasons {
-		if string(reason) != expectedString {
-			t.Errorf("Expected reason %s to have string value %s, got %s",
-				reason, expectedString, string(reason))
-		}
+	if SBRStorageUnhealthyReasonHeartbeatTimeout != "HeartbeatTimeout" {
+		t.Errorf("Expected SBRStorageUnhealthyReasonHeartbeatTimeout %q, got %q",
+			"HeartbeatTimeout", SBRStorageUnhealthyReasonHeartbeatTimeout)
 	}
 }
