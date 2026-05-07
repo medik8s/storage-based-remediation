@@ -4,6 +4,9 @@ package watchdog
 
 import (
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -24,18 +27,61 @@ func (w *Watchdog) petWatchdogIoctl() error {
 	return fmt.Errorf("ioctl WDIOC_KEEPALIVE failed: %w", errno)
 }
 
-// getTimeoutIoctl reads the actual hardware timeout from the watchdog device using ioctl
-// This returns the timeout value configured in the hardware, not the spec value.
-// If this returns an error, the caller should fall back to using the default timeout.
-func (w *Watchdog) getTimeoutIoctl() (time.Duration, error) {
-	// Call WDIOC_GETTIMEOUT ioctl to read hardware timeout
-	timeout, err := unix.IoctlGetInt(int(w.file.Fd()), WDIOC_GETTIMEOUT)
+// readTimeoutFromSysfsFile reads and parses timeout from a sysfs file
+func (w *Watchdog) readTimeoutFromSysfsFile(path, deviceName string) (time.Duration, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get watchdog timeout from hardware: %w", err)
+		return 0, err
 	}
 
-	timeoutDuration := time.Duration(timeout) * time.Second
-	w.logger.V(2).Info("Read watchdog timeout from hardware", "timeout", timeoutDuration)
+	timeoutStr := strings.TrimSpace(string(data))
+	timeoutSeconds, err := strconv.Atoi(timeoutStr)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse timeout value '%s': %w", timeoutStr, err)
+	}
 
+	if timeoutSeconds <= 0 {
+		return 0, fmt.Errorf("invalid timeout value: %d", timeoutSeconds)
+	}
+
+	timeoutDuration := time.Duration(timeoutSeconds) * time.Second
+	w.logger.V(2).Info("Read watchdog timeout from sysfs", "device", deviceName, "timeout", timeoutDuration)
+	return timeoutDuration, nil
+}
+
+// getTimeoutSysfs reads the watchdog timeout from sysfs
+// This is a fallback when ioctl is not available (e.g., in containers)
+func (w *Watchdog) getTimeoutSysfs() (time.Duration, error) {
+	// Try watchdog0 first (most common case - primary hardware watchdog)
+	watchdog0Path := fmt.Sprintf("%s/%s/%s", SysfsWatchdogClass, SysfsWatchdog0, SysfsTimeoutFile)
+	if timeout, err := w.readTimeoutFromSysfsFile(watchdog0Path, SysfsWatchdog0); err == nil {
+		return timeout, nil
+	}
+
+	// If watchdog0 doesn't exist or failed, enumerate all watchdog devices
+	entries, err := os.ReadDir(SysfsWatchdogClass)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read %s: %w", SysfsWatchdogClass, err)
+	}
+
+	for _, entry := range entries {
+		timeoutPath := fmt.Sprintf("%s/%s/%s", SysfsWatchdogClass, entry.Name(), SysfsTimeoutFile)
+		if timeout, err := w.readTimeoutFromSysfsFile(timeoutPath, entry.Name()); err == nil {
+			return timeout, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no readable timeout found in %s", SysfsWatchdogClass)
+}
+
+// getTimeoutIoctl reads the actual hardware timeout from the watchdog device using ioctl
+func (w *Watchdog) getTimeoutIoctl() (time.Duration, error) {
+	timeoutSeconds, err := unix.IoctlGetInt(int(w.file.Fd()), WDIOC_GETTIMEOUT)
+	if err != nil {
+		return 0, fmt.Errorf("ioctl WDIOC_GETTIMEOUT failed: %w", err)
+	}
+
+	timeoutDuration := time.Duration(timeoutSeconds) * time.Second
+	w.logger.V(2).Info("Read watchdog timeout from hardware via ioctl", "timeout", timeoutDuration)
 	return timeoutDuration, nil
 }
