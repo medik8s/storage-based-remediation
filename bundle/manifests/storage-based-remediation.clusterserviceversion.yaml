@@ -100,9 +100,21 @@ spec:
       kind: StorageBasedRemediationTemplate
       name: storagebasedremediationtemplates.storage-based-remediation.medik8s.io
       version: v1alpha1
-  description: Storage-Based Remediation operator for remediating nodes using storage-based
-    fencing (SBD/STONITH).
-  displayName: Storage-Based Remediation
+  description: |
+    ### Introduction
+    Storage-Based Remediation (SBR) is a Kubernetes operator that provides automated node remediation when nodes become unresponsive by leveraging shared block storage for fencing operations.
+    The operator implements a cloud-native approach to storage-based fencing for Kubernetes environments where traditional out-of-band management (IPMI, iDRAC) is unavailable.
+
+    ### Compatibility
+    SBR integrates with the Medik8s Node HealthCheck Operator [(NHC)](https://github.com/medik8s/node-healthcheck-operator) which detects unhealthy nodes and creates remediation CRs.
+    It is recommended to use SBR with NHC for fully automating the remediation process, but it can be used as a standalone remediator for experienced users.
+
+    ### Advantages
+    - **Shared Storage Fencing** - Uses CSI block PVs with concurrent multi-node access for inter-node communication, providing reliable node fencing without requiring out-of-band management hardware.
+    - **Dual Watchdog System** - Combines shared storage watchdog with local kernel watchdog for robust failure detection and automatic recovery.
+    - **Split-Brain Prevention** - Shared storage arbitration ensures cluster consistency and prevents split-brain scenarios in stateful workloads.
+    - **Cloud-Native** - Built for Kubernetes environments with native CRD integration and support for various storage backends (e.g., Ceph RBD, OpenShift Data Foundation).
+  displayName: Storage-Based Remediation Operator
   icon:
   - base64data: base64EncodedIcon
     mediatype: image/png

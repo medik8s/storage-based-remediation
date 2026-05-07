@@ -593,8 +593,11 @@ DEFAULT_CHANNEL ?= stable
 YQ = $(YQ_DIR)/$(YQ_API_VERSION)-$(YQ_VERSION)/yq
 YQ_API_VERSION = v4
 YQ_VERSION ?= v4.44.1
-# 1x1 transparent PNG
-ICON_BASE64 ?= iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/wwAAgMBgS+0L8sAAAAASUVORK5CYII=
+# Icon configuration
+BLUE_ICON_PATH = "./config/assets/medik8s_blue_icon.png"
+
+DEFAULT_ICON_BASE64 := $(shell base64 --wrap=0 ${BLUE_ICON_PATH})
+export ICON_BASE64 ?= ${DEFAULT_ICON_BASE64}
 
 # Derived bundle metadata opts
 ifneq ($(origin CHANNELS), undefined)
@@ -666,7 +669,7 @@ bundle-validate: operator-sdk ## Validate bundle directory
 	$(OPERATOR_SDK) bundle validate ./bundle --select-optional suite=operatorframework
 
 .PHONY: bundle-build
-bundle-build: bundle ## Build bundle image
+bundle-build: bundle bundle-update ## Build bundle image
 	@echo "Building bundle image: ${BUNDLE_IMG}"
 	$(CONTAINER_TOOL) build -f bundle.Dockerfile -t ${BUNDLE_IMG} .
 
