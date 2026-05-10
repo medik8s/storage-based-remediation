@@ -50,7 +50,7 @@ func (w *Watchdog) readTimeoutFromSysfsFile(path, deviceName string) (time.Durat
 }
 
 // getTimeoutSysfs reads the watchdog timeout from sysfs
-// This is a fallback when ioctl is not available (e.g., in containers)
+// This is a fallback when ioctl is not available
 func (w *Watchdog) getTimeoutSysfs() (time.Duration, error) {
 	// Try watchdog0 first (most common case - primary hardware watchdog)
 	watchdog0Path := fmt.Sprintf("%s/%s/%s", SysfsWatchdogClass, SysfsWatchdog0, SysfsTimeoutFile)
