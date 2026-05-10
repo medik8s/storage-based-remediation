@@ -109,9 +109,7 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 					Name:      testNodeName,
 					Namespace: "default",
 				},
-				Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
-					Reason: medik8sv1alpha1.SBRRemediationReasonHeartbeatTimeout,
-				},
+				Spec: medik8sv1alpha1.StorageBasedRemediationSpec{},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
@@ -137,9 +135,7 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 					Name:      testNodeName,
 					Namespace: "default",
 				},
-				Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
-					Reason: medik8sv1alpha1.SBRRemediationReasonManualFencing,
-				},
+				Spec: medik8sv1alpha1.StorageBasedRemediationSpec{},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
@@ -172,33 +168,6 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 			// The controller should handle cleanup gracefully
 		})
 
-		It("should handle timeoutSeconds field correctly", func() {
-			By("Creating StorageBasedRemediation with custom timeout")
-			testNodeName := "worker-3"
-			customTimeout := int32(120)
-			resource := &medik8sv1alpha1.StorageBasedRemediation{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      testNodeName,
-					Namespace: "default",
-				},
-				Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
-					Reason:         medik8sv1alpha1.SBRRemediationReasonManualFencing,
-					TimeoutSeconds: customTimeout,
-				},
-			}
-			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-
-			By("Verifying timeout is preserved in spec")
-			Eventually(func() int32 {
-				updatedResource := &medik8sv1alpha1.StorageBasedRemediation{}
-				err := k8sClient.Get(ctx, types.NamespacedName{Name: testNodeName, Namespace: "default"}, updatedResource)
-				if err != nil {
-					return 0
-				}
-				return updatedResource.Spec.TimeoutSeconds
-			}, 5*time.Second, 100*time.Millisecond).Should(Equal(customTimeout))
-		})
-
 		Context("with valid StorageBasedRemediation spec for a fake node", func() {
 			It("should handle normal processing flow", func() {
 				By("Creating a well-formed StorageBasedRemediation resource")
@@ -208,10 +177,7 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 						Name:      testNodeName,
 						Namespace: "default",
 					},
-					Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
-						Reason:         medik8sv1alpha1.SBRRemediationReasonNodeUnresponsive,
-						TimeoutSeconds: 300,
-					},
+					Spec: medik8sv1alpha1.StorageBasedRemediationSpec{},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
@@ -242,7 +208,6 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 				finalResource := &medik8sv1alpha1.StorageBasedRemediation{}
 				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNodeName, Namespace: "default"}, finalResource)).To(Succeed())
 				Expect(finalResource.Name).To(Equal(testNodeName))
-				Expect(finalResource.Spec.Reason).To(Equal(medik8sv1alpha1.SBRRemediationReasonNodeUnresponsive))
 			})
 		})
 
@@ -255,10 +220,7 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 						Name:      testNodeName,
 						Namespace: "default",
 					},
-					Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
-						Reason:         medik8sv1alpha1.SBRRemediationReasonNodeUnresponsive,
-						TimeoutSeconds: 300,
-					},
+					Spec: medik8sv1alpha1.StorageBasedRemediationSpec{},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
@@ -284,7 +246,6 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 				finalResource := &medik8sv1alpha1.StorageBasedRemediation{}
 				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNodeName, Namespace: "default"}, finalResource)).To(Succeed())
 				Expect(finalResource.Name).To(Equal(testNodeName))
-				Expect(finalResource.Spec.Reason).To(Equal(medik8sv1alpha1.SBRRemediationReasonNodeUnresponsive))
 			})
 		})
 	})

@@ -70,6 +70,11 @@ const (
 	ReasonFinalizerProcessed    = "FinalizerProcessed"
 	ReasonConditionUpdateFailed = "ConditionUpdateFailed"
 	ReasonOOSTaintRemoved       = "OOSTaintRemoved"
+
+	// DefaultFencingMonitorTimeoutSeconds is how long the operator monitors for observable fencing
+	// completion (node NotReady / SBR heartbeat checks) after writing a fence message.
+	// Matches the former StorageBasedRemediation spec when timeoutSeconds was omitted or zero (default 60).
+	DefaultFencingMonitorTimeoutSeconds int32 = 60
 )
 
 // outOfServiceTaint is used to evict workloads from the remediated node after successful fencing
@@ -210,7 +215,7 @@ func (r *SBRRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"sbrremediation.generation", sbrRemediation.Generation,
 		"sbrremediation.resourceVersion", sbrRemediation.ResourceVersion,
 		"nodeName", nodeName,
-		"spec.timeoutSeconds", sbrRemediation.Spec.TimeoutSeconds,
+		"fencingMonitorTimeoutSeconds", DefaultFencingMonitorTimeoutSeconds,
 		"status.ready", sbrRemediation.IsReady(),
 		"status.fencingSucceeded", sbrRemediation.IsFencingSucceeded(),
 	)
@@ -299,8 +304,7 @@ func (r *SBRRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 	// Perform the actual fencing operation
 	logger.Info("Starting fencing operation",
-		"targetNode", nodeName,
-		"reason", sbrRemediation.Spec.Reason)
+		"targetNode", nodeName)
 
 	// Ensure the node is cordoned BEFORE setting FencingInProgress
 	node := &corev1.Node{}
@@ -333,7 +337,7 @@ func (r *SBRRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Fence message written successfully, now monitor for actual fencing completion
 	logger.Info("Fence message written, monitoring for target node fencing completion",
 		"targetNode", nodeName,
-		"timeoutSeconds", sbrRemediation.Spec.TimeoutSeconds)
+		"timeoutSeconds", DefaultFencingMonitorTimeoutSeconds)
 
 	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 }
@@ -352,11 +356,10 @@ func (r *SBRRemediationReconciler) executeFencing(
 
 	logger.Info("Writing fence message to SBR device",
 		"targetNode", targetNodeName,
-		"targetNodeID", targetNodeID,
-		"reason", remediation.Spec.Reason)
+		"targetNodeID", targetNodeID)
 
 	// Write fence message to target node's slot
-	if err := r.writeFenceMessage(targetNodeID, remediation.Spec.Reason, logger); err != nil {
+	if err := r.writeFenceMessage(targetNodeID, logger); err != nil {
 		return fmt.Errorf("failed to write fence message to target node %d: %w", targetNodeID, err)
 	}
 
@@ -393,27 +396,16 @@ func (r *SBRRemediationReconciler) markNodeAsSchedulable(ctx context.Context, no
 	return nil
 }
 
-// writeFenceMessage writes a fence message to the target node's slot in the SBR device
-func (r *SBRRemediationReconciler) writeFenceMessage(targetNodeID uint16,
-	reason medik8sv1alpha1.SBRRemediationReason, logger logr.Logger) error {
+// writeFenceMessage writes a fence message to the target node's slot in the SBR device.
+//
+// The SBD wire reason is fixed (FENCE_REASON_MANUAL). Node condition SBRStorageUnhealthy
+// (and its Kubernetes condition reason) exists for pre-remediation signaling to remediators
+// such as NHC; it is not consulted again here after the StorageBasedRemediation CR exists.
+func (r *SBRRemediationReconciler) writeFenceMessage(targetNodeID uint16, logger logr.Logger) error {
 	if r.fenceDevice == nil || r.fenceDevice.IsClosed() {
 		return fmt.Errorf("SBR device is not available")
 	}
-
-	// Create fence message
-	fenceReason := sbdprotocol.FENCE_REASON_NONE // Map from CR reason to SBD reason
-	switch reason {
-	case medik8sv1alpha1.SBRRemediationReasonNone:
-		fenceReason = sbdprotocol.FENCE_REASON_NONE
-	case medik8sv1alpha1.SBRRemediationReasonHeartbeatTimeout:
-		fenceReason = sbdprotocol.FENCE_REASON_HEARTBEAT_TIMEOUT
-	case medik8sv1alpha1.SBRRemediationReasonNodeUnresponsive:
-		fenceReason = sbdprotocol.FENCE_REASON_MANUAL
-	case medik8sv1alpha1.SBRRemediationReasonManualFencing:
-		fenceReason = sbdprotocol.FENCE_REASON_MANUAL
-	}
-
-	fenceMsg := sbdprotocol.NewFence(r.ownNodeID, targetNodeID, r.getNextSequence(), fenceReason)
+	fenceMsg := sbdprotocol.NewFence(r.ownNodeID, targetNodeID, r.getNextSequence(), sbdprotocol.FENCE_REASON_MANUAL)
 	msgData, err := sbdprotocol.MarshalFence(fenceMsg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal fence message: %w", err)
@@ -440,7 +432,6 @@ func (r *SBRRemediationReconciler) writeFenceMessage(targetNodeID uint16,
 	logger.Info("Fence message written successfully",
 		"targetNodeID", targetNodeID,
 		"sourceNodeID", r.ownNodeID,
-		"reason", fenceReason,
 		"slotOffset", slotOffset,
 		"messageSize", len(msgData))
 
@@ -664,10 +655,7 @@ func (r *SBRRemediationReconciler) SetupWithManager(mgr ctrl.Manager, suffix str
 func (r *SBRRemediationReconciler) checkFencingCompletion(
 	ctx context.Context, remediation *medik8sv1alpha1.StorageBasedRemediation, logger logr.Logger) bool {
 	targetNodeName := remediation.Name
-	timeoutSeconds := remediation.Spec.TimeoutSeconds
-	if timeoutSeconds == 0 {
-		timeoutSeconds = 60 // Default timeout if not specified
-	}
+	timeoutSeconds := DefaultFencingMonitorTimeoutSeconds
 
 	// Check when fencing was initiated to enforce timeout
 	fencingStartTime := r.getFencingStartTime(remediation)

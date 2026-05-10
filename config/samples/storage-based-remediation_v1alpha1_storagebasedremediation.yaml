@@ -4,14 +4,7 @@ metadata:
   labels:
     app.kubernetes.io/name: sbr-operator
     app.kubernetes.io/managed-by: kustomize
-  name: storagebasedremediation-sample
+  # Resource name must match the Kubernetes node name to fence.
+  name: worker-1
   namespace: default
-spec:
-  # Name of the Kubernetes node to be fenced
-  nodeName: "worker-1"
-  
-  # Reason for fencing (optional, defaults to NodeUnresponsive)
-  reason: HeartbeatTimeout
-  
-  # Timeout in seconds (optional, defaults to 60)
-  timeoutSeconds: 120
+spec: {}

@@ -698,10 +698,7 @@ func testStorageAccessInterruption(cluster ClusterInfo) {
 			Name:      remediationName,
 			Namespace: testNamespace.Name,
 		},
-		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
-			Reason:         medik8sv1alpha1.SBRRemediationReasonHeartbeatTimeout,
-			TimeoutSeconds: 300,
-		},
+		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{},
 	}
 	err = k8sClient.Create(ctx, sbrRemediation)
 	Expect(err).NotTo(HaveOccurred())
@@ -806,10 +803,7 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 			Name:      remediationName,
 			Namespace: testNamespace.Name,
 		},
-		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
-			Reason:         medik8sv1alpha1.SBRRemediationReasonHeartbeatTimeout,
-			TimeoutSeconds: 300, // 5 minutes timeout for fencing
-		},
+		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{},
 	}
 	err = k8sClient.Create(ctx, sbrRemediation)
 	Expect(err).NotTo(HaveOccurred())
@@ -866,10 +860,7 @@ func testFakeRemediation() {
 			Name:      fakeNodeName,
 			Namespace: testNamespace.Name,
 		},
-		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
-			Reason:         medik8sv1alpha1.SBRRemediationReasonHeartbeatTimeout,
-			TimeoutSeconds: 300, // 5 minutes timeout for fencing
-		},
+		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{},
 	}
 	err := k8sClient.Create(ctx, sbrRemediation)
 	Expect(err).NotTo(HaveOccurred())
@@ -909,10 +900,7 @@ func testNodeRemediation(cluster ClusterInfo) {
 			Name:      nodeName,
 			Namespace: testNamespace.Name,
 		},
-		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{
-			Reason:         medik8sv1alpha1.SBRRemediationReasonHeartbeatTimeout,
-			TimeoutSeconds: 300, // 5 minutes timeout for fencing
-		},
+		Spec: medik8sv1alpha1.StorageBasedRemediationSpec{},
 	}
 	err := k8sClient.Create(ctx, sbrRemediation)
 	Expect(err).NotTo(HaveOccurred())
