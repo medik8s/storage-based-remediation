@@ -124,12 +124,20 @@ test-imports: sort-imports
 fix-imports: sort-imports
 	$(SORT_IMPORTS) -w .
 
+.PHONY: verify
+verify: bundle-reset ## Verify there are no un-committed changes
+	./hack/verify-diff.sh
+
 .PHONY: test-all
 test-all: test test-e2e ## Run all tests: unit and e2e
 
-.PHONY: test
-test: manifests generate fmt vet envtest ## Run tests.
+.PHONY: test-no-verify
+test-no-verify: generate manifests fmt vet envtest ## Generate and format code, and run tests
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v -E '/e2e') -coverprofile cover.out
+
+.PHONY: test
+test: test-no-verify ## Generate and format code, run tests and verify there are no un-committed changes
+	$(MAKE) bundle-reset verify
 
 TEST_ID=$(shell date +'%s')
 TEST_HOME=.tests
