@@ -23,7 +23,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/medik8s/storage-based-remediation/pkg/agent"
+	"github.com/medik8s/storage-based-remediation/internal/agent"
 )
 
 // testCase represents a generic test case for validation functions

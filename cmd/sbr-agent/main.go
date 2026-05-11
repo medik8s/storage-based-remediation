@@ -35,7 +35,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-
 	// Kubernetes imports for StorageBasedRemediation CR watching
 
 	corev1 "k8s.io/api/core/v1"
@@ -51,14 +50,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/medik8s/storage-based-remediation/api/v1alpha1"
-	"github.com/medik8s/storage-based-remediation/pkg/agent"
-	"github.com/medik8s/storage-based-remediation/pkg/blockdevice"
-	"github.com/medik8s/storage-based-remediation/pkg/controller"
-	"github.com/medik8s/storage-based-remediation/pkg/mocks"
-	"github.com/medik8s/storage-based-remediation/pkg/retry"
-	"github.com/medik8s/storage-based-remediation/pkg/sbdprotocol"
-	"github.com/medik8s/storage-based-remediation/pkg/version"
-	"github.com/medik8s/storage-based-remediation/pkg/watchdog"
+	"github.com/medik8s/storage-based-remediation/internal/agent"
+	"github.com/medik8s/storage-based-remediation/internal/blockdevice"
+	"github.com/medik8s/storage-based-remediation/internal/controller"
+	"github.com/medik8s/storage-based-remediation/internal/mocks"
+	"github.com/medik8s/storage-based-remediation/internal/retry"
+	"github.com/medik8s/storage-based-remediation/internal/sbdprotocol"
+	"github.com/medik8s/storage-based-remediation/internal/version"
+	"github.com/medik8s/storage-based-remediation/internal/watchdog"
 )
 
 // RBAC permissions for SBR Agent

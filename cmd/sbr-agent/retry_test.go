@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/medik8s/storage-based-remediation/pkg/sbdprotocol"
+	"github.com/medik8s/storage-based-remediation/internal/sbdprotocol"
 )
 
 func TestSBRAgent_FailureTracking(t *testing.T) {

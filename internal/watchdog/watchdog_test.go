@@ -25,7 +25,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/medik8s/storage-based-remediation/pkg/retry"
+	"github.com/medik8s/storage-based-remediation/internal/retry"
 )
 
 // isTrueEnv returns true if the environment variable is set to a true value (case-insensitive)

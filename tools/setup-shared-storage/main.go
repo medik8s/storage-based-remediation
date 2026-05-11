@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/medik8s/storage-based-remediation/pkg/storage"
+	"github.com/medik8s/storage-based-remediation/internal/storage"
 )
 
 // Configuration holds all the configuration for the storage setup
