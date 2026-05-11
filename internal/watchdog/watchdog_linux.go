@@ -12,11 +12,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// petWatchdogIoctl performs the WDIOC_KEEPALIVE ioctl syscall (Linux-specific)
+// petWatchdogIoctl performs the unix.WDIOC_KEEPALIVE ioctl syscall (Linux-specific)
 func (w *Watchdog) petWatchdogIoctl() error {
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(w.file.Fd()), WDIOC_KEEPALIVE, 0) //nolint:unconvert
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(w.fd), unix.WDIOC_KEEPALIVE, 0) //nolint:unconvert
 	if errno == 0 {
-		w.logger.V(3).Info("Watchdog pet successful using WDIOC_KEEPALIVE ioctl")
+		w.logger.V(3).Info("Watchdog pet successful using unix.WDIOC_KEEPALIVE ioctl")
 		return nil
 	}
 
@@ -24,7 +24,7 @@ func (w *Watchdog) petWatchdogIoctl() error {
 		return ErrIoctlNotSupported // Signal to use write fallback
 	}
 
-	return fmt.Errorf("ioctl WDIOC_KEEPALIVE failed: %w", errno)
+	return fmt.Errorf("ioctl unix.WDIOC_KEEPALIVE failed: %w", errno)
 }
 
 // readTimeoutFromSysfsFile reads and parses timeout from a sysfs file
@@ -76,9 +76,9 @@ func (w *Watchdog) getTimeoutSysfs() (time.Duration, error) {
 
 // getTimeoutIoctl reads the actual hardware timeout from the watchdog device using ioctl
 func (w *Watchdog) getTimeoutIoctl() (time.Duration, error) {
-	timeoutSeconds, err := unix.IoctlGetInt(int(w.file.Fd()), WDIOC_GETTIMEOUT)
+	timeoutSeconds, err := unix.IoctlGetInt(w.fd, unix.WDIOC_GETTIMEOUT)
 	if err != nil {
-		return 0, fmt.Errorf("ioctl WDIOC_GETTIMEOUT failed: %w", err)
+		return 0, fmt.Errorf("ioctl unix.WDIOC_GETTIMEOUT failed: %w", err)
 	}
 
 	timeoutDuration := time.Duration(timeoutSeconds) * time.Second
