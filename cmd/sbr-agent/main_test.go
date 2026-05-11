@@ -1758,5 +1758,3 @@ func isConditionExist(conditions []corev1.NodeCondition, condType corev1.NodeCon
 	}
 	return false
 }
-
-

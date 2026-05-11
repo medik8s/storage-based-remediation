@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"golang.org/x/sys/unix"
 
 	"github.com/medik8s/storage-based-remediation/internal/agent"
 	"github.com/medik8s/storage-based-remediation/internal/retry"
@@ -159,15 +160,15 @@ func TestPet(t *testing.T) {
 		{
 			name: "pet with nil file descriptor",
 			setup: func() *Watchdog {
-				// Create a watchdog with nil file descriptor
+				// Create a watchdog with invalid file descriptor
 				return &Watchdog{
-					file:   nil,
+					fd:     -1,
 					path:   "/test/path",
-					isOpen: true, // Mark as open but with nil file
+					isOpen: true, // Mark as open but with invalid fd
 				}
 			},
 			expectError: true,
-			errorMsg:    "watchdog file descriptor is nil",
+			errorMsg:    "watchdog file descriptor is invalid",
 		},
 		{
 			name: "pet valid watchdog (ioctl fails, write-based fallback succeeds)",
@@ -206,13 +207,13 @@ func TestPet(t *testing.T) {
 				}
 
 				// Open as read-only (this will fail for watchdog, but for test purposes)
-				file, err = os.OpenFile(tmpFile, os.O_RDONLY, 0)
+				fd, err := unix.Open(tmpFile, unix.O_RDONLY, 0)
 				if err != nil {
 					t.Fatalf("Failed to open read-only file: %v", err)
 				}
 
 				wd := &Watchdog{
-					file:   file,
+					fd:     fd,
 					path:   tmpFile,
 					isOpen: true,
 					logger: logr.Discard(),
@@ -285,10 +286,10 @@ func TestClose(t *testing.T) {
 			expectError: false, // Should not error on double close
 		},
 		{
-			name: "close watchdog with nil file",
+			name: "close watchdog with invalid fd",
 			setup: func() *Watchdog {
 				return &Watchdog{
-					file:   nil,
+					fd:     -1,
 					path:   "/test/path",
 					isOpen: true,
 				}
