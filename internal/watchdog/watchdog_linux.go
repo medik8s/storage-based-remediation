@@ -27,21 +27,25 @@ func (w *Watchdog) petWatchdogIoctl() error {
 	return fmt.Errorf("ioctl unix.WDIOC_KEEPALIVE failed: %w", errno)
 }
 
-// readTimeoutFromSysfsFile reads and parses timeout from a sysfs file
+// readTimeoutFromSysfsFile reads and parses timeout from a sysfs file.
+// Path is built by the caller to keep this function testable with arbitrary paths.
 func (w *Watchdog) readTimeoutFromSysfsFile(path, deviceName string) (time.Duration, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			w.logger.V(1).Info("Failed to read sysfs timeout file", "path", path, "error", err)
+		}
 		return 0, err
 	}
 
 	timeoutStr := strings.TrimSpace(string(data))
 	timeoutSeconds, err := strconv.Atoi(timeoutStr)
 	if err != nil {
-		return 0, fmt.Errorf("failed to parse timeout value '%s': %w", timeoutStr, err)
+		return 0, fmt.Errorf("failed to parse timeout value '%s' from %s: %w", timeoutStr, path, err)
 	}
 
 	if timeoutSeconds <= 0 {
-		return 0, fmt.Errorf("invalid timeout value: %d", timeoutSeconds)
+		return 0, fmt.Errorf("invalid timeout value %d from %s", timeoutSeconds, path)
 	}
 
 	timeoutDuration := time.Duration(timeoutSeconds) * time.Second
