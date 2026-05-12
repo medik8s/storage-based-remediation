@@ -17,7 +17,7 @@ WORKDIR /workspace
 COPY go.mod go.sum ./
 COPY api/ api/
 COPY cmd/ cmd/
-COPY pkg/ pkg/
+COPY internal/ internal/
 COPY vendor/ vendor/
 COPY hack/ hack/
 COPY .git/ .git/

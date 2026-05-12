@@ -18,7 +18,7 @@ COPY go.mod go.sum ./
 # Copy the go source and .git directory for version info
 COPY cmd/main.go cmd/main.go
 COPY api/ api/
-COPY pkg/ pkg/
+COPY internal/ internal/
 COPY vendor/ vendor/
 COPY hack/ hack/
 COPY .git/ .git/

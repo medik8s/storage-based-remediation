@@ -39,8 +39,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
-	"github.com/medik8s/storage-based-remediation/pkg/controller"
-	"github.com/medik8s/storage-based-remediation/pkg/version"
+	"github.com/medik8s/storage-based-remediation/internal/controller"
+	"github.com/medik8s/storage-based-remediation/internal/version"
 	// +kubebuilder:scaffold:imports
 )
 

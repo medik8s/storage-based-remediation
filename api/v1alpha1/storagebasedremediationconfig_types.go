@@ -25,7 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/medik8s/storage-based-remediation/pkg/agent"
+	"github.com/medik8s/storage-based-remediation/internal/agent"
 )
 
 var typesLog = logf.Log.WithName("sbrconfig-types")
