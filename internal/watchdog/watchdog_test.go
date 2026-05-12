@@ -655,7 +655,11 @@ func TestTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create watchdog: %v", err)
 	}
-	defer wd.Close()
+	defer func() {
+		if closeErr := wd.Close(); closeErr != nil {
+			t.Errorf("Failed to close watchdog: %v", closeErr)
+		}
+	}()
 
 	// Regular file doesn't support ioctl or sysfs, should return default
 	timeout := wd.Timeout()
