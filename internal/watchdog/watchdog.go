@@ -500,7 +500,7 @@ func (w *Watchdog) Timeout() time.Duration {
 	}
 
 	// If ioctl fails, try sysfs fallback
-	w.logger.V(2).Info("WDIOC_GETTIMEOUT ioctl failed, trying sysfs fallback", "ioctlError", err.Error())
+	w.logger.V(1).Info("WDIOC_GETTIMEOUT ioctl failed, trying sysfs fallback", "ioctlError", err.Error())
 	timeout, sysfsErr := w.getTimeoutSysfs()
 	if sysfsErr == nil {
 		w.logger.V(1).Info("Discovered watchdog timeout via sysfs", "timeout", timeout)
@@ -508,7 +508,7 @@ func (w *Watchdog) Timeout() time.Duration {
 	}
 
 	// Both methods failed, use default
-	w.logger.V(1).Info("Failed to discover watchdog timeout via ioctl and sysfs, using default",
-		"ioctlError", err, "sysfsError", sysfsErr, "default", agent.WatchdogTimeoutDefault)
+	w.logger.V(1).Info("Failed to discover watchdog timeout via sysfs, using default",
+		"sysfsError", sysfsErr, "default", agent.WatchdogTimeoutDefault)
 	return agent.WatchdogTimeoutDefault
 }
