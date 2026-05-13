@@ -29,7 +29,6 @@ import (
 	"github.com/go-logr/logr"
 	"golang.org/x/sys/unix"
 
-	"github.com/medik8s/storage-based-remediation/internal/agent"
 	"github.com/medik8s/storage-based-remediation/internal/retry"
 )
 
@@ -485,24 +484,26 @@ func (w *Watchdog) Path() string {
 // It tries multiple methods in order:
 // 1. WDIOC_GETTIMEOUT ioctl (preferred method)
 // 2. Sysfs reading from /sys/class/watchdog (fallback method)
-// Returns the timeout in seconds, or the default if discovery fails.
-func (w *Watchdog) Timeout() time.Duration {
+// Returns the timeout as time.Duration, or an error if discovery fails.
+func (w *Watchdog) Timeout() (time.Duration, error) {
+	if w.IsSoftdog() {
+		w.logger.V(1).Info("Softdog enabled", "timeout", DefaultSoftdogTimeout)
+		return DefaultSoftdogTimeout, nil
+	}
+
 	if !w.isOpen || w.fd < 0 {
-		w.logger.V(1).Info("Watchdog device not open, using default timeout", "default", agent.WatchdogTimeoutDefault)
-		return agent.WatchdogTimeoutDefault
+		return 0, fmt.Errorf("watchdog device not open")
 	}
 
 	// Try ioctl first (preferred method)
 	timeout, err := w.getTimeoutIoctl()
 	if err == nil {
 		w.logger.V(1).Info("Discovered watchdog timeout via ioctl", "timeout", timeout)
-		return timeout
+		return timeout, nil
 	}
 
 	if !errors.Is(err, ErrIoctlNotSupported) {
-		w.logger.V(1).Info("WDIOC_GETTIMEOUT ioctl failed, using default timeout",
-			"ioctlError", err, "default", agent.WatchdogTimeoutDefault)
-		return agent.WatchdogTimeoutDefault
+		return 0, fmt.Errorf("ioctl timeout discovery failed: %w", err)
 	}
 
 	// If ioctl is not supported, try sysfs fallback
@@ -510,11 +511,9 @@ func (w *Watchdog) Timeout() time.Duration {
 	timeout, sysfsErr := w.getTimeoutSysfs()
 	if sysfsErr == nil {
 		w.logger.V(1).Info("Discovered watchdog timeout via sysfs", "timeout", timeout)
-		return timeout
+		return timeout, nil
 	}
 
-	// Both methods failed, use default
-	w.logger.V(1).Info("Failed to discover watchdog timeout via sysfs, using default",
-		"sysfsError", sysfsErr, "default", agent.WatchdogTimeoutDefault)
-	return agent.WatchdogTimeoutDefault
+	// Sysfs also failed
+	return 0, fmt.Errorf("sysfs timeout discovery failed: %w", sysfsErr)
 }

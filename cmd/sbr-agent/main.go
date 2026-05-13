@@ -2365,7 +2365,11 @@ func main() {
 	}
 
 	// Derive petInterval from discovered watchdog timeout
-	discoveredTimeout := wd.Timeout()
+	discoveredTimeout, err := wd.Timeout()
+	if err != nil {
+		logger.Error(err, "Failed to discover watchdog timeout")
+		os.Exit(1)
+	}
 	derivedPetInterval := discoveredTimeout / agent.PetIntervalMultiple
 
 	// Validate that watchdog timeout is large enough to support the minimum pet interval
