@@ -59,15 +59,7 @@ func TestNew(t *testing.T) {
 		{
 			name: "valid path with mock file",
 			setup: func() (string, func()) {
-				// Create a temporary file to simulate a watchdog device
-				tmpDir := t.TempDir()
-				tmpFile := filepath.Join(tmpDir, "mock_watchdog")
-				file, err := os.Create(tmpFile)
-				if err != nil {
-					t.Fatalf("Failed to create mock file: %v", err)
-				}
-				_ = file.Close()
-
+				tmpFile := createMockWatchdogFile(t)
 				return tmpFile, func() {
 					_ = os.Remove(tmpFile)
 				}
@@ -137,20 +129,7 @@ func TestPet(t *testing.T) {
 		{
 			name: "pet closed watchdog",
 			setup: func() *Watchdog {
-				tmpDir := t.TempDir()
-				tmpFile := filepath.Join(tmpDir, "mock_watchdog")
-				file, err := os.Create(tmpFile)
-				if err != nil {
-					t.Fatalf("Failed to create mock file: %v", err)
-				}
-				_ = file.Close()
-
-				wd, err := New(tmpFile)
-				if err != nil {
-					t.Fatalf("Failed to create watchdog: %v", err)
-				}
-
-				// Close the watchdog to test petting a closed device
+				wd := createMockWatchdog(t)
 				_ = wd.Close()
 				return wd
 			},
@@ -173,19 +152,7 @@ func TestPet(t *testing.T) {
 		{
 			name: "pet valid watchdog (ioctl fails, write-based fallback succeeds)",
 			setup: func() *Watchdog {
-				tmpDir := t.TempDir()
-				tmpFile := filepath.Join(tmpDir, "mock_watchdog")
-				file, err := os.Create(tmpFile)
-				if err != nil {
-					t.Fatalf("Failed to create mock file: %v", err)
-				}
-				_ = file.Close()
-
-				wd, err := New(tmpFile)
-				if err != nil {
-					t.Fatalf("Failed to create watchdog: %v", err)
-				}
-				return wd
+				return createMockWatchdog(t)
 			},
 			expectError: false, // Should succeed with write-based fallback
 		},
@@ -266,20 +233,7 @@ func TestClose(t *testing.T) {
 		{
 			name: "close already closed watchdog",
 			setup: func() *Watchdog {
-				tmpDir := t.TempDir()
-				tmpFile := filepath.Join(tmpDir, "mock_watchdog")
-				file, err := os.Create(tmpFile)
-				if err != nil {
-					t.Fatalf("Failed to create mock file: %v", err)
-				}
-				_ = file.Close()
-
-				wd, err := New(tmpFile)
-				if err != nil {
-					t.Fatalf("Failed to create watchdog: %v", err)
-				}
-
-				// Close it once first
+				wd := createMockWatchdog(t)
 				_ = wd.Close()
 				return wd
 			},
@@ -299,19 +253,7 @@ func TestClose(t *testing.T) {
 		{
 			name: "close valid watchdog",
 			setup: func() *Watchdog {
-				tmpDir := t.TempDir()
-				tmpFile := filepath.Join(tmpDir, "mock_watchdog")
-				file, err := os.Create(tmpFile)
-				if err != nil {
-					t.Fatalf("Failed to create mock file: %v", err)
-				}
-				_ = file.Close()
-
-				wd, err := New(tmpFile)
-				if err != nil {
-					t.Fatalf("Failed to create watchdog: %v", err)
-				}
-				return wd
+				return createMockWatchdog(t)
 			},
 			expectError: false,
 		},
@@ -345,16 +287,7 @@ func TestClose(t *testing.T) {
 
 // TestWatchdogProperties tests the IsOpen and Path methods
 func TestWatchdogProperties(t *testing.T) {
-	tmpDir := t.TempDir()
-	tmpFile := filepath.Join(tmpDir, "mock_watchdog")
-
-	// Create a mock file
-	file, err := os.Create(tmpFile)
-	if err != nil {
-		t.Fatalf("Failed to create mock file: %v", err)
-	}
-	_ = file.Close()
-
+	tmpFile := createMockWatchdogFile(t)
 	wd, err := New(tmpFile)
 	if err != nil {
 		t.Fatalf("Failed to create watchdog: %v", err)
@@ -387,15 +320,7 @@ func TestWatchdogProperties(t *testing.T) {
 
 // TestWatchdogLifecycle tests the complete lifecycle of a watchdog
 func TestWatchdogLifecycle(t *testing.T) {
-	tmpDir := t.TempDir()
-	tmpFile := filepath.Join(tmpDir, "mock_watchdog")
-
-	// Create a mock file
-	file, err := os.Create(tmpFile)
-	if err != nil {
-		t.Fatalf("Failed to create mock file: %v", err)
-	}
-	_ = file.Close()
+	tmpFile := createMockWatchdogFile(t)
 
 	// Create watchdog
 	wd, err := New(tmpFile)
@@ -641,31 +566,101 @@ func TestNewWithSoftdogFallbackAndTestMode(t *testing.T) {
 	t.Logf("Successfully created softdog watchdog in test mode at path: %s", wd.Path())
 }
 
-// TestTimeout tests the Timeout method returns default when discovery fails
-func TestTimeout(t *testing.T) {
+// createMockWatchdogFile creates a temporary file for use as a mock watchdog device.
+// The temporary directory is cleaned up automatically by t.TempDir().
+func createMockWatchdogFile(t *testing.T) string {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "mock_watchdog")
 	file, err := os.Create(tmpFile)
 	if err != nil {
 		t.Fatalf("Failed to create mock file: %v", err)
 	}
-	_ = file.Close()
+	file.Close()
+	return tmpFile
+}
 
+// createMockWatchdog creates and opens a watchdog using a temporary file.
+func createMockWatchdog(t *testing.T) *Watchdog {
+	tmpFile := createMockWatchdogFile(t)
 	wd, err := New(tmpFile)
 	if err != nil {
 		t.Fatalf("Failed to create watchdog: %v", err)
 	}
-	defer func() {
-		if closeErr := wd.Close(); closeErr != nil {
-			t.Errorf("Failed to close watchdog: %v", closeErr)
-		}
-	}()
+	return wd
+}
 
-	// Regular file doesn't support ioctl or sysfs, should return default
-	timeout := wd.Timeout()
+// TestTimeout tests the Timeout method's pre-check behavior that returns the default timeout.
+// The Timeout() method implements a three-tier discovery approach:
+//  1. Pre-check: Verify device is open and fd is valid → return default if checks fail
+//  2. Primary: Try WDIOC_GETTIMEOUT ioctl → if fails, continue
+//  3. Fallback: Try sysfs at /sys/class/watchdog/*/timeout → if fails, use default
+//
+// This test covers the pre-check code paths only:
+//   - Device not open state
+//   - Invalid file descriptor
+//
+// Note: Discovery failures (ioctl and sysfs both failing) are tested via the sysfs parsing
+// tests in TestReadTimeoutFromSysfsFile in watchdog_linux_test.go. This separation avoids
+// discovering the host system's watchdog device, which would cause test failures in
+// environments with actual hardware watchdogs and break test isolation.
+func TestTimeout(t *testing.T) {
+	tests := []struct {
+		name         string
+		setup        func(*testing.T) *Watchdog
+		needsCleanup bool
+	}{
+		{
+			name: "device closed returns default timeout",
+			setup: func(t *testing.T) *Watchdog {
+				wd := createMockWatchdog(t)
+				if err := wd.Close(); err != nil {
+					t.Fatalf("Failed to close watchdog: %v", err)
+				}
+				return wd
+			},
+			needsCleanup: false,
+		},
+		{
+			name: "invalid file descriptor returns default timeout",
+			setup: func(t *testing.T) *Watchdog {
+				return &Watchdog{
+					fd:          -1,
+					path:        "/test/invalid",
+					isOpen:      true,
+					logger:      logr.Discard(),
+					retryConfig: retry.Config{},
+				}
+			},
+			needsCleanup: false,
+		},
+		{
+			name: "device marked not open returns default timeout",
+			setup: func(t *testing.T) *Watchdog {
+				wd := createMockWatchdog(t)
+				wd.isOpen = false
+				return wd
+			},
+			needsCleanup: true,
+		},
+	}
 
-	if timeout != agent.WatchdogTimeoutDefault {
-		t.Errorf("Expected default timeout %v, got: %v", agent.WatchdogTimeoutDefault, timeout)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wd := tt.setup(t)
+			if tt.needsCleanup {
+				defer func() {
+					if closeErr := wd.Close(); closeErr != nil {
+						t.Logf("Cleanup close error (may be expected): %v", closeErr)
+					}
+				}()
+			}
+
+			timeout := wd.Timeout()
+
+			if timeout != agent.WatchdogTimeoutDefault {
+				t.Errorf("Expected default timeout %v, got: %v", agent.WatchdogTimeoutDefault, timeout)
+			}
+		})
 	}
 }
 

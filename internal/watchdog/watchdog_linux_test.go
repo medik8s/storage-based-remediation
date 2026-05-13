@@ -11,7 +11,9 @@ import (
 	"github.com/go-logr/logr"
 )
 
-// TestReadTimeoutFromSysfsFile tests the sysfs timeout parsing logic
+// TestReadTimeoutFromSysfsFile tests the sysfs timeout parsing logic, including edge cases.
+// This function validates the timeout value read from /sys/class/watchdog/*/timeout,
+// ensuring proper error handling for invalid formats, missing files, and edge cases.
 func TestReadTimeoutFromSysfsFile(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -19,6 +21,7 @@ func TestReadTimeoutFromSysfsFile(t *testing.T) {
 		expectError bool
 		errorMsg    string
 	}{
+		// Valid timeout cases
 		{
 			name: "valid timeout",
 			setup: func() (string, func()) {
@@ -29,6 +32,8 @@ func TestReadTimeoutFromSysfsFile(t *testing.T) {
 			},
 			expectError: false,
 		},
+
+		// File not found
 		{
 			name: "file not found",
 			setup: func() (string, func()) {
@@ -36,8 +41,10 @@ func TestReadTimeoutFromSysfsFile(t *testing.T) {
 			},
 			expectError: true,
 		},
+
+		// Invalid timeout values (<=0 check at lines 47-49 in watchdog_linux.go)
 		{
-			name: "invalid timeout value",
+			name: "zero timeout value",
 			setup: func() (string, func()) {
 				tmpDir := t.TempDir()
 				testFile := filepath.Join(tmpDir, SysfsTimeoutFile)
@@ -46,6 +53,52 @@ func TestReadTimeoutFromSysfsFile(t *testing.T) {
 			},
 			expectError: true,
 			errorMsg:    "invalid timeout value",
+		},
+		{
+			name: "negative timeout value",
+			setup: func() (string, func()) {
+				tmpDir := t.TempDir()
+				testFile := filepath.Join(tmpDir, SysfsTimeoutFile)
+				_ = os.WriteFile(testFile, []byte("-10"), 0644)
+				return testFile, func() {}
+			},
+			expectError: true,
+			errorMsg:    "invalid timeout value",
+		},
+
+		// Parsing errors (non-numeric values - lines 42-45 in watchdog_linux.go)
+		{
+			name: "non-numeric timeout value",
+			setup: func() (string, func()) {
+				tmpDir := t.TempDir()
+				testFile := filepath.Join(tmpDir, SysfsTimeoutFile)
+				_ = os.WriteFile(testFile, []byte("invalid"), 0644)
+				return testFile, func() {}
+			},
+			expectError: true,
+			errorMsg:    "failed to parse timeout value",
+		},
+		{
+			name: "empty timeout file",
+			setup: func() (string, func()) {
+				tmpDir := t.TempDir()
+				testFile := filepath.Join(tmpDir, SysfsTimeoutFile)
+				_ = os.WriteFile(testFile, []byte(""), 0644)
+				return testFile, func() {}
+			},
+			expectError: true,
+			errorMsg:    "failed to parse timeout value",
+		},
+		{
+			name: "whitespace only timeout file",
+			setup: func() (string, func()) {
+				tmpDir := t.TempDir()
+				testFile := filepath.Join(tmpDir, SysfsTimeoutFile)
+				_ = os.WriteFile(testFile, []byte("   \n  "), 0644)
+				return testFile, func() {}
+			},
+			expectError: true,
+			errorMsg:    "failed to parse timeout value",
 		},
 	}
 
