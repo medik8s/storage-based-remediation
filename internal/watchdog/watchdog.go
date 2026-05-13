@@ -499,8 +499,14 @@ func (w *Watchdog) Timeout() time.Duration {
 		return timeout
 	}
 
-	// If ioctl fails, try sysfs fallback
-	w.logger.V(1).Info("WDIOC_GETTIMEOUT ioctl failed, trying sysfs fallback", "ioctlError", err.Error())
+	if !errors.Is(err, ErrIoctlNotSupported) {
+		w.logger.V(1).Info("WDIOC_GETTIMEOUT ioctl failed, using default timeout",
+			"ioctlError", err, "default", agent.WatchdogTimeoutDefault)
+		return agent.WatchdogTimeoutDefault
+	}
+
+	// If ioctl is not supported, try sysfs fallback
+	w.logger.V(1).Info("WDIOC_GETTIMEOUT ioctl not supported, trying sysfs fallback", "ioctlError", err)
 	timeout, sysfsErr := w.getTimeoutSysfs()
 	if sysfsErr == nil {
 		w.logger.V(1).Info("Discovered watchdog timeout via sysfs", "timeout", timeout)
