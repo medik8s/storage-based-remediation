@@ -26,7 +26,6 @@ import (
 	"github.com/go-logr/logr"
 	"golang.org/x/sys/unix"
 
-	"github.com/medik8s/storage-based-remediation/internal/agent"
 	"github.com/medik8s/storage-based-remediation/internal/retry"
 )
 
@@ -589,15 +588,16 @@ func createMockWatchdog(t *testing.T) *Watchdog {
 	return wd
 }
 
-// TestTimeout tests the Timeout method's pre-check behavior that returns the default timeout.
+// TestTimeout tests the Timeout method error handling.
 // The Timeout() method implements a three-tier discovery approach:
-//  1. Pre-check: Verify device is open and fd is valid → return default if checks fail
-//  2. Primary: Try WDIOC_GETTIMEOUT ioctl → if fails, continue
-//  3. Fallback: Try sysfs at /sys/class/watchdog/*/timeout → if fails, use default
+//  1. Pre-check: Verify device is open and fd is valid → return error if checks fail
+//  2. Primary: Try WDIOC_GETTIMEOUT ioctl → return error if fails (unless ErrIoctlNotSupported)
+//  3. Fallback: Try sysfs at /sys/class/watchdog/*/timeout → return error if fails
 //
-// This test covers the pre-check code paths only:
-//   - Device not open state
-//   - Invalid file descriptor
+// This test covers the pre-check code paths:
+//   - Device not open state returns error
+//   - Invalid file descriptor returns error
+//   - Device marked not open returns error
 //
 // Note: Discovery failures (ioctl and sysfs both failing) are tested via the sysfs parsing
 // tests in TestReadTimeoutFromSysfsFile in watchdog_linux_test.go. This separation avoids
@@ -608,9 +608,10 @@ func TestTimeout(t *testing.T) {
 		name         string
 		setup        func(*testing.T) *Watchdog
 		needsCleanup bool
+		expectError  bool
 	}{
 		{
-			name: "device closed returns default timeout",
+			name: "device closed returns error",
 			setup: func(t *testing.T) *Watchdog {
 				wd := createMockWatchdog(t)
 				if err := wd.Close(); err != nil {
@@ -619,9 +620,10 @@ func TestTimeout(t *testing.T) {
 				return wd
 			},
 			needsCleanup: false,
+			expectError:  true,
 		},
 		{
-			name: "invalid file descriptor returns default timeout",
+			name: "invalid file descriptor returns error",
 			setup: func(t *testing.T) *Watchdog {
 				return &Watchdog{
 					fd:          -1,
@@ -632,15 +634,17 @@ func TestTimeout(t *testing.T) {
 				}
 			},
 			needsCleanup: false,
+			expectError:  true,
 		},
 		{
-			name: "device marked not open returns default timeout",
+			name: "device marked not open returns error",
 			setup: func(t *testing.T) *Watchdog {
 				wd := createMockWatchdog(t)
 				wd.isOpen = false
 				return wd
 			},
 			needsCleanup: true,
+			expectError:  true,
 		},
 	}
 
@@ -655,10 +659,19 @@ func TestTimeout(t *testing.T) {
 				}()
 			}
 
-			timeout := wd.Timeout()
+			timeout, err := wd.Timeout()
 
-			if timeout != agent.WatchdogTimeoutDefault {
-				t.Errorf("Expected default timeout %v, got: %v", agent.WatchdogTimeoutDefault, timeout)
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got nil")
+				}
+				if timeout != 0 {
+					t.Errorf("Expected zero timeout when error returned, got: %v", timeout)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, got: %v", err)
+				}
 			}
 		})
 	}
