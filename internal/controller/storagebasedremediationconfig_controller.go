@@ -1553,7 +1553,10 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 
 // buildSBRAgentArgs builds the command line arguments for the sbr-agent container
 func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig) []string {
+	sbrTimeoutSeconds := sbrConfig.Spec.GetSBRTimeoutSeconds()
 	maxConsecutiveFailures := sbrConfig.Spec.GetMaxConsecutiveFailures()
+	sbrUpdateInterval := sbrConfig.Spec.GetSBRUpdateInterval()
+	peerCheckInterval := sbrConfig.Spec.GetPeerCheckInterval()
 	args := []string{
 		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, sbrConfig.Spec.GetWatchdogPath()),
 		fmt.Sprintf("--%s=%s", agent.FlagLogLevel, agent.LogLevel),
@@ -1561,10 +1564,10 @@ func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *m
 		fmt.Sprintf("--%s=%s", agent.FlagStaleNodeTimeout, agent.StaleNodeTimeout),
 		fmt.Sprintf("--io-timeout=%s", agent.IoTimeout),
 		fmt.Sprintf("--%s=%s", agent.FlagRebootMethod, agent.RebootMethod),
-		fmt.Sprintf("--%s=%d", agent.FlagSBRTimeoutSeconds, agent.SbrTimeoutSeconds),
+		fmt.Sprintf("--%s=%d", agent.FlagSBRTimeoutSeconds, sbrTimeoutSeconds),
 		fmt.Sprintf("--%s=%d", agent.FlagMaxConsecutiveFailures, maxConsecutiveFailures),
-		fmt.Sprintf("--%s=%s", agent.FlagSBRUpdateInterval, agent.SbrUpdateInterval),
-		fmt.Sprintf("--%s=%s", agent.FlagPeerCheckInterval, agent.PeerCheckInterval),
+		fmt.Sprintf("--%s=%s", agent.FlagSBRUpdateInterval, sbrUpdateInterval.String()),
+		fmt.Sprintf("--%s=%s", agent.FlagPeerCheckInterval, peerCheckInterval.String()),
 	}
 
 	// Add shared storage arguments if configured
