@@ -96,15 +96,21 @@ make test-e2e
 
 # Build and push images
 make build-images push-images IMG=<your-registry>/storage-based-remediation-operator:tag
+# Or: make build-push IMG=<your-registry>/storage-based-remediation-operator:tag
+# (build-images, push-images, and update-manifests)
 ```
 
 ## Documentation
 
-Comprehensive documentation is available in the `docs/` directory:
+Comprehensive documentation is available in the `docs/` directory.
+
+Files under `docs/archive/` are historical: they use older resource names
+(for example `SBDConfig`) and may not reflect the current implementation.
 
 - [Design Document](docs/archive/design.md) - Architecture and design
-  principles
+  principles (archive)
 - [Blueprint](docs/archive/blueprint.md) - Detailed implementation blueprint
+  (archive)
 - [User Guide](docs/sbr-config-user-guide.md) - Configuration and usage
 - [Webhook Requirements](docs/admission-webhook-validation.md) - Admission
   webhook setup
