@@ -1413,9 +1413,8 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: "sbr-agent",
-					HostNetwork:        true,
 					HostPID:            true,
-					DNSPolicy:          corev1.DNSClusterFirstWithHostNet,
+					DNSPolicy:          corev1.DNSClusterFirst,
 					PriorityClassName:  "system-node-critical",
 					RestartPolicy:      corev1.RestartPolicyAlways,
 					NodeSelector:       r.buildNodeSelector(sbrConfig),

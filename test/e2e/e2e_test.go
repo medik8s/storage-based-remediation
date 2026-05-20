@@ -159,6 +159,10 @@ var _ = Describe("SBR Operator", Ordered, Label("e2e"), func() {
 		It("should trigger fencing when SBR agent loses storage access", func() {
 			testStorageAccessInterruption(clusterInfo)
 		})
+
+		It("should start SBR agent when port 8080 is occupied on host", func() {
+			testPortConflictWithoutHostNetwork(clusterInfo)
+		})
 	})
 })
 
@@ -303,6 +307,196 @@ func testBasicStorageBasedRemediationConfiguration() {
 	Expect(err).NotTo(HaveOccurred(), "SBR agent deployment failed")
 
 	time.Sleep(time.Second * 30)
+}
+
+func testPortConflictWithoutHostNetwork(clusterInfo ClusterInfo) {
+	By("Selecting a worker node to occupy port 8080 on")
+	targetNode := selectWorkerNode(clusterInfo)
+	nodeName := targetNode.Metadata.Name
+	GinkgoWriter.Printf("Target node for port conflict test: %s\n", nodeName)
+
+	By("Deploying a port-blocker pod with hostNetwork that binds port 8080")
+	blockerPodName := fmt.Sprintf("sbr-e2e-port-blocker-%d", time.Now().Unix())
+	// nolint:lll
+	blockerPodYAML := fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata:
+  name: %s
+  namespace: default
+  labels:
+    app: sbr-e2e-port-blocker
+spec:
+  hostNetwork: true
+  nodeName: %s
+  containers:
+  - name: blocker
+    image: busybox:latest
+    imagePullPolicy: IfNotPresent
+    command:
+    - /bin/sh
+    - -c
+    - |
+      echo "Occupying port 8080 on host network to simulate another operator"
+      nc -l -k -p 8080
+    resources:
+      requests:
+        memory: "16Mi"
+        cpu: "10m"
+      limits:
+        memory: "32Mi"
+        cpu: "50m"
+  restartPolicy: Never
+  tolerations:
+  - operator: Exists
+`, blockerPodName, nodeName)
+
+	var blockerPod corev1.Pod
+	err := yaml.Unmarshal([]byte(blockerPodYAML), &blockerPod)
+	Expect(err).NotTo(HaveOccurred(), "failed to unmarshal port-blocker pod YAML")
+
+	err = k8sClient.Create(ctx, &blockerPod)
+	Expect(err).NotTo(HaveOccurred(), "failed to create port-blocker pod")
+
+	defer func() {
+		By("Cleaning up port-blocker pod")
+		_ = k8sClient.Delete(ctx, &blockerPod)
+	}()
+
+	By("Waiting for port-blocker pod to be Running")
+	Eventually(func() corev1.PodPhase {
+		pod := &corev1.Pod{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: blockerPodName, Namespace: "default"}, pod)
+		if err != nil {
+			return corev1.PodPending
+		}
+		return pod.Status.Phase
+	}, time.Minute*2, time.Second*5).Should(Equal(corev1.PodRunning),
+		"port-blocker pod should be running and occupying port 8080 on the host")
+
+	By("Verifying port 8080 is actually occupied on the host")
+	verifierPodName := fmt.Sprintf("sbr-e2e-port-verifier-%d", time.Now().Unix())
+	// nolint:lll
+	verifierPodYAML := fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata:
+  name: %s
+  namespace: default
+  labels:
+    app: sbr-e2e-port-verifier
+spec:
+  hostNetwork: true
+  nodeName: %s
+  containers:
+  - name: verifier
+    image: busybox:latest
+    imagePullPolicy: IfNotPresent
+    command:
+    - /bin/sh
+    - -c
+    - |
+      if nc -z -w 2 127.0.0.1 8080; then
+        echo "PORT_8080_OCCUPIED"
+      else
+        echo "PORT_8080_FREE"
+      fi
+    resources:
+      requests:
+        memory: "16Mi"
+        cpu: "10m"
+      limits:
+        memory: "32Mi"
+        cpu: "50m"
+  restartPolicy: Never
+  tolerations:
+  - operator: Exists
+`, verifierPodName, nodeName)
+
+	var verifierPod corev1.Pod
+	err = yaml.Unmarshal([]byte(verifierPodYAML), &verifierPod)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = k8sClient.Create(ctx, &verifierPod)
+	Expect(err).NotTo(HaveOccurred(), "failed to create port-verifier pod")
+
+	defer func() {
+		_ = k8sClient.Delete(ctx, &verifierPod)
+	}()
+
+	Eventually(func() bool {
+		pod := &corev1.Pod{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: verifierPodName, Namespace: "default"}, pod)
+		if err != nil {
+			return false
+		}
+		return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+	}, time.Minute, time.Second*5).Should(BeTrue(), "verifier pod should complete")
+
+	verifierChecker := &utils.PodStatusChecker{
+		Clients:   testClients,
+		Namespace: "default",
+	}
+	logs, err := verifierChecker.GetPodLogs(verifierPodName, nil)
+	Expect(err).NotTo(HaveOccurred(), "failed to get verifier pod logs")
+	Expect(logs).To(ContainSubstring("PORT_8080_OCCUPIED"),
+		"port 8080 must be occupied on the host before testing agent isolation")
+	GinkgoWriter.Printf("Confirmed: port 8080 is occupied on node %s\n", nodeName)
+
+	By("Looking for RWX-compatible storage class")
+	storageClasses := &storagev1.StorageClassList{}
+	err = k8sClient.List(ctx, storageClasses)
+	Expect(err).NotTo(HaveOccurred())
+
+	var rwxStorageClass *storagev1.StorageClass
+	for _, sc := range storageClasses.Items {
+		if isRWXCompatibleProvisioner(sc.Provisioner) {
+			rwxStorageClass = &sc
+			break
+		}
+	}
+	Expect(rwxStorageClass).NotTo(BeNil(),
+		"at least one RWX-compatible storage class is required")
+
+	By("Creating StorageBasedRemediationConfig (agent DaemonSet should NOT use hostNetwork)")
+	name := fmt.Sprintf("test-port-conflict-%d", time.Now().Unix())
+	sbrConfig, err := testNamespace.CreateStorageBasedRemediationConfig(name, func(config *medik8sv1alpha1.StorageBasedRemediationConfig) {
+		config.Spec.WatchdogPath = "/dev/watchdog"
+		config.Spec.SharedStorageClass = rwxStorageClass.Name
+	})
+	Expect(err).NotTo(HaveOccurred(), "StorageBasedRemediationConfig creation failed")
+
+	By("Waiting for SBR agent DaemonSet to be created")
+	dsChecker := testNamespace.NewDaemonSetChecker()
+	daemonSet, err := dsChecker.WaitForDaemonSet(
+		map[string]string{"sbrconfig": sbrConfig.Name}, time.Minute*5)
+	Expect(err).NotTo(HaveOccurred())
+
+	By("Verifying DaemonSet does NOT use hostNetwork")
+	Expect(daemonSet.Spec.Template.Spec.HostNetwork).To(BeFalse(),
+		"DaemonSet should not use hostNetwork")
+
+	By(fmt.Sprintf("Verifying the SBR agent pod on node %s (where port 8080 is occupied) is Running", nodeName))
+	Eventually(func() corev1.PodPhase {
+		pods := &corev1.PodList{}
+		err := k8sClient.List(ctx, pods,
+			client.InNamespace(testNamespace.Name),
+			client.MatchingLabels{"sbrconfig": sbrConfig.Name})
+		if err != nil {
+			return corev1.PodPending
+		}
+		for _, pod := range pods.Items {
+			if pod.Spec.NodeName == nodeName {
+				GinkgoWriter.Printf("Agent pod %s on target node %s: phase=%s\n",
+					pod.Name, nodeName, pod.Status.Phase)
+				return pod.Status.Phase
+			}
+		}
+		GinkgoWriter.Printf("No agent pod found on target node %s yet\n", nodeName)
+		return corev1.PodPending
+	}, time.Minute*5, time.Second*10).Should(Equal(corev1.PodRunning),
+		"SBR agent pod on node with port 8080 occupied should be Running — "+
+			"without hostNetwork, the pod has its own network namespace")
+
+	GinkgoWriter.Printf("SUCCESS: SBR agent running on node %s with port 8080 occupied on host\n", nodeName)
 }
 
 // isRWXCompatibleProvisioner checks if a CSI provisioner is known to support ReadWriteMany
