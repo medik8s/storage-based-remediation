@@ -234,6 +234,83 @@ func TestStorageBasedRemediationConfigSpec_GetWatchdogPath(t *testing.T) {
 	}
 }
 
+func TestStorageBasedRemediationConfigSpec_GetSBRTimeoutSeconds(t *testing.T) {
+	tests := []struct {
+		name     string
+		spec     StorageBasedRemediationConfigSpec
+		expected int32
+	}{
+		{
+			name: "nil timeout returns default",
+			spec: StorageBasedRemediationConfigSpec{
+				SBRTimeoutSeconds: nil,
+			},
+			expected: DefaultSBRTimeoutSeconds,
+		},
+		{
+			name: "explicit timeout is returned",
+			spec: StorageBasedRemediationConfigSpec{
+				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(60),
+			},
+			expected: 60,
+		},
+		{
+			name: "minimum timeout is returned",
+			spec: StorageBasedRemediationConfigSpec{
+				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(10),
+			},
+			expected: 10,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.spec.GetSBRTimeoutSeconds()
+			if result != tt.expected {
+				t.Errorf("GetSBRTimeoutSeconds() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestStorageBasedRemediationConfigSpec_GetDerivedTimingIntervals(t *testing.T) {
+	tests := []struct {
+		name              string
+		spec              StorageBasedRemediationConfigSpec
+		wantHeartbeat     time.Duration
+		wantUpdateAndPeer time.Duration
+	}{
+		{
+			name:              "default timeout yields 15s heartbeat and 5s update/peer intervals",
+			spec:              StorageBasedRemediationConfigSpec{},
+			wantHeartbeat:     15 * time.Second,
+			wantUpdateAndPeer: 5 * time.Second,
+		},
+		{
+			name: "60s timeout yields 30s heartbeat and 10s update/peer intervals",
+			spec: StorageBasedRemediationConfigSpec{
+				SBRTimeoutSeconds: func(v int32) *int32 { return &v }(60),
+			},
+			wantHeartbeat:     30 * time.Second,
+			wantUpdateAndPeer: 10 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.spec.GetHeartbeatInterval(); got != tt.wantHeartbeat {
+				t.Errorf("GetHeartbeatInterval() = %v, expected %v", got, tt.wantHeartbeat)
+			}
+			if got := tt.spec.GetSBRUpdateInterval(); got != tt.wantUpdateAndPeer {
+				t.Errorf("GetSBRUpdateInterval() = %v, expected %v", got, tt.wantUpdateAndPeer)
+			}
+			if got := tt.spec.GetPeerCheckInterval(); got != tt.wantUpdateAndPeer {
+				t.Errorf("GetPeerCheckInterval() = %v, expected %v", got, tt.wantUpdateAndPeer)
+			}
+		})
+	}
+}
+
 func TestStorageBasedRemediationConfigSpec_ValidateAll(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -242,11 +319,6 @@ func TestStorageBasedRemediationConfigSpec_ValidateAll(t *testing.T) {
 	}{
 		{
 			name:      "all defaults are valid",
-			spec:      StorageBasedRemediationConfigSpec{},
-			wantError: false,
-		},
-		{
-			name:      "all valid custom values",
 			spec:      StorageBasedRemediationConfigSpec{},
 			wantError: false,
 		},

@@ -260,6 +260,12 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 
 			expectedMaxFailures := fmt.Sprintf("--%s=%d", agent.FlagMaxConsecutiveFailures, medik8sv1alpha1.DefaultMaxConsecutiveFailures)
 			Expect(args).To(ContainElement(expectedMaxFailures))
+
+			expectedTimeout := fmt.Sprintf("--%s=%d", agent.FlagSBRTimeoutSeconds, medik8sv1alpha1.DefaultSBRTimeoutSeconds)
+			Expect(args).To(ContainElement(expectedTimeout))
+
+			expectedUpdateInterval := fmt.Sprintf("--%s=%s", agent.FlagSBRUpdateInterval, resource.Spec.GetSBRUpdateInterval().String())
+			Expect(args).To(ContainElement(expectedUpdateInterval))
 		})
 
 		It("should successfully reconcile after resource deletion", func() {

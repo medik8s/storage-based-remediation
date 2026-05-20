@@ -72,6 +72,17 @@ spec:
                   If not specified, defaults to worker nodes only (node-role.kubernetes.io/worker: "").
                   The selector is merged with the default requirement for kubernetes.io/os=linux.
                 type: object
+              sbrTimeoutSeconds:
+                description: |-
+                  SBRTimeoutSeconds defines the SBR timeout in seconds used to derive agent timing intervals.
+                  The agent computes the heartbeat interval as sbrTimeoutSeconds / 2 (peer liveness and failure-detection basis).
+                  The operator passes sbr-update-interval and peer-check-interval as sbrTimeoutSeconds / 6 each.
+                  Time-to-detection scales with maxConsecutiveFailures × heartbeatInterval.
+                  Allowed range is enforced by CRD validation (10-300 seconds).
+                format: int32
+                maximum: 300
+                minimum: 10
+                type: integer
               sharedStorageClass:
                 description: |-
                   SharedStorageClass is the name of a StorageClass to use for creating shared storage.

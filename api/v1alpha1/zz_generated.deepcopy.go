@@ -121,6 +121,11 @@ func (in *StorageBasedRemediationConfigSpec) DeepCopyInto(out *StorageBasedRemed
 			(*out)[key] = val
 		}
 	}
+	if in.SBRTimeoutSeconds != nil {
+		in, out := &in.SBRTimeoutSeconds, &out.SBRTimeoutSeconds
+		*out = new(int32)
+		**out = **in
+	}
 	if in.MaxConsecutiveFailures != nil {
 		in, out := &in.MaxConsecutiveFailures, &out.MaxConsecutiveFailures
 		*out = new(int32)

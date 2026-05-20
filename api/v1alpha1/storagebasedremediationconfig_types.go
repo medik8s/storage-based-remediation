@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,6 +38,8 @@ var typesLog = logf.Log.WithName("sbrconfig-types")
 const (
 	// DefaultWatchdogPath is the default path to the watchdog device
 	DefaultWatchdogPath = "/dev/watchdog"
+	// DefaultSBRTimeoutSeconds is the default SBR timeout in seconds when sbrTimeoutSeconds is unset on the CR.
+	DefaultSBRTimeoutSeconds = 30
 	// DefaultMaxConsecutiveFailures is the runtime default when maxConsecutiveFailures is unset on the CR (no OpenAPI default).
 	DefaultMaxConsecutiveFailures = 7
 	// RelatedImageSbrAgent when this env is set it contains the image of SBR agent
@@ -90,6 +93,16 @@ type StorageBasedRemediationConfigSpec struct {
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
+	// SBRTimeoutSeconds defines the SBR timeout in seconds used to derive agent timing intervals.
+	// The agent computes the heartbeat interval as sbrTimeoutSeconds / 2 (peer liveness and failure-detection basis).
+	// The operator passes sbr-update-interval and peer-check-interval as sbrTimeoutSeconds / 6 each.
+	// Time-to-detection scales with maxConsecutiveFailures × heartbeatInterval.
+	// Allowed range is enforced by CRD validation (10-300 seconds).
+	// +kubebuilder:validation:Minimum=10
+	// +kubebuilder:validation:Maximum=300
+	// +optional
+	SBRTimeoutSeconds *int32 `json:"sbrTimeoutSeconds,omitempty"`
+
 	// MaxConsecutiveFailures is the maximum number of consecutive failures (SBR device, watchdog, or local
 	// heartbeat writes) before the agent treats the node as failed and performs self-fencing (when not in
 	// detect-only or otherwise disarmed). The same threshold scales how many peer heartbeat gaps are
@@ -124,6 +137,43 @@ func (s *StorageBasedRemediationConfigSpec) GetWatchdogPath() string {
 		return s.WatchdogPath
 	}
 	return DefaultWatchdogPath
+}
+
+// GetSBRTimeoutSeconds returns the SBR timeout in seconds with default fallback.
+func (s *StorageBasedRemediationConfigSpec) GetSBRTimeoutSeconds() int32 {
+	if s.SBRTimeoutSeconds != nil {
+		return *s.SBRTimeoutSeconds
+	}
+	return DefaultSBRTimeoutSeconds
+}
+
+// GetHeartbeatInterval returns the agent heartbeat interval (sbrTimeoutSeconds / 2).
+func (s *StorageBasedRemediationConfigSpec) GetHeartbeatInterval() time.Duration {
+	interval := time.Duration(s.GetSBRTimeoutSeconds()) * time.Second / 2
+	if interval < time.Second {
+		return time.Second
+	}
+	return interval
+}
+
+// GetSBRUpdateInterval returns the sbr-update-interval passed to the agent (sbrTimeoutSeconds / 6).
+// Heartbeat timing for failure detection uses GetHeartbeatInterval instead.
+func (s *StorageBasedRemediationConfigSpec) GetSBRUpdateInterval() time.Duration {
+	return s.derivedTimingInterval()
+}
+
+// GetPeerCheckInterval returns the peer-check-interval passed to the agent (sbrTimeoutSeconds / 6).
+// Heartbeat timing for failure detection uses GetHeartbeatInterval instead.
+func (s *StorageBasedRemediationConfigSpec) GetPeerCheckInterval() time.Duration {
+	return s.derivedTimingInterval()
+}
+
+func (s *StorageBasedRemediationConfigSpec) derivedTimingInterval() time.Duration {
+	interval := time.Duration(s.GetSBRTimeoutSeconds()) * time.Second / 6
+	if interval < time.Second {
+		return time.Second
+	}
+	return interval
 }
 
 // GetMaxConsecutiveFailures returns max consecutive failures when unset uses DefaultMaxConsecutiveFailures.
@@ -219,7 +269,7 @@ func (s *StorageBasedRemediationConfigSpec) ValidateSharedStorageClass() error {
 	return nil
 }
 
-// ValidateAll validates all configuration values
+// ValidateAll validates configuration values not covered by CRD OpenAPI schema.
 func (s *StorageBasedRemediationConfigSpec) ValidateAll() error {
 	if err := s.ValidateSharedStorageClass(); err != nil {
 		return fmt.Errorf("shared storage PVC validation failed: %w", err)
