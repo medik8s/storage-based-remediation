@@ -46,6 +46,8 @@ const (
 	defaultRequeueAfter       = 500000000
 	validSharedStorageClass   = "test-ceph-sc"
 	invalidSharedStorageClass = "invalid-storage-class"
+	testOperatorImage         = "test-sbr-operator:latest"
+	testAgentImage            = "test-sbr-agent:latest"
 )
 
 func checkForDefaultReconcile(counter int, result reconcile.Result, err error) {
@@ -192,7 +194,9 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 			}
 
 			// set environment variable for the operator image
-			err = os.Setenv("OPERATOR_IMAGE", "test-sbr-agent:latest")
+			err = os.Setenv("OPERATOR_IMAGE", testOperatorImage)
+			Expect(err).NotTo(HaveOccurred())
+			err = os.Setenv("RELATED_IMAGE_SBR_AGENT", testAgentImage)
 			Expect(err).NotTo(HaveOccurred())
 			err = os.Setenv("POD_NAMESPACE", namespace)
 			Expect(err).NotTo(HaveOccurred())
@@ -371,7 +375,7 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 			By("verifying the DaemonSet pod template has correct configuration")
 			container := daemonSet.Spec.Template.Spec.Containers[0]
 			Expect(container.Name).To(Equal("sbr-agent"))
-			Expect(container.Image).To(Equal("sbr-agent:latest"))
+			Expect(container.Image).To(Equal(testAgentImage))
 			Expect(container.Args).To(ContainElement("--watchdog-path=/dev/watchdog"))
 
 			By("verifying the DaemonSet has correct volume mounts")
@@ -508,7 +512,7 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 				}, daemonSet)
 			}, timeout, interval).Should(Succeed())
 
-			Expect(daemonSet.Spec.Template.Spec.Containers[0].Image).To(Equal("sbr-agent:latest"))
+			Expect(daemonSet.Spec.Template.Spec.Containers[0].Image).To(Equal(testAgentImage))
 			Expect(daemonSet.Namespace).To(Equal(namespace))
 		})
 	})
