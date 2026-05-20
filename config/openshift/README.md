@@ -14,6 +14,7 @@ The SBR Agent requires privileged access to hardware watchdog devices and block 
 ## Required Permissions
 
 The SCC grants the following permissions:
+
 - `allowPrivilegedContainer: true` - Required for hardware watchdog access
 - `allowHostDirVolumePlugin: true` - Required to mount host directories like `/dev`
 - `allowHostNetwork: true` - Required for network access
@@ -23,17 +24,20 @@ The SCC grants the following permissions:
 ## Installation
 
 ### Option 1: Using the OpenShift Installer
+
 ```bash
 make build-openshift-installer
 kubectl apply -f dist/install-openshift.yaml
 ```
 
 ### Option 2: Manual Installation
+
 ```bash
 kubectl apply -f config/openshift/
 ```
 
 ### Option 3: Using Kustomize
+
 ```bash
 kubectl apply -k config/openshift-default/
 ```
@@ -60,21 +64,25 @@ These permissions are necessary for the SBR Agent to function as a cluster fenci
 If SBR Agent pods fail to start with permission errors:
 
 1. Verify the SCC is created:
+
    ```bash
    oc get scc sbr-agent-privileged
    ```
 
 2. Check if the service account can use the SCC:
+
    ```bash
    oc adm policy who-can use scc sbr-agent-privileged
    ```
 
 3. Verify the service account has the SCC assigned:
+
    ```bash
    oc describe scc sbr-agent-privileged
    ```
 
 4. Check pod security context:
+
    ```bash
    kubectl describe pod <sbr-agent-pod-name> -n sbr-system
    ```

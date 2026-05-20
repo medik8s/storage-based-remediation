@@ -60,6 +60,7 @@ const (
 ### Error Classification
 
 The implementation distinguishes between:
+
 - **Transient Errors**: EIO, EAGAIN, EBUSY, device busy, timeouts
 - **Permanent Errors**: ENOENT, EACCES, invalid arguments, missing devices
 
@@ -70,6 +71,7 @@ The implementation distinguishes between:
 #### Enhanced Features
 
 1. **Retry Configuration**
+
    ```go
    const (
        MaxSBDConfigRetries = 3
@@ -92,9 +94,10 @@ The implementation distinguishes between:
 
 ### SBD Remediation Controller (`internal/controller/sbdremediation_controller.go`)
 
-#### Enhanced Features
+#### Remediation Controller Enhanced Features
 
 1. **Multiple Retry Configurations**
+
    ```go
    const (
        // Fencing operations (most critical)
@@ -135,6 +138,7 @@ func Do(ctx context.Context, config Config, operation string, fn func() error) e
 ```
 
 **Features:**
+
 - Exponential backoff with configurable jitter
 - Context cancellation support
 - Automatic error classification
@@ -242,4 +246,4 @@ err := r.performKubernetesAPIOperationWithRetry(ctx, "create DaemonSet", func() 
 - **Configuration**: Default values provide sensible behavior out of the box
 - **Monitoring**: Enhanced metrics provide visibility into retry behavior
 
-This implementation significantly improves the robustness and reliability of the SBD operator while maintaining compatibility with existing deployments and providing comprehensive observability into the retry behavior. 
+This implementation significantly improves the robustness and reliability of the SBD operator while maintaining compatibility with existing deployments and providing comprehensive observability into the retry behavior.

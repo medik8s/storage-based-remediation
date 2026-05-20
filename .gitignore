@@ -37,6 +37,9 @@ go.work.sum
 # Downloaded tools directory
 .tools/
 
+# npm cache
+.npm-cache/
+
 # Cluster provisioning artifacts
 cluster/
 

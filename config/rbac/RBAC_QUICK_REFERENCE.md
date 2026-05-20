@@ -32,15 +32,17 @@ kubectl apply -f config/rbac/sbr_operator_role_binding.yaml
 ## Permission Summary
 
 ### SBR Agent Permissions (Read-Only)
+
 | Resource | Permissions | Purpose |
-|----------|-------------|---------|
+| -------- | ----------- | ------- |
 | `pods` | `get`, `list` | Read own pod metadata |
 | `nodes` | `get`, `list`, `watch` | Node name to ID mapping |
 | `events` | `create`, `patch` | Observability events |
 
 ### SBR Operator Permissions (Management)
+
 | Resource | Permissions | Purpose |
-|----------|-------------|---------|
+| -------- | ----------- | ------- |
 | `namespaces` | `create`, `get`, `list`, `patch`, `update`, `watch` | Namespace management |
 | `daemonsets` | `create`, `delete`, `get`, `list`, `patch`, `update`, `watch` | Agent deployment |
 | `nodes` | `get`, `list`, `watch` | Node information (read-only) |
@@ -67,11 +69,13 @@ kubectl auth can-i delete nodes --as=system:serviceaccount:sbr-system:sbr-operat
 ## Troubleshooting
 
 ### Common Issues
+
 1. **Permission Denied**: Verify ClusterRole and ClusterRoleBinding are applied
 2. **Wrong Namespace**: Ensure ServiceAccounts are in correct namespace (`sbr-system`)
 3. **Missing Resources**: Check if CRDs are installed before applying RBAC
 
 ### Debug Commands
+
 ```bash
 # List all SBR-related RBAC
 kubectl get clusterroles | grep sbr
