@@ -18,17 +18,12 @@ package v1alpha1
 
 import (
 	"fmt"
-	"os"
-	"strings"
 	"unicode"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/medik8s/storage-based-remediation/internal/agent"
 )
-
-var typesLog = logf.Log.WithName("sbrconfig-types")
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
@@ -229,59 +224,6 @@ func (s *StorageBasedRemediationConfigSpec) ValidateAll() error {
 }
 
 // DeriveAgentImageFromOperator derives the sbr-agent image from the operator image
-func DeriveAgentImageFromOperator(operatorImage string) (string, error) {
-	// Handle empty operator image
-	if operatorImage == "" {
-		return "", fmt.Errorf("invalid empty operator image")
-	}
-
-	// In CI, RELATED_IMAGE_SBR_AGENT is injected via `oc set env` after bundle installation,
-	// pointing to the CI-built agent image. In non-CI runs this env var is not set,
-	// so we fall through to pod image discovery and derivation.
-	if img, found := os.LookupEnv(RelatedImageSbrAgent); found {
-		typesLog.Info("Using RELATED_IMAGE_SBR_AGENT for agent image", "image", img)
-		return img, nil
-	}
-
-	lastSlash := strings.LastIndex(operatorImage, "/")
-	var prefix, suffix string
-	if lastSlash == -1 {
-		prefix = ""
-		suffix = operatorImage
-	} else {
-		prefix = operatorImage[:lastSlash+1]
-		suffix = operatorImage[lastSlash+1:]
-	}
-
-	// If already an agent image (e.g. controller fallback in tests), return as-is
-	if suffix == "sbr-agent" || strings.HasPrefix(suffix, "sbr-agent:") {
-		agentSuffix := suffix
-		if !strings.Contains(agentSuffix, ":") {
-			agentSuffix += ":latest"
-		}
-		return prefix + agentSuffix, nil
-	}
-
-	// Replace operator with agent in the image name. Two naming schemes are supported:
-	// 1) storage-based-remediation-*-operator -> storage-based-remediation-agent-* (then strip "-operator")
-	// 2) sbr-operator -> sbr-agent
-	agentSuffix := strings.Replace(suffix, "storage-based-remediation", "storage-based-remediation-agent", 1)
-	if agentSuffix != suffix {
-		agentSuffix = strings.Replace(agentSuffix, "-operator", "", 1)
-	} else {
-		agentSuffix = strings.Replace(suffix, "sbr-operator", "sbr-agent", 1)
-	}
-	if agentSuffix == suffix {
-		return "", fmt.Errorf("invalid operator image %q", operatorImage)
-	}
-
-	// Add :latest tag if no tag is present
-	if !strings.Contains(agentSuffix, ":") {
-		agentSuffix += ":latest"
-	}
-
-	return prefix + agentSuffix, nil
-}
 
 // StorageBasedRemediationConfigStatus defines the observed state of StorageBasedRemediationConfig.
 type StorageBasedRemediationConfigStatus struct {

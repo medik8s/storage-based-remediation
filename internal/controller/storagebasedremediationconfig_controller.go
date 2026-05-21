@@ -182,52 +182,16 @@ func (r *StorageBasedRemediationConfigReconciler) emitEventf(
 	}
 }
 
-// getOperatorImage discovers the operator's own image by querying the current pod
-// It uses environment variables (POD_NAME, POD_NAMESPACE) to find the current pod
-// and extracts the image from the pod spec
-func (r *StorageBasedRemediationConfigReconciler) getOperatorImage(ctx context.Context, logger logr.Logger) string {
-	// In CI, RELATED_IMAGE_SBR_AGENT is injected via `oc set env` after bundle installation,
-	// pointing to the CI-built agent image. In non-CI runs this env var is not set,
-	// so we fall through to pod image discovery and derivation.
-	if img := os.Getenv("RELATED_IMAGE_SBR_AGENT"); img != "" {
-		logger.Info("Using RELATED_IMAGE_SBR_AGENT for agent image", "image", img)
-		return img
+// getAgentImage reads the agent image from the RELATED_IMAGE_SBR_AGENT environment variable.
+// This variable is set during deployment via the operator-sdk bundle generation and
+// kustomize configuration. It must always be set for the operator to function correctly.
+func (r *StorageBasedRemediationConfigReconciler) getAgentImage(logger logr.Logger) (string, error) {
+	img := os.Getenv(medik8sv1alpha1.RelatedImageSbrAgent)
+	if img == "" {
+		return "", fmt.Errorf("RELATED_IMAGE_SBR_AGENT environment variable not set")
 	}
-
-	// Try to get pod information from environment variables (set by Downward API)
-	podName := os.Getenv("POD_NAME")
-	podNamespace := os.Getenv("POD_NAMESPACE")
-
-	if podName == "" || podNamespace == "" {
-		logger.Error(nil, "POD_NAME or POD_NAMESPACE environment variables not set, using fallback")
-		return DefaultSBRAgentImage
-	}
-
-	// Get the current pod
-	var pod corev1.Pod
-	err := r.Get(ctx, types.NamespacedName{Name: podName, Namespace: podNamespace}, &pod)
-	if err != nil {
-		logger.Error(err, "Failed to get operator pod", "podName", podName, "podNamespace", podNamespace)
-		return DefaultSBRAgentImage // Fallback to default
-	}
-
-	// Find the manager container (operator container)
-	for _, container := range pod.Spec.Containers {
-		if container.Name == "manager" {
-			logger.Info("Found operator image", "image", container.Image)
-			return container.Image
-		}
-	}
-
-	// If manager container not found, use the first container's image
-	if len(pod.Spec.Containers) > 0 {
-		image := pod.Spec.Containers[0].Image
-		logger.Error(nil, "Using first container image as operator image", "image", image)
-		return image
-	}
-
-	logger.Error(nil, "No containers found in operator pod, using fallback")
-	return DefaultSBRAgentImage
+	logger.Info("Using agent image from environment", "image", img)
+	return img, nil
 }
 
 // isRunningOnOpenShift detects if the operator is running on OpenShift
@@ -1020,14 +984,12 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 		return ctrl.Result{Requeue: true}, r.Update(ctx, &sbrConfig)
 	}
 
-	// Get the operator image first for logging and DaemonSet creation
-	operatorImage := r.getOperatorImage(ctx, logger)
-
-	agentImage, err := medik8sv1alpha1.DeriveAgentImageFromOperator(operatorImage)
+	// Get the agent image from environment variable
+	agentImage, err := r.getAgentImage(logger)
 	if err != nil {
+		logger.Error(err, "Failed to get agent image")
 		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	}
-	logger.Info("Resolved agent image", "agentImage", agentImage)
 	logger.V(1).Info("Starting StorageBasedRemediationConfig reconciliation",
 		"spec.image", agentImage,
 		"namespace", sbrConfig.Namespace,
