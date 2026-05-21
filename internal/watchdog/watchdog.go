@@ -24,13 +24,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/go-logr/logr"
+	"golang.org/x/sys/unix"
 
-	"github.com/medik8s/storage-based-remediation/internal/agent"
 	"github.com/medik8s/storage-based-remediation/internal/retry"
 )
 
@@ -38,22 +36,8 @@ import (
 var (
 	// ErrIoctlNotSupported indicates that the watchdog driver doesn't support ioctl operations
 	ErrIoctlNotSupported = errors.New("ioctl not supported by watchdog driver")
-)
-
-// Linux watchdog ioctl constants
-// Reference: include/uapi/linux/watchdog.h
-const (
-	// WDIOC_KEEPALIVE is the ioctl command to reset/pet the watchdog timer
-	// This is equivalent to _IO('W', 5) in C
-	WDIOC_KEEPALIVE = 0x40045705
-
-	// WDIOC_SETTIMEOUT is the ioctl command to set the watchdog timeout
-	// This is equivalent to _IOWR('W', 6, int) in C
-	WDIOC_SETTIMEOUT = 0x40045706
-
-	// WDIOC_GETTIMEOUT is the ioctl command to get the watchdog timeout
-	// This is equivalent to _IOR('W', 7, int) in C
-	WDIOC_GETTIMEOUT = 0x40045707
+	// ErrSysfsNotAvailable indicates that sysfs is not available on this platform
+	ErrSysfsNotAvailable = errors.New("sysfs not available on this platform")
 )
 
 // Retry configuration constants for watchdog operations
@@ -72,8 +56,8 @@ const (
 const (
 	// SoftdogModule is the name of the Linux software watchdog kernel module
 	SoftdogModule = "softdog"
-	// DefaultSoftdogTimeout is the default timeout in seconds for the softdog module
-	DefaultSoftdogTimeout = 60
+	// DefaultSoftdogTimeout is the default timeout for the softdog module
+	DefaultSoftdogTimeout = 60 * time.Second
 	// SoftdogModprobe is the command to load the softdog module
 	SoftdogModprobe = "modprobe"
 	// NsenterCommand is the command to enter host namespaces
@@ -82,12 +66,22 @@ const (
 	HostPID = "1"
 )
 
+// Sysfs watchdog paths for timeout discovery
+const (
+	// SysfsWatchdogClass is the sysfs path containing watchdog devices
+	SysfsWatchdogClass = "/sys/class/watchdog"
+	// SysfsWatchdog0 is the primary watchdog device name
+	SysfsWatchdog0 = "watchdog0"
+	// SysfsTimeoutFile is the timeout file name in watchdog sysfs directories
+	SysfsTimeoutFile = "timeout"
+)
+
 // Watchdog represents a Linux kernel watchdog device interface.
 // It provides methods to interact with hardware watchdog devices through
 // the Linux watchdog subsystem.
 type Watchdog struct {
-	// file is the open file descriptor for the watchdog device
-	file *os.File
+	// fd is the raw file descriptor for the watchdog device
+	fd int
 	// path is the filesystem path to the watchdog device
 	path string
 	// isOpen tracks whether the watchdog device is currently open
@@ -231,7 +225,7 @@ func loadSoftdogModule(testMode bool, logger logr.Logger) error {
 	// Build the modprobe command with parameters
 	modprobeArgs := []string{
 		SoftdogModule,
-		fmt.Sprintf("soft_margin=%d", DefaultSoftdogTimeout),
+		fmt.Sprintf("soft_margin=%d", int(DefaultSoftdogTimeout/time.Second)),
 	}
 
 	// Add soft_noboot parameter if test mode is enabled
@@ -343,20 +337,14 @@ func NewWithLogger(path string, logger logr.Logger) (*Watchdog, error) {
 		Logger:        logger.WithName("watchdog-retry"),
 	}
 
-	var file *os.File
+	var fd int
 	var err error
 
 	// Retry watchdog opening for transient errors
 	ctx := context.Background()
 	err = retry.Do(ctx, retryConfig, "open watchdog device", func() error {
-		// Open the watchdog device with write-only access
-		// Most watchdog devices require write access for ioctl operations
-		file, err = os.OpenFile(path, os.O_WRONLY, 0)
+		fd, err = unix.Open(path, unix.O_WRONLY, 0644)
 		if err != nil {
-			// Wrap the error with additional context and retry information
-			if pathErr, ok := err.(*os.PathError); ok {
-				return retry.NewRetryableError(pathErr, retry.IsTransientError(pathErr), "open watchdog device")
-			}
 			return retry.NewRetryableError(err, retry.IsTransientError(err), "open watchdog device")
 		}
 		return nil
@@ -367,7 +355,7 @@ func NewWithLogger(path string, logger logr.Logger) (*Watchdog, error) {
 	}
 
 	return &Watchdog{
-		file:        file,
+		fd:          fd,
 		path:        path,
 		isOpen:      true,
 		logger:      logger.WithName("watchdog").WithValues("path", path),
@@ -397,8 +385,8 @@ func (w *Watchdog) Pet() error {
 		return fmt.Errorf("watchdog device is not open")
 	}
 
-	if w.file == nil {
-		return fmt.Errorf("watchdog file descriptor is nil")
+	if w.fd < 0 {
+		return fmt.Errorf("watchdog file descriptor is invalid")
 	}
 
 	// Retry watchdog pet operations for transient errors
@@ -417,7 +405,7 @@ func (w *Watchdog) Pet() error {
 			// Fallback method: Use write-based keep-alive
 			// Many watchdog devices accept any write as a keep-alive signal
 			dummy := []byte{0}
-			_, writeErr := w.file.Write(dummy)
+			_, writeErr := unix.Write(w.fd, dummy)
 			if writeErr != nil {
 				return retry.NewRetryableError(
 					fmt.Errorf("write-based keep-alive failed: %w", writeErr),
@@ -460,7 +448,7 @@ func (w *Watchdog) Close() error {
 		return nil // Already closed, not an error
 	}
 
-	if w.file == nil {
+	if w.fd < 0 {
 		w.isOpen = false
 		return nil
 	}
@@ -468,11 +456,11 @@ func (w *Watchdog) Close() error {
 	// Some watchdog devices require writing 'V' to stop the timer before closing
 	// This is known as the "magic close" feature and prevents accidental system resets
 	// We'll write 'V' to attempt graceful shutdown, but don't fail if it doesn't work
-	_, _ = w.file.Write([]byte("V"))
+	_, _ = unix.Write(w.fd, []byte("V"))
 
-	err := w.file.Close()
+	err := unix.Close(w.fd)
 	w.isOpen = false
-	w.file = nil
+	w.fd = -1
 
 	if err != nil {
 		return fmt.Errorf("failed to close watchdog device at %s: %w", w.path, err)
@@ -492,54 +480,40 @@ func (w *Watchdog) Path() string {
 	return w.path
 }
 
-// Timeout queries the watchdog device timeout using WDIOC_GETTIMEOUT ioctl.
-// Returns the timeout in seconds, or the default if discovery fails.
-func (w *Watchdog) Timeout() time.Duration {
-	if !w.isOpen || w.file == nil {
-		w.logger.V(1).Info("Watchdog device not open, using default timeout", "default", agent.WatchdogTimeoutDefault)
-		return agent.WatchdogTimeoutDefault
+// Timeout queries the watchdog device timeout.
+// It tries multiple methods in order:
+// 1. WDIOC_GETTIMEOUT ioctl (preferred method)
+// 2. Sysfs reading from /sys/class/watchdog (fallback method)
+// Returns the timeout as time.Duration, or an error if discovery fails.
+func (w *Watchdog) Timeout() (time.Duration, error) {
+	if !w.isOpen || w.fd < 0 {
+		return 0, fmt.Errorf("watchdog device not open")
 	}
 
-	// Attempt to get timeout via ioctl
-	var timeout int32
-	err := w.ioctlGetTimeout(&timeout)
-	if err != nil {
-		w.logger.V(1).Info("Failed to discover watchdog timeout via ioctl, using default", "error", err, "default", agent.WatchdogTimeoutDefault)
-		return agent.WatchdogTimeoutDefault
+	if w.IsSoftdog() {
+		w.logger.V(1).Info("Softdog enabled. Returning default timeout", "timeout", DefaultSoftdogTimeout)
+		return DefaultSoftdogTimeout, nil
 	}
 
-	// Convert to time.Duration (timeout is in seconds)
-	if timeout <= 0 {
-		w.logger.V(1).Info("Watchdog returned invalid timeout, using default", "returned", timeout, "default", agent.WatchdogTimeoutDefault)
-		return agent.WatchdogTimeoutDefault
+	// Try ioctl first (preferred method)
+	timeout, err := w.getTimeoutIoctl()
+	if err == nil {
+		w.logger.V(1).Info("Discovered watchdog timeout via ioctl", "timeout", timeout)
+		return timeout, nil
 	}
 
-	duration := time.Duration(timeout) * time.Second
-	w.logger.V(1).Info("Discovered watchdog timeout", "seconds", timeout, "duration", duration)
-	return duration
-}
-
-// ioctlGetTimeout performs the WDIOC_GETTIMEOUT ioctl call on the watchdog device
-func (w *Watchdog) ioctlGetTimeout(timeout *int32) error {
-	// WDIOC_GETTIMEOUT is a read ioctl that returns the current timeout in seconds
-	r1, _, errno := syscall.Syscall(
-		syscall.SYS_IOCTL,
-		w.file.Fd(),
-		uintptr(WDIOC_GETTIMEOUT),
-		uintptr(unsafe.Pointer(timeout)),
-	)
-
-	if errno != 0 {
-		// ENOTTY means ioctl is not supported by this device
-		if errno == syscall.ENOTTY {
-			return ErrIoctlNotSupported
-		}
-		return fmt.Errorf("ioctl WDIOC_GETTIMEOUT failed: %w", errno)
+	if !errors.Is(err, ErrIoctlNotSupported) {
+		return 0, fmt.Errorf("ioctl timeout discovery failed: %w", err)
 	}
 
-	if r1 != 0 {
-		return fmt.Errorf("ioctl WDIOC_GETTIMEOUT returned non-zero: %d", r1)
+	// If ioctl is not supported, try sysfs fallback
+	w.logger.V(1).Info("WDIOC_GETTIMEOUT ioctl not supported, trying sysfs fallback", "ioctlError", err)
+	timeout, sysfsErr := w.getTimeoutSysfs()
+	if sysfsErr == nil {
+		w.logger.V(1).Info("Discovered watchdog timeout via sysfs", "timeout", timeout)
+		return timeout, nil
 	}
 
-	return nil
+	// Sysfs also failed
+	return 0, fmt.Errorf("sysfs timeout discovery failed: %w", sysfsErr)
 }

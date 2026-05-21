@@ -42,7 +42,7 @@ type WatchdogInterface interface {
 	Pet() error
 	Close() error
 	Path() string
-	Timeout() time.Duration
+	Timeout() (time.Duration, error)
 }
 
 // MockBlockDevice is a mock implementation of BlockDevice for testing
@@ -262,8 +262,8 @@ func (m *MockWatchdog) Path() string {
 	return m.path
 }
 
-func (m *MockWatchdog) Timeout() time.Duration {
-	return 60 * time.Second
+func (m *MockWatchdog) Timeout() (time.Duration, error) {
+	return 60 * time.Second, nil
 }
 
 // GetPetCount returns the number of times Pet() was called
