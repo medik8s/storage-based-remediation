@@ -294,27 +294,10 @@ func testBasicStorageBasedRemediationConfiguration() *medik8sv1alpha1.StorageBas
 	})
 	Expect(err).NotTo(HaveOccurred(), "StorageBasedRemediationConfig creation failed")
 
-	// Delete the config and wait for its agent pods to terminate at the end of the
-	// enclosing It block. Without this, stale agent pods on nodes that rebooted
-	// during the previous test hold the shared block device open and cause the
-	// next test's agents to crash-loop on startup.
-	DeferCleanup(func() {
-		By(fmt.Sprintf("Cleaning up StorageBasedRemediationConfig %s", sbrConfig.Name))
-		deleteErr := k8sClient.Delete(ctx, sbrConfig)
-		if deleteErr != nil && !errors.IsNotFound(deleteErr) {
-			GinkgoWriter.Printf("Warning: failed to delete StorageBasedRemediationConfig %s: %v\n", sbrConfig.Name, deleteErr)
-			return
-		}
-		By(fmt.Sprintf("Waiting for SBR agent pods for config %s to terminate", sbrConfig.Name))
-		Eventually(func() int {
-			podList := &corev1.PodList{}
-			_ = k8sClient.List(ctx, podList,
-				client.InNamespace(testNamespace.Name),
-				client.MatchingLabels{"sbrconfig": sbrConfig.Name})
-			return len(podList.Items)
-		}, 2*time.Minute, 5*time.Second).Should(Equal(0),
-			"timed out waiting for agent pods of %s to terminate", sbrConfig.Name)
-	})
+	// Clean up the config and its agent pods at the end of the enclosing It block.
+	// Without this, stale agent pods on nodes that rebooted during the previous test
+	// hold the shared block device open and cause the next test's agents to crash-loop.
+	DeferCleanup(cleanupStorageBasedRemediationConfig, testNamespace, sbrConfig)
 
 	validator := newSBRAgentValidator(testNamespace)
 	opts := defaultValidateAgentDeploymentOptions(sbrConfig.Name)
