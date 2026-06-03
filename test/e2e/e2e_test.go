@@ -261,7 +261,7 @@ func selectWorkerNode(cluster ClusterInfo) NodeInfo {
 	return selectedNode
 }
 
-func testBasicStorageBasedRemediationConfiguration() *medik8sv1alpha1.StorageBasedRemediationConfig {
+func testBasicStorageBasedRemediationConfiguration() {
 	By("Creating StorageBasedRemediationConfig with proper agent deployment")
 
 	// Look for a storage class that supports RWX (ReadWriteMany) access mode
@@ -308,7 +308,6 @@ func testBasicStorageBasedRemediationConfiguration() *medik8sv1alpha1.StorageBas
 	Expect(err).NotTo(HaveOccurred(), "SBR agent deployment failed")
 
 	time.Sleep(time.Second * 30)
-	return sbrConfig
 }
 
 // isRWXCompatibleProvisioner checks if a CSI provisioner is known to support ReadWriteMany
