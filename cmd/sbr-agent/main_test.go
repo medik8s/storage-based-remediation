@@ -940,7 +940,7 @@ func TestPreflightChecks_Success(t *testing.T) {
 	_ = sbrFile.Close()
 
 	// Test successful pre-flight checks
-	err = runPreflightChecks(watchdogPath, sbrPath, "test-node", 1)
+	err = runPreflightChecks(watchdogPath, sbrPath, "test-node", 1, false)
 	if err != nil {
 		t.Errorf("Expected pre-flight checks to succeed, but got error: %v", err)
 	}
@@ -958,7 +958,7 @@ func TestPreflightChecks_WatchdogMissing(t *testing.T) {
 
 	// Test pre-flight checks with missing watchdog device and no SBR device
 	// This should fail because SBR device is always required now
-	err := runPreflightChecks(watchdogPath, "", "test-node", 1)
+	err := runPreflightChecks(watchdogPath, "", "test-node", 1, false)
 	if err == nil {
 		t.Error("Expected pre-flight checks to fail with empty SBR device path, but they succeeded")
 		return
@@ -991,7 +991,7 @@ func TestPreflightChecks_SBRMissing(t *testing.T) {
 
 	// Test pre-flight checks with missing SBR device but working watchdog
 	// This should now PASS because watchdog is available (either/or logic)
-	err = runPreflightChecks(watchdogPath, sbrPath, "test-node", 1)
+	err = runPreflightChecks(watchdogPath, sbrPath, "test-node", 1, false)
 	if err == nil {
 		t.Errorf("Expected pre-flight checks to fail with working watchdog and missing SBR device")
 	}
@@ -1017,7 +1017,7 @@ func TestPreflightChecks_RequireSBRDevice(t *testing.T) {
 	sbrPath := ""
 
 	// Test pre-flight checks with empty SBR path should fail
-	err = runPreflightChecks(watchdogPath, sbrPath, "test-node", 1)
+	err = runPreflightChecks(watchdogPath, sbrPath, "test-node", 1, false)
 	if err == nil {
 		t.Error("Expected pre-flight checks to fail with empty SBR path, but they succeeded")
 	}
@@ -1083,7 +1083,7 @@ func TestPreflightChecks_InvalidNodeName(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := runPreflightChecks(watchdogPath, "", tc.nodeName, tc.nodeID)
+			err := runPreflightChecks(watchdogPath, "", tc.nodeName, tc.nodeID, false)
 			if err == nil {
 				t.Errorf("Expected pre-flight checks to fail for %s, but they succeeded", tc.name)
 				return
@@ -1304,7 +1304,7 @@ func TestPreflightChecks_SBROnlyMode(t *testing.T) {
 
 	// Test pre-flight checks with missing watchdog device but working SBR device
 	// This should PASS because SBR device is available (either/or logic)
-	err = runPreflightChecks(watchdogPath, sbrPath, "test-node", 1)
+	err = runPreflightChecks(watchdogPath, sbrPath, "test-node", 1, false)
 	if err == nil {
 		t.Errorf("Expected pre-flight checks to fail with working SBR device despite missing watchdog")
 	}
@@ -1323,7 +1323,7 @@ func TestPreflightChecks_BothFailing(t *testing.T) {
 
 	// Test pre-flight checks with both watchdog and SBR device failing
 	// This should FAIL because neither component is available
-	err := runPreflightChecks(watchdogPath, sbrPath, "test-node", 1)
+	err := runPreflightChecks(watchdogPath, sbrPath, "test-node", 1, false)
 	if err == nil {
 		t.Error("Expected pre-flight checks to fail with both watchdog and SBR device missing, but they succeeded")
 		return

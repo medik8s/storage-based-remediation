@@ -1884,16 +1884,22 @@ func (s *SBRAgent) readOwnSlotForFenceMessage() error {
 
 // runPreflightChecks performs critical startup validation before entering main event loops
 // Returns success if EITHER watchdog is active OR SBR device is accessible (or both)
-func runPreflightChecks(watchdogPath, sbrDevicePath, nodeName string, nodeID uint16) error {
+// When detectOnlyMode is true, the watchdog check is skipped since the agent won't use it
+func runPreflightChecks(watchdogPath, sbrDevicePath, nodeName string, nodeID uint16, detectOnlyMode bool) error {
 	logger.Info("Running pre-flight checks",
 		"watchdogPath", watchdogPath,
 		"sbrDevicePath", sbrDevicePath,
 		"nodeName", nodeName,
-		"nodeID", nodeID)
+		"nodeID", nodeID,
+		"detectOnlyMode", detectOnlyMode)
 
-	// Check watchdog device availability
+	// Check watchdog device availability (skip in detect-only mode)
 	var watchdogErr error
-	if watchdogPath != "" {
+	if detectOnlyMode {
+		logger.Info("Skipping watchdog pre-flight check (detect-only mode enabled)")
+		// Treat as successful - watchdog is not needed in detect-only mode
+		watchdogErr = nil
+	} else if watchdogPath != "" {
 		watchdogErr = checkWatchdogDevice(watchdogPath)
 	}
 
@@ -2326,7 +2332,8 @@ func main() {
 	}
 
 	// Run pre-flight checks before creating the agent
-	if err := runPreflightChecks(*watchdogPath, *sbrDevice, nodeNameValue, nodeIDValue); err != nil {
+	// Pass detectOnlyMode to skip watchdog check when not needed
+	if err := runPreflightChecks(*watchdogPath, *sbrDevice, nodeNameValue, nodeIDValue, *detectOnlyMode); err != nil {
 		logger.Error(err, "Pre-flight checks failed")
 		os.Exit(1)
 	}
