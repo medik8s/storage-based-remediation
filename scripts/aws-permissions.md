@@ -37,6 +37,7 @@ Create an IAM policy with the following permissions:
 4. Configure AWS CLI: `aws configure`
 
 ### Option 2: IAM Role (Recommended for Production)
+
 1. Create an IAM role with the above policy
 2. Attach the role to:
    - SBR operator pods (using IRSA)
@@ -44,6 +45,7 @@ Create an IAM policy with the following permissions:
    - EC2 instances running the script
 
 ### Option 3: Cross-Account Access
+
 For multi-account setups, create a cross-account role:
 
 ```json
@@ -90,12 +92,14 @@ aws ec2 reboot-instances --instance-ids i-1234567890abcdef0 --dry-run
 ## Troubleshooting
 
 ### "UnauthorizedOperation" Error
+
 - Verify IAM policy is attached
 - Check policy conditions match instance tags
 - Ensure AWS credentials are configured
 - Verify instance ID resolution from node
 
 ### "AccessDenied" for DescribeInstances
+
 - Add `ec2:DescribeInstances` permission
 - Check resource-level permissions
 - Verify cluster tagging is correct
@@ -106,4 +110,4 @@ For automated SBR fencing, ensure:
 1. SBR operator pods have the IAM role attached
 2. The role includes the emergency reboot permissions
 3. Cluster nodes are properly tagged
-4. Network connectivity allows AWS API access 
+4. Network connectivity allows AWS API access

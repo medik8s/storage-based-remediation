@@ -7,7 +7,7 @@ The SBD Operator supports multiple CPU architectures with different byte orderin
 ## Supported Architectures & Endianness
 
 | Architecture | Endianness | Status |
-|--------------|------------|---------|
+| ------------ | ---------- | ------ |
 | `linux/amd64` | Little Endian | ✅ Supported |
 | `linux/arm64` | Little Endian* | ✅ Supported |
 | `linux/s390x` | **Big Endian** | ✅ Supported |
@@ -19,13 +19,13 @@ The SBD Operator supports multiple CPU architectures with different byte orderin
 
 When multiple nodes with different endianness share an SBD block device, binary data must be interpreted consistently:
 
-```
+```text
 ┌─────────────────────────────────────────────────┐
 │                 Shared SBD Device               │
 ├─────────────────────────────────────────────────┤
-│ Slot 0: Node Mapping Table (ALL nodes write)   │
-│ Slot 1: Node 1 Heartbeats                      │
-│ Slot 2: Node 2 Heartbeats                      │
+│ Slot 0: Node Mapping Table (ALL nodes write)    │
+│ Slot 1: Node 1 Heartbeats                       │
+│ Slot 2: Node 2 Heartbeats                       │
 │ ...                                             │
 └─────────────────────────────────────────────────┘
       ↑                                    ↑
@@ -169,6 +169,7 @@ If upgrading from a version with endianness bugs:
 ### Rollback Safety
 
 The endianness fix is **forward-compatible** but not backward-compatible:
+
 - **Upgrading**: New version reads old data correctly
 - **Downgrading**: Old version may misinterpret new data
 
@@ -184,7 +185,7 @@ The endianness fix is **forward-compatible** but not backward-compatible:
 
 ### Binary Format Examples
 
-```
+```text
 Little Endian (0x12345678):
 Byte order: 78 56 34 12
 
@@ -213,4 +214,4 @@ hash := hasher.HashNodeName(nodeName)
 
 ## Conclusion
 
-The endianness compatibility fixes ensure that the SBD Operator works reliably in heterogeneous clusters combining different CPU architectures. All binary data exchanged via the shared SBD device uses a consistent little-endian format, preventing slot conflicts and data corruption in mixed-endianness environments. 
+The endianness compatibility fixes ensure that the SBD Operator works reliably in heterogeneous clusters combining different CPU architectures. All binary data exchanged via the shared SBD device uses a consistent little-endian format, preventing slot conflicts and data corruption in mixed-endianness environments.

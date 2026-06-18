@@ -89,7 +89,7 @@ docker run -d \
 ### Container Options
 
 | Option | Description | Example |
-|--------|-------------|---------|
+| ------ | ----------- | ------- |
 | `--privileged` | Full container privileges | Required for device access |
 | `--cap-add=SYS_ADMIN` | System administration capabilities | Required for watchdog |
 | `--cap-add=SYS_RAWIO` | Raw I/O access | Required for block devices |
@@ -100,7 +100,7 @@ docker run -d \
 ## Command Line Arguments
 
 | Argument | Description | Default | Example |
-|----------|-------------|---------|---------|
+| -------- | ----------- | ------- | ------- |
 | `--watchdog-path` | Path to watchdog device | `/dev/watchdog` | `--watchdog-path=/dev/watchdog0` |
 | `--sbr-device` | Path to SBD block device | (empty) | `--sbr-device=/dev/disk/by-id/sbr-device` |
 | `--log-level` | Logging level | `info` | `--log-level=debug` |

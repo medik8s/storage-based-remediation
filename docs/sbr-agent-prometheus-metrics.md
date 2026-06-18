@@ -5,9 +5,11 @@ The SBR Agent now exposes Prometheus metrics to provide observability into its h
 ## Metrics Configuration
 
 ### Command Line Flag
+
 - `--metrics-port`: Port for Prometheus metrics endpoint (default: 8080)
 
 ### Environment Variables
+
 The metrics port can also be configured through environment variables if needed in the deployment configuration.
 
 ## Available Metrics
@@ -51,7 +53,8 @@ The metrics port can also be configured through environment variables if needed 
 ## Metrics Endpoint
 
 The metrics are exposed via HTTP at:
-```
+
+```text
 http://localhost:8080/metrics
 ```
 
@@ -205,6 +208,7 @@ groups:
 ## Troubleshooting
 
 ### Check Metrics Availability
+
 ```bash
 # Test metrics endpoint from within the cluster
 kubectl exec -n sbr-operator-system <sbr-agent-pod> -- curl -s http://localhost:8080/metrics
@@ -215,6 +219,7 @@ curl http://localhost:8080/metrics
 ```
 
 ### Verify ServiceMonitor Discovery
+
 ```bash
 # Check if Prometheus discovered the ServiceMonitor
 kubectl get servicemonitor -n sbr-operator-system sbr-agent -o yaml
@@ -232,6 +237,7 @@ kubectl get servicemonitor -n sbr-operator-system sbr-agent -o yaml
 ## Implementation Details
 
 ### Metrics Updates
+
 - **Agent Health**: Updated when watchdog pet succeeds/fails and SBD device operations succeed/fail
 - **Watchdog Pets**: Incremented on each successful watchdog pet
 - **I/O Errors**: Incremented on any SBD device read/write failure
@@ -239,6 +245,7 @@ kubectl get servicemonitor -n sbr-operator-system sbr-agent -o yaml
 - **Self-Fence**: Incremented when self-fencing is initiated
 
 ### Thread Safety
+
 All metrics are thread-safe and can be updated from multiple goroutines (watchdog loop, SBD device loop, heartbeat loop, peer monitor loop).
 
 ### Graceful Shutdown

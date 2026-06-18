@@ -36,12 +36,17 @@ go.work.sum
 # Downloaded tools directory
 .tools/
 
+# npm cache
+.npm-cache/
+
 # Cluster provisioning artifacts
 cluster/
 
 # Editor/IDE
 .idea/
-# .vscode/
+.vscode/
+.cursorrules
+cspell.json
 
 # Generated manifests and test-specific configurations
 dist/

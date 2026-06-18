@@ -100,3 +100,9 @@ __pycache__/
 *.tar.gz
 *.tar
 *.rar
+
+# cSpell configuration (personal word list)
+cspell.json
+
+# Editor/IDE local configuration
+.cursorrules

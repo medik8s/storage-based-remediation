@@ -440,6 +440,25 @@ func (r *StorageBasedRemediationConfigReconciler) validateNFSMountOptions(storag
 	return nil
 }
 
+// patchPVReclaimToDelete patches a PV's reclaimPolicy to Delete
+func (r *StorageBasedRemediationConfigReconciler) patchPVReclaimToDelete(
+	ctx context.Context, pvName string, logger logr.Logger) error {
+	pv := &corev1.PersistentVolume{}
+	if err := r.Get(ctx, types.NamespacedName{Name: pvName}, pv); err != nil {
+		logger.Error(err, "Failed to get PV for reclaim policy patch", "pv", pvName)
+		return err
+	}
+	if pv.Spec.PersistentVolumeReclaimPolicy != corev1.PersistentVolumeReclaimDelete {
+		pv.Spec.PersistentVolumeReclaimPolicy = corev1.PersistentVolumeReclaimDelete
+		if err := r.Update(ctx, pv); err != nil {
+			logger.Error(err, "Failed to patch PV reclaim policy to Delete", "pv", pvName)
+			return err
+		}
+		logger.Info("Patched PV reclaim policy to Delete", "pv", pvName)
+	}
+	return nil
+}
+
 // testRWXSupport tests if a storage class actually supports ReadWriteMany by creating a temporary PVC
 func (r *StorageBasedRemediationConfigReconciler) testRWXSupport(
 	ctx context.Context, sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig, storageClassName string, logger logr.Logger) error {
@@ -470,11 +489,6 @@ func (r *StorageBasedRemediationConfigReconciler) testRWXSupport(
 		},
 	}
 
-	// Set controller reference for cleanup
-	if err := controllerutil.SetControllerReference(sbrConfig, testPVC, r.Scheme); err != nil {
-		return fmt.Errorf("failed to set controller reference on test PVC: %w", err)
-	}
-
 	// Best-effort delete of any stale PVC with this name before creating a fresh one.
 	// No wait: if Create still fails with AlreadyExists the error is returned and
 	// the reconcile loop retries on the next requeue.
@@ -493,6 +507,12 @@ func (r *StorageBasedRemediationConfigReconciler) testRWXSupport(
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+
+		// Patch the PV reclaimPolicy to Delete if the PVC is bound.
+		// Error is logged but not returned since this is best-effort cleanup in a defer.
+		if pvName := testPVC.Spec.VolumeName; pvName != "" {
+			_ = r.patchPVReclaimToDelete(cleanupCtx, pvName, logger)
+		}
 
 		if deleteErr := r.Delete(cleanupCtx, testPVC); deleteErr != nil {
 			logger.Error(deleteErr, "Failed to cleanup test PVC", "testPVC", testPVCName)
@@ -926,6 +946,7 @@ echo "SBR devices initialization completed successfully"
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumes,verbs=get;list;watch;update
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,verbs=use,resourceNames=privileged
@@ -1193,6 +1214,22 @@ func (r *StorageBasedRemediationConfigReconciler) handleDeletion(
 
 	// Note: DaemonSet cleanup is handled automatically by Kubernetes garbage collection due to OwnerReference
 
+	// Patch the shared-storage PV reclaimPolicy to Delete before the finalizer is removed and GC
+	// deletes the PVC. This prevents Released PV accumulation when the StorageClass uses reclaimPolicy: Retain.
+	if sbrConfig.Spec.HasSharedStorage() {
+		pvcName := sbrConfig.Spec.GetSharedStoragePVCName(sbrConfig.Name)
+		pvc := &corev1.PersistentVolumeClaim{}
+		if getErr := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: sbrConfig.Namespace}, pvc); getErr != nil {
+			if !errors.IsNotFound(getErr) {
+				logger.Error(getErr, "Failed to get shared-storage PVC during cleanup", "pvc", pvcName)
+			}
+		} else if pvName := pvc.Spec.VolumeName; pvName != "" {
+			if err := r.patchPVReclaimToDelete(ctx, pvName, logger); err != nil {
+				return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
+			}
+		}
+	}
+
 	// Remove the finalizer to allow deletion
 	controllerutil.RemoveFinalizer(sbrConfig, StorageBasedRemediationConfigFinalizerName)
 	err = r.Update(ctx, sbrConfig)
@@ -1382,9 +1419,8 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: "sbr-agent",
-					HostNetwork:        true,
 					HostPID:            true,
-					DNSPolicy:          corev1.DNSClusterFirstWithHostNet,
+					DNSPolicy:          corev1.DNSClusterFirst,
 					PriorityClassName:  "system-node-critical",
 					RestartPolicy:      corev1.RestartPolicyAlways,
 					NodeSelector:       r.buildNodeSelector(sbrConfig),
@@ -1470,7 +1506,19 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 									},
 								},
 							},
-							Args:         r.buildSBRAgentArgs(sbrConfig),
+							Args: r.buildSBRAgentArgs(sbrConfig),
+							Ports: []corev1.ContainerPort{
+								{
+									Name:          "runtime-metrics",
+									ContainerPort: 8080,
+									Protocol:      corev1.ProtocolTCP,
+								},
+								{
+									Name:          "agent-metrics",
+									ContainerPort: int32(agent.DefaultMetricsPort),
+									Protocol:      corev1.ProtocolTCP,
+								},
+							},
 							VolumeMounts: r.buildVolumeMounts(sbrConfig),
 							LivenessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{

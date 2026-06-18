@@ -28,6 +28,7 @@ The webhook considers two node selectors as overlapping if they could potentiall
 #### Examples
 
 **✅ Non-overlapping (allowed):**
+
 ```yaml
 # StorageBasedRemediationConfig 1
 nodeSelector:
@@ -39,6 +40,7 @@ nodeSelector:
 ```
 
 **❌ Overlapping (rejected):**
+
 ```yaml
 # StorageBasedRemediationConfig 1
 nodeSelector:
@@ -50,6 +52,7 @@ nodeSelector:
 ```
 
 **❌ Overlapping with empty selector (rejected):**
+
 ```yaml
 # StorageBasedRemediationConfig 1
 nodeSelector: {}  # Empty = matches all nodes
@@ -109,16 +112,19 @@ See the [cert-manager documentation](https://cert-manager.io/) for production ce
 ### Webhook Not Working
 
 1. Check webhook pod is running:
+
    ```bash
    kubectl get pods -n sbr-operator-system
    ```
 
 2. Check webhook configuration:
+
    ```bash
    kubectl get validatingwebhookconfiguration
    ```
 
 3. Check webhook logs:
+
    ```bash
    kubectl logs -n sbr-operator-system deployment/sbr-operator-controller-manager
    ```
@@ -126,11 +132,13 @@ See the [cert-manager documentation](https://cert-manager.io/) for production ce
 ### Certificate Issues
 
 1. Verify webhook service exists:
+
    ```bash
    kubectl get service -n sbr-operator-system webhook-service
    ```
 
 2. Check certificate secret:
+
    ```bash
    kubectl get secret -n sbr-operator-system webhook-server-certs
    ```

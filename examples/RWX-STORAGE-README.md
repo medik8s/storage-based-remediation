@@ -13,6 +13,7 @@ The SBR operator can benefit from shared storage for:
 ## Prerequisites
 
 ### 1. AWS EFS CSI Driver
+
 The cluster must have the AWS EFS CSI driver installed:
 
 ```bash
@@ -24,7 +25,9 @@ oc get csidriver efs.csi.aws.com
 ```
 
 ### 2. AWS Permissions
+
 Your AWS credentials must have the following permissions:
+
 - `efs:CreateFileSystem`
 - `efs:CreateMountTarget`
 - `efs:DescribeFileSystems`
@@ -34,6 +37,7 @@ Your AWS credentials must have the following permissions:
 - `ec2:DescribeVpcs`
 
 ### 3. Tools Required
+
 - AWS CLI configured
 - `kubectl` or `oc` CLI
 - `jq` for JSON processing
@@ -90,11 +94,13 @@ oc logs job/verify-rwx-storage -n sbr-system
 - `--namespace`: Kubernetes namespace (default: `sbr-system`)
 
 ### Advanced Options
+
 - `--performance-mode`: EFS performance (`generalPurpose` or `maxIO`)
 - `--throughput-mode`: EFS throughput (`provisioned` or `burstingThroughput`)
 - `--provisioned-tp`: Provisioned throughput in MiB/s (default: 100)
 
 ### Utility Options
+
 - `--dry-run`: Preview what would be created
 - `--cleanup`: Remove all created resources
 - `--cluster-name`: Specify cluster name (auto-detected if not provided)
@@ -171,16 +177,19 @@ data:
 ## Security Considerations
 
 ### Network Security
+
 - EFS mount targets are created in worker node subnets
 - Security group allows NFS traffic (port 2049) only within the cluster
 - No external access to EFS filesystem
 
 ### Access Control
+
 - Kubernetes RBAC controls access to PVC
 - File system permissions can be set via `directoryPerms`
 - Consider using EFS Access Points for additional security
 
 ### Encryption
+
 - EFS supports encryption at rest and in transit
 - Add encryption settings to the script if required:
 
@@ -195,6 +204,7 @@ data:
 ### Common Issues
 
 1. **Mount targets not created**
+
    ```bash
    # Check security groups
    aws ec2 describe-security-groups --group-ids sg-xxx
@@ -204,6 +214,7 @@ data:
    ```
 
 2. **PVC stuck in Pending**
+
    ```bash
    # Check EFS CSI driver
    oc get pods -n kube-system | grep efs
@@ -213,6 +224,7 @@ data:
    ```
 
 3. **Mount failures in pods**
+
    ```bash
    # Check pod events
    oc describe pod <pod-name> -n sbr-system
@@ -266,11 +278,13 @@ oc delete -f examples/rwx-shared-storage-example.yaml
 ## Cost Optimization
 
 ### EFS Pricing Factors
+
 - Storage used (GB-month)
 - Throughput provisioned (MiB/s-month)
 - Requests (per million)
 
 ### Cost Reduction Tips
+
 1. Use bursting throughput for variable workloads
 2. Monitor actual storage usage
 3. Use EFS Intelligent Tiering for infrequently accessed data

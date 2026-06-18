@@ -24,22 +24,22 @@ The SBR Operator system consists of two main components with distinct security r
 **ServiceAccount**: `sbr-agent`
 **Role**: `sbr-agent-role` (ClusterRole)
 
-### Permissions Granted
+### Agent Permissions Granted
 
 | Resource | Verbs | Justification |
-|----------|-------|---------------|
+| -------- | ----- | ------------- |
 | `pods` | `get`, `list` | Read own pod information to determine node name and metadata |
 | `nodes` | `get`, `list`, `watch` | Read-only access to resolve node names to node IDs for SBR operations |
 | `events` | `create`, `patch` | Emit observability events for monitoring and debugging |
 
-### Permissions Explicitly NOT Granted
+### Agent Permissions Explicitly NOT Granted
 
 - **No pod/node deletion or modification**: Fencing is done via SBR device + local panic
 - **No secret/configmap access**: No sensitive data access required
 - **No cluster resource modification**: Cannot alter cluster state through Kubernetes API
 - **No cross-namespace access**: Limited to necessary cluster-wide read operations
 
-### Security Rationale
+### Agent Security Rationale
 
 The SBR Agent operates with minimal Kubernetes permissions because its primary fencing mechanism works outside the Kubernetes API:
 
@@ -52,7 +52,7 @@ The SBR Agent operates with minimal Kubernetes permissions because its primary f
 **ServiceAccount**: `sbr-operator-controller-manager`
 **Role**: `sbr-operator-manager-role` (ClusterRole)
 
-### Permissions Granted
+### Operator Permissions Granted
 
 | Resource | Verbs | Justification |
 |----------|-------|---------------|
@@ -69,14 +69,14 @@ The SBR Agent operates with minimal Kubernetes permissions because its primary f
 | `storagebasedremediations/finalizers` | `update` | Handle proper cleanup of fencing operations |
 | `storagebasedremediations/status` | `get`, `patch`, `update` | Track fencing operation progress |
 
-### Permissions Explicitly NOT Granted
+### Operator Permissions Explicitly NOT Granted
 
 - **No direct node deletion/modification**: Cannot directly fence nodes via Kubernetes API
 - **No secret access**: No access to sensitive cluster data
 - **No modification of other operators**: Limited to SBR system scope
 - **No privileged resource access**: Cannot modify cluster-critical resources
 
-### Security Rationale
+### Operator Security Rationale
 
 The SBR Operator requires broader permissions than the Agent because it serves as the orchestration layer:
 
@@ -129,6 +129,7 @@ The SBR Agent requires privileged access for:
 ### Event Emission
 
 Both components emit Kubernetes events for:
+
 - Operational status updates
 - Error conditions
 - Fencing operation progress
@@ -137,6 +138,7 @@ Both components emit Kubernetes events for:
 ### Audit Trail
 
 RBAC permissions ensure all actions are:
+
 - Logged through Kubernetes audit logs
 - Traceable to specific service accounts
 - Limited to authorized operations

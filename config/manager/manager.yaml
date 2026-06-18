@@ -72,7 +72,7 @@ spec:
           - --enable-webhooks=false
         image: controller:latest
         name: manager
-        ports: []
+
         env:
         - name: POD_NAME
           valueFrom:

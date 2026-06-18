@@ -414,6 +414,17 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 			By("verifying the DaemonSet has correct security context")
 			Expect(*container.SecurityContext.Privileged).To(BeTrue())
 			Expect(*container.SecurityContext.RunAsUser).To(BeEquivalentTo(0))
+
+			By("verifying the DaemonSet does not use host networking")
+			Expect(daemonSet.Spec.Template.Spec.HostNetwork).To(BeFalse())
+			Expect(daemonSet.Spec.Template.Spec.DNSPolicy).To(Equal(corev1.DNSClusterFirst))
+
+			By("verifying the DaemonSet declares container ports")
+			Expect(container.Ports).To(HaveLen(2))
+			Expect(container.Ports[0].Name).To(Equal("runtime-metrics"))
+			Expect(container.Ports[0].ContainerPort).To(BeEquivalentTo(8080))
+			Expect(container.Ports[1].Name).To(Equal("agent-metrics"))
+			Expect(container.Ports[1].ContainerPort).To(BeEquivalentTo(agent.DefaultMetricsPort))
 		})
 
 		It("should update DaemonSet when StorageBasedRemediationConfig is modified", func() {
@@ -1039,6 +1050,202 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 				Expect(finalPVC.DeletionTimestamp).NotTo(BeNil(),
 					"New PVC should be in Terminating state (deleted by controller defer cleanup)")
 			})
+		})
+	})
+
+	Context("When verifying PV reclaim-policy cleanup (RHWA-1017)", func() {
+		const (
+			pvPatchRetainSCName    = "pv-patch-retain-sc"
+			pvPatchUnknownProv     = "custom.example.com/pv-patch-test"
+			pvPatchCephSCName      = "pv-patch-ceph-sc"
+			pvPatchCephProvisioner = "openshift-storage.cephfs.csi.ceph.com"
+		)
+
+		var (
+			pvPatchNamespace  string
+			pvPatchReconciler *StorageBasedRemediationConfigReconciler
+		)
+
+		ctx := context.Background()
+
+		BeforeEach(func() {
+			pvPatchNamespace = fmt.Sprintf("pv-patch-test-%d", time.Now().UnixNano())
+			Expect(k8sClient.Create(ctx, &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: pvPatchNamespace},
+			})).To(Succeed())
+
+			pvPatchReconciler = &StorageBasedRemediationConfigReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			// Unknown-provisioner SC with Retain policy — triggers testRWXSupport
+			reclaimPolicy := corev1.PersistentVolumeReclaimRetain
+			retainSC := &storagev1.StorageClass{
+				ObjectMeta:    metav1.ObjectMeta{Name: pvPatchRetainSCName},
+				Provisioner:   pvPatchUnknownProv,
+				ReclaimPolicy: &reclaimPolicy,
+			}
+			err := k8sClient.Create(ctx, retainSC)
+			if err != nil && !errors.IsAlreadyExists(err) {
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			// Known-RWX Ceph SC — skips testRWXSupport (used by the handleDeletion test)
+			cephSC := &storagev1.StorageClass{
+				ObjectMeta:    metav1.ObjectMeta{Name: pvPatchCephSCName},
+				Provisioner:   pvPatchCephProvisioner,
+				ReclaimPolicy: &reclaimPolicy,
+				Parameters: map[string]string{
+					"clusterID": "openshift-storage",
+					"fsName":    "ocs-storagecluster-cephfilesystem",
+				},
+			}
+			err = k8sClient.Create(ctx, cephSC)
+			if err != nil && !errors.IsAlreadyExists(err) {
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			Expect(os.Setenv("RELATED_IMAGE_AGENT", testAgentImage)).To(Succeed())
+			DeferCleanup(func() {
+				_ = os.Unsetenv("RELATED_IMAGE_AGENT")
+				ns := &corev1.Namespace{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: pvPatchNamespace}, ns); err == nil {
+					_ = k8sClient.Delete(ctx, ns)
+				}
+			})
+		})
+
+		// Verifies that the test PVC has no OwnerReference (preventing a runaway reconcile loop)
+		// and that a bound test PV with reclaimPolicy Retain is patched to Delete on cleanup.
+		// Both checks share the same goroutine observation window during testRWXSupport's 5s sleep.
+		It("should not set OwnerReference on test PVC and should patch the bound test PV reclaimPolicy to Delete", func() {
+			const sbrConfigName = "test-rwxsupport-cleanup"
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: sbrConfigName, Namespace: pvPatchNamespace},
+				Spec:       medik8sv1alpha1.StorageBasedRemediationConfigSpec{SharedStorageClass: pvPatchRetainSCName},
+			}
+			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, sbrConfig) })
+
+			// Pre-create a PV with Retain policy to simulate a provisioner bound volume.
+			// PersistentVolume is cluster-scoped, so derive the name from the unique namespace.
+			pvName := fmt.Sprintf("test-pv-%s", pvPatchNamespace)
+			pv := &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: pvName},
+				Spec: corev1.PersistentVolumeSpec{
+					Capacity:                      corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("1Gi")},
+					AccessModes:                   []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
+					PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						NFS: &corev1.NFSVolumeSource{Server: "fake-nfs", Path: "/data"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pv)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, pv) })
+
+			// testRWXSupport creates the test PVC and then sleeps 5s before re-fetching it.
+			// Run the reconcile in the background so we can inspect the PVC during that window.
+			reconcileDone := make(chan struct{})
+			go func() {
+				defer GinkgoRecover()
+				defer close(reconcileDone)
+				runReconcile(ctx, pvPatchReconciler, types.NamespacedName{
+					Name: sbrConfigName, Namespace: pvPatchNamespace,
+				})
+			}()
+
+			testPVCName := fmt.Sprintf("%s-rwx-test", sbrConfigName)
+			testPVC := &corev1.PersistentVolumeClaim{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx,
+					types.NamespacedName{Name: testPVCName, Namespace: pvPatchNamespace}, testPVC)
+			}, 8*time.Second, 200*time.Millisecond).Should(Succeed())
+
+			By("verifying the test PVC carries no OwnerReference")
+			Expect(testPVC.OwnerReferences).To(BeEmpty(),
+				"the test PVC must not carry an OwnerReference to the SBRConfig")
+
+			By("simulating a provisioner binding the test PVC to the Retain PV")
+			patch := client.MergeFrom(testPVC.DeepCopy())
+			testPVC.Spec.VolumeName = pvName
+			Expect(k8sClient.Patch(ctx, testPVC, patch)).To(Succeed())
+
+			<-reconcileDone
+
+			By("verifying the test PV reclaim policy was patched to Delete")
+			fetchedPV := &corev1.PersistentVolume{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pvName}, fetchedPV)).To(Succeed())
+			Expect(fetchedPV.Spec.PersistentVolumeReclaimPolicy).To(
+				Equal(corev1.PersistentVolumeReclaimDelete),
+				"test PV reclaim policy must be patched to Delete before the test PVC is deleted",
+			)
+		})
+
+		// Covers the handleDeletion fix: shared-storage PV with Retain policy is patched to
+		// Delete before the SBRConfig finalizer is removed, preventing Released PV accumulation.
+		It("should patch the shared-storage PV reclaimPolicy to Delete during SBRConfig deletion", func() {
+			const sbrConfigName = "test-deletion-pv-patch"
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: sbrConfigName, Namespace: pvPatchNamespace},
+				// Ceph is known-RWX-compatible so validateStorageClass short-circuits
+				// and testRWXSupport is never called.
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{SharedStorageClass: pvPatchCephSCName},
+			}
+			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
+
+			By("running reconcile until the init-job waiting error; the shared-storage PVC is created by then")
+			_, _, _ = runReconcile(ctx, pvPatchReconciler, types.NamespacedName{
+				Name: sbrConfigName, Namespace: pvPatchNamespace,
+			})
+
+			sharedPVCName := sbrConfig.Spec.GetSharedStoragePVCName(sbrConfigName)
+			sharedPVC := &corev1.PersistentVolumeClaim{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: sharedPVCName, Namespace: pvPatchNamespace,
+			}, sharedPVC)).To(Succeed())
+
+			By("creating a Retain PV and binding the shared-storage PVC to it")
+			// PersistentVolume is cluster-scoped, so derive the name from the unique namespace.
+			sharedPVName := fmt.Sprintf("test-shared-pv-%s", pvPatchNamespace)
+			sharedPV := &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: sharedPVName},
+				Spec: corev1.PersistentVolumeSpec{
+					Capacity:                      corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Mi")},
+					AccessModes:                   []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
+					PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						NFS: &corev1.NFSVolumeSource{Server: "fake-nfs", Path: "/shared"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, sharedPV)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, sharedPV) })
+
+			pvcPatch := client.MergeFrom(sharedPVC.DeepCopy())
+			sharedPVC.Spec.VolumeName = sharedPVName
+			Expect(k8sClient.Patch(ctx, sharedPVC, pvcPatch)).To(Succeed())
+
+			By("deleting the SBRConfig and running the finalizer-removal reconcile")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: sbrConfigName, Namespace: pvPatchNamespace,
+			}, sbrConfig)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, sbrConfig)).To(Succeed())
+
+			_, result, err := runReconcile(ctx, pvPatchReconciler, types.NamespacedName{
+				Name: sbrConfigName, Namespace: pvPatchNamespace,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(reconcile.Result{}))
+
+			By("verifying the shared-storage PV reclaim policy was patched to Delete")
+			fetchedPV := &corev1.PersistentVolume{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: sharedPVName}, fetchedPV)).To(Succeed())
+			Expect(fetchedPV.Spec.PersistentVolumeReclaimPolicy).To(
+				Equal(corev1.PersistentVolumeReclaimDelete),
+				"shared-storage PV reclaim policy must be patched to Delete during SBRConfig deletion",
+			)
 		})
 	})
 })

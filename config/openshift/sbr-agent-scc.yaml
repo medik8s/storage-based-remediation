@@ -13,7 +13,7 @@ metadata:
     kubernetes.io/description: "SecurityContextConstraints for SBR Agent pods that require privileged access to hardware watchdog and block devices"
 allowHostDirVolumePlugin: true
 allowHostIPC: false
-allowHostNetwork: true
+allowHostNetwork: false
 allowHostPID: true
 allowHostPorts: false
 allowPrivilegedContainer: true

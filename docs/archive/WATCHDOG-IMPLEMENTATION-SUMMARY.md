@@ -13,6 +13,7 @@ The original assumption that this was an **ARM64-specific issue was incorrect**.
 ### 1. Enhanced Watchdog Implementation (`pkg/watchdog/watchdog.go`)
 
 **Write-Based Fallback Mechanism:**
+
 ```go
 // Enhanced Pet() method with dual approach:
 // 1. Try WDIOC_KEEPALIVE ioctl (hardware watchdog preferred method)
@@ -32,6 +33,7 @@ func (w *Watchdog) Pet() error {
 ```
 
 **Key Features:**
+
 - **Dual Keep-Alive Methods**: Supports both ioctl and write-based approaches
 - **Intelligent Fallback**: Automatically switches when ioctl returns `ENOTTY`
 - **Comprehensive Logging**: Detailed logs for debugging driver compatibility
@@ -41,13 +43,15 @@ func (w *Watchdog) Pet() error {
 ### 2. Updated Tests (`pkg/watchdog/watchdog_test.go`)
 
 **Enhanced Test Coverage:**
+
 - **Fallback Success Testing**: Verifies write-based fallback works correctly
 - **Cross-Architecture Compatibility**: Tests both ioctl and write methods
 - **Error Handling**: Comprehensive error scenario testing
 - **Backward Compatibility**: Ensures existing functionality remains intact
 
 **Test Results:**
-```
+
+```text
 ✅ TestPet/pet_valid_watchdog_(ioctl_fails,_write-based_fallback_succeeds)
 ✅ TestPet/pet_read-only_watchdog_file_(both_ioctl_and_write_fail)
 ✅ TestWatchdogLifecycle - Updated to expect fallback success
@@ -57,14 +61,16 @@ func (w *Watchdog) Pet() error {
 ## 📊 **Technical Impact**
 
 ### Before (Problematic Behavior)
-```
+
+```text
 ARM64 Node → SBD Agent → WDIOC_KEEPALIVE ioctl → ENOTTY Error
          ↓
     Pet Failure → Watchdog Timeout → Kernel Panic → Reboot → LOOP ♾️
 ```
 
 ### After (Fixed Behavior)
-```
+
+```text
 Any Node → SBD Agent → WDIOC_KEEPALIVE ioctl → ENOTTY Error
          ↓
     Write Fallback → Success → Watchdog Pet → Node Stable ✅
@@ -73,7 +79,7 @@ Any Node → SBD Agent → WDIOC_KEEPALIVE ioctl → ENOTTY Error
 ## 🔧 **Architecture Support**
 
 | Architecture | WDIOC_KEEPALIVE | Write Fallback | Result |
-|--------------|-----------------|----------------|---------|
+| ------------ | --------------- | -------------- | ------ |
 | **AMD64** | ❌ ENOTTY | ✅ Success | ✅ **WORKS** |
 | **ARM64** | ❌ ENOTTY | ✅ Success | ✅ **WORKS** |
 | **Hardware WD** | ✅ Success | N/A | ✅ **WORKS** |
@@ -81,12 +87,14 @@ Any Node → SBD Agent → WDIOC_KEEPALIVE ioctl → ENOTTY Error
 ## 🚀 **Deployment Benefits**
 
 ### Immediate Impact
+
 - **✅ Eliminates ARM64 reboot loops** - Nodes remain stable
 - **✅ Cross-platform compatibility** - Single solution for all architectures  
 - **✅ Backward compatible** - Existing hardware watchdogs continue working
 - **✅ Production ready** - Comprehensive error handling and logging
 
 ### Long-term Benefits
+
 - **🔧 Driver Independence** - Works regardless of softdog driver implementation
 - **📈 Improved Reliability** - Dual fallback approach increases success rate
 - **🔍 Better Observability** - Enhanced logging for troubleshooting
@@ -95,6 +103,7 @@ Any Node → SBD Agent → WDIOC_KEEPALIVE ioctl → ENOTTY Error
 ## 🧪 **Validation Results**
 
 ### Unit Tests
+
 ```bash
 ✅ All watchdog unit tests passing (71.7% coverage)
 ✅ Enhanced error handling tested
@@ -103,6 +112,7 @@ Any Node → SBD Agent → WDIOC_KEEPALIVE ioctl → ENOTTY Error
 ```
 
 ### Integration Tests
+
 ```bash
 ✅ SBD agent compilation successful
 ✅ Controller tests passing (59.3% coverage)  
@@ -111,6 +121,7 @@ Any Node → SBD Agent → WDIOC_KEEPALIVE ioctl → ENOTTY Error
 ```
 
 ### Real-World Testing
+
 ```bash
 ✅ AWS AMD64 testing confirmed write fallback works
 ✅ Local development environment tested
@@ -121,6 +132,7 @@ Any Node → SBD Agent → WDIOC_KEEPALIVE ioctl → ENOTTY Error
 ## 📁 **Files Modified/Created**
 
 ### Core Implementation
+
 - `pkg/watchdog/watchdog.go` - Enhanced Pet() method with fallback
 - `pkg/watchdog/watchdog_test.go` - Updated tests for new behavior
 
@@ -128,6 +140,7 @@ Any Node → SBD Agent → WDIOC_KEEPALIVE ioctl → ENOTTY Error
 - Various debugging and testing scripts created
 
 ### Documentation
+
 - `WATCHDOG-ISSUE-RESOLVED.md` - Investigation findings
 - `DEBUG-WATCHDOG-ARM64.md` - Debugging documentation
 - This summary document
@@ -155,7 +168,8 @@ Any Node → SBD Agent → WDIOC_KEEPALIVE ioctl → ENOTTY Error
 The ARM64 watchdog reboot loop issue has been **completely resolved** with a robust, cross-platform solution that ensures node stability across all supported architectures while maintaining full backward compatibility.
 
 **Next Steps:**
+
 - Deploy to staging environment for validation
 - Monitor production metrics post-deployment  
 - Consider backporting to previous versions if needed
-- Document operational procedures for troubleshooting 
+- Document operational procedures for troubleshooting

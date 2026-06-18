@@ -1,9 +1,0 @@
-=== SBD Device Summary ===
-Generated at: 2025-07-28 12:55:43
-Total slots with data: 2
-
-Slot   NodeID   Node Name                      Type         Timestamp            Sequence  
-----   ------   ---------                      ----         ---------            --------  
-2      1        Unknown                        HEARTBEAT    12:55:23             1         
-146    145      Unknown                        HEARTBEAT    12:55:38             1         
-
