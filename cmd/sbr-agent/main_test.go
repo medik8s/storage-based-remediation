@@ -1335,6 +1335,35 @@ func TestPreflightChecks_BothFailing(t *testing.T) {
 	}
 }
 
+// TestPreflightChecks_DetectOnlyMode tests that watchdog check is skipped in detect-only mode
+func TestPreflightChecks_DetectOnlyMode(t *testing.T) {
+	// Initialize logger for tests
+	if err := initializeLogger("info"); err != nil {
+		t.Fatalf("Failed to initialize logger: %v", err)
+	}
+
+	// Create temporary SBR device file
+	tmpDir := t.TempDir()
+	sbrPath := filepath.Join(tmpDir, "sbr-device")
+	sbrFile, err := os.Create(sbrPath)
+	if err != nil {
+		t.Fatalf("Failed to create mock SBR file: %v", err)
+	}
+	_ = sbrFile.Close()
+
+	// Use non-existent watchdog path - this would normally fail
+	watchdogPath := nonExistentWatchdogPath
+
+	// Test pre-flight checks with detect-only mode enabled
+	// Should PASS even though watchdog device is missing, because:
+	// 1. detect-only mode skips watchdog check
+	// 2. SBR device is accessible
+	err = runPreflightChecks(watchdogPath, sbrPath, "test-node", 1, true)
+	if err != nil {
+		t.Errorf("Expected pre-flight checks to succeed in detect-only mode with missing watchdog, but got error: %v", err)
+	}
+}
+
 // Fence flow with real SBR agent (RunUntilShutdown). Uses the envtest and k8sClient
 // from the Agent Suite (suite_test.go). Temp files + blockdevice populate the node table
 // so the agent's node manager resolves slot IDs; setSBRDevices then uses mocks for I/O.

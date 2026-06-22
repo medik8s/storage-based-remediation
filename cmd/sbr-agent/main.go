@@ -1896,9 +1896,8 @@ func runPreflightChecks(watchdogPath, sbrDevicePath, nodeName string, nodeID uin
 	// Check watchdog device availability (skip in detect-only mode)
 	var watchdogErr error
 	if detectOnlyMode {
-		logger.Info("Skipping watchdog pre-flight check (detect-only mode enabled)")
 		// Treat as successful - watchdog is not needed in detect-only mode
-		watchdogErr = nil
+		logger.Info("Skipping watchdog pre-flight check (detect-only mode enabled)")
 	} else if watchdogPath != "" {
 		watchdogErr = checkWatchdogDevice(watchdogPath)
 	}
