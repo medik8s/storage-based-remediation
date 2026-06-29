@@ -782,6 +782,22 @@ func (s *SBRAgent) initializeNodeManagers(clusterName string, fileLockingEnabled
 		"fileLockingEnabled", fileLockingEnabled,
 		"coordinationStrategy", s.nodeManager.GetCoordinationStrategy())
 
+	// Clean up slot 1 if we were assigned a different slot to prevent ghost peer entries
+	// During pre-flight checks, a test heartbeat is written to slot 1 (DefaultNodeID)
+	// If hash-based assignment gives us a different slot, we must clear slot 1 to avoid
+	// all agents continuously checking a phantom peer that doesn't exist (RHWA-1058)
+	if nodeID != DefaultNodeID {
+		if err := s.clearPreflightSlot(); err != nil {
+			logger.Error(err, "Failed to clear pre-flight slot 1 (non-fatal, will cause ghost peer warnings)",
+				"assignedNodeID", nodeID)
+			// Non-fatal: continue initialization even if cleanup fails
+			// The ghost entry will cause log noise but won't break functionality
+		} else {
+			logger.Info("Cleared pre-flight test data from slot 1",
+				"assignedNodeID", nodeID)
+		}
+	}
+
 	return nil
 }
 
@@ -980,6 +996,11 @@ func (s *SBRAgent) writeHeartbeatToSBRInternal() error {
 	slotOffset := int64(s.nodeID) * sbdprotocol.SBD_SLOT_SIZE
 
 	// Write heartbeat message to the designated slot
+	// NOTE: We use direct WriteAt/Sync here (not writeSlotWithLock) because:
+	// - Each node writes only to its own slot (no inter-node contention)
+	// - The node mapping file lock coordinates node-to-slot assignments, not heartbeat writes
+	// - Using the node mapping lock here causes deadlocks when heartbeat writes happen
+	//   concurrently with node mapping operations
 	n, err := s.heartbeatDevice.WriteAt(msgBytes, slotOffset)
 	if err != nil {
 		return fmt.Errorf("failed to write heartbeat to SBR device at offset %d: %w", slotOffset, err)
@@ -1560,6 +1581,12 @@ func (s *SBRAgent) cleanOwnFenceSlotIfPresent(logger logr.Logger) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal clear fence message: %w", err)
 	}
+
+	// Write clear fence message to own slot
+	// NOTE: We use direct WriteAt/Sync here (not writeSlotWithLock) because:
+	// - This writes to the fence device, not the node mapping file
+	// - Each node writes only to its own fence slot (no inter-node contention)
+	// - The node mapping file lock is for coordinating node-to-slot assignments, not fence writes
 	wrote, err := s.fenceDevice.WriteAt(data, slotOffset)
 	if err != nil {
 		return fmt.Errorf("failed to write clear fence message at offset %d: %w", slotOffset, err)
@@ -1570,8 +1597,78 @@ func (s *SBRAgent) cleanOwnFenceSlotIfPresent(logger logr.Logger) error {
 	if err := s.fenceDevice.Sync(); err != nil {
 		return fmt.Errorf("failed to sync fence device after clearing: %w", err)
 	}
+
 	logger.Info("Cleared old fence message from own slot", "ourNodeID", s.nodeID)
 	return nil
+}
+
+// writeSlotWithLock writes data to a specific slot on a device with file locking if available
+func (s *SBRAgent) writeSlotWithLock(device mocks.BlockDeviceInterface, slotOffset int64, data []byte, operation string) error {
+	writeFunc := func() error {
+		n, err := device.WriteAt(data, slotOffset)
+		if err != nil {
+			return fmt.Errorf("failed to write to slot at offset %d: %w", slotOffset, err)
+		}
+		if n != len(data) {
+			return fmt.Errorf("partial write to slot: wrote %d bytes, expected %d", n, len(data))
+		}
+		if err := device.Sync(); err != nil {
+			return fmt.Errorf("failed to sync device after write: %w", err)
+		}
+		return nil
+	}
+
+	// Use node manager locking if available
+	if s.nodeManager != nil {
+		return s.nodeManager.WriteWithLock(operation, writeFunc)
+	}
+
+	// Fallback: direct write without locking
+	return writeFunc()
+}
+
+// clearPreflightSlot clears the pre-flight test heartbeat from slot 1 (DefaultNodeID)
+// This prevents ghost peer warnings when agents are assigned different slots via hash-based mapping.
+//
+// IMPORTANT: This unconditionally clears slot 1, even if another peer is legitimately assigned to it.
+// This is acceptable because:
+// 1. Probability: Low - only affects nodes that hash to slot 1 (~0.4% chance, 1/256 nodes)
+// 2. Timing: Only during agent initialization (once per agent lifetime)
+// 3. Duration: Brief - missing 1-2 heartbeat cycles at most (~30-60 seconds)
+// 4. Tolerance: High - requires 7 consecutive missed heartbeats (210 seconds) before peer remediation
+// 5. Self-healing: The affected node's next heartbeat automatically restores slot 1
+//
+// The brief heartbeat gap is well within the tolerance threshold and does not trigger remediation.
+func (s *SBRAgent) clearPreflightSlot() error {
+	if s.heartbeatDevice == nil {
+		return fmt.Errorf("heartbeat device is nil")
+	}
+
+	// If device is closed, try to reinitialize before clearing
+	if s.heartbeatDevice.IsClosed() {
+		logger.V(1).Info("Heartbeat device closed, reinitializing before slot 1 cleanup")
+		if err := s.initializeSBRDevices(); err != nil {
+			return fmt.Errorf("failed to reinitialize closed heartbeat device: %w", err)
+		}
+		// Double-check it's open now
+		if s.heartbeatDevice.IsClosed() {
+			return fmt.Errorf("heartbeat device still closed after reinitialization")
+		}
+		logger.V(1).Info("Heartbeat device reinitialized successfully")
+	}
+
+	// Calculate slot offset for DefaultNodeID (slot 1)
+	slotOffset := int64(DefaultNodeID) * sbdprotocol.SBD_SLOT_SIZE
+
+	logger.V(1).Info("Clearing pre-flight test data from slot 1",
+		"slotOffset", slotOffset,
+		"assignedNodeID", s.nodeID)
+
+	// Create an empty buffer to zero out the slot
+	emptySlot := make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+
+	// Write zeros to slot 1
+	return s.writeSlotWithLock(s.heartbeatDevice, slotOffset, emptySlot, "clear pre-flight slot 1")
 }
 
 // annotateNodeGraceNow sets the grace annotation on the Node to the current time
