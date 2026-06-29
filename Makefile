@@ -804,7 +804,15 @@ bundle-update: yq ## Patch CSV with image, icon and skipRange
 	@# set icon
 	$(YQ) -i '.spec.icon[0].base64data = "$(ICON_BASE64)"' ${CSV}
 	@# set skipRange
-	$(YQ) -i '.metadata.annotations."olm.skipRange" = ">=$(SKIP_RANGE_LOWER) <$(VERSION)"' ${CSV}
+	@if [ -n "${SKIP_RANGE_LOWER}" ] && [ "${VERSION}" != "${DEFAULT_VERSION}" ] && [ "${VERSION}" != "${SKIP_RANGE_LOWER}" ]; then \
+		if ! printf '%s\n' "${SKIP_RANGE_LOWER}" "${VERSION}" | sort -V -C 2>/dev/null; then \
+			echo "Error: VERSION (${VERSION}) must be greater than SKIP_RANGE_LOWER (${SKIP_RANGE_LOWER})"; \
+			exit 1; \
+		fi; \
+		$(YQ) -i '.metadata.annotations."olm.skipRange" = ">=$(SKIP_RANGE_LOWER) <$(VERSION)"' ${CSV}; \
+	else \
+		$(YQ) -i '.metadata.annotations."olm.skipRange" = "<$(VERSION)"' ${CSV}; \
+	fi
 
 .PHONY: add-ocp-annotations
 add-ocp-annotations: yq ## Add OCP annotations
