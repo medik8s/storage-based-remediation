@@ -18,7 +18,7 @@ DEFAULT_VERSION := 0.0.1
 VERSION ?= $(DEFAULT_VERSION)
 PREVIOUS_VERSION ?= $(DEFAULT_VERSION)
 # Lower bound for the skipRange field in the CSV, should be set to the oldest supported version
-SKIP_RANGE_LOWER ?= 0.0.1
+SKIP_RANGE_LOWER ?=
 export VERSION
 
 # When no version is set, use latest as image tags
@@ -37,6 +37,10 @@ BUNDLE_IMG ?= $(QUAY_OPERATOR_NAME)-bundle:$(IMAGE_TAG)
 
 # The image tag given to the resulting catalog image (e.g. make catalog-build CATALOG_IMG=example.com/operator-catalog:v0.2.0).
 CATALOG_IMG ?= $(QUAY_OPERATOR_NAME)-catalog:$(IMAGE_TAG)
+# NOTE: CATALOG_DIR and CATALOG_DOCKERFILE items won't be deleted in case of recipe's failure
+CATALOG_DIR := catalog
+CATALOG_DOCKERFILE := ${CATALOG_DIR}.Dockerfile
+CATALOG_INDEX := $(CATALOG_DIR)/index.yaml
 
 AGENT_IMG ?= $(IMAGE_REGISTRY)/$(AGENT_NAME):$(IMAGE_TAG)
 export AGENT_IMG
@@ -602,6 +606,17 @@ OPM_VERSION ?= v1.66.0
 CHANNELS ?= stable
 DEFAULT_CHANNEL ?= stable
 
+# Validate DEFAULT_CHANNEL is in CHANNELS
+# When CHANNELS contains comma-separated values (e.g., "stable,beta"), we need to convert
+# commas to spaces for filter to match. We use a variable for the comma because Make treats
+# commas as function argument delimiters, causing $(subst ,, ,$(CHANNELS)) to misparse.
+comma := ,
+ifneq (,$(DEFAULT_CHANNEL))
+  ifeq (,$(filter $(DEFAULT_CHANNEL),$(subst $(comma), ,$(CHANNELS))))
+    $(error DEFAULT_CHANNEL "$(DEFAULT_CHANNEL)" must be present in CHANNELS "$(CHANNELS)")
+  endif
+endif
+
 # CSV patch helpers
 YQ = $(YQ_DIR)/$(YQ_API_VERSION)-$(YQ_VERSION)/yq
 YQ_API_VERSION = v4
@@ -691,10 +706,47 @@ bundle-push: ## Push bundle image
 	@echo "Pushing bundle image: ${BUNDLE_IMG}"
 	$(CONTAINER_TOOL) push ${BUNDLE_IMG}
 
+# Add olm.channel entries for each channel in CHANNELS.
+# For development version (0.0.1), omit replaces and skipRange to avoid OLM catalog validation errors.
+.PHONY: add_channel_entry_for_the_bundle
+add_channel_entry_for_the_bundle:
+	@for channel in $(shell echo ${CHANNELS} | tr ',' ' '); do \
+		echo "---" >> ${CATALOG_INDEX}; \
+		echo "schema: olm.channel" >> ${CATALOG_INDEX}; \
+		echo "package: ${OPERATOR_NAME}" >> ${CATALOG_INDEX}; \
+		echo "name: $$channel" >> ${CATALOG_INDEX}; \
+		echo "entries:" >> ${CATALOG_INDEX}; \
+		echo "  - name: ${OPERATOR_NAME}.v${VERSION}" >> ${CATALOG_INDEX}; \
+		if [ -n "${PREVIOUS_VERSION}" ] && [ "${VERSION}" != "${DEFAULT_VERSION}" ] && [ "${PREVIOUS_VERSION}" != "${DEFAULT_VERSION}" ]; then \
+			echo "    replaces: ${OPERATOR_NAME}.v${PREVIOUS_VERSION}" >> ${CATALOG_INDEX}; \
+		fi; \
+		if [ -n "${SKIP_RANGE_LOWER}" ] && [ "${VERSION}" != "${DEFAULT_VERSION}" ] && [ "${VERSION}" != "${SKIP_RANGE_LOWER}" ]; then \
+			if ! printf '%s\n' "${SKIP_RANGE_LOWER}" "${VERSION}" | sort -V -C 2>/dev/null; then \
+				echo "Error: VERSION (${VERSION}) must be greater than SKIP_RANGE_LOWER (${SKIP_RANGE_LOWER})"; \
+				exit 1; \
+			fi; \
+			echo "    skipRange: '>=${SKIP_RANGE_LOWER} <${VERSION}'" >> ${CATALOG_INDEX}; \
+		fi; \
+	done
+
 .PHONY: catalog-build
-catalog-build: opm ## Build a catalog image (single-bundle index)
-	@echo "Building catalog image: ${CATALOG_IMG}"
-	$(OPM) index add --container-tool $(CONTAINER_TOOL) --tag $(CATALOG_IMG) --bundles $(BUNDLE_IMG)
+catalog-build: opm ## Build a file-based catalog image.
+	# Remove the catalog directory and Dockerfile
+	-rm -r ${CATALOG_DIR} ${CATALOG_DOCKERFILE}
+	@mkdir -p ${CATALOG_DIR}
+	$(OPM) generate dockerfile ${CATALOG_DIR}
+	$(OPM) init ${OPERATOR_NAME} \
+		--default-channel=${DEFAULT_CHANNEL} \
+		--description=./README.md \
+		--icon=${BLUE_ICON_PATH} \
+		--output yaml \
+		> ${CATALOG_INDEX}
+	$(OPM) render ${BUNDLE_IMG} --output yaml >> ${CATALOG_INDEX}
+	$(MAKE) add_channel_entry_for_the_bundle
+	$(OPM) validate ${CATALOG_DIR}
+	$(CONTAINER_TOOL) build . -f ${CATALOG_DOCKERFILE} -t ${CATALOG_IMG}
+	# Clean up the catalog directory and Dockerfile
+	rm -r ${CATALOG_DIR} ${CATALOG_DOCKERFILE}
 
 .PHONY: catalog-push
 catalog-push: ## Push catalog image
@@ -752,7 +804,15 @@ bundle-update: yq ## Patch CSV with image, icon and skipRange
 	@# set icon
 	$(YQ) -i '.spec.icon[0].base64data = "$(ICON_BASE64)"' ${CSV}
 	@# set skipRange
-	$(YQ) -i '.metadata.annotations."olm.skipRange" = ">=$(SKIP_RANGE_LOWER) <$(VERSION)"' ${CSV}
+	@if [ -n "${SKIP_RANGE_LOWER}" ] && [ "${VERSION}" != "${DEFAULT_VERSION}" ] && [ "${VERSION}" != "${SKIP_RANGE_LOWER}" ]; then \
+		if ! printf '%s\n' "${SKIP_RANGE_LOWER}" "${VERSION}" | sort -V -C 2>/dev/null; then \
+			echo "Error: VERSION (${VERSION}) must be greater than SKIP_RANGE_LOWER (${SKIP_RANGE_LOWER})"; \
+			exit 1; \
+		fi; \
+		$(YQ) -i '.metadata.annotations."olm.skipRange" = ">=$(SKIP_RANGE_LOWER) <$(VERSION)"' ${CSV}; \
+	else \
+		$(YQ) -i '.metadata.annotations."olm.skipRange" = "<$(VERSION)"' ${CSV}; \
+	fi
 
 .PHONY: add-ocp-annotations
 add-ocp-annotations: yq ## Add OCP annotations

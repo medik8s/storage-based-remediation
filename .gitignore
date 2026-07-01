@@ -51,3 +51,7 @@ cspell.json
 # Generated manifests and test-specific configurations
 dist/
 deploy/sbr-agent-daemonset-*.yaml
+
+# Generated catalog files
+catalog/
+catalog.Dockerfile
