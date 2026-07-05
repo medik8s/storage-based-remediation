@@ -115,10 +115,18 @@ var _ = BeforeEach(func() {
 
 var _ = AfterEach(func() {
 	createReportAndCleanUp()
+
+	// Clean up SBRCs BEFORE checking node readiness
+	// This ensures nodes are not in remediation state during the check
+	By("Cleaning up all SBRCs created by this test")
+	cleanupStorageBasedRemediationConfigs(testNamespace)
+
+	// Now check that nodes are ready after cleanup
 	Expect(utils.WaitForNodesReady(testNamespace, "10m", "30s", false)).To(Succeed(), "expected all nodes to be Ready")
+
+	// Collect agent logs after cleanup and readiness verification
 	debugCollector := newDebugCollector(testClients, testNamespace.ArtifactsDir)
 	debugCollector.collectAgentLogs(testNamespace.Name)
-	cleanupStorageBasedRemediationConfigs(testNamespace)
 })
 
 func createReportAndCleanUp() {
