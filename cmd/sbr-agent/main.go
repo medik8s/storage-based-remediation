@@ -1638,6 +1638,11 @@ func (s *SBRAgent) writeSlotWithLock(device mocks.BlockDeviceInterface, slotOffs
 // 4. Tolerance: High - requires 7 consecutive missed heartbeats (210 seconds) before peer remediation
 // 5. Self-healing: The affected node's next heartbeat automatically restores slot 1
 //
+// NOTE: In concurrent startup scenarios (e.g., DaemonSet rollouts with many nodes), the probability
+// of slot 1 collision increases slightly, but the impact remains minimal due to the high tolerance
+// threshold and rapid self-healing. Multiple agents clearing slot 1 concurrently is safe as each
+// write is idempotent (all write zeros), and the legitimate slot 1 owner recovers on next heartbeat.
+//
 // The brief heartbeat gap is well within the tolerance threshold and does not trigger remediation.
 func (s *SBRAgent) clearPreflightSlot() error {
 	if s.heartbeatDevice == nil {

@@ -713,7 +713,7 @@ func (r *StorageBasedRemediationConfigReconciler) ensureSBRDevice(
 					Containers: []corev1.Container{
 						{
 							Name:    "sbr-device-init",
-							Image:   "registry.access.redhat.com/ubi9/ubi-minimal:latest",
+							Image:   "registry.access.redhat.com/ubi9/ubi-minimal:9.8",
 							Command: []string{"sh", "-c"},
 							Args: []string{
 								fmt.Sprintf(`
@@ -1324,7 +1324,7 @@ func (r *StorageBasedRemediationConfigReconciler) runNodeMapCleanupJob(
 					Containers: []corev1.Container{
 						{
 							Name:    "sbr-cleanup",
-							Image:   "registry.access.redhat.com/ubi9/ubi-minimal:latest",
+							Image:   "registry.access.redhat.com/ubi9/ubi-minimal:9.8",
 							Command: []string{"sh", "-c"},
 							Args: []string{
 								fmt.Sprintf(`

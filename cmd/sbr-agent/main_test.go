@@ -1900,11 +1900,6 @@ func TestSlot1Cleanup_ClearWhenAssignedToDifferentNodeID(t *testing.T) {
 		}
 	})
 
-	// Skip if agent happened to hash to slot 1
-	if sbrAgent.nodeID == DefaultNodeID {
-		t.Skipf("Node hashed to slot 1, cannot test cleanup (nodeID=%d)", sbrAgent.nodeID)
-	}
-
 	// Verify slot 1 was cleared
 	slotData = readSlot1Data(t, heartbeatPath)
 	if !sbdprotocol.IsEmptySlot(slotData[:sbdprotocol.SBD_HEADER_SIZE]) {
