@@ -83,8 +83,9 @@ steps.
 > to the real `sbr-operator-system` namespace — verified via `kustomize build
 > config/default`, which still renders the stale `namespace: system` on these
 > bindings. This breaks leader election and metrics-auth RBAC on `make
-> deploy`. See PR #23 (closed, not merged) for a proposed fix using base
-> names instead.
+> deploy`. Fix: use base ServiceAccount names in these subjects instead of
+> pre-prefixed names, so kustomize's nameReference transformer can rewrite
+> both name and namespace correctly.
 
 1. Install the operator:
 
