@@ -56,9 +56,10 @@ kubectl get daemonset -n <namespace>
 # Check pods
 kubectl get pods -n <namespace> -o wide
 
-# View logs
-kubectl logs -n <namespace> -l app=sbr-agent
-kubectl logs -n <namespace> -l app=sbr-agent -f
+# View logs (app=sbr-agent matches every config in the namespace;
+# scope to one config with the storagebasedremediationconfig label)
+kubectl logs -n <namespace> -l storagebasedremediationconfig=<config-name>
+kubectl logs -n <namespace> -l storagebasedremediationconfig=<config-name> -f
 
 # Check events
 kubectl get events -n <namespace> --sort-by='.lastTimestamp'
@@ -81,8 +82,10 @@ oc debug node/<node-name> -- chroot /host sh -c 'ls -la /dev/watchdog*'
 kubectl debug node/<node-name> -it --image=busybox --profile=sysadmin \
   -- chroot /host sh -c 'ls -la /dev/watchdog*'
 
-# Check metrics
-curl http://<node-ip>:8082/metrics
+# Check metrics (agent does not use hostNetwork; use a Service + port-forward,
+# not a direct node-IP curl — see Monitoring and Observability)
+kubectl port-forward -n <namespace> svc/sbr-agent-metrics 8082:8082
+curl http://localhost:8082/metrics
 
 # Verify SCC ClusterRoleBinding (OpenShift)
 oc get clusterrolebinding | grep sbr-agent
@@ -154,7 +157,7 @@ spec:
 | `sharedStorageClass` | None | StorageClass for shared storage coordination (RWX required); mounted at `/dev/sbr` |
 | `nodeSelector` | Worker nodes | Label selector restricting which nodes run the agent |
 | `sbrTimeoutSeconds` | `30` | SBR detection timeout in seconds (10–300) |
-| `maxConsecutiveFailures` | `7` | Consecutive I/O failures before declaring a node unhealthy (2–32) |
+| `maxConsecutiveFailures` | `7` | Consecutive watchdog, SBR-device, local-heartbeat, or peer-heartbeat failures before declaring a node unhealthy (2–32) |
 | `detectOnlyMode` | `Disabled` | When `Enabled`, detects failures without performing remediation |
 
 **Note**: The namespace is set via `metadata.namespace`. The agent image is managed automatically

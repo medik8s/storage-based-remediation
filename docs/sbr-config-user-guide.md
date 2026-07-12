@@ -174,7 +174,8 @@ oc get pods -n openshift-operators | grep -E 'storage-based-remediation|sbr'
 #### `maxConsecutiveFailures` (integer, optional)
 - **Default**: `7`
 - **Range**: `2` to `32`
-- **Description**: Number of consecutive storage I/O failures before a node is marked unhealthy.
+- **Description**: Number of consecutive watchdog, SBR-device, local-heartbeat, or peer-heartbeat
+  failures before a node is marked unhealthy — not limited to storage I/O.
   Time-to-detection scales with `maxConsecutiveFailures × heartbeatInterval` for both local
   and peer failures.
 
@@ -296,7 +297,12 @@ spec:
 
 ### Multi-Cluster Configuration
 
+Each StorageBasedRemediationConfig below targets a **different cluster** — apply each manifest
+against its own cluster context (`kubectl config use-context <cluster>` or `--context`), not
+together with a single `kubectl apply`.
+
 ```yaml
+# Apply against the "west" cluster context
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
 kind: StorageBasedRemediationConfig
 metadata:
@@ -304,7 +310,10 @@ metadata:
   namespace: sbr-cluster-west
 spec:
   watchdogPath: "/dev/watchdog"
----
+```
+
+```yaml
+# Apply against the "east" cluster context
 apiVersion: storage-based-remediation.medik8s.io/v1alpha1
 kind: StorageBasedRemediationConfig
 metadata:
@@ -432,7 +441,8 @@ spec:
 - **NFS**: `nfs-client` (via NFS CSI driver)
 - **CephFS**: `cephfs` (via Ceph CSI driver)
 - **GlusterFS**: `glusterfs` (via GlusterFS CSI driver)
-- **Azure Files**: `azurefile-csi` (via Azure Files CSI driver)
+- **Azure Files**: `azurefile-csi`, **NFS v4.1-backed shares only** — SMB-backed Azure Files
+  does not provide the POSIX file-locking semantics the coordination contract requires
 
 ---
 
@@ -646,10 +656,13 @@ spec:
     matchLabels:
       app: sbr-agent
   endpoints:
-  - port: runtime-metrics
+  - port: metrics
     interval: 30s
     path: /metrics
 ```
+
+> The `port` field above must match the **named port on the Service** fronting the agent
+> (see `config/prometheus/sbr-agent-metrics.yaml`), not the container's port name.
 
 ### With Alerting Rules
 
