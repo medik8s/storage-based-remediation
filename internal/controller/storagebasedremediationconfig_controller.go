@@ -36,7 +36,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -72,6 +74,12 @@ const (
 	ReasonPVCError                                = "PVCError"
 	ReasonSBRDeviceInitialized                    = "SBRDeviceInitialized"
 	ReasonSBRDeviceInitError                      = "SBRDeviceInitWaiting"
+
+	// Cleanup job timeout constants
+	// CleanupJobPollTimeout is how long we wait for the cleanup job to complete
+	CleanupJobPollTimeout = 240 * time.Second
+	// CleanupJobDeadline is the Kubernetes ActiveDeadlineSeconds - must be > poll timeout to avoid races
+	CleanupJobDeadline = int64(300) // 5 minutes, gives 60s margin over poll timeout
 
 	// Finalizer for cleanup operations
 	StorageBasedRemediationConfigFinalizerName = "sbr-operator.medik8s.io/cleanup"
@@ -705,7 +713,7 @@ func (r *StorageBasedRemediationConfigReconciler) ensureSBRDevice(
 					Containers: []corev1.Container{
 						{
 							Name:    "sbr-device-init",
-							Image:   "registry.access.redhat.com/ubi8/ubi-minimal:latest",
+							Image:   "registry.access.redhat.com/ubi9/ubi-minimal:9.8",
 							Command: []string{"sh", "-c"},
 							Args: []string{
 								fmt.Sprintf(`
@@ -827,7 +835,7 @@ fi
 
 echo "SBR devices initialization completed successfully"
 `,
-									agent.SharedStorageSBRDeviceDirectory,
+									sbrConfig.Spec.GetSharedStorageMountPath(),
 									agent.SharedStorageSBRDeviceFile,
 									agent.SharedStorageFenceDeviceSuffix,
 									agent.SharedStorageNodeMappingSuffix),
@@ -1214,6 +1222,20 @@ func (r *StorageBasedRemediationConfigReconciler) handleDeletion(
 
 	// Note: DaemonSet cleanup is handled automatically by Kubernetes garbage collection due to OwnerReference
 
+	// Run cleanup job to wipe the node map file before deletion (RHWA-1056)
+	// This prevents stale node map entries from causing agent restart loops on SBRC recreation
+	if sbrConfig.Spec.HasSharedStorage() {
+		if err := r.runNodeMapCleanupJob(ctx, sbrConfig, logger); err != nil {
+			logger.Error(err, "Failed to run node map cleanup job - SBRC recreation may fail with restart loops")
+			r.emitEventf(sbrConfig, EventTypeWarning, ReasonCleanupError,
+				"Node map cleanup job failed: %v. If recreating this SBRC, you may encounter agent restart loops (RHWA-1056). "+
+					"Manual cleanup: delete PVC '%s' before recreating SBRC, or manually remove the node map file from shared storage.",
+				err, sbrConfig.Spec.GetSharedStoragePVCName(sbrConfig.Name))
+			// Non-fatal: continue with deletion even if cleanup fails
+			// The stale entries will eventually age out via periodic cleanup
+		}
+	}
+
 	// Patch the shared-storage PV reclaimPolicy to Delete before the finalizer is removed and GC
 	// deletes the PVC. This prevents Released PV accumulation when the StorageClass uses reclaimPolicy: Retain.
 	if sbrConfig.Spec.HasSharedStorage() {
@@ -1245,6 +1267,160 @@ func (r *StorageBasedRemediationConfigReconciler) handleDeletion(
 		"StorageBasedRemediationConfig cleanup completed successfully")
 
 	return ctrl.Result{}, nil
+}
+
+// runNodeMapCleanupJob creates and waits for a job that wipes the node map file
+// This prevents stale node map entries from causing agent restart loops on SBRC recreation (RHWA-1056)
+func (r *StorageBasedRemediationConfigReconciler) runNodeMapCleanupJob(
+	ctx context.Context, sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig, logger logr.Logger) error {
+
+	pvcName := sbrConfig.Spec.GetSharedStoragePVCName(sbrConfig.Name)
+
+	// Initial logger without job name (will add after creation with generated name)
+	logger = logger.WithValues(
+		"job.namespace", sbrConfig.Namespace,
+		"pvc.name", pvcName,
+	)
+
+	// Check if PVC exists before creating cleanup job
+	pvc := &corev1.PersistentVolumeClaim{}
+	if err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: sbrConfig.Namespace}, pvc); err != nil {
+		if errors.IsNotFound(err) {
+			return fmt.Errorf("shared-storage PVC %q not found; node-map cleanup could not run", pvcName)
+		}
+		return fmt.Errorf("failed to get PVC for cleanup job: %w", err)
+	}
+
+	// Define the cleanup job
+	cleanupJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: fmt.Sprintf("%s-sbr-cleanup-", sbrConfig.Name),
+			Namespace:    sbrConfig.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "sbr-operator",
+				"app.kubernetes.io/component":  "sbr-cleanup",
+				"app.kubernetes.io/managed-by": "sbr-operator",
+				"sbrconfig":                    sbrConfig.Name,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			// Clean up job 5 minutes after completion (success or failure)
+			TTLSecondsAfterFinished: ptr.To[int32](300),
+			// Kill pod if still running (must be > poll timeout to avoid race)
+			ActiveDeadlineSeconds: ptr.To(CleanupJobDeadline),
+			// Allow 1 retry on failure (2 total pod attempts)
+			BackoffLimit: ptr.To[int32](1),
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app.kubernetes.io/name":       "sbr-operator",
+						"app.kubernetes.io/component":  "sbr-cleanup",
+						"app.kubernetes.io/managed-by": "sbr-operator",
+						"sbrconfig":                    sbrConfig.Name,
+					},
+				},
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyNever,
+					Containers: []corev1.Container{
+						{
+							Name:    "sbr-cleanup",
+							Image:   "registry.access.redhat.com/ubi9/ubi-minimal:9.8",
+							Command: []string{"sh", "-c"},
+							Args: []string{
+								fmt.Sprintf(`
+set -e
+SBR_DEVICE_PREFIX="%s"
+HEARTBEAT_DEVICE_PATH="$SBR_DEVICE_PREFIX/%s"
+NODE_MAP_FILE="$HEARTBEAT_DEVICE_PATH%s"
+
+echo "Cleaning up SBR node map file: $NODE_MAP_FILE"
+
+if [ -f "$NODE_MAP_FILE" ]; then
+    echo "Node map file exists, removing it to prevent stale entries on recreation"
+    rm -f "$NODE_MAP_FILE"
+    echo "Node map file removed successfully"
+else
+    echo "Node map file does not exist, nothing to clean"
+fi
+
+echo "SBR cleanup completed successfully"
+`,
+									sbrConfig.Spec.GetSharedStorageMountPath(),
+									agent.SharedStorageSBRDeviceFile,
+									agent.SharedStorageNodeMappingSuffix),
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "shared-storage",
+									MountPath: sbrConfig.Spec.GetSharedStorageMountPath(),
+								},
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceMemory: mustParseQuantity("32Mi"),
+									corev1.ResourceCPU:    mustParseQuantity("10m"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceMemory: mustParseQuantity("64Mi"),
+									corev1.ResourceCPU:    mustParseQuantity("100m"),
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "shared-storage",
+							VolumeSource: corev1.VolumeSource{
+								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+									ClaimName: pvcName,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Create the cleanup job
+	logger.Info("Creating node map cleanup job")
+	if err := r.Create(ctx, cleanupJob); err != nil {
+		return fmt.Errorf("failed to create cleanup job: %w", err)
+	}
+
+	// Get the generated job name and update logger
+	jobName := cleanupJob.Name
+	logger = logger.WithValues("job.name", jobName)
+	logger.Info("Cleanup job created with generated name")
+
+	// Wait for job completion with timeout
+	logger.Info("Waiting for cleanup job to complete", "timeout", CleanupJobPollTimeout)
+	err := wait.PollUntilContextTimeout(ctx, 5*time.Second, CleanupJobPollTimeout, true, func(ctx context.Context) (bool, error) {
+		job := &batchv1.Job{}
+		if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: sbrConfig.Namespace}, job); err != nil {
+			logger.Error(err, "Failed to get cleanup job status")
+			return false, err
+		}
+
+		for _, condition := range job.Status.Conditions {
+			if condition.Type == batchv1.JobComplete && condition.Status == corev1.ConditionTrue {
+				logger.Info("Cleanup job completed successfully")
+				return true, nil
+			}
+			if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+				logger.Info("Cleanup job failed, but continuing with deletion",
+					"reason", condition.Reason,
+					"message", condition.Message)
+				return false, fmt.Errorf("cleanup job failed: %s", condition.Reason)
+			}
+		}
+
+		logger.V(1).Info("Waiting for cleanup job to complete",
+			"active", job.Status.Active, "succeeded", job.Status.Succeeded, "failed", job.Status.Failed)
+		return false, nil // Keep polling
+	})
+
+	return err
 }
 
 // ensureServiceAccount creates the service account and RBAC resources if they don't exist

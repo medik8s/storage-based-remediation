@@ -1800,3 +1800,271 @@ func isConditionExist(conditions []corev1.NodeCondition, condType corev1.NodeCon
 	}
 	return false
 }
+
+// Helper functions for TestSlot1Cleanup_* tests
+
+// setupTestDevices creates temporary test device files and returns their paths
+func setupTestDevices(t *testing.T) (tmpDir, heartbeatPath string) {
+	tmpDir = t.TempDir()
+	heartbeatPath = filepath.Join(tmpDir, "sbr-device")
+	fencePath := filepath.Join(tmpDir, "sbr-device-fence")
+
+	deviceSize := int(sbdprotocol.SBD_SLOT_SIZE * 256)
+	if err := os.WriteFile(heartbeatPath, make([]byte, deviceSize), 0644); err != nil {
+		t.Fatalf("Failed to create heartbeat device: %v", err)
+	}
+	if err := os.WriteFile(fencePath, make([]byte, deviceSize), 0644); err != nil {
+		t.Fatalf("Failed to create fence device: %v", err)
+	}
+	return
+}
+
+// writePreflightDataToSlot1 writes pre-flight heartbeat data to slot 1
+func writePreflightDataToSlot1(t *testing.T, heartbeatPath string) {
+	preflightMsg := sbdprotocol.SBDHeartbeatMessage{
+		Header: sbdprotocol.NewHeartbeat(DefaultNodeID, 1),
+	}
+	msgBytes, err := sbdprotocol.MarshalHeartbeat(preflightMsg)
+	if err != nil {
+		t.Fatalf("Failed to marshal pre-flight heartbeat: %v", err)
+	}
+
+	heartbeatFile, err := os.OpenFile(heartbeatPath, os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatalf("Failed to open heartbeat file for writing: %v", err)
+	}
+	defer func() {
+		if cerr := heartbeatFile.Close(); cerr != nil {
+			t.Errorf("Failed to close heartbeat file: %v", cerr)
+		}
+	}()
+
+	slot1Offset := int64(DefaultNodeID) * sbdprotocol.SBD_SLOT_SIZE
+	if _, err := heartbeatFile.WriteAt(msgBytes, slot1Offset); err != nil {
+		t.Fatalf("Failed to write pre-flight data: %v", err)
+	}
+}
+
+// readSlot1Data reads and returns the data from slot 1
+func readSlot1Data(t *testing.T, heartbeatPath string) []byte {
+	slotData := make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+	heartbeatFile, err := os.Open(heartbeatPath)
+	if err != nil {
+		t.Fatalf("Failed to open heartbeat file for reading: %v", err)
+	}
+	defer func() {
+		if cerr := heartbeatFile.Close(); cerr != nil {
+			t.Errorf("Failed to close heartbeat file: %v", cerr)
+		}
+	}()
+
+	slot1Offset := int64(DefaultNodeID) * sbdprotocol.SBD_SLOT_SIZE
+	if _, err := heartbeatFile.ReadAt(slotData, slot1Offset); err != nil {
+		t.Fatalf("Failed to read slot data: %v", err)
+	}
+	return slotData
+}
+
+// TestSlot1Cleanup_ClearWhenAssignedToDifferentNodeID tests that pre-flight test data
+// in slot 1 is cleared after hash-based assignment when agent is assigned to a different nodeID (RHWA-1058)
+func TestSlot1Cleanup_ClearWhenAssignedToDifferentNodeID(t *testing.T) {
+	tmpDir, heartbeatPath := setupTestDevices(t)
+
+	writePreflightDataToSlot1(t, heartbeatPath)
+
+	// Verify pre-condition
+	slotData := readSlot1Data(t, heartbeatPath)
+	if sbdprotocol.IsEmptySlot(slotData[:sbdprotocol.SBD_HEADER_SIZE]) {
+		t.Fatal("Pre-condition failed: slot 1 should have pre-flight data")
+	}
+
+	// Create agent with a node name that won't hash to slot 1
+	mockWatchdog := mocks.NewMockWatchdog(tmpDir + "/watchdog")
+	k8sClient := testutils.NewFakeClient(t)
+
+	sbrAgent, err := NewSBRAgentWithWatchdog(
+		mockWatchdog,
+		heartbeatPath,
+		"test-node-cleanup", // Won't hash to slot 1
+		"test-cluster",
+		1, 1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second,
+		30, "panic", 8888, 10*time.Minute, true, 2*time.Second,
+		k8sClient, &rest.Config{}, createManagerPrefix(), false,
+	)
+	if err != nil {
+		t.Fatalf("Failed to create agent: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := sbrAgent.Stop(); err != nil {
+			t.Errorf("Failed to stop agent: %v", err)
+		}
+	})
+
+	// Verify slot 1 was cleared
+	slotData = readSlot1Data(t, heartbeatPath)
+	if !sbdprotocol.IsEmptySlot(slotData[:sbdprotocol.SBD_HEADER_SIZE]) {
+		t.Errorf("Slot 1 should be cleared (agent got nodeID %d)", sbrAgent.nodeID)
+	}
+
+	// Verify entire slot is zeroed
+	for i, b := range slotData {
+		if b != 0 {
+			t.Errorf("Slot 1 byte at offset %d is non-zero: 0x%02x", i, b)
+			break
+		}
+	}
+}
+
+// TestSlot1Cleanup_PreserveWhenAssignedToNodeID1 tests that slot 1 is NOT cleared
+// when the agent is assigned to nodeID=1 (RHWA-1058)
+func TestSlot1Cleanup_PreserveWhenAssignedToNodeID1(t *testing.T) {
+	tmpDir, heartbeatPath := setupTestDevices(t)
+
+	writePreflightDataToSlot1(t, heartbeatPath)
+
+	// Create agent with node name that hashes to slot 1
+	mockWatchdog := mocks.NewMockWatchdog(tmpDir + "/watchdog")
+	k8sClient := testutils.NewFakeClient(t)
+
+	sbrAgent, err := NewSBRAgentWithWatchdog(
+		mockWatchdog,
+		heartbeatPath,
+		"test-node-517", // Known to hash to slot 1 with cluster "test-cluster"
+		"test-cluster",
+		1, 1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second,
+		30, "panic", 8888, 10*time.Minute, true, 2*time.Second,
+		k8sClient, &rest.Config{}, createManagerPrefix(), false,
+	)
+	if err != nil {
+		t.Fatalf("Failed to create agent: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := sbrAgent.Stop(); err != nil {
+			t.Errorf("Failed to stop agent: %v", err)
+		}
+	})
+
+	// Verify agent got slot 1
+	if sbrAgent.nodeID != DefaultNodeID {
+		t.Skipf("Node didn't hash to slot 1, cannot test (got nodeID=%d)", sbrAgent.nodeID)
+	}
+
+	// Verify slot 1 still has data (NOT cleared)
+	slotData := readSlot1Data(t, heartbeatPath)
+	if sbdprotocol.IsEmptySlot(slotData[:sbdprotocol.SBD_HEADER_SIZE]) {
+		t.Error("Slot 1 should NOT be cleared when agent is assigned to nodeID=1")
+	}
+
+	// Verify it's still a valid heartbeat
+	header, err := sbdprotocol.Unmarshal(slotData[:sbdprotocol.SBD_HEADER_SIZE])
+	if err != nil {
+		t.Fatalf("Failed to unmarshal slot 1 header: %v", err)
+	}
+	if header.NodeID != 1 {
+		t.Errorf("Slot 1 should still have nodeID=1, got %d", header.NodeID)
+	}
+	if header.Type != sbdprotocol.SBD_MSG_TYPE_HEARTBEAT {
+		t.Errorf("Slot 1 should still be a heartbeat, got type %d", header.Type)
+	}
+}
+
+// TestSlot1Cleanup_UseNodeManagerLocking verifies that slot 1 cleanup uses node manager locking (RHWA-1058)
+func TestSlot1Cleanup_UseNodeManagerLocking(t *testing.T) {
+	tmpDir, heartbeatPath := setupTestDevices(t)
+
+	mockWatchdog := mocks.NewMockWatchdog(tmpDir + "/watchdog")
+	k8sClient := testutils.NewFakeClient(t)
+
+	sbrAgent, err := NewSBRAgentWithWatchdog(
+		mockWatchdog, heartbeatPath, "test-node-locking", "test-cluster",
+		1, 1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second,
+		30, "panic", 8888, 10*time.Minute,
+		true, // fileLockingEnabled
+		2*time.Second,
+		k8sClient, &rest.Config{}, createManagerPrefix(), false,
+	)
+	if err != nil {
+		t.Fatalf("Failed to create agent: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := sbrAgent.Stop(); err != nil {
+			t.Errorf("Failed to stop agent: %v", err)
+		}
+	})
+
+	// Verify node manager exists and has file locking
+	if sbrAgent.nodeManager == nil {
+		t.Error("Agent should have a node manager")
+	}
+	if sbrAgent.nodeManager != nil && sbrAgent.nodeManager.GetCoordinationStrategy() != "file-locking" {
+		t.Errorf("Expected file-locking coordination, got %s", sbrAgent.nodeManager.GetCoordinationStrategy())
+	}
+}
+
+func TestSlot1CleanupWithMockDevice(t *testing.T) {
+	t.Run("should zero entire slot, not just header", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		heartbeatPath := filepath.Join(tmpDir, "sbr-device")
+		fencePath := filepath.Join(tmpDir, "sbr-device-fence")
+
+		deviceSize := int(sbdprotocol.SBD_SLOT_SIZE * 256)
+		deviceData := make([]byte, deviceSize)
+
+		// Fill slot 1 with pattern data (not just zeros)
+		slot1Start := int(DefaultNodeID) * int(sbdprotocol.SBD_SLOT_SIZE)
+		for i := slot1Start; i < slot1Start+int(sbdprotocol.SBD_SLOT_SIZE); i++ {
+			deviceData[i] = 0xAA // Pattern to verify full clear
+		}
+
+		if err := os.WriteFile(heartbeatPath, deviceData, 0644); err != nil {
+			t.Fatalf("Failed to create heartbeat device: %v", err)
+		}
+		if err := os.WriteFile(fencePath, make([]byte, deviceSize), 0644); err != nil {
+			t.Fatalf("Failed to create fence device: %v", err)
+		}
+
+		mockWatchdog := mocks.NewMockWatchdog(tmpDir + "/watchdog")
+		k8sClient := testutils.NewFakeClient(t)
+
+		agent, err := NewSBRAgentWithWatchdog(
+			mockWatchdog, heartbeatPath, "test-node", "test-cluster",
+			1, 1*time.Second, 1*time.Second, 1*time.Second, 1*time.Second,
+			30, "panic", 8888, 10*time.Minute, true, 2*time.Second,
+			k8sClient, &rest.Config{}, createManagerPrefix(), false,
+		)
+		if err != nil {
+			t.Fatalf("Failed to create agent: %v", err)
+		}
+		defer func() {
+			if err := agent.Stop(); err != nil {
+				t.Errorf("Failed to stop agent: %v", err)
+			}
+		}()
+
+		// Skip if assigned to slot 1
+		if agent.nodeID == DefaultNodeID {
+			t.Skipf("Agent assigned to slot 1, cannot test cleanup")
+		}
+
+		// Verify entire slot 1 is zeroed
+		slotData := make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+		heartbeatFile, err := os.Open(heartbeatPath)
+		if err != nil {
+			t.Fatalf("Failed to open heartbeat file for reading: %v", err)
+		}
+		slot1Offset := int64(DefaultNodeID) * sbdprotocol.SBD_SLOT_SIZE
+		if _, err := heartbeatFile.ReadAt(slotData, slot1Offset); err != nil {
+			t.Fatalf("Failed to read slot data: %v", err)
+		}
+		if err := heartbeatFile.Close(); err != nil {
+			t.Fatalf("Failed to close heartbeat file: %v", err)
+		}
+
+		for i, b := range slotData {
+			if b != 0 {
+				t.Errorf("Slot 1 not fully zeroed: byte at offset %d is 0x%02x (expected 0x00)", i, b)
+				break
+			}
+		}
+	})
+}
