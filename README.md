@@ -68,13 +68,33 @@ predefined spec.
 
 ### Installation
 
-1. Install the operator:
+Recommended: install via OLM (OperatorHub on OpenShift, or the latest release
+manifests) rather than `make deploy` — see [SBR Config User Guide -
+Installation](docs/sbr-config-user-guide.md#installation) for OLM/OperatorHub
+steps.
+
+> **TODO**: `make deploy` currently has known RBAC/kustomize issues.
+> `config/rbac/leader_election_role_binding.yaml`,
+> `metrics_auth_role_binding.yaml`, and `sbr_operator_role_binding.yaml`
+> hardcode their ServiceAccount subject as `name:
+> sbr-operator-controller-manager` / `namespace: system`. Because the name is
+> already prefixed, kustomize's nameReference transformer doesn't recognize it
+> as a reference to the ServiceAccount and skips rewriting `namespace: system`
+> to the real `sbr-operator-system` namespace — verified via `kustomize build
+> config/default`, which still renders the stale `namespace: system` on these
+> bindings. This breaks leader election and metrics-auth RBAC on `make
+> deploy`. Fix: use base ServiceAccount names in these subjects instead of
+> pre-prefixed names, so kustomize's nameReference transformer can rewrite
+> both name and namespace correctly.
+
+1. Install the operator via OLM (see the
+   [Installation guide](docs/sbr-config-user-guide.md#installation) for details):
 
 ```bash
-make deploy
+operator-sdk run bundle quay.io/medik8s/storage-based-remediation-operator-bundle:latest
 ```
 
-1. Create a StorageBasedRemediationConfig:
+2. Create a StorageBasedRemediationConfig:
 
 ```bash
 kubectl apply -f config/samples/storage-based-remediation_v1alpha1_storagebasedremediationconfig.yaml
