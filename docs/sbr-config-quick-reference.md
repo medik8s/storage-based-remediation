@@ -82,9 +82,9 @@ oc debug node/<node-name> -- chroot /host sh -c 'ls -la /dev/watchdog*'
 kubectl debug node/<node-name> -it --image=busybox --profile=sysadmin \
   -- chroot /host sh -c 'ls -la /dev/watchdog*'
 
-# Check metrics (agent does not use hostNetwork; use a Service + port-forward,
-# not a direct node-IP curl — see Monitoring and Observability)
-kubectl port-forward -n <namespace> svc/sbr-agent-metrics 8082:8082
+# Check metrics (agent listens on port 8082; target the DaemonSet directly
+# since the Service manifest currently exposes 8080 — see RHWA-1372)
+kubectl port-forward -n <namespace> ds/sbr-agent-<config-name> 8082:8082
 curl http://localhost:8082/metrics
 
 # Verify SCC ClusterRoleBinding (OpenShift)

@@ -37,7 +37,7 @@ apiVersion: storage-based-remediation.medik8s.io/v1alpha1
 kind: StorageBasedRemediationConfig
 metadata:
   name: default
-  namespace: openshift-operators
+  namespace: sbr-operator-system
 spec:
   sharedStorageClass: "ocs-storagecluster-cephfs"
 ```
