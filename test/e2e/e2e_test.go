@@ -294,6 +294,11 @@ func testBasicStorageBasedRemediationConfiguration() {
 	})
 	Expect(err).NotTo(HaveOccurred(), "StorageBasedRemediationConfig creation failed")
 
+	// Clean up the config and its agent pods at the end of the enclosing It block.
+	// Without this, stale agent pods on nodes that rebooted during the previous test
+	// hold the shared block device open and cause the next test's agents to crash-loop.
+	DeferCleanup(cleanupStorageBasedRemediationConfig, testNamespace, sbrConfig)
+
 	validator := newSBRAgentValidator(testNamespace)
 	opts := defaultValidateAgentDeploymentOptions(sbrConfig.Name)
 	opts.ExpectedArgs = []string{
