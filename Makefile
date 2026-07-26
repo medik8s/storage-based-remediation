@@ -102,8 +102,8 @@ generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and
 	GOFLAGS=-mod=mod $(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
 .PHONY: fmt
-fmt: ## Run go fmt against code.
-	go fmt ./...
+fmt: goimports ## Run go goimports against code - goimports = go fmt + fixing imports.
+	$(GOIMPORTS) -w ./api ./cmd ./internal ./test ./tools/setup-shared-storage ./tools/validate-sbr-consistency ./tools/watchdog-demo
 
 .PHONY: vet
 vet: ## Run go vet against code.
@@ -121,28 +121,28 @@ go-vendor:  # Run go mod vendor - make vendored copy of dependencies.
 go-verify: go-tidy go-vendor # Run go mod verify - verify dependencies have expected content
 	go mod verify
 
-# Check for sorted imports
-test-imports: sort-imports
+.PHONY: test-imports
+test-imports: sort-imports ## Check for sorted imports
 	$(SORT_IMPORTS) .
 
-# Sort imports
-fix-imports: sort-imports
+.PHONY: fix-imports
+fix-imports: sort-imports ## Sort imports
 	$(SORT_IMPORTS) -w .
 
-.PHONY: verify
-verify: bundle-reset ## Verify there are no un-committed changes
-	./hack/verify-diff.sh
+.PHONY: verify-unchanged
+verify-unchanged: bundle-reset ## Verify there are no un-committed changes
+	./hack/verify-unchanged.sh
 
 .PHONY: test-all
 test-all: test test-e2e ## Run all tests: unit and e2e
 
 .PHONY: test-no-verify
-test-no-verify: generate manifests fmt vet envtest ## Generate and format code, and run tests
+test-no-verify: manifests generate fmt fix-imports vet envtest ## Generate and format code, and run tests
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v -E '/e2e') -coverprofile cover.out
 
 .PHONY: test
 test: test-no-verify ## Generate and format code, run tests and verify there are no un-committed changes
-	$(MAKE) bundle-reset verify
+	$(MAKE) bundle-reset verify-unchanged
 
 # Use := for immediate expansion to avoid TEST_ID changing at each evaluation
 # This prevents race conditions where mkdir creates one directory but ginkgo uses another
@@ -575,6 +575,7 @@ YQ_DIR ?= $(LOCALBIN)/yq
 KUSTOMIZE_DIR ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN_DIR ?= $(LOCALBIN)/controller-gen
 SORT_IMPORTS_DIR ?= $(LOCALBIN)/sort-imports
+GOIMPORTS_DIR ?= $(LOCALBIN)/goimports
 OPERATOR_SDK ?= $(LOCALBIN)/operator-sdk
 OPM ?= $(LOCALBIN)/opm
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
@@ -585,6 +586,7 @@ GINKGO = $(GINKGO_DIR)/$(GINKGO_VERSION)/ginkgo
 KUSTOMIZE = $(KUSTOMIZE_DIR)/$(KUSTOMIZE_VERSION)/kustomize
 CONTROLLER_GEN = $(CONTROLLER_GEN_DIR)/$(CONTROLLER_GEN_VERSION)/controller-gen
 SORT_IMPORTS = $(SORT_IMPORTS_DIR)/$(SORT_IMPORTS_VERSION)/sort-imports
+GOIMPORTS = $(GOIMPORTS_DIR)/$(GOIMPORTS_VERSION)/goimports
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5@v5.8.1
@@ -597,6 +599,8 @@ GOLANGCI_LINT_VERSION ?= v2.1.0
 GINKGO_VERSION ?= v2.28.3
 # See https://github.com/slintes/sort-imports/releases for the last version
 SORT_IMPORTS_VERSION = v0.3.0
+# See https://github.com/golang/tools/releases for goimports versions
+GOIMPORTS_VERSION ?= v0.48.0
 
 # OLM tooling versions (aligned with other operators)
 OPERATOR_SDK_VERSION ?= v1.42.2
@@ -664,6 +668,10 @@ ginkgo: ## Download ginkgo locally if necessary.
 .PHONY: sort-imports
 sort-imports: ## Download sort-imports locally if necessary.
 	$(call go-install-tool,$(SORT_IMPORTS),$(SORT_IMPORTS_DIR),github.com/slintes/sort-imports@$(SORT_IMPORTS_VERSION))
+
+.PHONY: goimports
+goimports: ## Download goimports locally if necessary.
+	$(call go-install-tool,$(GOIMPORTS),$(GOIMPORTS_DIR),golang.org/x/tools/cmd/goimports@$(GOIMPORTS_VERSION))
 
 # go-install-tool will delete old package $2, then 'go install' any package $3 to $1.
 define go-install-tool
