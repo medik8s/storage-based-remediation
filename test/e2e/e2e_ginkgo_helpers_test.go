@@ -119,14 +119,33 @@ func cleanupStorageBasedRemediationConfig(tn *utils.TestNamespace, sbrConfig *me
 				}
 			}
 
+			GinkgoWriter.Printf("Force deleting stuck non-running pods after %v timeout\n", elapsed)
+			forceDeleteAttempted = true
+			zero := int64(0)
+			policy := metav1.DeletePropagationBackground
+
+			// Delete owning Jobs first to prevent replacement pod creation
+			jobs := &batchv1.JobList{}
+			if jobErr := tn.Clients.Client.List(tn.Clients.Context, jobs,
+				client.InNamespace(tn.Name),
+				client.MatchingLabels{"sbrconfig": sbrConfig.Name}); jobErr == nil {
+				for _, job := range jobs.Items {
+					GinkgoWriter.Printf("Deleting cleanup Job %s to prevent replacement pods\n", job.Name)
+					delErr := tn.Clients.Clientset.BatchV1().Jobs(tn.Name).Delete(
+						tn.Clients.Context, job.Name, metav1.DeleteOptions{
+							GracePeriodSeconds: &zero,
+							PropagationPolicy:  &policy,
+						})
+					if delErr != nil && !errors.IsNotFound(delErr) {
+						GinkgoWriter.Printf("Failed to delete Job %s: %v\n", job.Name, delErr)
+					}
+				}
+			} else {
+				GinkgoWriter.Printf("Failed to list Jobs: %v\n", jobErr)
+			}
+
 			for _, pod := range podsToDelete {
-				// Force delete collected pods
-				GinkgoWriter.Printf("Force deleting stuck non-running pods after %v timeout\n", elapsed)
-				forceDeleteAttempted = true
 				GinkgoWriter.Printf("Force deleting pod %s (phase: %s)\n", pod.Name, pod.Status.Phase)
-				// Use GracePeriodSeconds=0 for immediate deletion
-				zero := int64(0)
-				policy := metav1.DeletePropagationBackground
 				err := tn.Clients.Clientset.CoreV1().Pods(tn.Name).Delete(
 					tn.Clients.Context, pod.Name, metav1.DeleteOptions{
 						GracePeriodSeconds: &zero,
