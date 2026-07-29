@@ -65,6 +65,9 @@ const (
 
 	// FlagDetectOnlyMode disables remediation: watchdog is disarmed, no self-fence
 	FlagDetectOnlyMode = "detect-only-mode"
+
+	// FlagInit runs block device initialization (write superblock) and exits.
+	FlagInit = "init"
 )
 
 // Default values for SBR Agent flags

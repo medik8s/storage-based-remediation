@@ -69,18 +69,33 @@ type Opener interface {
 	Open(path string) (*os.File, error)
 }
 
-type opener struct{}
+type directOpener struct{}
 
-func (opener) Open(path string) (*os.File, error) {
+func (directOpener) Open(path string) (*os.File, error) {
 	// Open the device with read/write access and synchronous I/O.
 	// O_SYNC ensures that all writes are immediately flushed to disk.
 	// O_DIRECT ensures reads bypass the page cache so the agent does not see stale data.
 	return os.OpenFile(path, os.O_RDWR|os.O_SYNC|syscall.O_DIRECT, 0)
 }
 
-// DeviceOpener opens block device paths. Defaults to opener (O_DIRECT).
+type bufferedOpener struct{}
+
+func (bufferedOpener) Open(path string) (*os.File, error) {
+	// Open the device with read/write access and synchronous I/O, but
+	// without O_DIRECT. This avoids the page-alignment requirement for
+	// I/O buffers, which is acceptable for one-shot operations like --init
+	// where cache bypass is not needed.
+	return os.OpenFile(path, os.O_RDWR|os.O_SYNC, 0)
+}
+
+// DeviceOpener opens block device paths. Defaults to directOpener (O_DIRECT).
 // Unit tests may replace it when using temp files instead of real block devices.
-var DeviceOpener Opener = opener{}
+var DeviceOpener Opener = directOpener{}
+
+// BufferedDeviceOpener opens block device paths without O_DIRECT.
+// Use this for one-shot operations (e.g. --init) where page-aligned
+// buffers are not available and cache bypass is unnecessary.
+var BufferedDeviceOpener Opener = bufferedOpener{}
 
 // Open opens a raw block device at the specified path for read/write operations.
 // The device is opened with O_RDWR and O_SYNC flags to ensure synchronous I/O,
@@ -109,26 +124,21 @@ func OpenWithLogger(path string, logger logr.Logger) (*Device, error) {
 	return OpenWithTimeout(path, DefaultIOTimeout, logger)
 }
 
-// OpenWithTimeout opens a raw block device with custom I/O timeout and logger
-// This allows customization of the timeout for I/O operations to prevent indefinite hanging.
-//
-// Parameters:
-//   - path: The filesystem path to the block device (e.g., "/dev/sdb1")
-//   - ioTimeout: The timeout for individual I/O operations
-//   - logger: Logger for device operations and retries
-//
-// Returns:
-//   - *Device: A new Device instance if successful
-//   - error: An error if the device cannot be opened
-//
-// Example:
-//
-//	device, err := blockdevice.OpenWithTimeout("/dev/sdb1", 45*time.Second, logger)
-//	if err != nil {
-//	    log.Fatalf("Failed to open device: %v", err)
-//	}
-//	defer device.Close()
+// OpenBuffered opens a block device without O_DIRECT (buffered I/O).
+// Use this for one-shot operations like --init where page-aligned buffers
+// are not available and cache bypass is unnecessary.
+func OpenBuffered(path string, ioTimeout time.Duration, logger logr.Logger) (*Device, error) {
+	return openWithOpener(path, ioTimeout, logger, BufferedDeviceOpener)
+}
+
+// OpenWithTimeout opens a raw block device with custom I/O timeout and logger.
+// The device is opened with O_DIRECT, which requires page-aligned I/O buffers.
 func OpenWithTimeout(path string, ioTimeout time.Duration, logger logr.Logger) (*Device, error) {
+	return openWithOpener(path, ioTimeout, logger, DeviceOpener)
+}
+
+// openWithOpener is the shared implementation for all Open variants.
+func openWithOpener(path string, ioTimeout time.Duration, logger logr.Logger, opener Opener) (*Device, error) {
 	if path == "" {
 		return nil, fmt.Errorf("device path cannot be empty")
 	}
@@ -159,8 +169,7 @@ func OpenWithTimeout(path string, ioTimeout time.Duration, logger logr.Logger) (
 	// Retry device opening for transient errors
 	ctx := context.Background()
 	err = retry.Do(ctx, retryConfig, "open block device", func() error {
-		// DeviceOpener uses O_RDWR|O_SYNC|O_DIRECT in production (see opener).
-		file, err = DeviceOpener.Open(path)
+		file, err = opener.Open(path)
 		if err != nil {
 			// Wrap error with retry information
 			return retry.NewRetryableError(err, retry.IsTransientError(err), "open block device")
@@ -488,6 +497,13 @@ func (d *Device) String() string {
 // Path returns the filesystem path of the block device.
 func (d *Device) Path() string {
 	return d.path
+}
+
+// File returns the underlying os.File handle.
+// This is needed for operations like Stat() or Seek() that are not part of
+// the io.ReaderAt/io.WriterAt interface (e.g. determining device size).
+func (d *Device) File() *os.File {
+	return d.file
 }
 
 // IsClosed returns true if the device has been closed.

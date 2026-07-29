@@ -651,6 +651,79 @@ func BenchmarkWriteAt(b *testing.B) {
 	}
 }
 
+func TestOpenBuffered(t *testing.T) {
+	devicePath, cleanup := setupTestDevice(t, 4096)
+	defer cleanup()
+
+	// OpenBuffered should work the same as OpenWithTimeout but use
+	// bufferedOpener (no O_DIRECT). Since unit tests already override
+	// DeviceOpener, we verify the function signature and I/O work.
+	device, err := OpenBuffered(devicePath, 5*time.Second, logr.Discard())
+	if err != nil {
+		t.Fatalf("OpenBuffered failed: %v", err)
+	}
+	defer device.Close()
+
+	// Write and read back
+	testData := []byte("buffered test data")
+	n, err := device.WriteAt(testData, 0)
+	if err != nil {
+		t.Fatalf("WriteAt failed: %v", err)
+	}
+	if n != len(testData) {
+		t.Errorf("expected to write %d bytes, wrote %d", len(testData), n)
+	}
+
+	readBuf := make([]byte, len(testData))
+	n, err = device.ReadAt(readBuf, 0)
+	if err != nil {
+		t.Fatalf("ReadAt failed: %v", err)
+	}
+	if string(readBuf[:n]) != string(testData) {
+		t.Errorf("read data mismatch: expected %q, got %q", testData, readBuf[:n])
+	}
+}
+
+func TestOpenBufferedValidation(t *testing.T) {
+	// Verify OpenBuffered shares the same validation as OpenWithTimeout
+	_, err := OpenBuffered("", 5*time.Second, logr.Discard())
+	if err == nil {
+		t.Error("expected error for empty path")
+	}
+
+	_, err = OpenBuffered("/nonexistent", 0, logr.Discard())
+	if err == nil {
+		t.Error("expected error for zero timeout")
+	}
+
+	_, err = OpenBuffered("/nonexistent", 500*time.Millisecond, logr.Discard())
+	if err == nil {
+		t.Error("expected error for timeout too short")
+	}
+}
+
+func TestBufferedOpenerNoODirect(t *testing.T) {
+	// Verify that bufferedOpener creates a valid file handle (no O_DIRECT flag).
+	// On temp files, O_DIRECT with unaligned buffers would fail; bufferedOpener
+	// must work with any buffer alignment.
+	devicePath, cleanup := setupTestDevice(t, 4096)
+	defer cleanup()
+
+	bo := bufferedOpener{}
+	f, err := bo.Open(devicePath)
+	if err != nil {
+		t.Fatalf("bufferedOpener.Open failed: %v", err)
+	}
+	defer f.Close()
+
+	// Write an unaligned buffer size (3 bytes) — would fail with O_DIRECT
+	// on a real block device but must succeed with buffered I/O.
+	_, err = f.WriteAt([]byte("abc"), 0)
+	if err != nil {
+		t.Fatalf("unaligned write via bufferedOpener failed: %v", err)
+	}
+}
+
 func TestOpenWithTimeout(t *testing.T) {
 	devicePath, cleanup := setupTestDevice(t, 4096)
 	defer cleanup()

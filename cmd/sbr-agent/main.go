@@ -35,8 +35,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	// Kubernetes imports for StorageBasedRemediation CR watching
 
+	// Kubernetes imports for StorageBasedRemediation CR watching
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -52,6 +52,7 @@ import (
 	"github.com/medik8s/storage-based-remediation/api/v1alpha1"
 	"github.com/medik8s/storage-based-remediation/internal/agent"
 	"github.com/medik8s/storage-based-remediation/internal/blockdevice"
+	"github.com/medik8s/storage-based-remediation/internal/blockformat"
 	"github.com/medik8s/storage-based-remediation/internal/controller"
 	"github.com/medik8s/storage-based-remediation/internal/mocks"
 	"github.com/medik8s/storage-based-remediation/internal/retry"
@@ -101,6 +102,10 @@ var (
 	// I/O timeout configuration
 	ioTimeout = flag.Duration("io-timeout", 2*time.Second,
 		"Timeout for I/O operations (prevents indefinite hanging when storage becomes unresponsive)")
+
+	// Init mode: initialize block device superblock and exit
+	initMode = flag.Bool(agent.FlagInit, false,
+		"Initialize block device with V1 superblock and exit (used by init job)")
 
 	// Previous fencing message flag
 	previousFenceMessage = false
@@ -2007,7 +2012,7 @@ func runPreflightChecks(watchdogPath, sbrDevicePath, nodeName string, nodeID uin
 	// Check SBR device accessibility
 	var sbrErr error
 	if sbrDevicePath != "" {
-		sbrErr = checkSBRDevice(sbrDevicePath, nodeID, nodeName)
+		sbrErr = checkSBRDevice(sbrDevicePath, nodeID, nodeName, false)
 	}
 
 	// Check node ID/name resolution
@@ -2065,9 +2070,14 @@ func checkWatchdogDevice(watchdogPath string) error {
 	return nil
 }
 
-// checkSBRDevice verifies the SBR device exists and performs a minimal read/write test
-func checkSBRDevice(sbrDevicePath string, nodeID uint16, nodeName string) error {
-	logger.V(1).Info("Checking SBR device accessibility", "sbrDevicePath", sbrDevicePath, "nodeID", nodeID)
+// checkSBRDevice verifies the SBR device exists and performs a minimal read/write test.
+// When blockModeExpected is true, the device must contain a valid V1 superblock;
+// the function will never fall back to the filesystem slot-write test.
+// When blockModeExpected is false, the superblock region is not probed and the
+// filesystem slot-write test runs directly.
+func checkSBRDevice(sbrDevicePath string, nodeID uint16, nodeName string, blockModeExpected bool) error {
+	logger.V(1).Info("Checking SBR device accessibility",
+		"sbrDevicePath", sbrDevicePath, "nodeID", nodeID, "blockModeExpected", blockModeExpected)
 
 	// Check if the SBR device file exists
 	if _, err := os.Stat(sbrDevicePath); err != nil {
@@ -2089,7 +2099,11 @@ func checkSBRDevice(sbrDevicePath string, nodeID uint16, nodeName string) error 
 		}
 	}()
 
-	// Perform minimal read/write test: write node ID to its slot and read it back
+	if blockModeExpected {
+		return checkSBRBlockDevice(device, sbrDevicePath)
+	}
+
+	// Filesystem mode: perform minimal read/write test at the node's slot
 	if err := performSBRReadWriteTest(device, nodeID, nodeName); err != nil {
 		return fmt.Errorf("SBR device read/write test failed: %w", err)
 	}
@@ -2098,6 +2112,32 @@ func checkSBRDevice(sbrDevicePath string, nodeID uint16, nodeName string) error 
 		"sbrDevicePath", sbrDevicePath,
 		"nodeID", nodeID)
 	return nil
+}
+
+// checkSBRBlockDevice verifies a block-mode device has a valid V1 superblock.
+// It never falls back to the filesystem slot-write test.
+func checkSBRBlockDevice(device mocks.BlockDeviceInterface, sbrDevicePath string) error {
+	buf := make([]byte, blockformat.BlockSuperblockSize)
+	n, err := device.ReadAt(buf, blockformat.BlockSuperblockOffset)
+	if err != nil {
+		return fmt.Errorf("block mode device %s: failed to read superblock: %w", sbrDevicePath, err)
+	}
+	if n < blockformat.SuperblockTotalSize {
+		return fmt.Errorf("block mode device %s: short read (%d bytes), expected at least %d",
+			sbrDevicePath, n, blockformat.SuperblockTotalSize)
+	}
+
+	if blockformat.HasSuperblockMagic(buf) {
+		if _, unmarshalErr := blockformat.UnmarshalSuperblock(buf); unmarshalErr != nil {
+			return fmt.Errorf("block mode device %s has SBR magic but an invalid superblock: %w",
+				sbrDevicePath, unmarshalErr)
+		}
+		logger.V(1).Info("Block mode device: superblock read verified",
+			"sbrDevicePath", sbrDevicePath)
+		return nil
+	}
+
+	return fmt.Errorf("block mode device %s: no valid superblock found — device not initialized", sbrDevicePath)
 }
 
 // performSBRReadWriteTest writes the node ID to its slot and reads it back to verify functionality
@@ -2335,6 +2375,52 @@ func (s *SBRAgent) addSBRRemediationController() error {
 	return nil
 }
 
+// runInit initializes a block device with a V1 superblock.
+// It opens the device, checks its size, and calls blockformat.InitDevice.
+// Returns nil on success (including idempotent no-op).
+func runInit(devicePath string, ioTimeout time.Duration, log logr.Logger) error {
+	if devicePath == "" {
+		return fmt.Errorf("--%s is required in init mode", agent.FlagSBRDevice)
+	}
+
+	// Use OpenBuffered (no O_DIRECT) for init. The init job runs once
+	// and does not need cache bypass. This avoids the page-alignment
+	// requirement that O_DIRECT imposes on I/O buffers.
+	dev, err := blockdevice.OpenBuffered(devicePath, ioTimeout, log)
+	if err != nil {
+		return fmt.Errorf("failed to open device %q: %w", devicePath, err)
+	}
+	defer dev.Close()
+
+	// Get device size via stat. For regular files this returns the file size;
+	// for block devices the kernel reports 0 via stat, so we fall back to
+	// seeking to the end.
+	file := dev.File()
+	fi, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat device %q: %w", devicePath, err)
+	}
+	deviceSize := fi.Size()
+	if deviceSize == 0 {
+		// Block devices report size 0 via stat; seek to end to get actual size.
+		deviceSize, err = file.Seek(0, 2) // SEEK_END
+		if err != nil {
+			return fmt.Errorf("failed to determine device size for %q: %w", devicePath, err)
+		}
+		// Seek back to beginning
+		if _, err := file.Seek(0, 0); err != nil {
+			return fmt.Errorf("failed to seek to beginning of %q: %w", devicePath, err)
+		}
+	}
+
+	log.Info("Initializing block device", "device", devicePath, "size", deviceSize)
+
+	ioBuffer := make([]byte, blockformat.BlockSectorSize)
+	zeroBuffer := make([]byte, 1024*1024) // 1 MB
+
+	return blockformat.InitDevice(dev, deviceSize, ioBuffer, zeroBuffer, log)
+}
+
 func main() {
 	flag.Parse()
 	MaxConsecutiveFailures = *maxConsecutiveFailuresFlag
@@ -2343,6 +2429,18 @@ func main() {
 	if err := initializeLogger(*logLevel); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Handle --init mode: initialize block device and exit immediately.
+	// This runs before any Kubernetes client setup, watchdog, or agent logic.
+	if *initMode {
+		logger.Info("Running in init mode")
+		if err := runInit(*sbrDevice, *ioTimeout, logger); err != nil {
+			logger.Error(err, "Block device initialization failed")
+			os.Exit(1)
+		}
+		logger.Info("Block device initialization complete")
+		os.Exit(0)
 	}
 
 	logger.Info("SBR Agent starting", "version", "development")
