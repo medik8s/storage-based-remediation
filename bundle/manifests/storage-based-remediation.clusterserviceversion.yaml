@@ -51,7 +51,7 @@ metadata:
     capabilities: Basic Install
     categories: OpenShift Optional
     containerImage: quay.io/medik8s/storage-based-remediation-operator:latest
-    createdAt: "2026-07-30T18:49:53Z"
+    createdAt: "2026-07-30T19:35:27Z"
     description: Storage-Based Remediation Operator for remediating nodes using storage-based
       fencing (SBD/STONITH).
     olm.skipRange: '>=0.0.1'
