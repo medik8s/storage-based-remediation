@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -80,8 +81,8 @@ func TestFileNodeMapStore_LoadNonExistent(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error loading non-existent file")
 	}
-	if !os.IsNotExist(err) {
-		t.Errorf("expected os.ErrNotExist, got: %v", err)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected fs.ErrNotExist, got: %v", err)
 	}
 }
 
@@ -442,5 +443,200 @@ func TestNodeManager_CorruptStoreDataRecovery(t *testing.T) {
 	}
 	if table.ClusterName != "corrupt-mock-test" {
 		t.Errorf("wrong cluster name after recovery: expected corrupt-mock-test, got %s", table.ClusterName)
+	}
+}
+
+// mockConflictError satisfies the isSaveConflict duck-type interface.
+type mockConflictError struct{ msg string }
+
+func (e *mockConflictError) Error() string    { return e.msg }
+func (e *mockConflictError) IsConflict() bool { return true }
+
+// mockConflictStore is a NodeMapStore that returns a conflict error on the
+// first N Save calls, then succeeds. When conflictData is set, the store
+// replaces its internal data with conflictData on conflict, simulating a
+// concurrent writer that won the race.
+type mockConflictStore struct {
+	data          []byte
+	conflictData  []byte // injected as the "winner's" data on conflict
+	conflictsLeft int
+	saveCallCount int
+}
+
+func (m *mockConflictStore) Load() ([]byte, error) {
+	if m.data == nil {
+		return nil, os.ErrNotExist
+	}
+	return append([]byte(nil), m.data...), nil
+}
+
+func (m *mockConflictStore) Save(data []byte) error {
+	m.saveCallCount++
+	if m.conflictsLeft > 0 {
+		m.conflictsLeft--
+		// Simulate the concurrent writer's data landing on the device
+		if m.conflictData != nil {
+			m.data = append([]byte(nil), m.conflictData...)
+		}
+		return &mockConflictError{msg: "mock write-verify conflict"}
+	}
+	m.data = make([]byte, len(data))
+	copy(m.data, data)
+	return nil
+}
+
+func TestIsSaveConflict(t *testing.T) {
+	// Verify the duck-type interface check works
+	if !isSaveConflict(&mockConflictError{msg: "test"}) {
+		t.Error("expected isSaveConflict to return true for mockConflictError")
+	}
+	if isSaveConflict(errors.New("regular error")) {
+		t.Error("expected isSaveConflict to return false for regular error")
+	}
+	if isSaveConflict(nil) {
+		t.Error("expected isSaveConflict to return false for nil")
+	}
+}
+
+func TestNodeManager_SyncToDeviceConflictReloads(t *testing.T) {
+	// Set up a store with initial valid data
+	store := &mockConflictStore{}
+	device := NewMockSBDDevice("", SBD_SLOT_SIZE*10)
+
+	config := NodeManagerConfig{
+		ClusterName:        "conflict-test",
+		SyncInterval:       time.Minute,
+		StaleNodeTimeout:   10 * time.Minute,
+		Logger:             logr.Discard(),
+		FileLockingEnabled: false,
+		NodeMapStore:       store,
+	}
+
+	nm, err := NewNodeManager(device, config)
+	if err != nil {
+		t.Fatalf("NewNodeManager failed: %v", err)
+	}
+	defer func() { _ = nm.Close() }()
+
+	// Assign a node — this saves successfully via atomicSyncToDevice
+	if _, err := nm.GetNodeIDForNode("node-a"); err != nil {
+		t.Fatalf("GetNodeIDForNode failed: %v", err)
+	}
+
+	// Simulate another writer saving a different table to the store
+	otherTable := NewNodeMapTable("conflict-test")
+	otherHasher := NewNodeHasher("conflict-test")
+	if _, err := otherTable.AssignSlot("node-b", otherHasher); err != nil {
+		t.Fatalf("AssignSlot failed: %v", err)
+	}
+	otherData, err := otherTable.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	store.data = otherData
+
+	// Make local state dirty
+	nm.mutex.Lock()
+	_ = nm.table.UpdateLastSeen("node-a")
+	nm.dirty = true
+	nm.mutex.Unlock()
+
+	// Next Save will conflict, syncToDevice should handle it by reloading
+	store.conflictsLeft = 1
+
+	if err := nm.Sync(); err != nil {
+		t.Fatalf("Sync should succeed after conflict reload, got: %v", err)
+	}
+
+	// After conflict handling, the table should have the other writer's data
+	// (reloaded from store), not our stale local data
+	nm.mutex.RLock()
+	_, hasNodeB := nm.table.GetNodeIDForNode("node-b")
+	nm.mutex.RUnlock()
+
+	if !hasNodeB {
+		t.Error("after conflict reload, table should contain node-b from the winning writer")
+	}
+}
+
+func TestNodeManager_AtomicSyncConflictRetries(t *testing.T) {
+	// Verify that atomicSyncToDevice maps ConflictError to ErrVersionMismatch,
+	// allowing the existing retry loop in atomicAssignSlot to handle it.
+	//
+	// This test simulates a concurrent writer that adds "rival-node" to the
+	// store during the conflict. After retry, both the rival's node and our
+	// node must be present — proving that the retry reloaded the winner's
+	// data before re-applying the local mutation.
+	store := &mockConflictStore{}
+	device := NewMockSBDDevice("", SBD_SLOT_SIZE*10)
+
+	config := NodeManagerConfig{
+		ClusterName:        "atomic-conflict-test",
+		SyncInterval:       time.Minute,
+		StaleNodeTimeout:   10 * time.Minute,
+		Logger:             logr.Discard(),
+		FileLockingEnabled: false,
+		NodeMapStore:       store,
+	}
+
+	nm, err := NewNodeManager(device, config)
+	if err != nil {
+		t.Fatalf("NewNodeManager failed: %v", err)
+	}
+	defer func() { _ = nm.Close() }()
+
+	// First assignment succeeds normally
+	_, err = nm.GetNodeIDForNode("first-node")
+	if err != nil {
+		t.Fatalf("GetNodeIDForNode(first-node) failed: %v", err)
+	}
+
+	// Build a competing table that a "rival writer" would have saved.
+	// It contains first-node (from the current state) plus rival-node.
+	rivalTable := NewNodeMapTable("atomic-conflict-test")
+	rivalHasher := NewNodeHasher("atomic-conflict-test")
+	if _, err := rivalTable.AssignSlot("first-node", rivalHasher); err != nil {
+		t.Fatalf("rival AssignSlot(first-node) failed: %v", err)
+	}
+	if _, err := rivalTable.AssignSlot("rival-node", rivalHasher); err != nil {
+		t.Fatalf("rival AssignSlot(rival-node) failed: %v", err)
+	}
+	rivalData, err := rivalTable.Marshal()
+	if err != nil {
+		t.Fatalf("rival Marshal failed: %v", err)
+	}
+
+	// Configure store: next Save conflicts once, injecting the rival's table.
+	// On conflict, the store's data becomes rivalData (simulating the rival
+	// winning the write race). The retry loop reloads this state.
+	store.conflictsLeft = 1
+	store.conflictData = rivalData
+
+	// Assign second-node. The first attempt conflicts (rival wins),
+	// the retry reloads rival's data (first-node + rival-node),
+	// re-applies second-node assignment, and saves successfully.
+	_, err = nm.GetNodeIDForNode("second-node")
+	if err != nil {
+		t.Fatalf("GetNodeIDForNode(second-node) should succeed after retry, got: %v", err)
+	}
+
+	// Verify ALL three nodes are persisted: first-node (ours), rival-node
+	// (from the competing writer), and second-node (re-applied after conflict).
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+	table, err := UnmarshalNodeMapTable(loaded)
+	if err != nil {
+		t.Fatalf("UnmarshalNodeMapTable failed: %v", err)
+	}
+	if _, found := table.GetNodeIDForNode("first-node"); !found {
+		t.Error("first-node not found in persisted table")
+	}
+	if _, found := table.GetNodeIDForNode("rival-node"); !found {
+		t.Error("rival-node not found — competing writer's data was lost after conflict retry")
+	}
+	if _, found := table.GetNodeIDForNode("second-node"); !found {
+		t.Error("second-node not found in persisted table")
 	}
 }
