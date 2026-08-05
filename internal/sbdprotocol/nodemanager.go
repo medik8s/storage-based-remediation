@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"io/fs"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -71,7 +72,8 @@ type SBDDevice interface {
 // NodeManager manages node-to-slot mappings with persistence to a separate file
 type NodeManager struct {
 	device             SBDDevice
-	nodeMapFilePath    string // Path to the separate node mapping file
+	store              NodeMapStore
+	nodeMapFilePath    string // Path to the separate node mapping file (used for locking and diagnostics)
 	clusterName        string
 	table              *NodeMapTable
 	hasher             *NodeHasher
@@ -92,6 +94,9 @@ type NodeManagerConfig struct {
 	Logger           logr.Logger
 	// File locking configuration
 	FileLockingEnabled bool
+	// NodeMapStore provides the persistence layer for node map data.
+	// If nil, a FileNodeMapStore is created using the derived node map path.
+	NodeMapStore NodeMapStore
 }
 
 // DefaultNodeManagerConfig returns a default configuration
@@ -133,8 +138,15 @@ func NewNodeManager(device SBDDevice, config NodeManagerConfig) (*NodeManager, e
 		nodeMapFilePath = fmt.Sprintf("%s%s", devicePath, SBD_NODE_MAP_FILE_SUFFIX)
 	}
 
+	// Use provided store or default to FileNodeMapStore
+	store := config.NodeMapStore
+	if store == nil {
+		store = NewFileNodeMapStore(nodeMapFilePath)
+	}
+
 	manager := &NodeManager{
 		device:             device,
+		store:              store,
 		nodeMapFilePath:    nodeMapFilePath,
 		clusterName:        config.ClusterName,
 		logger:             config.Logger,
@@ -436,13 +448,13 @@ func (nm *NodeManager) StartPeriodicSync() chan struct{} {
 
 // loadFromDevice loads the node mapping table from the separate node mapping file
 func (nm *NodeManager) loadFromDevice() error {
-	// Read from the separate node mapping file
-	data, err := os.ReadFile(nm.nodeMapFilePath)
+	// Read from the node map store
+	data, err := nm.store.Load()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("node mapping file does not exist: %s", nm.nodeMapFilePath)
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("node mapping does not exist: %s", nm.nodeMapFilePath)
 		}
-		return fmt.Errorf("failed to read node mapping file %s: %w", nm.nodeMapFilePath, err)
+		return fmt.Errorf("failed to read node mapping via %T: %w", nm.store, err)
 	}
 
 	// Unmarshal the data
@@ -544,16 +556,16 @@ func (nm *NodeManager) retryLoadWithDelay() error {
 
 // diagnoseAndFixCorruption attempts to diagnose and fix specific corruption patterns
 func (nm *NodeManager) diagnoseAndFixCorruption() error {
-	// Read the raw file data for analysis
-	fileData, err := os.ReadFile(nm.nodeMapFilePath)
+	// Read the raw data for analysis
+	fileData, err := nm.store.Load()
 	if err != nil {
-		if os.IsNotExist(err) {
-			nm.logger.Info("Corruption diagnosis: file does not exist, creating new table")
+		if errors.Is(err, fs.ErrNotExist) {
+			nm.logger.Info("Corruption diagnosis: no node mapping found, creating new table")
 			nm.table = NewNodeMapTable(nm.clusterName)
 			nm.dirty = true
 			return nil
 		}
-		return fmt.Errorf("failed to read node mapping file for diagnosis: %w", err)
+		return fmt.Errorf("failed to read node mapping via %T for diagnosis: %w", nm.store, err)
 	}
 
 	// Check if it's completely empty
@@ -619,14 +631,16 @@ func (nm *NodeManager) clearCorruptedSlot() error {
 	}
 	defer func() { _ = nm.releaseDeviceLock(lockFile) }()
 
-	// Remove the corrupted file
-	if err := os.Remove(nm.nodeMapFilePath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove corrupted node mapping file %s: %w", nm.nodeMapFilePath, err)
-	}
-
-	// Create new table
+	// Create new table and save it immediately to replace corrupted data
 	nm.table = NewNodeMapTable(nm.clusterName)
-	nm.dirty = true
+	data, err := nm.table.Marshal()
+	if err != nil {
+		return fmt.Errorf("failed to marshal new table: %w", err)
+	}
+	if err := nm.store.Save(data); err != nil {
+		return fmt.Errorf("failed to save new table to replace corrupted data: %w", err)
+	}
+	nm.dirty = false
 
 	nm.logger.Info("Successfully cleared corrupted slot and created new table")
 	return nil
@@ -644,23 +658,8 @@ func (nm *NodeManager) syncToDevice() error {
 		return fmt.Errorf("failed to marshal node mapping table: %w", err)
 	}
 
-	// Write to the separate node mapping file
-	// Create the directory if it doesn't exist
-	if err := os.MkdirAll(filepath.Dir(nm.nodeMapFilePath), 0755); err != nil {
-		return fmt.Errorf("failed to create directory for node mapping file: %w", err)
-	}
-
-	// Write data to temporary file first, then rename (atomic operation)
-	tempFilePath := nm.nodeMapFilePath + ".tmp"
-	if err := os.WriteFile(tempFilePath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write node mapping to temporary file %s: %w", tempFilePath, err)
-	}
-
-	// Atomic rename to final location
-	if err := os.Rename(tempFilePath, nm.nodeMapFilePath); err != nil {
-		// Clean up temporary file on failure
-		_ = os.Remove(tempFilePath)
-		return fmt.Errorf("failed to rename temporary file to %s: %w", nm.nodeMapFilePath, err)
+	if err := nm.store.Save(data); err != nil {
+		return fmt.Errorf("failed to save node mapping: %w", err)
 	}
 
 	nm.lastSync = time.Now()
@@ -798,21 +797,21 @@ func (nm *NodeManager) atomicSyncToDeviceWithLock(expectedVersion uint64, lockFi
 		}()
 	}
 
-	// Read current version from file to check for conflicts
+	// Read current version from store to check for conflicts
 	// This read happens under the same lock as the write to prevent race conditions
-	currentFileData, err := os.ReadFile(nm.nodeMapFilePath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read current node mapping file for version check: %w", err)
+	currentFileData, err := nm.store.Load()
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("failed to read current node mapping for version check: %w", err)
 	}
 
-	// Check if file exists and has content (not first time write)
+	// Check if data exists and has content (not first time write)
 	if err == nil && len(currentFileData) > 0 {
-		// Parse current version from file
+		// Parse current version
 		currentTable, err := UnmarshalNodeMapTable(currentFileData)
 		if err != nil {
 			// If we can't parse the current data, it might be corrupted
 			// This could happen if we're reading during another node's write
-			nm.logger.Info("Warning: failed to parse current node mapping file during version check",
+			nm.logger.Info("Warning: failed to parse current node mapping during version check",
 				"error", err,
 				"expectedVersion", expectedVersion,
 				"attempting", "corruption recovery")
@@ -821,9 +820,9 @@ func (nm *NodeManager) atomicSyncToDeviceWithLock(expectedVersion uint64, lockFi
 			time.Sleep(50 * time.Millisecond)
 
 			// Re-read and try again
-			retryFileData, retryErr := os.ReadFile(nm.nodeMapFilePath)
-			if retryErr == nil && len(retryFileData) > 0 {
-				currentTable, err = UnmarshalNodeMapTable(retryFileData)
+			retryData, retryErr := nm.store.Load()
+			if retryErr == nil && len(retryData) > 0 {
+				currentTable, err = UnmarshalNodeMapTable(retryData)
 				if err != nil {
 					nm.logger.Info("Corruption persists after retry, proceeding with write to clear it", "error", err)
 					// Proceed with write to potentially fix corruption
@@ -843,27 +842,9 @@ func (nm *NodeManager) atomicSyncToDeviceWithLock(expectedVersion uint64, lockFi
 		}
 	}
 
-	// Write to the separate node mapping file using atomic operations
-	// Create the directory if it doesn't exist
-	if err := os.MkdirAll(filepath.Dir(nm.nodeMapFilePath), 0755); err != nil {
-		return fmt.Errorf("failed to create directory for node mapping file: %w", err)
+	if err := nm.store.Save(data); err != nil {
+		return fmt.Errorf("failed to save node mapping: %w", err)
 	}
-
-	// Write data to temporary file first, then rename (atomic operation)
-	tempFilePath := nm.nodeMapFilePath + ".tmp"
-	if err := os.WriteFile(tempFilePath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write node mapping to temporary file %s: %w", tempFilePath, err)
-	}
-
-	// Atomic rename to final location
-	if err := os.Rename(tempFilePath, nm.nodeMapFilePath); err != nil {
-		// Clean up temporary file on failure
-		_ = os.Remove(tempFilePath)
-		return fmt.Errorf("failed to rename temporary file to %s: %w", nm.nodeMapFilePath, err)
-	}
-
-	// Note: File write verification could be added here if needed
-	// For now, we rely on atomic file operations (write to .tmp, then rename)
 
 	nm.lastSync = time.Now()
 	nm.dirty = false
