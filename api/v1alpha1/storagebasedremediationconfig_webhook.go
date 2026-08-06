@@ -57,11 +57,20 @@ func (v *StorageBasedRemediationConfigValidator) ValidateUpdate(
 	oldObj, newObj runtime.Object,
 ) (admission.Warnings, error) {
 	sbrConfig := newObj.(*StorageBasedRemediationConfig)
+	oldSBRConfig := oldObj.(*StorageBasedRemediationConfig)
 	sbrConfigLog.Info("validate update", "name", sbrConfig.Name, "namespace", sbrConfig.Namespace)
 
 	// Validate the StorageBasedRemediationConfig spec
 	if err := sbrConfig.Spec.ValidateAll(); err != nil {
 		return nil, fmt.Errorf("StorageBasedRemediationConfig spec validation failed: %w", err)
+	}
+
+	// SharedStorageVolumeMode is immutable after creation.
+	// nil resolves to Filesystem for comparison: nil→Filesystem is allowed, nil→Block is rejected.
+	oldMode := oldSBRConfig.Spec.GetSharedStorageVolumeMode()
+	newMode := sbrConfig.Spec.GetSharedStorageVolumeMode()
+	if oldMode != newMode {
+		return nil, fmt.Errorf("sharedStorageVolumeMode is immutable: cannot change from %q to %q", oldMode, newMode)
 	}
 
 	// TODO: Add node selector overlap validation once we can access the client
