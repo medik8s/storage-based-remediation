@@ -61,6 +61,14 @@ func (v *StorageBasedRemediationConfigValidator) ValidateUpdate(
 		return nil, fmt.Errorf("StorageBasedRemediationConfig spec validation failed: %w", err)
 	}
 
+	// SharedStorageVolumeMode is immutable after creation.
+	// nil resolves to Filesystem for comparison: nil→Filesystem is allowed, nil→Block is rejected.
+	oldMode := oldSbrConfig.Spec.GetSharedStorageVolumeMode()
+	newMode := sbrConfig.Spec.GetSharedStorageVolumeMode()
+	if oldMode != newMode {
+		return nil, fmt.Errorf("sharedStorageVolumeMode is immutable: cannot change from %q to %q", oldMode, newMode)
+	}
+
 	// TODO: Add node selector overlap validation once we can access the client
 	// For now, the validation logic is in the controller
 	sbrConfigLog.V(1).Info("Admission webhook validation passed", "name", sbrConfig.Name)

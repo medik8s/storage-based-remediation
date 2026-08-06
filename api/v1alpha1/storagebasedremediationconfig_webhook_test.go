@@ -97,6 +97,95 @@ func isMutuallyExclusiveRole(key string) bool {
 	return false
 }
 
+func TestStorageBasedRemediationConfigValidator_ValidateUpdate_VolumeModeImmutability(t *testing.T) {
+	filesystem := SharedStorageVolumeModeFilesystem
+	block := SharedStorageVolumeModeBlock
+	validator := &StorageBasedRemediationConfigValidator{}
+
+	tests := []struct {
+		name    string
+		oldMode *SharedStorageVolumeModeType
+		newMode *SharedStorageVolumeModeType
+		wantErr bool
+	}{
+		{
+			name:    "nil to nil is allowed",
+			oldMode: nil,
+			newMode: nil,
+			wantErr: false,
+		},
+		{
+			name:    "nil to Filesystem is allowed (both resolve to Filesystem)",
+			oldMode: nil,
+			newMode: &filesystem,
+			wantErr: false,
+		},
+		{
+			name:    "Filesystem to nil is allowed (both resolve to Filesystem)",
+			oldMode: &filesystem,
+			newMode: nil,
+			wantErr: false,
+		},
+		{
+			name:    "Filesystem to Filesystem is allowed",
+			oldMode: &filesystem,
+			newMode: &filesystem,
+			wantErr: false,
+		},
+		{
+			name:    "Block to Block is allowed",
+			oldMode: &block,
+			newMode: &block,
+			wantErr: false,
+		},
+		{
+			name:    "nil to Block is rejected",
+			oldMode: nil,
+			newMode: &block,
+			wantErr: true,
+		},
+		{
+			name:    "Filesystem to Block is rejected",
+			oldMode: &filesystem,
+			newMode: &block,
+			wantErr: true,
+		},
+		{
+			name:    "Block to Filesystem is rejected",
+			oldMode: &block,
+			newMode: &filesystem,
+			wantErr: true,
+		},
+		{
+			name:    "Block to nil is rejected",
+			oldMode: &block,
+			newMode: nil,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldObj := &StorageBasedRemediationConfig{
+				Spec: StorageBasedRemediationConfigSpec{
+					SharedStorageVolumeMode: tt.oldMode,
+					SharedStorageClass:      "test-sc",
+				},
+			}
+			newObj := &StorageBasedRemediationConfig{
+				Spec: StorageBasedRemediationConfigSpec{
+					SharedStorageVolumeMode: tt.newMode,
+					SharedStorageClass:      "test-sc",
+				},
+			}
+			_, err := validator.ValidateUpdate(t.Context(), oldObj, newObj)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateUpdate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func Test_nodeSelectorOverlaps(t *testing.T) {
 	tests := []struct {
 		name      string

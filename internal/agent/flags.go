@@ -129,4 +129,9 @@ const (
 
 	// SharedStorageSBRDeviceDirectory is the directory for the SBR device within shared storage
 	SharedStorageSBRDeviceDirectory = "/dev/sbr"
+
+	// SharedStorageBlockDevicePath is the device path where a raw block PVC is exposed in the container.
+	// Used as volumeDevices[].devicePath for block mode PVCs.
+	// This path must NOT be under /dev to avoid being shadowed by the host /dev hostPath mount.
+	SharedStorageBlockDevicePath = "/sbr-block"
 )
