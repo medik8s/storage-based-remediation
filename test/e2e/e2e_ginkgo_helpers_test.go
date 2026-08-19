@@ -119,7 +119,7 @@ func cleanupStorageBasedRemediationConfig(tn *utils.TestNamespace, sbrConfig *me
 				}
 			}
 
-			GinkgoWriter.Printf("Force deleting stuck non-running pods after %v timeout\n", elapsed)
+			GinkgoWriter.Printf("Force deleting stuck jobs and non-running pods after %v timeout\n", elapsed)
 			zero := int64(0)
 			policy := metav1.DeletePropagationBackground
 
