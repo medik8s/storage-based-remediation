@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -87,6 +88,12 @@ const (
 	// Default image constants
 	DefaultSBRAgentImage = "sbr-agent:latest"
 	SBROperatorName      = "sbr-operator"
+
+	// BlockModeHostDevMountPath is where the host /dev is mounted inside the agent container in block
+	// mode. A bind mount at destination /dev makes the OCI runtime skip creating every linux.devices
+	// node (runc's needsSetupDev gate; crun behaves the same), so the CSI-mapped block device never
+	// appears; mounting host /dev at this side path instead lets the mapped device be created.
+	BlockModeHostDevMountPath = "/host-dev"
 
 	// Retry configuration constants for StorageBasedRemediationConfig controller
 	// MaxStorageBasedRemediationConfigRetries is the maximum number of retry attempts for StorageBasedRemediationConfig operations
@@ -1835,7 +1842,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 									Exec: &corev1.ExecAction{
 										Command: []string{"/bin/sh", "-c",
 											fmt.Sprintf("test -c %s && grep -l sbr-agent /proc/*/cmdline 2>/dev/null",
-												sbrConfig.Spec.GetWatchdogPath())},
+												getEffectiveWatchdogPath(sbrConfig))},
 									},
 								},
 								InitialDelaySeconds: 60,
@@ -1873,7 +1880,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *m
 	sbrUpdateInterval := sbrConfig.Spec.GetSBRUpdateInterval()
 	peerCheckInterval := sbrConfig.Spec.GetPeerCheckInterval()
 	args := []string{
-		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, sbrConfig.Spec.GetWatchdogPath()),
+		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, getEffectiveWatchdogPath(sbrConfig)),
 		fmt.Sprintf("--%s=%s", agent.FlagLogLevel, agent.LogLevel),
 		fmt.Sprintf("--%s=%s", agent.FlagClusterName, sbrConfig.Name),
 		fmt.Sprintf("--%s=%s", agent.FlagStaleNodeTimeout, agent.StaleNodeTimeout),
@@ -1923,13 +1930,32 @@ func (r *StorageBasedRemediationConfigReconciler) buildNodeSelector(sbrConfig *m
 	return nodeSelector
 }
 
+// getEffectiveWatchdogPath returns the in-container path the agent should use for the watchdog device.
+// In block mode the host /dev is mounted at BlockModeHostDevMountPath (not over /dev), so the watchdog
+// resolves under that side path; otherwise the configured path (host /dev mounted at /dev) is used.
+func getEffectiveWatchdogPath(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig) string {
+	watchdogPath := sbrConfig.Spec.GetWatchdogPath()
+	if sbrConfig.Spec.IsBlockMode() {
+		return filepath.Join(BlockModeHostDevMountPath, filepath.Base(watchdogPath))
+	}
+	return watchdogPath
+}
+
 // buildVolumeMounts builds the volume mounts for the sbr-agent container.
 // Block mode shared storage uses volumeDevices instead, so it is NOT added here.
 func (r *StorageBasedRemediationConfigReconciler) buildVolumeMounts(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig) []corev1.VolumeMount {
 	mounts := []corev1.VolumeMount{
-		{Name: "dev", MountPath: "/dev"},
 		{Name: "sys", MountPath: "/sys", ReadOnly: true},
 		{Name: "proc", MountPath: "/proc", ReadOnly: true},
+	}
+
+	// A bind mount at destination /dev makes the OCI runtime skip creating the CSI-mapped block device
+	// node, so in block mode mount the host /dev at a side path (/host-dev); the agent resolves the
+	// watchdog under it and softdog's runtime-created device appears via the live directory mount.
+	if sbrConfig.Spec.IsBlockMode() {
+		mounts = append(mounts, corev1.VolumeMount{Name: "host-dev", MountPath: BlockModeHostDevMountPath})
+	} else {
+		mounts = append(mounts, corev1.VolumeMount{Name: "dev", MountPath: "/dev"})
 	}
 
 	// Add shared storage mount for filesystem mode only; block mode uses volumeDevices
@@ -1960,15 +1986,6 @@ func (r *StorageBasedRemediationConfigReconciler) buildVolumeDevices(sbrConfig *
 func (r *StorageBasedRemediationConfigReconciler) buildVolumes(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig) []corev1.Volume {
 	volumes := []corev1.Volume{
 		{
-			Name: "dev",
-			VolumeSource: corev1.VolumeSource{
-				HostPath: &corev1.HostPathVolumeSource{
-					Path: "/dev",
-					Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
-				},
-			},
-		},
-		{
 			Name: "sys",
 			VolumeSource: corev1.VolumeSource{
 				HostPath: &corev1.HostPathVolumeSource{
@@ -1986,6 +2003,31 @@ func (r *StorageBasedRemediationConfigReconciler) buildVolumes(sbrConfig *medik8
 				},
 			},
 		},
+	}
+
+	// See buildVolumeMounts: block mode mounts the host watchdog directory at /host-dev (a bind mount
+	// at /dev makes the runtime skip the CSI block-device node). The host path is derived from the
+	// configured watchdog path so no /dev location is assumed; filesystem mode mounts the whole host /dev.
+	if sbrConfig.Spec.IsBlockMode() {
+		volumes = append(volumes, corev1.Volume{
+			Name: "host-dev",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: filepath.Dir(sbrConfig.Spec.GetWatchdogPath()),
+					Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+				},
+			},
+		})
+	} else {
+		volumes = append(volumes, corev1.Volume{
+			Name: "dev",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/dev",
+					Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+				},
+			},
+		})
 	}
 
 	// Add shared storage volume if configured

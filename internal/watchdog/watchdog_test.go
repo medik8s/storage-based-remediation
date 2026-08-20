@@ -366,7 +366,7 @@ func TestWatchdogLifecycle(t *testing.T) {
 }
 
 func TestFindWatchdogDevices(t *testing.T) {
-	devices := findWatchdogDevices()
+	devices := findWatchdogDevices("/dev")
 
 	// Result should be a slice (may be empty on systems without watchdog devices)
 	if devices == nil {

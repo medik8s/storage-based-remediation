@@ -134,6 +134,12 @@ func NewWithSoftdogFallbackAndTestMode(path string, testMode bool, logger logr.L
 		return nil, fmt.Errorf("watchdog device path cannot be empty")
 	}
 
+	// Resolve every device lookup relative to the requested path's directory so the watchdog logic
+	// never assumes the host /dev is mounted at the container's /dev. Block mode mounts the host /dev
+	// at a non-/dev path (a bind mount at /dev makes the runtime skip the CSI block-device node), so
+	// the watchdog path is e.g. /host-dev/watchdog; softdog still creates "watchdog" in that same dir.
+	devDir := filepath.Dir(path)
+
 	// First, try to open the specified watchdog device
 	wd, err := NewWithLogger(path, logger)
 	if err == nil {
@@ -145,7 +151,7 @@ func NewWithSoftdogFallbackAndTestMode(path string, testMode bool, logger logr.L
 		"requestedPath", path, "error", err.Error())
 
 	// Check if any watchdog devices exist in the system
-	existingDevices := findWatchdogDevices()
+	existingDevices := findWatchdogDevices(devDir)
 	if len(existingDevices) > 0 {
 		logger.Info("Found existing watchdog devices, not loading softdog",
 			"devices", existingDevices)
@@ -164,8 +170,10 @@ func NewWithSoftdogFallbackAndTestMode(path string, testMode bool, logger logr.L
 	// Wait a moment for the device to appear after module load
 	time.Sleep(100 * time.Millisecond)
 
-	// Try to open the softdog device (typically /dev/watchdog)
-	softdogPath := "/dev/watchdog"
+	// Open the softdog device. softdog always creates a device named "watchdog"; resolve it in the
+	// same directory as the requested path rather than assuming /dev, so this works when the host
+	// /dev is mounted at a non-/dev path (block mode).
+	softdogPath := filepath.Join(devDir, "watchdog")
 	wd, err = NewWithLogger(softdogPath, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open softdog device at %s after loading module: %w", softdogPath, err)
@@ -179,15 +187,16 @@ func NewWithSoftdogFallbackAndTestMode(path string, testMode bool, logger logr.L
 	return wd, nil
 }
 
-// findWatchdogDevices scans the system for existing watchdog devices
-// Returns a list of watchdog device paths found in /dev/
-func findWatchdogDevices() []string {
+// findWatchdogDevices scans dir for existing watchdog devices.
+// Returns a list of watchdog device paths found in dir (typically the directory holding /dev).
+func findWatchdogDevices(dir string) []string {
 	var devices []string
 
-	// Common watchdog device patterns
+	// Common watchdog device patterns, resolved within dir so the search follows the requested
+	// watchdog path rather than assuming /dev is mounted at the container's /dev.
 	patterns := []string{
-		"/dev/watchdog*",
-		"/dev/wdt*",
+		filepath.Join(dir, "watchdog*"),
+		filepath.Join(dir, "wdt*"),
 	}
 
 	for _, pattern := range patterns {
