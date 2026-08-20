@@ -1379,6 +1379,35 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 			}
 		})
 
+		It("should mount host /dev at /host-dev and resolve the watchdog there in block mode", func() {
+			blockMode := medik8sv1alpha1.SharedStorageVolumeModeBlock
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "block-hostdev-test", Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass:      blockStorageClass,
+					SharedStorageVolumeMode: &blockMode,
+				},
+			}
+
+			By("verifying host /dev is mounted at /host-dev, never over /dev")
+			mounts := blockReconciler.buildVolumeMounts(sbrConfig)
+			var hostDev *corev1.VolumeMount
+			for i := range mounts {
+				Expect(mounts[i].MountPath).NotTo(Equal("/dev"),
+					"a bind mount at /dev makes the OCI runtime skip creating the CSI block device node")
+				if mounts[i].Name == "host-dev" {
+					hostDev = &mounts[i]
+				}
+			}
+			Expect(hostDev).NotTo(BeNil(), "block mode must mount host /dev at a side path")
+			Expect(hostDev.MountPath).To(Equal(BlockModeHostDevMountPath))
+
+			By("verifying the agent resolves the watchdog under /host-dev")
+			args := blockReconciler.buildSBRAgentArgs(sbrConfig)
+			Expect(args).To(ContainElement(
+				fmt.Sprintf("--%s=%s/watchdog", agent.FlagWatchdogPath, BlockModeHostDevMountPath)))
+		})
+
 		It("should use volumeMounts for filesystem mode DaemonSet", func() {
 			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "fs-ds-test", Namespace: blockNamespace},
