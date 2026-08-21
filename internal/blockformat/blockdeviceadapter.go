@@ -110,4 +110,3 @@ func (a *BlockDeviceAdapter) Path() string {
 func (a *BlockDeviceAdapter) IsClosed() bool {
 	return a.backing.IsClosed()
 }
-

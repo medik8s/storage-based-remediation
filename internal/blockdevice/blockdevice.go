@@ -93,7 +93,7 @@ func (bufferedOpener) Open(path string) (*os.File, error) {
 var DeviceOpener Opener = directOpener{}
 
 // BufferedDeviceOpener opens block device paths without O_DIRECT.
-// Use this for one-shot operations (e.g. --init) where page-aligned
+// Use this for one-shot operations (e.g. --init) where O_DIRECT-aligned
 // buffers are not available and cache bypass is unnecessary.
 var BufferedDeviceOpener Opener = bufferedOpener{}
 
@@ -125,14 +125,14 @@ func OpenWithLogger(path string, logger logr.Logger) (*Device, error) {
 }
 
 // OpenBuffered opens a block device without O_DIRECT (buffered I/O).
-// Use this for one-shot operations like --init where page-aligned buffers
+// Use this for one-shot operations like --init where O_DIRECT-aligned buffers
 // are not available and cache bypass is unnecessary.
 func OpenBuffered(path string, ioTimeout time.Duration, logger logr.Logger) (*Device, error) {
 	return openWithOpener(path, ioTimeout, logger, BufferedDeviceOpener)
 }
 
 // OpenWithTimeout opens a raw block device with custom I/O timeout and logger.
-// The device is opened with O_DIRECT, which requires page-aligned I/O buffers.
+// The device is opened with O_DIRECT, which requires O_DIRECT-aligned I/O buffers.
 func OpenWithTimeout(path string, ioTimeout time.Duration, logger logr.Logger) (*Device, error) {
 	return openWithOpener(path, ioTimeout, logger, DeviceOpener)
 }

@@ -41,8 +41,8 @@ type mockClosable struct {
 	closeCount int
 }
 
-func (m *mockClosable) Close() error { m.closed = true; m.closeCount++; return nil }
-func (m *mockClosable) Path() string { return m.path }
+func (m *mockClosable) Close() error   { m.closed = true; m.closeCount++; return nil }
+func (m *mockClosable) Path() string   { return m.path }
 func (m *mockClosable) IsClosed() bool { return m.closed }
 
 func TestBlockDeviceAdapterReadWriteViaOffset(t *testing.T) {

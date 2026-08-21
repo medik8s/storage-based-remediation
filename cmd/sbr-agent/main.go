@@ -538,6 +538,29 @@ type SBRAgent struct {
 	// All adapters (heartbeatDevice, fenceDevice) and cleanup code use this
 	// to ensure the device is closed exactly once.
 	deviceCloser *blockformat.SharedCloser
+
+	// Block mode pre-allocated O_DIRECT-aligned I/O buffers.
+	// Used only when blockMode == true. Allocated once in
+	// initializeBlockModeDevices. Each buffer has exactly one serialized
+	// consumer goroutine (heartbeatLoop or peerMonitorLoop).
+	heartbeatSlotBuf []byte // DirectIOAlloc(BlockSlotSize) — own heartbeat writes
+	peerReadBuf      []byte // DirectIOAlloc(BlockSlotSize) — peer heartbeat reads
+	fenceWriteBuf    []byte // DirectIOAlloc(BlockSlotSize) — fence message writes
+	fenceReadBuf     []byte // DirectIOAlloc(BlockSlotSize) — fence slot reads
+}
+
+// slotSize returns the per-slot I/O size: BlockSlotSize (4096) in block mode,
+// SBD_SLOT_SIZE (512) in filesystem mode.
+func (s *SBRAgent) slotSize() int64 {
+	if s.blockMode {
+		return blockformat.BlockSlotSize
+	}
+	return sbdprotocol.SBD_SLOT_SIZE
+}
+
+// slotOffset returns the byte offset for the given node's slot.
+func (s *SBRAgent) slotOffset(nodeID uint16) int64 {
+	return int64(nodeID) * s.slotSize()
 }
 
 // NewSBRAgentWithWatchdog creates a new SBR agent with a provided watchdog interface.
@@ -774,17 +797,16 @@ func (s *SBRAgent) probeBlockMode() (bool, *blockformat.Superblock, error) {
 		return false, nil, nil
 	}
 
-	// Use OpenBuffered (no O_DIRECT) for block mode. O_SYNC already
-	// ensures writes hit disk. O_DIRECT requires page-aligned I/O buffers
-	// which the heartbeat/fence code does not provide.
-	dev, err := blockdevice.OpenBuffered(s.heartbeatDevicePath, s.ioTimeout,
+	// Use O_DIRECT + O_SYNC so the superblock probe bypasses the local page
+	// cache and reads fresh data from the shared RWX block device.
+	dev, err := blockdevice.OpenWithTimeout(s.heartbeatDevicePath, s.ioTimeout,
 		logger.WithName("probe-device"))
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to open device for block probe: %w", err)
 	}
 	defer dev.Close()
 
-	buf := make([]byte, blockformat.BlockSuperblockSize)
+	buf := blockdevice.DirectIOAlloc(int(blockformat.BlockSuperblockSize))
 	n, err := dev.ReadAt(buf, blockformat.BlockSuperblockOffset)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
@@ -822,10 +844,9 @@ func (s *SBRAgent) probeBlockMode() (bool, *blockformat.Superblock, error) {
 // initializeBlockModeDevices sets up block mode: opens one device and
 // creates OffsetDevice-backed adapters for heartbeat and fence regions.
 func (s *SBRAgent) initializeBlockModeDevices(sb *blockformat.Superblock) error {
-	// Use OpenBuffered (no O_DIRECT) for block mode runtime I/O. O_SYNC
-	// ensures durability; O_DIRECT's cache bypass is unnecessary on a raw
-	// block device and would require page-aligned buffers throughout.
-	dev, err := blockdevice.OpenBuffered(s.heartbeatDevicePath, s.ioTimeout,
+	// Use O_DIRECT + O_SYNC for block mode runtime I/O. O_DIRECT bypasses
+	// the page cache so heartbeat reads see fresh data from other nodes.
+	dev, err := blockdevice.OpenWithTimeout(s.heartbeatDevicePath, s.ioTimeout,
 		logger.WithName("block-device"))
 	if err != nil {
 		return fmt.Errorf("failed to open block device %s: %w", s.heartbeatDevicePath, err)
@@ -846,6 +867,12 @@ func (s *SBRAgent) initializeBlockModeDevices(sb *blockformat.Superblock) error 
 	closer := blockformat.NewSharedCloser(dev)
 	s.heartbeatDevice = blockformat.NewBlockDeviceAdapter(heartbeatOffset, closer)
 	s.fenceDevice = blockformat.NewBlockDeviceAdapter(fenceOffset, closer)
+
+	// Pre-allocate O_DIRECT-aligned I/O buffers for heartbeat/fence slot I/O.
+	s.heartbeatSlotBuf = blockdevice.DirectIOAlloc(int(blockformat.BlockSlotSize))
+	s.peerReadBuf = blockdevice.DirectIOAlloc(int(blockformat.BlockSlotSize))
+	s.fenceWriteBuf = blockdevice.DirectIOAlloc(int(blockformat.BlockSlotSize))
+	s.fenceReadBuf = blockdevice.DirectIOAlloc(int(blockformat.BlockSlotSize))
 
 	// Set state only after successful initialization
 	s.blockMode = true
@@ -1147,8 +1174,8 @@ func (s *SBRAgent) writeHeartbeatToSBRInternal() error {
 		return fmt.Errorf("failed to marshal heartbeat message: %w", err)
 	}
 
-	// Calculate slot offset for this node (NodeID * SBD_SLOT_SIZE)
-	slotOffset := int64(s.nodeID) * sbdprotocol.SBD_SLOT_SIZE
+	// Calculate slot offset for this node
+	slotOffset := s.slotOffset(s.nodeID)
 
 	// Write heartbeat message to the designated slot
 	// NOTE: We use direct WriteAt/Sync here (not writeSlotWithLock) because:
@@ -1156,13 +1183,26 @@ func (s *SBRAgent) writeHeartbeatToSBRInternal() error {
 	// - The node mapping file lock coordinates node-to-slot assignments, not heartbeat writes
 	// - Using the node mapping lock here causes deadlocks when heartbeat writes happen
 	//   concurrently with node mapping operations
-	n, err := s.heartbeatDevice.WriteAt(msgBytes, slotOffset)
+	var writeData []byte
+	var expectedLen int
+	if s.blockMode {
+		// Block mode: write full 4 KiB slot with payload + zero padding
+		clear(s.heartbeatSlotBuf)
+		copy(s.heartbeatSlotBuf, msgBytes)
+		writeData = s.heartbeatSlotBuf
+		expectedLen = len(s.heartbeatSlotBuf)
+	} else {
+		writeData = msgBytes
+		expectedLen = len(msgBytes)
+	}
+
+	n, err := s.heartbeatDevice.WriteAt(writeData, slotOffset)
 	if err != nil {
 		return fmt.Errorf("failed to write heartbeat to SBR device at offset %d: %w", slotOffset, err)
 	}
 
-	if n != len(msgBytes) {
-		return fmt.Errorf("partial write to SBR device: wrote %d bytes, expected %d", n, len(msgBytes))
+	if n != expectedLen {
+		return fmt.Errorf("partial write to SBR device: wrote %d bytes, expected %d", n, expectedLen)
 	}
 
 	// Ensure data is committed to storage
@@ -1184,10 +1224,16 @@ func (s *SBRAgent) readPeerHeartbeat(peerNodeID uint16) error {
 	}
 
 	// Calculate slot offset for the peer node
-	slotOffset := int64(peerNodeID) * sbdprotocol.SBD_SLOT_SIZE
+	slotOffset := s.slotOffset(peerNodeID)
 
 	// Read the entire slot
-	slotData := make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+	var slotData []byte
+	if s.blockMode {
+		slotData = s.peerReadBuf
+		clear(slotData)
+	} else {
+		slotData = make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+	}
 	n, err := s.heartbeatDevice.ReadAt(slotData, slotOffset)
 	if err != nil {
 		// Increment SBR I/O errors counter for read failures
@@ -1196,9 +1242,10 @@ func (s *SBRAgent) readPeerHeartbeat(peerNodeID uint16) error {
 		return fmt.Errorf("failed to read peer %d heartbeat from offset %d: %w", peerNodeID, slotOffset, err)
 	}
 
-	if n != sbdprotocol.SBD_SLOT_SIZE {
+	expectedSize := int(s.slotSize())
+	if n != expectedSize {
 		return fmt.Errorf("partial read from peer %d slot: read %d bytes, expected %d",
-			peerNodeID, n, sbdprotocol.SBD_SLOT_SIZE)
+			peerNodeID, n, expectedSize)
 	}
 
 	if sbdprotocol.IsEmptySlot(slotData[:sbdprotocol.SBD_HEADER_SIZE]) {
@@ -1654,7 +1701,7 @@ func (s *SBRAgent) quiesceCheckLoop() {
 				continue
 			}
 
-			buf := make([]byte, blockformat.BlockSuperblockSize)
+			buf := blockdevice.DirectIOAlloc(int(blockformat.BlockSuperblockSize))
 			n, err := s.rawDevice.ReadAt(buf, blockformat.BlockSuperblockOffset)
 			if err != nil || n < blockformat.SuperblockTotalSize {
 				logger.V(1).Info("Quiesce check: failed to read superblock",
@@ -1760,10 +1807,16 @@ func (s *SBRAgent) cleanOwnFenceSlotIfPresent(logger logr.Logger) error {
 	}
 
 	// Calculate slot offset for our own node
-	slotOffset := int64(s.nodeID) * sbdprotocol.SBD_SLOT_SIZE
+	slotOffset := s.slotOffset(s.nodeID)
 
-	// Read the header
-	headerBuf := make([]byte, sbdprotocol.SBD_HEADER_SIZE)
+	// Read the slot (full slot in block mode for alignment, header only in filesystem mode)
+	var headerBuf []byte
+	if s.blockMode {
+		headerBuf = s.fenceReadBuf
+		clear(headerBuf)
+	} else {
+		headerBuf = make([]byte, sbdprotocol.SBD_HEADER_SIZE)
+	}
 	n, err := s.fenceDevice.ReadAt(headerBuf, slotOffset)
 	if err != nil {
 		return fmt.Errorf("failed to read header from own slot %d at offset %d: %w", s.nodeID, slotOffset, err)
@@ -1797,16 +1850,20 @@ func (s *SBRAgent) cleanOwnFenceSlotIfPresent(logger logr.Logger) error {
 	}
 
 	// Write clear fence message to own slot
-	// NOTE: We use direct WriteAt/Sync here (not writeSlotWithLock) because:
-	// - This writes to the fence device, not the node mapping file
-	// - Each node writes only to its own fence slot (no inter-node contention)
-	// - The node mapping file lock is for coordinating node-to-slot assignments, not fence writes
-	wrote, err := s.fenceDevice.WriteAt(data, slotOffset)
+	var writeData []byte
+	if s.blockMode {
+		clear(s.fenceWriteBuf)
+		copy(s.fenceWriteBuf, data)
+		writeData = s.fenceWriteBuf
+	} else {
+		writeData = data
+	}
+	wrote, err := s.fenceDevice.WriteAt(writeData, slotOffset)
 	if err != nil {
 		return fmt.Errorf("failed to write clear fence message at offset %d: %w", slotOffset, err)
 	}
-	if wrote != len(data) {
-		return fmt.Errorf("partial write clearing own fence slot: wrote %d expected %d", wrote, len(data))
+	if wrote != len(writeData) {
+		return fmt.Errorf("partial write clearing own fence slot: wrote %d expected %d", wrote, len(writeData))
 	}
 	if err := s.fenceDevice.Sync(); err != nil {
 		return fmt.Errorf("failed to sync fence device after clearing: %w", err)
@@ -1877,14 +1934,19 @@ func (s *SBRAgent) clearPreflightSlot() error {
 	}
 
 	// Calculate slot offset for DefaultNodeID (slot 1)
-	slotOffset := int64(DefaultNodeID) * sbdprotocol.SBD_SLOT_SIZE
+	slotOffset := s.slotOffset(DefaultNodeID)
 
 	logger.V(1).Info("Clearing pre-flight test data from slot 1",
 		"slotOffset", slotOffset,
 		"assignedNodeID", s.nodeID)
 
 	// Create an empty buffer to zero out the slot
-	emptySlot := make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+	var emptySlot []byte
+	if s.blockMode {
+		emptySlot = blockdevice.DirectIOAlloc(int(blockformat.BlockSlotSize))
+	} else {
+		emptySlot = make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+	}
 
 	// Write zeros to slot 1
 	return s.writeSlotWithLock(s.heartbeatDevice, slotOffset, emptySlot, "clear pre-flight slot 1")
@@ -2125,17 +2187,24 @@ func (s *SBRAgent) readOwnSlotForFenceMessage() error {
 	}
 
 	// Calculate slot offset for our own node
-	slotOffset := int64(s.nodeID) * sbdprotocol.SBD_SLOT_SIZE
+	slotOffset := s.slotOffset(s.nodeID)
 
 	// Read the entire slot
-	slotData := make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+	var slotData []byte
+	if s.blockMode {
+		slotData = s.fenceReadBuf
+		clear(slotData)
+	} else {
+		slotData = make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+	}
 	n, err := s.fenceDevice.ReadAt(slotData, slotOffset)
 	if err != nil {
 		return fmt.Errorf("failed to read own slot %d from offset %d: %w", s.nodeID, slotOffset, err)
 	}
 
-	if n != sbdprotocol.SBD_SLOT_SIZE {
-		return fmt.Errorf("partial read from own slot %d: read %d bytes, expected %d", s.nodeID, n, sbdprotocol.SBD_SLOT_SIZE)
+	expectedSize := int(s.slotSize())
+	if n != expectedSize {
+		return fmt.Errorf("partial read from own slot %d: read %d bytes, expected %d", s.nodeID, n, expectedSize)
 	}
 
 	// Check if the slot is empty
@@ -2213,15 +2282,14 @@ func probeBlockModeAt(devicePath string, ioTimeout time.Duration) (bool, *blockf
 		return false, nil, nil
 	}
 
-	// OpenBuffered (no O_DIRECT): O_SYNC already ensures durability and O_DIRECT would require
-	// page-aligned buffers the heartbeat/fence code does not provide.
-	dev, err := blockdevice.OpenBuffered(devicePath, ioTimeout, logger.WithName("probe-device"))
+	// Use O_DIRECT + O_SYNC so the superblock probe bypasses the local page cache.
+	dev, err := blockdevice.OpenWithTimeout(devicePath, ioTimeout, logger.WithName("probe-device"))
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to open device for block probe: %w", err)
 	}
 	defer dev.Close()
 
-	buf := make([]byte, blockformat.BlockSuperblockSize)
+	buf := blockdevice.DirectIOAlloc(int(blockformat.BlockSuperblockSize))
 	n, err := dev.ReadAt(buf, blockformat.BlockSuperblockOffset)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
