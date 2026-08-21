@@ -18,8 +18,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -1989,6 +1991,62 @@ func (s *SBRAgent) readOwnSlotForFenceMessage() error {
 	return nil
 }
 
+// probeBlockModeAt detects whether devicePath points to a block-format device by reading and
+// validating its on-disk superblock, so pre-flight classifies a device the same way the runtime does.
+//
+// Returns:
+//   - (true, superblock, nil) — block mode detected
+//   - (false, nil, nil) — filesystem mode (directory path or no valid superblock)
+//   - (false, nil, err) — device exists but I/O failed or superblock layout invalid
+func probeBlockModeAt(devicePath string, ioTimeout time.Duration) (bool, *blockformat.Superblock, error) {
+	// A directory path is always filesystem mode.
+	info, statErr := os.Stat(devicePath)
+	if statErr == nil && info.IsDir() {
+		logger.V(1).Info("Path is a directory, using filesystem mode", "path", devicePath)
+		return false, nil, nil
+	}
+
+	// OpenBuffered (no O_DIRECT): O_SYNC already ensures durability and O_DIRECT would require
+	// page-aligned buffers the heartbeat/fence code does not provide.
+	dev, err := blockdevice.OpenBuffered(devicePath, ioTimeout, logger.WithName("probe-device"))
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to open device for block probe: %w", err)
+	}
+	defer dev.Close()
+
+	buf := make([]byte, blockformat.BlockSuperblockSize)
+	n, err := dev.ReadAt(buf, blockformat.BlockSuperblockOffset)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			// Smaller than the superblock region — not a block-format device.
+			logger.V(1).Info("Device too small for superblock, using filesystem mode", "path", devicePath)
+			return false, nil, nil
+		}
+		return false, nil, fmt.Errorf("failed to read superblock from %s (read %d bytes): %w", devicePath, n, err)
+	}
+	if n < blockformat.SuperblockTotalSize {
+		logger.V(1).Info("Short read from device, using filesystem mode", "path", devicePath, "bytesRead", n)
+		return false, nil, nil
+	}
+
+	sb, err := blockformat.UnmarshalSuperblock(buf)
+	if err != nil {
+		// No valid superblock magic/version/CRC — a regular file, not a block-format device.
+		logger.V(1).Info("No valid superblock found, using filesystem mode", "path", devicePath, "error", err)
+		return false, nil, nil
+	}
+
+	if err := sb.Validate(); err != nil {
+		return false, nil, fmt.Errorf("superblock found but invalid layout: %w", err)
+	}
+
+	return true, sb, nil
+}
+
+// preflightBlockProbeTimeout bounds the superblock read used to detect block mode at pre-flight;
+// it matches the io-timeout flag default so a hung device fails fast.
+const preflightBlockProbeTimeout = 2 * time.Second
+
 // runPreflightChecks performs critical startup validation before entering main event loops
 // Returns success if EITHER watchdog is active OR SBR device is accessible (or both)
 // When detectOnlyMode is true, the watchdog check is skipped since the agent won't use it
@@ -2009,10 +2067,21 @@ func runPreflightChecks(watchdogPath, sbrDevicePath, nodeName string, nodeID uin
 		watchdogErr = checkWatchdogDevice(watchdogPath)
 	}
 
-	// Check SBR device accessibility
+	// Check SBR device accessibility. Detect block mode the same way the runtime does (a valid
+	// on-disk superblock) so a raw block device is verified via its superblock instead of the
+	// filesystem slot-write test, which would corrupt the block layout.
 	var sbrErr error
 	if sbrDevicePath != "" {
-		sbrErr = checkSBRDevice(sbrDevicePath, nodeID, nodeName, false)
+		isBlock, _, probeErr := probeBlockModeAt(sbrDevicePath, preflightBlockProbeTimeout)
+		switch {
+		case probeErr != nil:
+			sbrErr = probeErr
+		case isBlock:
+			logger.Info("Pre-flight check passed: block-mode SBR device has a valid superblock",
+				"sbrDevicePath", sbrDevicePath)
+		default:
+			sbrErr = checkSBRDevice(sbrDevicePath, nodeID, nodeName, false)
+		}
 	}
 
 	// Check node ID/name resolution
