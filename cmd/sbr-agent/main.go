@@ -2117,7 +2117,7 @@ func checkSBRDevice(sbrDevicePath string, nodeID uint16, nodeName string, blockM
 // checkSBRBlockDevice verifies a block-mode device has a valid V1 superblock.
 // It never falls back to the filesystem slot-write test.
 func checkSBRBlockDevice(device mocks.BlockDeviceInterface, sbrDevicePath string) error {
-	buf := make([]byte, blockformat.BlockSuperblockSize)
+	buf := blockdevice.DirectIOAlloc(int(blockformat.BlockSuperblockSize))
 	n, err := device.ReadAt(buf, blockformat.BlockSuperblockOffset)
 	if err != nil {
 		return fmt.Errorf("block mode device %s: failed to read superblock: %w", sbrDevicePath, err)
@@ -2383,10 +2383,10 @@ func runInit(devicePath string, ioTimeout time.Duration, log logr.Logger) error 
 		return fmt.Errorf("--%s is required in init mode", agent.FlagSBRDevice)
 	}
 
-	// Use OpenBuffered (no O_DIRECT) for init. The init job runs once
-	// and does not need cache bypass. This avoids the page-alignment
-	// requirement that O_DIRECT imposes on I/O buffers.
-	dev, err := blockdevice.OpenBuffered(devicePath, ioTimeout, log)
+	// Use O_DIRECT + O_SYNC (OpenWithTimeout) for init. Concurrent init Jobs
+	// on different nodes can share the same RWX block device. O_DIRECT avoids
+	// relying on the local page cache when checking the existing superblock.
+	dev, err := blockdevice.OpenWithTimeout(devicePath, ioTimeout, log)
 	if err != nil {
 		return fmt.Errorf("failed to open device %q: %w", devicePath, err)
 	}
@@ -2415,8 +2415,8 @@ func runInit(devicePath string, ioTimeout time.Duration, log logr.Logger) error 
 
 	log.Info("Initializing block device", "device", devicePath, "size", deviceSize)
 
-	ioBuffer := make([]byte, blockformat.BlockSectorSize)
-	zeroBuffer := make([]byte, 1024*1024) // 1 MB
+	ioBuffer := blockdevice.DirectIOAlloc(int(blockformat.BlockSectorSize))
+	zeroBuffer := blockdevice.DirectIOAlloc(1024 * 1024) // 1 MB
 
 	return blockformat.InitDevice(dev, deviceSize, ioBuffer, zeroBuffer, log)
 }

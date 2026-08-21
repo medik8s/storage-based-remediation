@@ -473,3 +473,31 @@ func TestHasSuperblockMagicVsIsValidSuperblock(t *testing.T) {
 		t.Error("expected IsValidSuperblock=false for corrupted CRC")
 	}
 }
+
+// TestLayoutAlignmentForODirect verifies the O_DIRECT design contract:
+// all region offsets and sizes used by direct I/O must be aligned to
+// BlockSectorSize. Keep this invariant so block-format I/O satisfies the
+// alignment requirements of O_DIRECT on supported devices.
+func TestLayoutAlignmentForODirect(t *testing.T) {
+	const align = BlockSectorSize
+	checks := []struct {
+		name  string
+		value int64
+	}{
+		{"BlockSectorSize", BlockSectorSize},
+		{"BlockSlotSize", BlockSlotSize},
+		{"BlockSuperblockOffset", BlockSuperblockOffset},
+		{"BlockSuperblockSize", BlockSuperblockSize},
+		{"BlockNodeMapAOffset", BlockNodeMapAOffset},
+		{"BlockNodeMapBOffset", BlockNodeMapBOffset},
+		{"BlockNodeMapRegionSize", BlockNodeMapRegionSize},
+		{"BlockHeartbeatRegionOffset", BlockHeartbeatRegionOffset},
+		{"BlockFenceRegionOffset", BlockFenceRegionOffset},
+		{"BlockMinDeviceSize", BlockMinDeviceSize},
+	}
+	for _, c := range checks {
+		if c.value%align != 0 {
+			t.Errorf("%s = %d is not aligned to %d bytes", c.name, c.value, align)
+		}
+	}
+}

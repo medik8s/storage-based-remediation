@@ -83,8 +83,8 @@ type bufferedOpener struct{}
 func (bufferedOpener) Open(path string) (*os.File, error) {
 	// Open the device with read/write access and synchronous I/O, but
 	// without O_DIRECT. This avoids the page-alignment requirement for
-	// I/O buffers, which is acceptable for one-shot operations like --init
-	// where cache bypass is not needed.
+	// I/O buffers. Used in unit tests that operate on temp files where
+	// O_DIRECT may not be supported.
 	return os.OpenFile(path, os.O_RDWR|os.O_SYNC, 0)
 }
 

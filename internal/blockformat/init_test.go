@@ -302,6 +302,55 @@ func TestInitDeviceRejectsUnknownVersion(t *testing.T) {
 	}
 }
 
+// TestInitDeviceIOAlignment verifies that all I/O operations performed by
+// InitDevice use offsets and lengths aligned to BlockSectorSize, as required
+// by O_DIRECT.
+func TestInitDeviceIOAlignment(t *testing.T) {
+	dev := &alignmentCheckDevice{data: make([]byte, BlockMinDeviceSize)}
+
+	err := InitDevice(dev, BlockMinDeviceSize, testIOBuffer, testZeroBuffer, logr.Discard())
+	if err != nil {
+		t.Fatalf("InitDevice failed: %v", err)
+	}
+
+	for i, op := range dev.ops {
+		if op.offset%BlockSectorSize != 0 {
+			t.Errorf("op[%d] %s: offset %d not aligned to %d", i, op.kind, op.offset, BlockSectorSize)
+		}
+		if int64(op.length)%BlockSectorSize != 0 {
+			t.Errorf("op[%d] %s: length %d not aligned to %d", i, op.kind, op.length, BlockSectorSize)
+		}
+	}
+	if len(dev.ops) == 0 {
+		t.Fatal("no I/O operations recorded")
+	}
+}
+
+type ioOp struct {
+	kind   string
+	offset int64
+	length int
+}
+
+type alignmentCheckDevice struct {
+	data []byte
+	ops  []ioOp
+}
+
+func (d *alignmentCheckDevice) ReadAt(p []byte, off int64) (int, error) {
+	d.ops = append(d.ops, ioOp{"read", off, len(p)})
+	n := copy(p, d.data[off:])
+	return n, nil
+}
+
+func (d *alignmentCheckDevice) WriteAt(p []byte, off int64) (int, error) {
+	d.ops = append(d.ops, ioOp{"write", off, len(p)})
+	n := copy(d.data[off:], p)
+	return n, nil
+}
+
+func (d *alignmentCheckDevice) Sync() error { return nil }
+
 func TestInitDeviceLargerDevice(t *testing.T) {
 	// Device larger than minimum — should work fine
 	size := BlockMinDeviceSize * 2
