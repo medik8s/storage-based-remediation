@@ -24,9 +24,11 @@ import (
 	"io/fs"
 	"math"
 	"testing"
+	"unsafe"
 
 	"github.com/go-logr/logr"
 
+	"github.com/medik8s/storage-based-remediation/internal/blockdevice"
 	"github.com/medik8s/storage-based-remediation/internal/sbdprotocol"
 )
 
@@ -711,3 +713,71 @@ func TestBlockNodeMapStore_NonLinearizableButValid(t *testing.T) {
 		t.Errorf("equal generations after sequential saves is unexpected: gen=%d", stateA.generation)
 	}
 }
+
+// TestBlockNodeMapStore_IOAlignmentContract verifies the O_DIRECT contract:
+// all ReadAt/WriteAt operations use offsets and lengths aligned to
+// BlockSectorSize, and the pre-allocated I/O buffers have addresses
+// aligned to DirectIOAlignment.
+func TestBlockNodeMapStore_IOAlignmentContract(t *testing.T) {
+	dev := &ioTrackingDevice{data: make([]byte, BlockMinDeviceSize)}
+	store := NewBlockNodeMapStore(dev, logr.Discard())
+
+	// Verify buffer address alignment (DirectIOAlloc contract)
+	readAddr := uintptr(unsafe.Pointer(&store.readBuf[0]))
+	if readAddr%blockdevice.DirectIOAlignment != 0 {
+		t.Errorf("readBuf addr %#x not aligned to %d", readAddr, blockdevice.DirectIOAlignment)
+	}
+	writeAddr := uintptr(unsafe.Pointer(&store.writeBuf[0]))
+	if writeAddr%blockdevice.DirectIOAlignment != 0 {
+		t.Errorf("writeBuf addr %#x not aligned to %d", writeAddr, blockdevice.DirectIOAlignment)
+	}
+
+	// Save triggers reads (both buffers) + write + sync + verify read
+	if err := store.Save([]byte("alignment test")); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Load triggers reads of both buffers
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Verify all I/O offsets and lengths are aligned
+	for i, op := range dev.ops {
+		if op.offset%BlockSectorSize != 0 {
+			t.Errorf("op[%d] %s: offset %d not aligned to %d", i, op.kind, op.offset, BlockSectorSize)
+		}
+		if int64(op.length)%BlockSectorSize != 0 {
+			t.Errorf("op[%d] %s: length %d not aligned to %d", i, op.kind, op.length, BlockSectorSize)
+		}
+	}
+	if len(dev.ops) == 0 {
+		t.Fatal("no I/O operations recorded")
+	}
+}
+
+type ioTrackingOp struct {
+	kind   string
+	offset int64
+	length int
+}
+
+// ioTrackingDevice records all ReadAt/WriteAt calls for alignment auditing.
+type ioTrackingDevice struct {
+	data []byte
+	ops  []ioTrackingOp
+}
+
+func (d *ioTrackingDevice) ReadAt(p []byte, off int64) (int, error) {
+	d.ops = append(d.ops, ioTrackingOp{"read", off, len(p)})
+	n := copy(p, d.data[off:])
+	return n, nil
+}
+
+func (d *ioTrackingDevice) WriteAt(p []byte, off int64) (int, error) {
+	d.ops = append(d.ops, ioTrackingOp{"write", off, len(p)})
+	n := copy(d.data[off:], p)
+	return n, nil
+}
+
+func (d *ioTrackingDevice) Sync() error { return nil }

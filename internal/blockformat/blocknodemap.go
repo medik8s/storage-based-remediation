@@ -26,9 +26,12 @@ import (
 	"io/fs"
 	"math"
 	"math/big"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
+
+	"github.com/medik8s/storage-based-remediation/internal/blockdevice"
 )
 
 // Node map buffer envelope field sizes (within the 64 KB region).
@@ -71,15 +74,23 @@ type BlockNodeMapStore struct {
 	bufA   *OffsetDevice
 	bufB   *OffsetDevice
 	logger logr.Logger
+	// mu protects the reusable I/O buffers. It also serializes Load and Save
+	// because the buffers are shared between operations.
+	mu       sync.Mutex
+	readBuf  []byte // pre-allocated, aligned to DirectIOAlignment, 64 KiB
+	writeBuf []byte // pre-allocated, aligned to DirectIOAlignment, 64 KiB
 }
 
 // NewBlockNodeMapStore creates a BlockNodeMapStore operating on the given device.
 // The device must be a DeviceReadWriterAt with regions at the standard offsets.
+// Read and write buffers are pre-allocated with O_DIRECT-compatible alignment.
 func NewBlockNodeMapStore(dev DeviceReadWriterAt, logger logr.Logger) *BlockNodeMapStore {
 	return &BlockNodeMapStore{
-		bufA:   NewOffsetDevice(dev, BlockNodeMapAOffset, BlockNodeMapRegionSize),
-		bufB:   NewOffsetDevice(dev, BlockNodeMapBOffset, BlockNodeMapRegionSize),
-		logger: logger,
+		bufA:     NewOffsetDevice(dev, BlockNodeMapAOffset, BlockNodeMapRegionSize),
+		bufB:     NewOffsetDevice(dev, BlockNodeMapBOffset, BlockNodeMapRegionSize),
+		logger:   logger,
+		readBuf:  blockdevice.DirectIOAlloc(int(BlockNodeMapRegionSize)),
+		writeBuf: blockdevice.DirectIOAlloc(int(BlockNodeMapRegionSize)),
 	}
 }
 
@@ -88,6 +99,9 @@ func NewBlockNodeMapStore(dev DeviceReadWriterAt, logger logr.Logger) *BlockNode
 // to be a freshly zeroed device, returns fs.ErrNotExist. If both are
 // corrupted with non-zero generations, returns an error.
 func (s *BlockNodeMapStore) Load() ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	stateA := s.readBuffer(s.bufA, "A")
 	stateB := s.readBuffer(s.bufB, "B")
 
@@ -142,6 +156,9 @@ func (s *BlockNodeMapStore) Save(data []byte) error {
 	if len(data) > nmMaxPayloadSize {
 		return fmt.Errorf("payload too large: %d bytes, max %d", len(data), nmMaxPayloadSize)
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	return s.saveAttempt(data)
 }
@@ -212,12 +229,12 @@ func (s *BlockNodeMapStore) saveAttempt(data []byte) error {
 		return err
 	}
 
-	buf := marshalBuffer(newGen, writerUUID, data)
+	marshalInto(s.writeBuf, newGen, writerUUID, data)
 	s.logger.V(1).Info("Save: writing to inactive buffer",
 		"target", targetName, "generation", newGen,
 		"writerUUID", fmt.Sprintf("%x", writerUUID))
 
-	if _, err := targetBuf.WriteAt(buf, 0); err != nil {
+	if _, err := targetBuf.WriteAt(s.writeBuf, 0); err != nil {
 		return fmt.Errorf("failed to write node map buffer %s: %w", targetName, err)
 	}
 
@@ -250,14 +267,15 @@ func (s *BlockNodeMapStore) saveAttempt(data []byte) error {
 }
 
 // readBuffer reads and parses a 64 KB node map buffer.
+// It uses the pre-allocated readBuf for O_DIRECT-aligned I/O.
 func (s *BlockNodeMapStore) readBuffer(buf *OffsetDevice, name string) bufferState {
-	raw := make([]byte, BlockNodeMapRegionSize)
+	raw := s.readBuf
 	n, err := buf.ReadAt(raw, 0)
 	if err != nil && err != io.EOF {
 		s.logger.V(1).Info("readBuffer: read error", "buffer", name, "error", err)
 		return bufferState{readErr: fmt.Errorf("read buffer %s: %w", name, err)}
 	}
-	if int64(n) < BlockNodeMapRegionSize {
+	if n != int(BlockNodeMapRegionSize) {
 		s.logger.V(1).Info("readBuffer: short read", "buffer", name, "got", n, "expected", BlockNodeMapRegionSize)
 		return bufferState{readErr: fmt.Errorf("short read buffer %s: got %d bytes, need %d", name, n, BlockNodeMapRegionSize)}
 	}
@@ -310,9 +328,11 @@ func parseBuffer(raw []byte) bufferState {
 	}
 }
 
-// marshalBuffer constructs a 64 KB buffer from the given fields.
-func marshalBuffer(generation uint64, writerUUID [nmUUIDSize]byte, payload []byte) []byte {
-	buf := make([]byte, BlockNodeMapRegionSize)
+// marshalInto writes node map fields into an existing buffer (must be
+// at least BlockNodeMapRegionSize bytes). This allows using a
+// pre-allocated, O_DIRECT-aligned buffer for production I/O.
+func marshalInto(buf []byte, generation uint64, writerUUID [nmUUIDSize]byte, payload []byte) {
+	clear(buf[:BlockNodeMapRegionSize])
 
 	// Generation
 	binary.LittleEndian.PutUint64(buf[0:nmGenSize], generation)
@@ -330,7 +350,13 @@ func marshalBuffer(generation uint64, writerUUID [nmUUIDSize]byte, payload []byt
 	dataEnd := int(BlockNodeMapRegionSize) - nmCRCSize
 	checksum := crc32.ChecksumIEEE(buf[:dataEnd])
 	binary.LittleEndian.PutUint32(buf[dataEnd:dataEnd+nmCRCSize], checksum)
+}
 
+// marshalBuffer allocates and returns a new 64 KB buffer with the given fields.
+// Used in tests; production code uses marshalInto with pre-allocated buffers.
+func marshalBuffer(generation uint64, writerUUID [nmUUIDSize]byte, payload []byte) []byte {
+	buf := make([]byte, BlockNodeMapRegionSize)
+	marshalInto(buf, generation, writerUUID, payload)
 	return buf
 }
 
