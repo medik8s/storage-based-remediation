@@ -75,6 +75,11 @@ const (
 	ReasonPVCError                                = "PVCError"
 	ReasonSBRDeviceInitialized                    = "SBRDeviceInitialized"
 	ReasonSBRDeviceInitError                      = "SBRDeviceInitWaiting"
+	ReasonSBRDeviceInitFailed                     = "SBRDeviceInitFailed"
+
+	// Device init job timeout constants
+	DeviceInitJobDeadline     = int64(300) // 5 minutes
+	DeviceInitJobBackoffLimit = int32(1)   // 1 retry (2 total pod attempts)
 
 	// Cleanup job timeout constants
 	// CleanupJobPollTimeout is how long we wait for the cleanup job to complete
@@ -752,6 +757,8 @@ func (r *StorageBasedRemediationConfigReconciler) ensureSBRDevice(
 				},
 			},
 			Spec: batchv1.JobSpec{
+				ActiveDeadlineSeconds: ptr.To(DeviceInitJobDeadline),
+				BackoffLimit:          ptr.To(DeviceInitJobBackoffLimit),
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{
@@ -930,7 +937,7 @@ echo "SBR devices initialization completed successfully"
 					},
 				},
 				// Clean up completed jobs after 1 hour to avoid accumulation
-				TTLSecondsAfterFinished: func() *int32 { i := int32(3600); return &i }(),
+				TTLSecondsAfterFinished: ptr.To[int32](3600),
 			},
 		}
 	}
@@ -954,16 +961,29 @@ echo "SBR devices initialization completed successfully"
 			return controllerutil.OperationResultNone, nil
 		}
 
-		// If job failed, delete it so it can be recreated
-		if existingJob.Status.Failed > 0 {
-			logger.Info("SBR device initialization job failed, recreating...",
-				"failedCount", existingJob.Status.Failed)
-			if err := r.Delete(ctx, existingJob); err != nil {
-				logger.Error(err, "Failed to delete failed SBR device init job")
-				return controllerutil.OperationResultNone, fmt.Errorf("failed to delete failed SBR device init job: %w", err)
+		if existingJob.DeletionTimestamp != nil {
+			logger.Info("SBR device initialization job is terminating, waiting for deletion to complete")
+			return controllerutil.OperationResultNone, fmt.Errorf(
+				"SBR device initialization job '%s' is terminating, DaemonSet creation will be delayed",
+				existingJob.Name)
+		}
+
+		// If job reached terminal failure (all retries exhausted or deadline exceeded),
+		// delete it so it can be recreated on next reconcile
+		for _, condition := range existingJob.Status.Conditions {
+			if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+				logger.Info("SBR device initialization job failed, recreating...",
+					"failedCount", existingJob.Status.Failed,
+					"reason", condition.Reason)
+				r.emitEventf(sbrConfig, EventTypeWarning, ReasonSBRDeviceInitFailed,
+					"Device initialization job '%s' failed (%s). Will retry. If this persists, check storage availability.",
+					existingJob.Name, condition.Reason)
+				if err := r.Delete(ctx, existingJob); err != nil && !errors.IsNotFound(err) {
+					logger.Error(err, "Failed to delete failed SBR device init job")
+					return controllerutil.OperationResultNone, fmt.Errorf("failed to delete failed SBR device init job: %w", err)
+				}
+				return controllerutil.OperationResultUpdated, nil
 			}
-			// Wait a bit for deletion to complete
-			return controllerutil.OperationResultUpdated, nil
 		}
 
 		// Job is still running - prevent DaemonSet creation until job completes
