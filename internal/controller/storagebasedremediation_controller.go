@@ -108,6 +108,17 @@ type SBRRemediationReconciler struct {
 	ownNodeID   uint16
 	ownNodeName string // Changed from uint32 to uint64
 	sequence    uint64 // Changed from uint32 to uint64
+
+	// blockMode is true when the fence device is a raw RWX-Block volume opened with
+	// O_DIRECT. In that case fence writes must use the block slot geometry and a page-aligned,
+	// zero-padded slot buffer; a 512-byte, unpadded write fails with EINVAL. The slot size and
+	// aligned buffer are supplied by the agent (which owns the O_DIRECT allocator) so this
+	// package stays free of the linux-only blockdevice import.
+	blockMode     bool
+	blockSlotSize int64
+	// fenceWriteBuf is a page-aligned, blockSlotSize buffer reused for block-mode fence writes;
+	// nil in filesystem mode. Fence writes are serialized by the reconciler, so one buffer is safe.
+	fenceWriteBuf []byte
 }
 
 // +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=storagebasedremediations,verbs=get;list;watch;create;update;patch;delete
@@ -120,6 +131,32 @@ type SBRRemediationReconciler struct {
 func (s *SBRRemediationReconciler) SetSBRDevices(heartbeatDevice, fenceDevice mocks.BlockDeviceInterface) {
 	s.sbrDevice = heartbeatDevice
 	s.fenceDevice = fenceDevice
+}
+
+// SetBlockMode selects the fence-write slot geometry. In block mode the reconciler writes to
+// blockSlotSize slots using the supplied page-aligned, zero-padded fenceWriteBuf (matching the
+// agent's O_DIRECT read path); otherwise it uses the 512-byte filesystem slot geometry. The slot
+// size and aligned buffer are provided by the agent so this package avoids the linux-only
+// blockdevice/blockformat imports.
+func (r *SBRRemediationReconciler) SetBlockMode(blockMode bool, blockSlotSize int64, fenceWriteBuf []byte) {
+	r.blockMode = blockMode
+	r.blockSlotSize = blockSlotSize
+	r.fenceWriteBuf = fenceWriteBuf
+}
+
+// slotSize returns the per-slot I/O size: blockSlotSize (4096) in block mode, SBD_SLOT_SIZE (512)
+// in filesystem mode. Must match the agent's slotSize so the victim reads the slot the controller
+// wrote.
+func (r *SBRRemediationReconciler) slotSize() int64 {
+	if r.blockMode {
+		return r.blockSlotSize
+	}
+	return sbdprotocol.SBD_SLOT_SIZE
+}
+
+// slotOffset returns the fence-region-relative byte offset for the given node's slot.
+func (r *SBRRemediationReconciler) slotOffset(nodeID uint16) int64 {
+	return int64(nodeID) * r.slotSize()
 }
 
 // SetNodeManager sets the node manager for node ID resolution
@@ -411,17 +448,27 @@ func (r *SBRRemediationReconciler) writeFenceMessage(targetNodeID uint16, logger
 		return fmt.Errorf("failed to marshal fence message: %w", err)
 	}
 
-	// Calculate slot offset for the target node
-	slotOffset := int64(targetNodeID) * sbdprotocol.SBD_SLOT_SIZE
+	// Calculate slot offset for the target node using the active slot geometry.
+	slotOffset := r.slotOffset(targetNodeID)
+
+	// In block mode the device is O_DIRECT: the write must be a page-aligned, zero-padded
+	// full-slot buffer, otherwise WriteAt fails with EINVAL. In filesystem mode the raw
+	// marshalled message is written directly.
+	writeData := msgData
+	if r.blockMode {
+		clear(r.fenceWriteBuf)
+		copy(r.fenceWriteBuf, msgData)
+		writeData = r.fenceWriteBuf
+	}
 
 	// Write fence message to target node's slot
-	n, err := r.fenceDevice.WriteAt(msgData, slotOffset)
+	n, err := r.fenceDevice.WriteAt(writeData, slotOffset)
 	if err != nil {
 		return fmt.Errorf("failed to write fence message to slot %d (offset %d): %w", targetNodeID, slotOffset, err)
 	}
 
-	if n != len(msgData) {
-		return fmt.Errorf("partial write to slot %d: wrote %d bytes, expected %d", targetNodeID, n, len(msgData))
+	if n != len(writeData) {
+		return fmt.Errorf("partial write to slot %d: wrote %d bytes, expected %d", targetNodeID, n, len(writeData))
 	}
 
 	// Sync to ensure data is written to storage

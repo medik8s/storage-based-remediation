@@ -2706,6 +2706,11 @@ func (s *SBRAgent) addSBRRemediationController() error {
 
 	// Set up the reconciler with agent resources
 	reconciler.SetSBRDevices(s.heartbeatDevice, s.fenceDevice)
+	// In block mode the fence device is O_DIRECT: hand the reconciler the block slot geometry and
+	// a dedicated page-aligned buffer (not shared with the agent's own fence loop).
+	if s.blockMode {
+		reconciler.SetBlockMode(true, s.slotSize(), blockdevice.DirectIOAlloc(int(blockformat.BlockSlotSize)))
+	}
 
 	reconciler.SetNodeManager(s.nodeManager)
 	reconciler.SetOwnNodeInfo(s.nodeID, s.nodeName)
