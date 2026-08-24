@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -35,8 +34,7 @@ var sbrConfigLog = logf.Log.WithName("sbrconfig-resource")
 type StorageBasedRemediationConfigValidator struct{}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
-func (v *StorageBasedRemediationConfigValidator) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	sbrConfig := obj.(*StorageBasedRemediationConfig)
+func (v *StorageBasedRemediationConfigValidator) ValidateCreate(ctx context.Context, sbrConfig *StorageBasedRemediationConfig) (admission.Warnings, error) {
 	sbrConfigLog.Info("validate create", "name", sbrConfig.Name, "namespace", sbrConfig.Namespace)
 
 	// Validate the StorageBasedRemediationConfig spec
@@ -54,9 +52,8 @@ func (v *StorageBasedRemediationConfigValidator) ValidateCreate(ctx context.Cont
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
 func (v *StorageBasedRemediationConfigValidator) ValidateUpdate(
 	ctx context.Context,
-	oldObj, newObj runtime.Object,
+	oldSbrConfig, sbrConfig *StorageBasedRemediationConfig,
 ) (admission.Warnings, error) {
-	sbrConfig := newObj.(*StorageBasedRemediationConfig)
 	sbrConfigLog.Info("validate update", "name", sbrConfig.Name, "namespace", sbrConfig.Namespace)
 
 	// Validate the StorageBasedRemediationConfig spec
@@ -72,8 +69,7 @@ func (v *StorageBasedRemediationConfigValidator) ValidateUpdate(
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type
-func (v *StorageBasedRemediationConfigValidator) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	sbrConfig := obj.(*StorageBasedRemediationConfig)
+func (v *StorageBasedRemediationConfigValidator) ValidateDelete(ctx context.Context, sbrConfig *StorageBasedRemediationConfig) (admission.Warnings, error) {
 	sbrConfigLog.Info("validate delete", "name", sbrConfig.Name, "namespace", sbrConfig.Namespace)
 
 	// No validation needed for deletion
@@ -82,8 +78,7 @@ func (v *StorageBasedRemediationConfigValidator) ValidateDelete(ctx context.Cont
 
 // SetupWithManager sets up the webhook with the Manager.
 func (v *StorageBasedRemediationConfigValidator) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(&StorageBasedRemediationConfig{}).
+	return ctrl.NewWebhookManagedBy(mgr, &StorageBasedRemediationConfig{}).
 		WithValidator(v).
 		Complete()
 }

@@ -1114,7 +1114,7 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 		logger.Error(err, "Waiting for SBR device to be initialized",
 			"namespace", sbrConfig.Namespace,
 			"operation", "sbr-device-init")
-		r.emitEventf(&sbrConfig, EventTypeWarning, ReasonSBRDeviceInitError, err.Error())
+		r.emitEventf(&sbrConfig, EventTypeWarning, ReasonSBRDeviceInitError, "%s", err.Error())
 
 		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	} else if action != controllerutil.OperationResultNone {
