@@ -52,7 +52,7 @@ func TestWriteFenceMessageSlotGeometry(t *testing.T) {
 			r := &SBRRemediationReconciler{ownNodeID: 1}
 			r.SetSBRDevices(nil, dev)
 			if tc.blockMode {
-				r.SetBlockMode(true, testBlockSlotSize, make([]byte, testBlockSlotSize))
+				r.SetBlockMode(true, testBlockSlotSize, make([]byte, testBlockSlotSize), make([]byte, testBlockSlotSize))
 			}
 
 			if got := r.slotOffset(targetNodeID); got != int64(targetNodeID)*tc.wantSlotSize {
