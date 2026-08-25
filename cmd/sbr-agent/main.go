@@ -18,8 +18,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -520,6 +522,45 @@ type SBRAgent struct {
 
 	// detectOnlyMode when true disables remediation: watchdog is not armed, self-fence is never executed
 	detectOnlyMode bool
+
+	// blockMode is true when the device has a valid superblock (RWX block volume).
+	// In block mode, heartbeat/fence I/O goes through OffsetDevice adapters and
+	// the node map is stored on the block device instead of a file.
+	blockMode bool
+
+	// rawDevice holds the underlying block device when in block mode, used for
+	// superblock re-reads (quiesce checking) and BlockNodeMapStore I/O.
+	// Nil in filesystem mode. Never call Close() on rawDevice directly —
+	// use deviceCloser instead.
+	rawDevice *blockdevice.Device
+
+	// deviceCloser manages the shared close for the underlying block device.
+	// All adapters (heartbeatDevice, fenceDevice) and cleanup code use this
+	// to ensure the device is closed exactly once.
+	deviceCloser *blockformat.SharedCloser
+
+	// Block mode pre-allocated O_DIRECT-aligned I/O buffers.
+	// Used only when blockMode == true. Allocated once in
+	// initializeBlockModeDevices. Each buffer has exactly one serialized
+	// consumer goroutine (heartbeatLoop or peerMonitorLoop).
+	heartbeatSlotBuf []byte // DirectIOAlloc(BlockSlotSize) — own heartbeat writes
+	peerReadBuf      []byte // DirectIOAlloc(BlockSlotSize) — peer heartbeat reads
+	fenceWriteBuf    []byte // DirectIOAlloc(BlockSlotSize) — fence message writes
+	fenceReadBuf     []byte // DirectIOAlloc(BlockSlotSize) — fence slot reads
+}
+
+// slotSize returns the per-slot I/O size: BlockSlotSize (4096) in block mode,
+// SBD_SLOT_SIZE (512) in filesystem mode.
+func (s *SBRAgent) slotSize() int64 {
+	if s.blockMode {
+		return blockformat.BlockSlotSize
+	}
+	return sbdprotocol.SBD_SLOT_SIZE
+}
+
+// slotOffset returns the byte offset for the given node's slot.
+func (s *SBRAgent) slotOffset(nodeID uint16) int64 {
+	return int64(nodeID) * s.slotSize()
 }
 
 // NewSBRAgentWithWatchdog creates a new SBR agent with a provided watchdog interface.
@@ -721,8 +762,135 @@ func (s *SBRAgent) initMetrics() {
 	}()
 }
 
-// initializeSBRDevices opens and initializes the SBR block devices
+// initializeSBRDevices opens and initializes the SBR block devices.
+// It probes for a valid superblock to detect block mode. In block mode,
+// a single device is opened and heartbeat/fence regions are accessed via
+// OffsetDevice adapters. In filesystem mode, two separate device files
+// are opened as before.
 func (s *SBRAgent) initializeSBRDevices() error {
+	// Try to detect block mode by reading the superblock from the heartbeat device path.
+	isBlock, sb, err := s.probeBlockMode()
+	if err != nil {
+		return fmt.Errorf("failed to probe block mode on %s: %w", s.heartbeatDevicePath, err)
+	}
+
+	if isBlock {
+		return s.initializeBlockModeDevices(sb)
+	}
+
+	return s.initializeFilesystemModeDevices()
+}
+
+// probeBlockMode checks whether the device path points to a block device
+// with a valid V1 superblock.
+//
+// Returns:
+//   - (true, superblock, nil) — block mode detected
+//   - (false, nil, nil) — filesystem mode (directory path or no valid superblock)
+//   - (false, nil, err) — device exists but I/O failed or superblock layout invalid
+func (s *SBRAgent) probeBlockMode() (bool, *blockformat.Superblock, error) {
+	// Check if the path is a directory — that is always filesystem mode.
+	info, statErr := os.Stat(s.heartbeatDevicePath)
+	if statErr == nil && info.IsDir() {
+		logger.V(1).Info("Path is a directory, using filesystem mode",
+			"path", s.heartbeatDevicePath)
+		return false, nil, nil
+	}
+
+	// Use O_DIRECT + O_SYNC so the superblock probe bypasses the local page
+	// cache and reads fresh data from the shared RWX block device.
+	dev, err := blockdevice.OpenWithTimeout(s.heartbeatDevicePath, s.ioTimeout,
+		logger.WithName("probe-device"))
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to open device for block probe: %w", err)
+	}
+	defer dev.Close()
+
+	buf := blockdevice.DirectIOAlloc(int(blockformat.BlockSuperblockSize))
+	n, err := dev.ReadAt(buf, blockformat.BlockSuperblockOffset)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			// File is smaller than the superblock region — not a block-format device.
+			logger.V(1).Info("Device too small for superblock, using filesystem mode",
+				"path", s.heartbeatDevicePath)
+			return false, nil, nil
+		}
+		return false, nil, fmt.Errorf("failed to read superblock from %s (read %d bytes): %w",
+			s.heartbeatDevicePath, n, err)
+	}
+	if n < blockformat.SuperblockTotalSize {
+		// Short read without error — treat as filesystem mode.
+		logger.V(1).Info("Short read from device, using filesystem mode",
+			"path", s.heartbeatDevicePath, "bytesRead", n)
+		return false, nil, nil
+	}
+
+	sb, err := blockformat.UnmarshalSuperblock(buf)
+	if err != nil {
+		// No valid superblock magic/version/CRC — this is a regular file, not
+		// a block-format device. Treat as filesystem mode.
+		logger.V(1).Info("No valid superblock found, using filesystem mode",
+			"path", s.heartbeatDevicePath, "error", err)
+		return false, nil, nil
+	}
+
+	if err := sb.Validate(); err != nil {
+		return false, nil, fmt.Errorf("superblock found but invalid layout: %w", err)
+	}
+
+	return true, sb, nil
+}
+
+// initializeBlockModeDevices sets up block mode: opens one device and
+// creates OffsetDevice-backed adapters for heartbeat and fence regions.
+func (s *SBRAgent) initializeBlockModeDevices(sb *blockformat.Superblock) error {
+	// Use O_DIRECT + O_SYNC for block mode runtime I/O. O_DIRECT bypasses
+	// the page cache so heartbeat reads see fresh data from other nodes.
+	dev, err := blockdevice.OpenWithTimeout(s.heartbeatDevicePath, s.ioTimeout,
+		logger.WithName("block-device"))
+	if err != nil {
+		return fmt.Errorf("failed to open block device %s: %w", s.heartbeatDevicePath, err)
+	}
+
+	// Check quiesce flag before committing state
+	if sb.IsQuiesced() {
+		dev.Close()
+		return fmt.Errorf("block device %s has quiesce flag set; agent cannot start", s.heartbeatDevicePath)
+	}
+
+	// Create OffsetDevice wrappers for heartbeat and fence regions
+	heartbeatOffset := blockformat.NewOffsetDevice(dev, sb.HeartbeatRegOffset, sb.HeartbeatRegLength)
+	fenceOffset := blockformat.NewOffsetDevice(dev, sb.FenceRegOffset, sb.FenceRegLength)
+
+	// Both adapters share a single SharedCloser so the underlying device is
+	// closed exactly once regardless of close ordering.
+	closer := blockformat.NewSharedCloser(dev)
+	s.heartbeatDevice = blockformat.NewBlockDeviceAdapter(heartbeatOffset, closer)
+	s.fenceDevice = blockformat.NewBlockDeviceAdapter(fenceOffset, closer)
+
+	// Pre-allocate O_DIRECT-aligned I/O buffers for heartbeat/fence slot I/O.
+	s.heartbeatSlotBuf = blockdevice.DirectIOAlloc(int(blockformat.BlockSlotSize))
+	s.peerReadBuf = blockdevice.DirectIOAlloc(int(blockformat.BlockSlotSize))
+	s.fenceWriteBuf = blockdevice.DirectIOAlloc(int(blockformat.BlockSlotSize))
+	s.fenceReadBuf = blockdevice.DirectIOAlloc(int(blockformat.BlockSlotSize))
+
+	// Set state only after successful initialization
+	s.blockMode = true
+	s.rawDevice = dev
+	s.deviceCloser = closer
+
+	logger.Info("Block mode detected: using superblock-based device layout",
+		"devicePath", s.heartbeatDevicePath,
+		"heartbeatOffset", sb.HeartbeatRegOffset,
+		"heartbeatLength", sb.HeartbeatRegLength,
+		"fenceOffset", sb.FenceRegOffset,
+		"fenceLength", sb.FenceRegLength,
+		"version", sb.Version)
+	return nil
+}
+
+// initializeFilesystemModeDevices opens separate heartbeat and fence device files.
+func (s *SBRAgent) initializeFilesystemModeDevices() error {
 	heartbeatDevice, err := blockdevice.OpenWithTimeout(s.heartbeatDevicePath, s.ioTimeout,
 		logger.WithName("heartbeat-device"))
 	if err != nil {
@@ -737,7 +905,7 @@ func (s *SBRAgent) initializeSBRDevices() error {
 
 	s.heartbeatDevice = heartbeatDevice
 	s.fenceDevice = fenceDevice
-	logger.Info("Successfully opened SBR devices",
+	logger.Info("Filesystem mode: opened separate heartbeat and fence devices",
 		"heartbeatDevicePath", s.heartbeatDevicePath,
 		"fenceDevicePath", s.fenceDevicePath,
 		"ioTimeout", s.ioTimeout)
@@ -763,6 +931,15 @@ func (s *SBRAgent) initializeNodeManagers(clusterName string, fileLockingEnabled
 		StaleNodeTimeout:   s.staleNodeTimeout,
 		Logger:             logger.WithName("node-manager"),
 		FileLockingEnabled: fileLockingEnabled,
+	}
+
+	// In block mode, use BlockNodeMapStore for on-device node map persistence
+	// and disable file locking (the write-verify protocol handles coordination).
+	if s.blockMode && s.rawDevice != nil {
+		config.NodeMapStore = blockformat.NewBlockNodeMapStore(s.rawDevice,
+			logger.WithName("block-node-map-store"))
+		config.FileLockingEnabled = false
+		logger.Info("Block mode: using BlockNodeMapStore for node map persistence")
 	}
 
 	nodeManager, err := sbdprotocol.NewNodeManager(s.heartbeatDevice, config)
@@ -997,8 +1174,8 @@ func (s *SBRAgent) writeHeartbeatToSBRInternal() error {
 		return fmt.Errorf("failed to marshal heartbeat message: %w", err)
 	}
 
-	// Calculate slot offset for this node (NodeID * SBD_SLOT_SIZE)
-	slotOffset := int64(s.nodeID) * sbdprotocol.SBD_SLOT_SIZE
+	// Calculate slot offset for this node
+	slotOffset := s.slotOffset(s.nodeID)
 
 	// Write heartbeat message to the designated slot
 	// NOTE: We use direct WriteAt/Sync here (not writeSlotWithLock) because:
@@ -1006,13 +1183,26 @@ func (s *SBRAgent) writeHeartbeatToSBRInternal() error {
 	// - The node mapping file lock coordinates node-to-slot assignments, not heartbeat writes
 	// - Using the node mapping lock here causes deadlocks when heartbeat writes happen
 	//   concurrently with node mapping operations
-	n, err := s.heartbeatDevice.WriteAt(msgBytes, slotOffset)
+	var writeData []byte
+	var expectedLen int
+	if s.blockMode {
+		// Block mode: write full 4 KiB slot with payload + zero padding
+		clear(s.heartbeatSlotBuf)
+		copy(s.heartbeatSlotBuf, msgBytes)
+		writeData = s.heartbeatSlotBuf
+		expectedLen = len(s.heartbeatSlotBuf)
+	} else {
+		writeData = msgBytes
+		expectedLen = len(msgBytes)
+	}
+
+	n, err := s.heartbeatDevice.WriteAt(writeData, slotOffset)
 	if err != nil {
 		return fmt.Errorf("failed to write heartbeat to SBR device at offset %d: %w", slotOffset, err)
 	}
 
-	if n != len(msgBytes) {
-		return fmt.Errorf("partial write to SBR device: wrote %d bytes, expected %d", n, len(msgBytes))
+	if n != expectedLen {
+		return fmt.Errorf("partial write to SBR device: wrote %d bytes, expected %d", n, expectedLen)
 	}
 
 	// Ensure data is committed to storage
@@ -1034,10 +1224,16 @@ func (s *SBRAgent) readPeerHeartbeat(peerNodeID uint16) error {
 	}
 
 	// Calculate slot offset for the peer node
-	slotOffset := int64(peerNodeID) * sbdprotocol.SBD_SLOT_SIZE
+	slotOffset := s.slotOffset(peerNodeID)
 
 	// Read the entire slot
-	slotData := make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+	var slotData []byte
+	if s.blockMode {
+		slotData = s.peerReadBuf
+		clear(slotData)
+	} else {
+		slotData = make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+	}
 	n, err := s.heartbeatDevice.ReadAt(slotData, slotOffset)
 	if err != nil {
 		// Increment SBR I/O errors counter for read failures
@@ -1046,9 +1242,10 @@ func (s *SBRAgent) readPeerHeartbeat(peerNodeID uint16) error {
 		return fmt.Errorf("failed to read peer %d heartbeat from offset %d: %w", peerNodeID, slotOffset, err)
 	}
 
-	if n != sbdprotocol.SBD_SLOT_SIZE {
+	expectedSize := int(s.slotSize())
+	if n != expectedSize {
 		return fmt.Errorf("partial read from peer %d slot: read %d bytes, expected %d",
-			peerNodeID, n, sbdprotocol.SBD_SLOT_SIZE)
+			peerNodeID, n, expectedSize)
 	}
 
 	if sbdprotocol.IsEmptySlot(slotData[:sbdprotocol.SBD_HEADER_SIZE]) {
@@ -1099,9 +1296,19 @@ func (s *SBRAgent) Start() error {
 	return s.StartWithContext(s.ctx)
 }
 
-// StartWithContext begins the SBR agent operations and blocks until ctx is cancelled.
-// When ctx is cancelled (e.g. on SIGTERM), the caller should then call Stop() to close the watchdog.
+// StartWithContext begins the SBR agent operations and blocks until ctx or
+// s.ctx is cancelled. Both contexts are merged: external cancellation (e.g.
+// SIGTERM via ctx) and internal cancellation (e.g. quiesce detection via
+// s.cancel()) both stop all loops and the controller manager.
 func (s *SBRAgent) StartWithContext(ctx context.Context) error {
+	// Merge the external ctx with the agent's internal ctx so that
+	// s.cancel() (e.g. from quiesceCheckLoop) also stops the controller manager.
+	ctx, mergedCancel := context.WithCancel(ctx)
+	go func() {
+		<-s.ctx.Done()
+		mergedCancel()
+	}()
+	defer mergedCancel()
 	logger.Info("Starting SBR Agent",
 		"watchdogDevice", s.watchdog.Path(),
 		"heartbeatDevice", s.heartbeatDevicePath,
@@ -1125,6 +1332,11 @@ func (s *SBRAgent) StartWithContext(ctx context.Context) error {
 	if s.heartbeatDevicePath != "" {
 		go s.heartbeatLoop()
 		go s.peerMonitorLoop()
+	}
+
+	// In block mode, periodically re-read superblock to detect quiesce flag
+	if s.blockMode {
+		go s.quiesceCheckLoop()
 	}
 
 	// Start fencing loop if enabled
@@ -1468,6 +1680,50 @@ func (s *SBRAgent) peerMonitorLoop() {
 	}
 }
 
+// quiesceCheckLoop periodically re-reads the superblock to detect the
+// quiesce flag. If set, the agent cancels its context and exits cleanly.
+// The DaemonSet restart policy handles retry after the quiesce period.
+func (s *SBRAgent) quiesceCheckLoop() {
+	// Check every heartbeat interval — frequent enough to detect quiesce
+	// promptly, infrequent enough to avoid unnecessary I/O.
+	ticker := time.NewTicker(s.heartbeatInterval)
+	defer ticker.Stop()
+
+	logger.Info("Starting quiesce check loop (block mode)", "interval", s.heartbeatInterval)
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			logger.Info("Quiesce check loop stopping")
+			return
+		case <-ticker.C:
+			if s.rawDevice == nil || s.rawDevice.IsClosed() {
+				continue
+			}
+
+			buf := blockdevice.DirectIOAlloc(int(blockformat.BlockSuperblockSize))
+			n, err := s.rawDevice.ReadAt(buf, blockformat.BlockSuperblockOffset)
+			if err != nil || n < blockformat.SuperblockTotalSize {
+				logger.V(1).Info("Quiesce check: failed to read superblock",
+					"error", err, "bytesRead", n)
+				continue
+			}
+
+			sb, err := blockformat.UnmarshalSuperblock(buf)
+			if err != nil {
+				logger.V(1).Info("Quiesce check: failed to parse superblock", "error", err)
+				continue
+			}
+
+			if sb.IsQuiesced() {
+				logger.Info("Quiesce flag detected on superblock — shutting down agent cleanly")
+				s.cancel()
+				return
+			}
+		}
+	}
+}
+
 // resolveNodeName maps a node ID to a node name using the NodeManager.
 func (s *SBRAgent) resolveNodeName(nodeID uint16) (string, bool) {
 	if s.nodeManager == nil {
@@ -1551,10 +1807,16 @@ func (s *SBRAgent) cleanOwnFenceSlotIfPresent(logger logr.Logger) error {
 	}
 
 	// Calculate slot offset for our own node
-	slotOffset := int64(s.nodeID) * sbdprotocol.SBD_SLOT_SIZE
+	slotOffset := s.slotOffset(s.nodeID)
 
-	// Read the header
-	headerBuf := make([]byte, sbdprotocol.SBD_HEADER_SIZE)
+	// Read the slot (full slot in block mode for alignment, header only in filesystem mode)
+	var headerBuf []byte
+	if s.blockMode {
+		headerBuf = s.fenceReadBuf
+		clear(headerBuf)
+	} else {
+		headerBuf = make([]byte, sbdprotocol.SBD_HEADER_SIZE)
+	}
 	n, err := s.fenceDevice.ReadAt(headerBuf, slotOffset)
 	if err != nil {
 		return fmt.Errorf("failed to read header from own slot %d at offset %d: %w", s.nodeID, slotOffset, err)
@@ -1588,16 +1850,20 @@ func (s *SBRAgent) cleanOwnFenceSlotIfPresent(logger logr.Logger) error {
 	}
 
 	// Write clear fence message to own slot
-	// NOTE: We use direct WriteAt/Sync here (not writeSlotWithLock) because:
-	// - This writes to the fence device, not the node mapping file
-	// - Each node writes only to its own fence slot (no inter-node contention)
-	// - The node mapping file lock is for coordinating node-to-slot assignments, not fence writes
-	wrote, err := s.fenceDevice.WriteAt(data, slotOffset)
+	var writeData []byte
+	if s.blockMode {
+		clear(s.fenceWriteBuf)
+		copy(s.fenceWriteBuf, data)
+		writeData = s.fenceWriteBuf
+	} else {
+		writeData = data
+	}
+	wrote, err := s.fenceDevice.WriteAt(writeData, slotOffset)
 	if err != nil {
 		return fmt.Errorf("failed to write clear fence message at offset %d: %w", slotOffset, err)
 	}
-	if wrote != len(data) {
-		return fmt.Errorf("partial write clearing own fence slot: wrote %d expected %d", wrote, len(data))
+	if wrote != len(writeData) {
+		return fmt.Errorf("partial write clearing own fence slot: wrote %d expected %d", wrote, len(writeData))
 	}
 	if err := s.fenceDevice.Sync(); err != nil {
 		return fmt.Errorf("failed to sync fence device after clearing: %w", err)
@@ -1668,14 +1934,19 @@ func (s *SBRAgent) clearPreflightSlot() error {
 	}
 
 	// Calculate slot offset for DefaultNodeID (slot 1)
-	slotOffset := int64(DefaultNodeID) * sbdprotocol.SBD_SLOT_SIZE
+	slotOffset := s.slotOffset(DefaultNodeID)
 
 	logger.V(1).Info("Clearing pre-flight test data from slot 1",
 		"slotOffset", slotOffset,
 		"assignedNodeID", s.nodeID)
 
 	// Create an empty buffer to zero out the slot
-	emptySlot := make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+	var emptySlot []byte
+	if s.blockMode {
+		emptySlot = blockdevice.DirectIOAlloc(int(blockformat.BlockSlotSize))
+	} else {
+		emptySlot = make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+	}
 
 	// Write zeros to slot 1
 	return s.writeSlotWithLock(s.heartbeatDevice, slotOffset, emptySlot, "clear pre-flight slot 1")
@@ -1916,17 +2187,24 @@ func (s *SBRAgent) readOwnSlotForFenceMessage() error {
 	}
 
 	// Calculate slot offset for our own node
-	slotOffset := int64(s.nodeID) * sbdprotocol.SBD_SLOT_SIZE
+	slotOffset := s.slotOffset(s.nodeID)
 
 	// Read the entire slot
-	slotData := make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+	var slotData []byte
+	if s.blockMode {
+		slotData = s.fenceReadBuf
+		clear(slotData)
+	} else {
+		slotData = make([]byte, sbdprotocol.SBD_SLOT_SIZE)
+	}
 	n, err := s.fenceDevice.ReadAt(slotData, slotOffset)
 	if err != nil {
 		return fmt.Errorf("failed to read own slot %d from offset %d: %w", s.nodeID, slotOffset, err)
 	}
 
-	if n != sbdprotocol.SBD_SLOT_SIZE {
-		return fmt.Errorf("partial read from own slot %d: read %d bytes, expected %d", s.nodeID, n, sbdprotocol.SBD_SLOT_SIZE)
+	expectedSize := int(s.slotSize())
+	if n != expectedSize {
+		return fmt.Errorf("partial read from own slot %d: read %d bytes, expected %d", s.nodeID, n, expectedSize)
 	}
 
 	// Check if the slot is empty
@@ -1989,6 +2267,61 @@ func (s *SBRAgent) readOwnSlotForFenceMessage() error {
 	return nil
 }
 
+// probeBlockModeAt detects whether devicePath points to a block-format device by reading and
+// validating its on-disk superblock, so pre-flight classifies a device the same way the runtime does.
+//
+// Returns:
+//   - (true, superblock, nil) — block mode detected
+//   - (false, nil, nil) — filesystem mode (directory path or no valid superblock)
+//   - (false, nil, err) — device exists but I/O failed or superblock layout invalid
+func probeBlockModeAt(devicePath string, ioTimeout time.Duration) (bool, *blockformat.Superblock, error) {
+	// A directory path is always filesystem mode.
+	info, statErr := os.Stat(devicePath)
+	if statErr == nil && info.IsDir() {
+		logger.V(1).Info("Path is a directory, using filesystem mode", "path", devicePath)
+		return false, nil, nil
+	}
+
+	// Use O_DIRECT + O_SYNC so the superblock probe bypasses the local page cache.
+	dev, err := blockdevice.OpenWithTimeout(devicePath, ioTimeout, logger.WithName("probe-device"))
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to open device for block probe: %w", err)
+	}
+	defer dev.Close()
+
+	buf := blockdevice.DirectIOAlloc(int(blockformat.BlockSuperblockSize))
+	n, err := dev.ReadAt(buf, blockformat.BlockSuperblockOffset)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			// Smaller than the superblock region — not a block-format device.
+			logger.V(1).Info("Device too small for superblock, using filesystem mode", "path", devicePath)
+			return false, nil, nil
+		}
+		return false, nil, fmt.Errorf("failed to read superblock from %s (read %d bytes): %w", devicePath, n, err)
+	}
+	if n < blockformat.SuperblockTotalSize {
+		logger.V(1).Info("Short read from device, using filesystem mode", "path", devicePath, "bytesRead", n)
+		return false, nil, nil
+	}
+
+	sb, err := blockformat.UnmarshalSuperblock(buf)
+	if err != nil {
+		// No valid superblock magic/version/CRC — a regular file, not a block-format device.
+		logger.V(1).Info("No valid superblock found, using filesystem mode", "path", devicePath, "error", err)
+		return false, nil, nil
+	}
+
+	if err := sb.Validate(); err != nil {
+		return false, nil, fmt.Errorf("superblock found but invalid layout: %w", err)
+	}
+
+	return true, sb, nil
+}
+
+// preflightBlockProbeTimeout bounds the superblock read used to detect block mode at pre-flight;
+// it matches the io-timeout flag default so a hung device fails fast.
+const preflightBlockProbeTimeout = 2 * time.Second
+
 // runPreflightChecks performs critical startup validation before entering main event loops
 // Returns success if EITHER watchdog is active OR SBR device is accessible (or both)
 // When detectOnlyMode is true, the watchdog check is skipped since the agent won't use it
@@ -2009,10 +2342,21 @@ func runPreflightChecks(watchdogPath, sbrDevicePath, nodeName string, nodeID uin
 		watchdogErr = checkWatchdogDevice(watchdogPath)
 	}
 
-	// Check SBR device accessibility
+	// Check SBR device accessibility. Detect block mode the same way the runtime does (a valid
+	// on-disk superblock) so a raw block device is verified via its superblock instead of the
+	// filesystem slot-write test, which would corrupt the block layout.
 	var sbrErr error
 	if sbrDevicePath != "" {
-		sbrErr = checkSBRDevice(sbrDevicePath, nodeID, nodeName, false)
+		isBlock, _, probeErr := probeBlockModeAt(sbrDevicePath, preflightBlockProbeTimeout)
+		switch {
+		case probeErr != nil:
+			sbrErr = probeErr
+		case isBlock:
+			logger.Info("Pre-flight check passed: block-mode SBR device has a valid superblock",
+				"sbrDevicePath", sbrDevicePath)
+		default:
+			sbrErr = checkSBRDevice(sbrDevicePath, nodeID, nodeName, false)
+		}
 	}
 
 	// Check node ID/name resolution

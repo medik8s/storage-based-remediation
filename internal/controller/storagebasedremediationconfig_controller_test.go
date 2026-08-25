@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -1246,6 +1247,302 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 				Equal(corev1.PersistentVolumeReclaimDelete),
 				"shared-storage PV reclaim policy must be patched to Delete during SBRConfig deletion",
 			)
+		})
+	})
+
+	Context("When testing block volume mode support", func() {
+		var blockReconciler *StorageBasedRemediationConfigReconciler
+		var blockNamespace string
+		const blockStorageClass = "test-rbd-sc"
+
+		ctx := context.Background()
+
+		BeforeEach(func() {
+			blockNamespace = fmt.Sprintf("block-test-%d", time.Now().UnixNano())
+
+			testNamespace := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: blockNamespace},
+			}
+			Expect(k8sClient.Create(ctx, testNamespace)).To(Succeed())
+
+			blockReconciler = &StorageBasedRemediationConfigReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			// Create a Ceph RBD storage class for block mode tests
+			reclaimPolicy := corev1.PersistentVolumeReclaimDelete
+			sc := &storagev1.StorageClass{
+				ObjectMeta:    metav1.ObjectMeta{Name: blockStorageClass},
+				Provisioner:   "openshift-storage.rbd.csi.ceph.com",
+				ReclaimPolicy: &reclaimPolicy,
+			}
+			err := k8sClient.Create(ctx, sc)
+			if err != nil && !errors.IsAlreadyExists(err) {
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			Expect(os.Setenv("RELATED_IMAGE_AGENT", testAgentImage)).To(Succeed())
+			DeferCleanup(func() { _ = os.Unsetenv("RELATED_IMAGE_AGENT") })
+		})
+
+		AfterEach(func() {
+			ns := &corev1.Namespace{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: blockNamespace}, ns); err == nil {
+				Expect(k8sClient.Delete(ctx, ns)).To(Succeed())
+			}
+		})
+
+		It("should configure agent args for block mode", func() {
+			blockMode := medik8sv1alpha1.SharedStorageVolumeModeBlock
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "block-test", Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass:      blockStorageClass,
+					SharedStorageVolumeMode: &blockMode,
+				},
+			}
+
+			args := blockReconciler.buildSBRAgentArgs(sbrConfig)
+
+			By("verifying block device path is used instead of filesystem path")
+			expectedDevice := fmt.Sprintf("--%s=%s", agent.FlagSBRDevice, agent.SharedStorageBlockDevicePath)
+			Expect(args).To(ContainElement(expectedDevice))
+
+			By("verifying file locking is disabled for block mode")
+			expectedLocking := fmt.Sprintf("--%s=false", agent.FlagSBRFileLocking)
+			Expect(args).To(ContainElement(expectedLocking))
+		})
+
+		It("should configure agent args for filesystem mode", func() {
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "fs-test", Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass: validSharedStorageClass,
+				},
+			}
+
+			args := blockReconciler.buildSBRAgentArgs(sbrConfig)
+
+			By("verifying filesystem path is used")
+			expectedDevice := fmt.Sprintf("--%s=%s/%s",
+				agent.FlagSBRDevice, agent.SharedStorageSBRDeviceDirectory, agent.SharedStorageSBRDeviceFile)
+			Expect(args).To(ContainElement(expectedDevice))
+
+			By("verifying file locking is enabled for filesystem mode")
+			expectedLocking := fmt.Sprintf("--%s=true", agent.FlagSBRFileLocking)
+			Expect(args).To(ContainElement(expectedLocking))
+		})
+
+		It("should use volumeDevices for block mode DaemonSet", func() {
+			blockMode := medik8sv1alpha1.SharedStorageVolumeModeBlock
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "block-ds-test", Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass:      blockStorageClass,
+					SharedStorageVolumeMode: &blockMode,
+				},
+			}
+
+			By("verifying volumeDevices contains block device path")
+			devices := blockReconciler.buildVolumeDevices(sbrConfig)
+			Expect(devices).To(HaveLen(1))
+			Expect(devices[0].Name).To(Equal("shared-storage"))
+			Expect(devices[0].DevicePath).To(Equal(agent.SharedStorageBlockDevicePath))
+
+			By("verifying volumeMounts does NOT contain shared-storage")
+			mounts := blockReconciler.buildVolumeMounts(sbrConfig)
+			for _, m := range mounts {
+				Expect(m.Name).NotTo(Equal("shared-storage"))
+			}
+		})
+
+		It("should not place block device path under any hostPath mount", func() {
+			blockMode := medik8sv1alpha1.SharedStorageVolumeModeBlock
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "block-overlap-test", Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass:      blockStorageClass,
+					SharedStorageVolumeMode: &blockMode,
+				},
+			}
+
+			By("verifying block device path does not overlap with any volume mount path")
+			mounts := blockReconciler.buildVolumeMounts(sbrConfig)
+			devices := blockReconciler.buildVolumeDevices(sbrConfig)
+			Expect(devices).To(HaveLen(1))
+			devicePath := devices[0].DevicePath
+			for _, m := range mounts {
+				Expect(strings.HasPrefix(devicePath, m.MountPath)).To(BeFalse(),
+					"block device path %q must not be under mount path %q — hostPath mount would shadow the volumeDevice",
+					devicePath, m.MountPath)
+			}
+		})
+
+		It("should mount host /dev at /host-dev and resolve the watchdog there in block mode", func() {
+			blockMode := medik8sv1alpha1.SharedStorageVolumeModeBlock
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "block-hostdev-test", Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass:      blockStorageClass,
+					SharedStorageVolumeMode: &blockMode,
+				},
+			}
+
+			By("verifying host /dev is mounted at /host-dev, never over /dev")
+			mounts := blockReconciler.buildVolumeMounts(sbrConfig)
+			var hostDev *corev1.VolumeMount
+			for i := range mounts {
+				Expect(mounts[i].MountPath).NotTo(Equal("/dev"),
+					"a bind mount at /dev makes the OCI runtime skip creating the CSI block device node")
+				if mounts[i].Name == "host-dev" {
+					hostDev = &mounts[i]
+				}
+			}
+			Expect(hostDev).NotTo(BeNil(), "block mode must mount host /dev at a side path")
+			Expect(hostDev.MountPath).To(Equal(BlockModeHostDevMountPath))
+
+			By("verifying the agent resolves the watchdog under /host-dev")
+			args := blockReconciler.buildSBRAgentArgs(sbrConfig)
+			Expect(args).To(ContainElement(
+				fmt.Sprintf("--%s=%s/watchdog", agent.FlagWatchdogPath, BlockModeHostDevMountPath)))
+		})
+
+		It("should use volumeMounts for filesystem mode DaemonSet", func() {
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "fs-ds-test", Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass: validSharedStorageClass,
+				},
+			}
+
+			By("verifying volumeDevices is nil for filesystem mode")
+			devices := blockReconciler.buildVolumeDevices(sbrConfig)
+			Expect(devices).To(BeNil())
+
+			By("verifying volumeMounts contains shared-storage")
+			mounts := blockReconciler.buildVolumeMounts(sbrConfig)
+			found := false
+			for _, m := range mounts {
+				if m.Name == "shared-storage" {
+					found = true
+					Expect(m.MountPath).To(Equal(agent.SharedStorageSBRDeviceDirectory))
+				}
+			}
+			Expect(found).To(BeTrue(), "shared-storage mount not found in filesystem mode")
+		})
+
+		It("should build block init job with sbr-agent --init", func() {
+			blockMode := medik8sv1alpha1.SharedStorageVolumeModeBlock
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "block-init-test", Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass:      blockStorageClass,
+					SharedStorageVolumeMode: &blockMode,
+				},
+			}
+
+			job := blockReconciler.buildBlockInitJob(sbrConfig, "test-init-job", "test-pvc")
+
+			By("verifying the init job uses the agent image")
+			Expect(job.Spec.Template.Spec.Containers).To(HaveLen(1))
+			container := job.Spec.Template.Spec.Containers[0]
+			Expect(container.Image).To(Equal(testAgentImage))
+
+			By("verifying --init flag is set")
+			expectedInit := fmt.Sprintf("--%s=true", agent.FlagInit)
+			Expect(container.Args).To(ContainElement(expectedInit))
+
+			By("verifying --sbr-device points to block device path")
+			expectedDevice := fmt.Sprintf("--%s=%s", agent.FlagSBRDevice, agent.SharedStorageBlockDevicePath)
+			Expect(container.Args).To(ContainElement(expectedDevice))
+
+			By("verifying volumeDevices is used instead of volumeMounts")
+			Expect(container.VolumeMounts).To(BeNil())
+			Expect(container.VolumeDevices).To(HaveLen(1))
+			Expect(container.VolumeDevices[0].DevicePath).To(Equal(agent.SharedStorageBlockDevicePath))
+		})
+
+		It("should validate RBD provisioner as block-compatible", func() {
+			Expect(blockReconciler.isRWXBlockCompatibleProvisioner("rbd.csi.ceph.com")).To(BeTrue())
+			Expect(blockReconciler.isRWXBlockCompatibleProvisioner("openshift-storage.rbd.csi.ceph.com")).To(BeTrue())
+		})
+
+		It("should reject NFS provisioner for block mode", func() {
+			Expect(blockReconciler.isRWXBlockCompatibleProvisioner("nfs.csi.k8s.io")).To(BeFalse())
+			Expect(blockReconciler.isRWXBlockCompatibleProvisioner("efs.csi.aws.com")).To(BeFalse())
+		})
+
+		It("should reject filesystem-only provisioner for block mode via validateStorageClass", func() {
+			blockMode := medik8sv1alpha1.SharedStorageVolumeModeBlock
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "block-validation-test", Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass:      validSharedStorageClass, // CephFS — filesystem only
+					SharedStorageVolumeMode: &blockMode,
+				},
+			}
+			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
+
+			err := blockReconciler.validateStorageClass(ctx, sbrConfig, logr.Discard())
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("not RWX block volumes"))
+		})
+
+		It("should accept RBD provisioner for block mode via validateStorageClass", func() {
+			blockMode := medik8sv1alpha1.SharedStorageVolumeModeBlock
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "block-rbd-validation", Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass:      blockStorageClass, // RBD — block capable
+					SharedStorageVolumeMode: &blockMode,
+				},
+			}
+			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
+
+			err := blockReconciler.validateStorageClass(ctx, sbrConfig, logr.Discard())
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should set volumeMode Block on PVC for block mode", func() {
+			blockMode := medik8sv1alpha1.SharedStorageVolumeModeBlock
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "block-pvc-test", Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass:      blockStorageClass,
+					SharedStorageVolumeMode: &blockMode,
+				},
+			}
+			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
+
+			_, err := blockReconciler.ensurePVC(ctx, sbrConfig, logr.Discard())
+			Expect(err).NotTo(HaveOccurred())
+
+			pvc := &corev1.PersistentVolumeClaim{}
+			pvcName := sbrConfig.Spec.GetSharedStoragePVCName(sbrConfig.Name)
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: blockNamespace}, pvc)).To(Succeed())
+			Expect(pvc.Spec.VolumeMode).NotTo(BeNil())
+			Expect(*pvc.Spec.VolumeMode).To(Equal(corev1.PersistentVolumeBlock))
+		})
+
+		It("should not set volumeMode on PVC for filesystem mode", func() {
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "fs-pvc-test", Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass: validSharedStorageClass,
+				},
+			}
+			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
+
+			_, err := blockReconciler.ensurePVC(ctx, sbrConfig, logr.Discard())
+			Expect(err).NotTo(HaveOccurred())
+
+			pvc := &corev1.PersistentVolumeClaim{}
+			pvcName := sbrConfig.Spec.GetSharedStoragePVCName(sbrConfig.Name)
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: blockNamespace}, pvc)).To(Succeed())
+			// API server defaults VolumeMode to Filesystem when not explicitly set
+			Expect(pvc.Spec.VolumeMode).NotTo(BeNil())
+			Expect(*pvc.Spec.VolumeMode).To(Equal(corev1.PersistentVolumeFilesystem))
 		})
 	})
 })

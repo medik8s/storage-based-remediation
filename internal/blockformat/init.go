@@ -33,9 +33,10 @@ type DeviceReadWriterAt interface {
 // It is idempotent: if a valid superblock already exists, it returns nil
 // without modifying the device.
 //
-// To support O_DIRECT, the caller must provide page-aligned memory buffers.
-//   - ioBuffer: a 4 KB page-aligned buffer used for reading/writing the superblock.
-//   - zeroBuffer: a larger page-aligned buffer (e.g. 1 MB) used for zeroing the layout.
+// To support O_DIRECT, the caller must provide O_DIRECT-aligned memory buffers
+// (see blockdevice.DirectIOAlloc).
+//   - ioBuffer: a 4 KiB aligned buffer used for reading/writing the superblock.
+//   - zeroBuffer: a larger aligned buffer (e.g. 1 MiB) used for zeroing the layout.
 //     Larger buffers reduce the number of synchronous network round-trips on
 //     network-backed storage (Ceph RBD).
 //
@@ -107,7 +108,7 @@ func InitDevice(dev DeviceReadWriterAt, deviceSize int64, ioBuffer, zeroBuffer [
 		return fmt.Errorf("failed to marshal superblock: %w", err)
 	}
 
-	// Clear and copy into ioBuffer to preserve its page-aligned address.
+	// Clear and copy into ioBuffer to preserve its O_DIRECT-aligned address.
 	clear(ioBuffer[:BlockSectorSize])
 	copy(ioBuffer, data)
 

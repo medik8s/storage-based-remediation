@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -87,6 +88,12 @@ const (
 	// Default image constants
 	DefaultSBRAgentImage = "sbr-agent:latest"
 	SBROperatorName      = "sbr-operator"
+
+	// BlockModeHostDevMountPath is where the host /dev is mounted inside the agent container in block
+	// mode. A bind mount at destination /dev makes the OCI runtime skip creating every linux.devices
+	// node (runc's needsSetupDev gate; crun behaves the same), so the CSI-mapped block device never
+	// appears; mounting host /dev at this side path instead lets the mapped device be created.
+	BlockModeHostDevMountPath = "/host-dev"
 
 	// Retry configuration constants for StorageBasedRemediationConfig controller
 	// MaxStorageBasedRemediationConfigRetries is the maximum number of retry attempts for StorageBasedRemediationConfig operations
@@ -271,8 +278,32 @@ func (r *StorageBasedRemediationConfigReconciler) validateStorageClass(
 		return fmt.Errorf("failed to get StorageClass '%s': %w", storageClassName, err)
 	}
 
-	// Check if the provisioner is known to support ReadWriteMany
 	provisioner := storageClass.Provisioner
+
+	// Block mode validation: check for RWX block-capable provisioners
+	if sbrConfig.Spec.IsBlockMode() {
+		if r.isRWXBlockCompatibleProvisioner(provisioner) {
+			logger.Info("StorageClass validation passed (block mode)", "provisioner", provisioner)
+			return nil
+		}
+		// NFS/filesystem-only provisioners cannot provide RWX block volumes
+		if r.isRWXCompatibleProvisioner(provisioner) && !r.isRWXBlockCompatibleProvisioner(provisioner) {
+			return fmt.Errorf(
+				"StorageClass '%s' uses provisioner '%s' that supports RWX filesystem but not RWX block volumes; "+
+					"use a block-capable provisioner (e.g. Ceph RBD) or switch to Filesystem volume mode",
+				storageClassName, provisioner)
+		}
+		if r.isRWXIncompatibleProvisioner(provisioner) {
+			return fmt.Errorf(
+				"StorageClass '%s' uses provisioner '%s' that does not support "+
+					"ReadWriteMany block volumes required for SBR block mode",
+				storageClassName, provisioner)
+		}
+		logger.Info("StorageClass uses unknown provisioner, cannot verify RWX block support", "provisioner", provisioner)
+		return nil
+	}
+
+	// Filesystem mode validation
 	if r.isRWXCompatibleProvisioner(provisioner) {
 		logger.Info("StorageClass validation passed", "provisioner", provisioner)
 
@@ -306,6 +337,18 @@ func (r *StorageBasedRemediationConfigReconciler) validateStorageClass(
 
 	logger.Info("StorageClass validation passed", "provisioner", provisioner)
 	return nil
+}
+
+// isRWXBlockCompatibleProvisioner checks if a CSI provisioner supports ReadWriteMany with raw block volumes.
+// This list is not exhaustive — unknown provisioners are accepted with a log warning.
+// TODO: detect block RWX capabilities dynamically if Kubernetes ever exposes them via StorageClass or CSIDriver.
+func (r *StorageBasedRemediationConfigReconciler) isRWXBlockCompatibleProvisioner(provisioner string) bool {
+	rwxBlockProvisioners := map[string]bool{
+		// Ceph RBD supports RWX block via multi-attach
+		"rbd.csi.ceph.com":                   true,
+		"openshift-storage.rbd.csi.ceph.com": true,
+	}
+	return rwxBlockProvisioners[provisioner]
 }
 
 // isRWXCompatibleProvisioner checks if a CSI provisioner is known to support ReadWriteMany
@@ -609,6 +652,12 @@ func (r *StorageBasedRemediationConfigReconciler) ensurePVC(
 		},
 	}
 
+	// Set volumeMode for block mode PVCs
+	if sbrConfig.Spec.IsBlockMode() {
+		volumeMode := corev1.PersistentVolumeBlock
+		desiredPVC.Spec.VolumeMode = &volumeMode
+	}
+
 	// Set controller reference
 	if err := controllerutil.SetControllerReference(sbrConfig, desiredPVC, r.Scheme); err != nil {
 		return controllerutil.OperationResultNone, fmt.Errorf("failed to set controller reference on PVC: %w", err)
@@ -686,37 +735,41 @@ func (r *StorageBasedRemediationConfigReconciler) ensureSBRDevice(
 		"pvc.name", pvcName,
 	)
 
-	// Define the desired Job for SBR device initialization
-	desiredJob := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      jobName,
-			Namespace: sbrConfig.Namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":       "sbr-operator",
-				"app.kubernetes.io/component":  "sbr-device-init",
-				"app.kubernetes.io/managed-by": "sbr-operator",
-				"sbrconfig":                    sbrConfig.Name,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app.kubernetes.io/name":       "sbr-operator",
-						"app.kubernetes.io/component":  "sbr-device-init",
-						"app.kubernetes.io/managed-by": "sbr-operator",
-						"sbrconfig":                    sbrConfig.Name,
-					},
+	// Build init job: block mode uses sbr-agent --init; filesystem mode uses shell script
+	var desiredJob *batchv1.Job
+	if sbrConfig.Spec.IsBlockMode() {
+		desiredJob = r.buildBlockInitJob(sbrConfig, jobName, pvcName)
+	} else {
+		desiredJob = &batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      jobName,
+				Namespace: sbrConfig.Namespace,
+				Labels: map[string]string{
+					"app.kubernetes.io/name":       "sbr-operator",
+					"app.kubernetes.io/component":  "sbr-device-init",
+					"app.kubernetes.io/managed-by": "sbr-operator",
+					"sbrconfig":                    sbrConfig.Name,
 				},
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyNever,
-					Containers: []corev1.Container{
-						{
-							Name:    "sbr-device-init",
-							Image:   "registry.access.redhat.com/ubi9/ubi-minimal:9.8",
-							Command: []string{"sh", "-c"},
-							Args: []string{
-								fmt.Sprintf(`
+			},
+			Spec: batchv1.JobSpec{
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{
+							"app.kubernetes.io/name":       "sbr-operator",
+							"app.kubernetes.io/component":  "sbr-device-init",
+							"app.kubernetes.io/managed-by": "sbr-operator",
+							"sbrconfig":                    sbrConfig.Name,
+						},
+					},
+					Spec: corev1.PodSpec{
+						RestartPolicy: corev1.RestartPolicyNever,
+						Containers: []corev1.Container{
+							{
+								Name:    "sbr-device-init",
+								Image:   "registry.access.redhat.com/ubi9/ubi-minimal:9.8",
+								Command: []string{"sh", "-c"},
+								Args: []string{
+									fmt.Sprintf(`
 set -e
 SBR_DEVICE_SIZE_KB=1024
 SBR_DEVICE_PREFIX="%s"
@@ -835,50 +888,51 @@ fi
 
 echo "SBR devices initialization completed successfully"
 `,
-									sbrConfig.Spec.GetSharedStorageMountPath(),
-									agent.SharedStorageSBRDeviceFile,
-									agent.SharedStorageFenceDeviceSuffix,
-									agent.SharedStorageNodeMappingSuffix),
-							},
-							Env: []corev1.EnvVar{
-								{
-									Name:  "CLUSTER_NAME",
-									Value: sbrConfig.Name,
+										sbrConfig.Spec.GetSharedStorageMountPath(),
+										agent.SharedStorageSBRDeviceFile,
+										agent.SharedStorageFenceDeviceSuffix,
+										agent.SharedStorageNodeMappingSuffix),
 								},
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "shared-storage",
-									MountPath: sbrConfig.Spec.GetSharedStorageMountPath(),
+								Env: []corev1.EnvVar{
+									{
+										Name:  "CLUSTER_NAME",
+										Value: sbrConfig.Name,
+									},
 								},
-							},
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{
-									corev1.ResourceMemory: mustParseQuantity("64Mi"),
-									corev1.ResourceCPU:    mustParseQuantity("10m"),
+								VolumeMounts: []corev1.VolumeMount{
+									{
+										Name:      "shared-storage",
+										MountPath: sbrConfig.Spec.GetSharedStorageMountPath(),
+									},
 								},
-								Limits: corev1.ResourceList{
-									corev1.ResourceMemory: mustParseQuantity("128Mi"),
-									corev1.ResourceCPU:    mustParseQuantity("100m"),
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{
+										corev1.ResourceMemory: mustParseQuantity("64Mi"),
+										corev1.ResourceCPU:    mustParseQuantity("10m"),
+									},
+									Limits: corev1.ResourceList{
+										corev1.ResourceMemory: mustParseQuantity("128Mi"),
+										corev1.ResourceCPU:    mustParseQuantity("100m"),
+									},
 								},
 							},
 						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "shared-storage",
-							VolumeSource: corev1.VolumeSource{
-								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-									ClaimName: pvcName,
+						Volumes: []corev1.Volume{
+							{
+								Name: "shared-storage",
+								VolumeSource: corev1.VolumeSource{
+									PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+										ClaimName: pvcName,
+									},
 								},
 							},
 						},
 					},
 				},
+				// Clean up completed jobs after 1 hour to avoid accumulation
+				TTLSecondsAfterFinished: func() *int32 { i := int32(3600); return &i }(),
 			},
-			// Clean up completed jobs after 1 hour to avoid accumulation
-			TTLSecondsAfterFinished: func() *int32 { i := int32(3600); return &i }(),
-		},
+		}
 	}
 
 	// Set controller reference
@@ -940,6 +994,79 @@ echo "SBR devices initialization completed successfully"
 		"SBR device initialization job '%s' created successfully", jobName)
 
 	return controllerutil.OperationResultCreated, nil
+}
+
+// buildBlockInitJob creates a Job that runs sbr-agent --init to write the superblock on a raw block device.
+func (r *StorageBasedRemediationConfigReconciler) buildBlockInitJob(
+	sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig, jobName, pvcName string,
+) *batchv1.Job {
+	agentImage, err := r.getAgentImage(logr.Discard())
+	if err != nil {
+		agentImage = DefaultSBRAgentImage
+	}
+
+	initLabels := map[string]string{
+		"app.kubernetes.io/name":       "sbr-operator",
+		"app.kubernetes.io/component":  "sbr-device-init",
+		"app.kubernetes.io/managed-by": "sbr-operator",
+		"sbrconfig":                    sbrConfig.Name,
+	}
+
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      jobName,
+			Namespace: sbrConfig.Namespace,
+			Labels:    initLabels,
+		},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: initLabels,
+				},
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyNever,
+					Containers: []corev1.Container{
+						{
+							Name:  "sbr-device-init",
+							Image: agentImage,
+							Args: []string{
+								fmt.Sprintf("--%s=true", agent.FlagInit),
+								fmt.Sprintf("--%s=%s", agent.FlagSBRDevice, agent.SharedStorageBlockDevicePath),
+								fmt.Sprintf("--io-timeout=%s", agent.IoTimeout),
+							},
+							VolumeDevices: []corev1.VolumeDevice{
+								{
+									Name:       "shared-storage",
+									DevicePath: agent.SharedStorageBlockDevicePath,
+								},
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceMemory: mustParseQuantity("64Mi"),
+									corev1.ResourceCPU:    mustParseQuantity("10m"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceMemory: mustParseQuantity("128Mi"),
+									corev1.ResourceCPU:    mustParseQuantity("100m"),
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "shared-storage",
+							VolumeSource: corev1.VolumeSource{
+								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+									ClaimName: pvcName,
+								},
+							},
+						},
+					},
+				},
+			},
+			TTLSecondsAfterFinished: func() *int32 { i := int32(3600); return &i }(),
+		},
+	}
 }
 
 // +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=storagebasedremediationconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -1223,8 +1350,9 @@ func (r *StorageBasedRemediationConfigReconciler) handleDeletion(
 	// Note: DaemonSet cleanup is handled automatically by Kubernetes garbage collection due to OwnerReference
 
 	// Run cleanup job to wipe the node map file before deletion (RHWA-1056)
-	// This prevents stale node map entries from causing agent restart loops on SBRC recreation
-	if sbrConfig.Spec.HasSharedStorage() {
+	// This prevents stale node map entries from causing agent restart loops on SBRC recreation.
+	// Block mode doesn't use a filesystem-level node map file — skip cleanup.
+	if sbrConfig.Spec.HasSharedStorage() && !sbrConfig.Spec.IsBlockMode() {
 		if err := r.runNodeMapCleanupJob(ctx, sbrConfig, logger); err != nil {
 			logger.Error(err, "Failed to run node map cleanup job - SBRC recreation may fail with restart loops")
 			r.emitEventf(sbrConfig, EventTypeWarning, ReasonCleanupError,
@@ -1695,7 +1823,8 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 									Protocol:      corev1.ProtocolTCP,
 								},
 							},
-							VolumeMounts: r.buildVolumeMounts(sbrConfig),
+							VolumeMounts:  r.buildVolumeMounts(sbrConfig),
+							VolumeDevices: r.buildVolumeDevices(sbrConfig),
 							LivenessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									Exec: &corev1.ExecAction{
@@ -1713,7 +1842,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 									Exec: &corev1.ExecAction{
 										Command: []string{"/bin/sh", "-c",
 											fmt.Sprintf("test -c %s && grep -l sbr-agent /proc/*/cmdline 2>/dev/null",
-												sbrConfig.Spec.GetWatchdogPath())},
+												getEffectiveWatchdogPath(sbrConfig))},
 									},
 								},
 								InitialDelaySeconds: 60,
@@ -1751,7 +1880,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *m
 	sbrUpdateInterval := sbrConfig.Spec.GetSBRUpdateInterval()
 	peerCheckInterval := sbrConfig.Spec.GetPeerCheckInterval()
 	args := []string{
-		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, sbrConfig.Spec.GetWatchdogPath()),
+		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, getEffectiveWatchdogPath(sbrConfig)),
 		fmt.Sprintf("--%s=%s", agent.FlagLogLevel, agent.LogLevel),
 		fmt.Sprintf("--%s=%s", agent.FlagClusterName, sbrConfig.Name),
 		fmt.Sprintf("--%s=%s", agent.FlagStaleNodeTimeout, agent.StaleNodeTimeout),
@@ -1765,14 +1894,19 @@ func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *m
 
 	// Add shared storage arguments if configured
 	if sbrConfig.Spec.HasSharedStorage() {
-		// Set heartbeat device to a file within the shared storage mount
-		// The fence device will be automatically generated by appending the fence suffix
-		heartbeatDevicePath := fmt.Sprintf("%s/%s",
-			sbrConfig.Spec.GetSharedStorageMountPath(), agent.SharedStorageSBRDeviceFile)
-		args = append(args, fmt.Sprintf("--%s=%s", agent.FlagSBRDevice, heartbeatDevicePath))
-
-		// Enable file locking for shared storage safety
-		args = append(args, fmt.Sprintf("--%s=true", agent.FlagSBRFileLocking))
+		if sbrConfig.Spec.IsBlockMode() {
+			// Block mode: use the raw block device path directly
+			args = append(args, fmt.Sprintf("--%s=%s", agent.FlagSBRDevice, agent.SharedStorageBlockDevicePath))
+			// Block mode uses direct I/O — no file locking needed
+			args = append(args, fmt.Sprintf("--%s=false", agent.FlagSBRFileLocking))
+		} else {
+			// Filesystem mode: heartbeat device is a file within the shared storage mount
+			heartbeatDevicePath := fmt.Sprintf("%s/%s",
+				sbrConfig.Spec.GetSharedStorageMountPath(), agent.SharedStorageSBRDeviceFile)
+			args = append(args, fmt.Sprintf("--%s=%s", agent.FlagSBRDevice, heartbeatDevicePath))
+			// Enable file locking for shared storage safety
+			args = append(args, fmt.Sprintf("--%s=true", agent.FlagSBRFileLocking))
+		}
 	}
 
 	if sbrConfig.Spec.GetDetectOnlyMode() {
@@ -1796,16 +1930,36 @@ func (r *StorageBasedRemediationConfigReconciler) buildNodeSelector(sbrConfig *m
 	return nodeSelector
 }
 
-// buildVolumeMounts builds the volume mounts for the sbr-agent container
+// getEffectiveWatchdogPath returns the in-container path the agent should use for the watchdog device.
+// In block mode the host /dev is mounted at BlockModeHostDevMountPath (not over /dev), so the watchdog
+// resolves under that side path; otherwise the configured path (host /dev mounted at /dev) is used.
+func getEffectiveWatchdogPath(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig) string {
+	watchdogPath := sbrConfig.Spec.GetWatchdogPath()
+	if sbrConfig.Spec.IsBlockMode() {
+		return filepath.Join(BlockModeHostDevMountPath, filepath.Base(watchdogPath))
+	}
+	return watchdogPath
+}
+
+// buildVolumeMounts builds the volume mounts for the sbr-agent container.
+// Block mode shared storage uses volumeDevices instead, so it is NOT added here.
 func (r *StorageBasedRemediationConfigReconciler) buildVolumeMounts(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig) []corev1.VolumeMount {
 	mounts := []corev1.VolumeMount{
-		{Name: "dev", MountPath: "/dev"},
 		{Name: "sys", MountPath: "/sys", ReadOnly: true},
 		{Name: "proc", MountPath: "/proc", ReadOnly: true},
 	}
 
-	// Add shared storage mount if configured
-	if sbrConfig.Spec.HasSharedStorage() {
+	// A bind mount at destination /dev makes the OCI runtime skip creating the CSI-mapped block device
+	// node, so in block mode mount the host /dev at a side path (/host-dev); the agent resolves the
+	// watchdog under it and softdog's runtime-created device appears via the live directory mount.
+	if sbrConfig.Spec.IsBlockMode() {
+		mounts = append(mounts, corev1.VolumeMount{Name: "host-dev", MountPath: BlockModeHostDevMountPath})
+	} else {
+		mounts = append(mounts, corev1.VolumeMount{Name: "dev", MountPath: "/dev"})
+	}
+
+	// Add shared storage mount for filesystem mode only; block mode uses volumeDevices
+	if sbrConfig.Spec.HasSharedStorage() && !sbrConfig.Spec.IsBlockMode() {
 		mounts = append(mounts, corev1.VolumeMount{
 			Name:      "shared-storage",
 			MountPath: sbrConfig.Spec.GetSharedStorageMountPath(),
@@ -1815,18 +1969,22 @@ func (r *StorageBasedRemediationConfigReconciler) buildVolumeMounts(sbrConfig *m
 	return mounts
 }
 
+// buildVolumeDevices builds the volume devices for the sbr-agent container (block mode only).
+func (r *StorageBasedRemediationConfigReconciler) buildVolumeDevices(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig) []corev1.VolumeDevice {
+	if !sbrConfig.Spec.HasSharedStorage() || !sbrConfig.Spec.IsBlockMode() {
+		return nil
+	}
+	return []corev1.VolumeDevice{
+		{
+			Name:       "shared-storage",
+			DevicePath: agent.SharedStorageBlockDevicePath,
+		},
+	}
+}
+
 // buildVolumes builds the volumes for the DaemonSet pod spec
 func (r *StorageBasedRemediationConfigReconciler) buildVolumes(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig) []corev1.Volume {
 	volumes := []corev1.Volume{
-		{
-			Name: "dev",
-			VolumeSource: corev1.VolumeSource{
-				HostPath: &corev1.HostPathVolumeSource{
-					Path: "/dev",
-					Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
-				},
-			},
-		},
 		{
 			Name: "sys",
 			VolumeSource: corev1.VolumeSource{
@@ -1845,6 +2003,31 @@ func (r *StorageBasedRemediationConfigReconciler) buildVolumes(sbrConfig *medik8
 				},
 			},
 		},
+	}
+
+	// See buildVolumeMounts: block mode mounts the host watchdog directory at /host-dev (a bind mount
+	// at /dev makes the runtime skip the CSI block-device node). The host path is derived from the
+	// configured watchdog path so no /dev location is assumed; filesystem mode mounts the whole host /dev.
+	if sbrConfig.Spec.IsBlockMode() {
+		volumes = append(volumes, corev1.Volume{
+			Name: "host-dev",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: filepath.Dir(sbrConfig.Spec.GetWatchdogPath()),
+					Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+				},
+			},
+		})
+	} else {
+		volumes = append(volumes, corev1.Volume{
+			Name: "dev",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/dev",
+					Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+				},
+			},
+		})
 	}
 
 	// Add shared storage volume if configured

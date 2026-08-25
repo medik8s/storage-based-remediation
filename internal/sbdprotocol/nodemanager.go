@@ -452,7 +452,7 @@ func (nm *NodeManager) loadFromDevice() error {
 	data, err := nm.store.Load()
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("node mapping does not exist: %s", nm.nodeMapFilePath)
+			return fmt.Errorf("node mapping does not exist (store %T)", nm.store)
 		}
 		return fmt.Errorf("failed to read node mapping via %T: %w", nm.store, err)
 	}
@@ -460,7 +460,7 @@ func (nm *NodeManager) loadFromDevice() error {
 	// Unmarshal the data
 	table, err := UnmarshalNodeMapTable(data)
 	if err != nil {
-		return fmt.Errorf("failed to unmarshal node mapping table from file %s: %w", nm.nodeMapFilePath, err)
+		return fmt.Errorf("failed to unmarshal node mapping table from %T: %w", nm.store, err)
 	}
 
 	// Verify cluster name matches
@@ -472,11 +472,11 @@ func (nm *NodeManager) loadFromDevice() error {
 	nm.lastSync = time.Now()
 	nm.dirty = false
 
-	nm.logger.Info("Loaded node mapping from file",
+	nm.logger.Info("Loaded node mapping from store",
 		"nodeCount", len(table.Entries),
 		"clusterName", table.ClusterName,
 		"lastUpdate", table.LastUpdate,
-		"filePath", nm.nodeMapFilePath)
+		"storeType", fmt.Sprintf("%T", nm.store))
 
 	return nil
 }
@@ -646,7 +646,11 @@ func (nm *NodeManager) clearCorruptedSlot() error {
 	return nil
 }
 
-// syncToDevice writes the node mapping table to the SBD device
+// syncToDevice writes the node mapping table to the SBD device.
+// If the store returns a write-verify conflict (e.g. BlockNodeMapStore),
+// syncToDevice reloads the device state and returns nil — the caller's
+// local changes (typically timestamp updates) will be re-applied on the
+// next sync cycle.
 func (nm *NodeManager) syncToDevice() error {
 	if !nm.dirty {
 		return nil // Nothing to sync
@@ -659,6 +663,13 @@ func (nm *NodeManager) syncToDevice() error {
 	}
 
 	if err := nm.store.Save(data); err != nil {
+		if isSaveConflict(err) {
+			nm.logger.Info("Write-verify conflict in syncToDevice, reloading device state", "error", err)
+			if loadErr := nm.loadFromDevice(); loadErr != nil {
+				return fmt.Errorf("failed to reload after write conflict: %w", loadErr)
+			}
+			return nil
+		}
 		return fmt.Errorf("failed to save node mapping: %w", err)
 	}
 
@@ -670,6 +681,17 @@ func (nm *NodeManager) syncToDevice() error {
 		"nodeCount", len(nm.table.Entries))
 
 	return nil
+}
+
+// isSaveConflict reports whether err is a storage-level write-verify conflict.
+// Uses duck-typing to avoid importing the blockformat package (which would
+// create a circular dependency via test imports).
+func isSaveConflict(err error) bool {
+	type conflictChecker interface {
+		IsConflict() bool
+	}
+	var ce conflictChecker
+	return errors.As(err, &ce) && ce.IsConflict()
 }
 
 // IsEmptySlot reports whether the slot data is all zeros or uninitialized.
@@ -843,6 +865,10 @@ func (nm *NodeManager) atomicSyncToDeviceWithLock(expectedVersion uint64, lockFi
 	}
 
 	if err := nm.store.Save(data); err != nil {
+		if isSaveConflict(err) {
+			nm.logger.V(1).Info("Write-verify conflict during atomic save, treating as version mismatch", "error", err)
+			return ErrVersionMismatch
+		}
 		return fmt.Errorf("failed to save node mapping: %w", err)
 	}
 

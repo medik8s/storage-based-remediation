@@ -51,6 +51,16 @@ const (
 	DetectOnlyModeEnabled DetectOnlyModeType = "Enabled"
 )
 
+// SharedStorageVolumeModeType specifies the volume mode for shared storage PVCs.
+type SharedStorageVolumeModeType string
+
+const (
+	// SharedStorageVolumeModeFilesystem uses a filesystem-backed RWX PVC (default).
+	SharedStorageVolumeModeFilesystem SharedStorageVolumeModeType = "Filesystem"
+	// SharedStorageVolumeModeBlock uses a raw block device RWX PVC.
+	SharedStorageVolumeModeBlock SharedStorageVolumeModeType = "Block"
+)
+
 // SBRConfigConditionType represents the type of condition for StorageBasedRemediationConfig
 type SBRConfigConditionType string
 
@@ -80,6 +90,15 @@ type StorageBasedRemediationConfigSpec struct {
 	// The StorageClass must support ReadWriteMany (RWX) access mode.
 	// +optional
 	SharedStorageClass string `json:"sharedStorageClass,omitempty"`
+
+	// SharedStorageVolumeMode selects the PVC volume mode for shared storage.
+	// "Filesystem" (default) mounts a filesystem-backed RWX volume.
+	// "Block" uses a raw block device RWX volume.
+	// Requires SharedStorageClass to be set when "Block" is specified.
+	// This field is immutable after creation.
+	// +kubebuilder:validation:Enum=Filesystem;Block
+	// +optional
+	SharedStorageVolumeMode *SharedStorageVolumeModeType `json:"sharedStorageVolumeMode,omitempty"`
 
 	// NodeSelector is a selector which must be true for the SBR agent pod to fit on a node.
 	// This allows users to control which nodes the SBR agent runs on by specifying node labels.
@@ -222,6 +241,19 @@ func (s *StorageBasedRemediationConfigSpec) HasSharedStorage() bool {
 	return s.SharedStorageClass != ""
 }
 
+// GetSharedStorageVolumeMode returns the volume mode, defaulting to Filesystem when nil.
+func (s *StorageBasedRemediationConfigSpec) GetSharedStorageVolumeMode() SharedStorageVolumeModeType {
+	if s.SharedStorageVolumeMode != nil {
+		return *s.SharedStorageVolumeMode
+	}
+	return SharedStorageVolumeModeFilesystem
+}
+
+// IsBlockMode returns true if shared storage uses raw block device mode.
+func (s *StorageBasedRemediationConfigSpec) IsBlockMode() bool {
+	return s.GetSharedStorageVolumeMode() == SharedStorageVolumeModeBlock
+}
+
 // GetNodeSelector returns the node selector with default fallback to worker nodes only
 func (s *StorageBasedRemediationConfigSpec) GetNodeSelector() map[string]string {
 	if len(s.NodeSelector) > 0 {
@@ -271,6 +303,13 @@ func (s *StorageBasedRemediationConfigSpec) ValidateSharedStorageClass() error {
 func (s *StorageBasedRemediationConfigSpec) ValidateAll() error {
 	if err := s.ValidateSharedStorageClass(); err != nil {
 		return fmt.Errorf("shared storage PVC validation failed: %w", err)
+	}
+
+	// Block mode requires a StorageClass to be specified
+	if s.SharedStorageVolumeMode != nil &&
+		*s.SharedStorageVolumeMode == SharedStorageVolumeModeBlock &&
+		s.SharedStorageClass == "" {
+		return fmt.Errorf("sharedStorageClass is required when sharedStorageVolumeMode is Block")
 	}
 
 	return nil

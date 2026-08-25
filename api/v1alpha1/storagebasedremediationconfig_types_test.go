@@ -624,6 +624,122 @@ func TestStorageBasedRemediationConfigSpec_ValidateSharedStorageClass(t *testing
 	}
 }
 
+func TestStorageBasedRemediationConfigSpec_GetSharedStorageVolumeMode(t *testing.T) {
+	filesystem := SharedStorageVolumeModeFilesystem
+	block := SharedStorageVolumeModeBlock
+
+	tests := []struct {
+		name     string
+		spec     StorageBasedRemediationConfigSpec
+		expected SharedStorageVolumeModeType
+	}{
+		{
+			name:     "nil defaults to Filesystem",
+			spec:     StorageBasedRemediationConfigSpec{},
+			expected: SharedStorageVolumeModeFilesystem,
+		},
+		{
+			name:     "explicit Filesystem",
+			spec:     StorageBasedRemediationConfigSpec{SharedStorageVolumeMode: &filesystem},
+			expected: SharedStorageVolumeModeFilesystem,
+		},
+		{
+			name:     "explicit Block",
+			spec:     StorageBasedRemediationConfigSpec{SharedStorageVolumeMode: &block},
+			expected: SharedStorageVolumeModeBlock,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.spec.GetSharedStorageVolumeMode()
+			if result != tt.expected {
+				t.Errorf("GetSharedStorageVolumeMode() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestStorageBasedRemediationConfigSpec_IsBlockMode(t *testing.T) {
+	filesystem := SharedStorageVolumeModeFilesystem
+	block := SharedStorageVolumeModeBlock
+
+	tests := []struct {
+		name     string
+		spec     StorageBasedRemediationConfigSpec
+		expected bool
+	}{
+		{
+			name:     "nil is not block mode",
+			spec:     StorageBasedRemediationConfigSpec{},
+			expected: false,
+		},
+		{
+			name:     "Filesystem is not block mode",
+			spec:     StorageBasedRemediationConfigSpec{SharedStorageVolumeMode: &filesystem},
+			expected: false,
+		},
+		{
+			name:     "Block is block mode",
+			spec:     StorageBasedRemediationConfigSpec{SharedStorageVolumeMode: &block},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.spec.IsBlockMode()
+			if result != tt.expected {
+				t.Errorf("IsBlockMode() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestStorageBasedRemediationConfigSpec_ValidateAll_BlockRequiresStorageClass(t *testing.T) {
+	block := SharedStorageVolumeModeBlock
+	filesystem := SharedStorageVolumeModeFilesystem
+
+	tests := []struct {
+		name    string
+		spec    StorageBasedRemediationConfigSpec
+		wantErr bool
+	}{
+		{
+			name:    "nil volume mode is valid",
+			spec:    StorageBasedRemediationConfigSpec{},
+			wantErr: false,
+		},
+		{
+			name:    "Filesystem without storage class is valid",
+			spec:    StorageBasedRemediationConfigSpec{SharedStorageVolumeMode: &filesystem},
+			wantErr: false,
+		},
+		{
+			name: "Block with storage class is valid",
+			spec: StorageBasedRemediationConfigSpec{
+				SharedStorageVolumeMode: &block,
+				SharedStorageClass:      "ocs-storagecluster-ceph-rbd",
+			},
+			wantErr: false,
+		},
+		{
+			name:    "Block without storage class is invalid",
+			spec:    StorageBasedRemediationConfigSpec{SharedStorageVolumeMode: &block},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.spec.ValidateAll()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateAll() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestStorageBasedRemediationConfigSpec_ValidateAll_WithSharedStorage(t *testing.T) {
 	tests := []struct {
 		name     string
