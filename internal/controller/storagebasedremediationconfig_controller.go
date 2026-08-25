@@ -74,12 +74,13 @@ const (
 	ReasonPVCManaged                              = "PVCManaged"
 	ReasonPVCError                                = "PVCError"
 	ReasonSBRDeviceInitialized                    = "SBRDeviceInitialized"
-	ReasonSBRDeviceInitError                      = "SBRDeviceInitWaiting"
+	ReasonSBRDeviceInitWaiting                    = "SBRDeviceInitWaiting"
 	ReasonSBRDeviceInitFailed                     = "SBRDeviceInitFailed"
 
-	// Device init job timeout constants
+	// Device init job constants
 	DeviceInitJobDeadline     = int64(300) // 5 minutes
 	DeviceInitJobBackoffLimit = int32(1)   // 1 retry (2 total pod attempts)
+	DeviceInitJobTTLSeconds   = int32(3600)
 
 	// Cleanup job timeout constants
 	// CleanupJobPollTimeout is how long we wait for the cleanup job to complete
@@ -936,8 +937,7 @@ echo "SBR devices initialization completed successfully"
 						},
 					},
 				},
-				// Clean up completed jobs after 1 hour to avoid accumulation
-				TTLSecondsAfterFinished: ptr.To[int32](3600),
+				TTLSecondsAfterFinished: ptr.To(DeviceInitJobTTLSeconds),
 			},
 		}
 	}
@@ -1004,7 +1004,7 @@ echo "SBR devices initialization completed successfully"
 	logger.Info("Creating SBR device initialization job")
 	if err := r.Create(ctx, desiredJob); err != nil {
 		logger.Error(err, "Failed to create SBR device initialization job")
-		r.emitEventf(sbrConfig, EventTypeWarning, ReasonSBRDeviceInitError,
+		r.emitEventf(sbrConfig, EventTypeWarning, ReasonSBRDeviceInitWaiting,
 			"Failed to create SBR device initialization job: %v", err)
 		return controllerutil.OperationResultNone, fmt.Errorf("failed to create SBR device initialization job: %w", err)
 	}
@@ -1261,7 +1261,7 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 		logger.Error(err, "Waiting for SBR device to be initialized",
 			"namespace", sbrConfig.Namespace,
 			"operation", "sbr-device-init")
-		r.emitEventf(&sbrConfig, EventTypeWarning, ReasonSBRDeviceInitError, "%s", err.Error())
+		r.emitEventf(&sbrConfig, EventTypeWarning, ReasonSBRDeviceInitWaiting, "%s", err.Error())
 
 		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	} else if action != controllerutil.OperationResultNone {
