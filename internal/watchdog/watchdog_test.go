@@ -26,7 +26,7 @@ import (
 	"github.com/go-logr/logr"
 	"golang.org/x/sys/unix"
 
-	"github.com/medik8s/storage-based-remediation/internal/retry"
+	"github.com/medik8s/storage-based-remediation/v5/internal/retry"
 )
 
 // isTrueEnv returns true if the environment variable is set to a true value (case-insensitive)

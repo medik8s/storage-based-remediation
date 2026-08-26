@@ -1,4 +1,4 @@
-module github.com/medik8s/storage-based-remediation
+module github.com/medik8s/storage-based-remediation/v5
 
 go 1.26.0
 

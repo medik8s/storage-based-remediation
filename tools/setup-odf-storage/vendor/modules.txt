@@ -178,9 +178,9 @@ github.com/google/uuid
 # github.com/json-iterator/go v1.1.12
 ## explicit; go 1.12
 github.com/json-iterator/go
-# github.com/medik8s/storage-based-remediation v0.0.0-00010101000000-000000000000 => ../..
+# github.com/medik8s/storage-based-remediation/v5 v5.0.0-00010101000000-000000000000 => ../..
 ## explicit; go 1.26.0
-github.com/medik8s/storage-based-remediation/internal/storage/odf
+github.com/medik8s/storage-based-remediation/v5/internal/storage/odf
 # github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd
 ## explicit
 github.com/modern-go/concurrent
@@ -568,4 +568,4 @@ sigs.k8s.io/structured-merge-diff/v6/value
 # sigs.k8s.io/yaml v1.6.0
 ## explicit; go 1.22
 sigs.k8s.io/yaml
-# github.com/medik8s/storage-based-remediation => ../..
+# github.com/medik8s/storage-based-remediation/v5 => ../..

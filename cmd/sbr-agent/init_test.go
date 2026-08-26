@@ -26,7 +26,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/medik8s/storage-based-remediation/internal/blockformat"
+	"github.com/medik8s/storage-based-remediation/v5/internal/blockformat"
 )
 
 func createInitTestDevice(t *testing.T, size int64) string {

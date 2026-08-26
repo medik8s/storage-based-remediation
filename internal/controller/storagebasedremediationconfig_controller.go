@@ -47,9 +47,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
-	"github.com/medik8s/storage-based-remediation/internal/agent"
-	"github.com/medik8s/storage-based-remediation/internal/retry"
+	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/v5/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
+	"github.com/medik8s/storage-based-remediation/v5/internal/retry"
 )
 
 // Event types and reasons for StorageBasedRemediationConfig controller

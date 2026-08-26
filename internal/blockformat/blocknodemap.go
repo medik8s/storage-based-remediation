@@ -31,7 +31,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/medik8s/storage-based-remediation/internal/blockdevice"
+	"github.com/medik8s/storage-based-remediation/v5/internal/blockdevice"
 )
 
 // Node map buffer envelope field sizes (within the 64 KB region).

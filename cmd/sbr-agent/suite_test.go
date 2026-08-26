@@ -34,8 +34,8 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
-	"github.com/medik8s/storage-based-remediation/test/utils"
+	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/v5/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/v5/test/utils"
 	// +kubebuilder:scaffold:imports
 )
 

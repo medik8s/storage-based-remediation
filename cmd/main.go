@@ -45,9 +45,9 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	openshifttls "github.com/openshift/controller-runtime-common/pkg/tls"
 
-	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
-	"github.com/medik8s/storage-based-remediation/internal/controller"
-	"github.com/medik8s/storage-based-remediation/internal/version"
+	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/v5/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/v5/internal/controller"
+	"github.com/medik8s/storage-based-remediation/v5/internal/version"
 	// +kubebuilder:scaffold:imports
 )
 

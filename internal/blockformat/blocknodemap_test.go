@@ -28,8 +28,8 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/medik8s/storage-based-remediation/internal/blockdevice"
-	"github.com/medik8s/storage-based-remediation/internal/sbdprotocol"
+	"github.com/medik8s/storage-based-remediation/v5/internal/blockdevice"
+	"github.com/medik8s/storage-based-remediation/v5/internal/sbdprotocol"
 )
 
 // Compile-time check that BlockNodeMapStore implements sbdprotocol.NodeMapStore.

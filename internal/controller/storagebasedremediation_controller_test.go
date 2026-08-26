@@ -35,9 +35,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
-	"github.com/medik8s/storage-based-remediation/internal/mocks"
-	"github.com/medik8s/storage-based-remediation/internal/sbdprotocol"
+	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/v5/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/v5/internal/mocks"
+	"github.com/medik8s/storage-based-remediation/v5/internal/sbdprotocol"
 )
 
 // Note: Controller tests simplified since agent-based fencing architecture

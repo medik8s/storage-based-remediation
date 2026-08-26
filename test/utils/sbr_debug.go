@@ -42,8 +42,8 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 
-	"github.com/medik8s/storage-based-remediation/internal/agent"
-	"github.com/medik8s/storage-based-remediation/internal/sbdprotocol"
+	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
+	"github.com/medik8s/storage-based-remediation/v5/internal/sbdprotocol"
 )
 
 const (

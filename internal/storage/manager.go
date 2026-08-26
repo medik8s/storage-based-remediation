@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/medik8s/storage-based-remediation/internal/storage/k8s"
+	"github.com/medik8s/storage-based-remediation/v5/internal/storage/k8s"
 )
 
 // Config holds all configuration for storage setup

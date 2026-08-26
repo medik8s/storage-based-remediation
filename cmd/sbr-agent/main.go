@@ -51,16 +51,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	"github.com/medik8s/storage-based-remediation/api/v1alpha1"
-	"github.com/medik8s/storage-based-remediation/internal/agent"
-	"github.com/medik8s/storage-based-remediation/internal/blockdevice"
-	"github.com/medik8s/storage-based-remediation/internal/blockformat"
-	"github.com/medik8s/storage-based-remediation/internal/controller"
-	"github.com/medik8s/storage-based-remediation/internal/mocks"
-	"github.com/medik8s/storage-based-remediation/internal/retry"
-	"github.com/medik8s/storage-based-remediation/internal/sbdprotocol"
-	"github.com/medik8s/storage-based-remediation/internal/version"
-	"github.com/medik8s/storage-based-remediation/internal/watchdog"
+	"github.com/medik8s/storage-based-remediation/v5/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
+	"github.com/medik8s/storage-based-remediation/v5/internal/blockdevice"
+	"github.com/medik8s/storage-based-remediation/v5/internal/blockformat"
+	"github.com/medik8s/storage-based-remediation/v5/internal/controller"
+	"github.com/medik8s/storage-based-remediation/v5/internal/mocks"
+	"github.com/medik8s/storage-based-remediation/v5/internal/retry"
+	"github.com/medik8s/storage-based-remediation/v5/internal/sbdprotocol"
+	"github.com/medik8s/storage-based-remediation/v5/internal/version"
+	"github.com/medik8s/storage-based-remediation/v5/internal/watchdog"
 )
 
 // RBAC permissions for SBR Agent
