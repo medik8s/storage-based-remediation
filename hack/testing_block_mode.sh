@@ -18,7 +18,7 @@ set -euo pipefail
 
 # Defaults
 NAMESPACE="${NAMESPACE:-sbr-block-test}"
-AGENT_IMAGE="${AGENT_IMAGE:-quay.io/migi/storage-based-remediation-agent:latest}"
+AGENT_IMAGE="${AGENT_IMAGE:-quay.io/medik8s/storage-based-remediation-agent:latest}"
 STORAGE_CLASS="${STORAGE_CLASS:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
