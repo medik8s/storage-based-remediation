@@ -504,3 +504,60 @@ func initTestLogger(t *testing.T) {
 	t.Helper()
 	logger = logr.Discard()
 }
+
+func TestSlotOffset_BlockMode(t *testing.T) {
+	agent := &SBRAgent{blockMode: true}
+
+	tests := []struct {
+		nodeID uint16
+		want   int64
+	}{
+		{1, 0},                                 // first usable slot starts at offset 0
+		{2, blockformat.BlockSlotSize},         // second slot
+		{254, 253 * blockformat.BlockSlotSize}, // near end
+		{255, 254 * blockformat.BlockSlotSize}, // last valid nodeID — must fit
+	}
+
+	for _, tc := range tests {
+		got := agent.slotOffset(tc.nodeID)
+		if got != tc.want {
+			t.Errorf("slotOffset(%d) = %d, want %d", tc.nodeID, got, tc.want)
+		}
+	}
+}
+
+func TestSlotOffset_FilesystemMode(t *testing.T) {
+	agent := &SBRAgent{blockMode: false}
+
+	tests := []struct {
+		nodeID uint16
+		want   int64
+	}{
+		{1, sbdprotocol.SBD_SLOT_SIZE},
+		{2, 2 * sbdprotocol.SBD_SLOT_SIZE},
+		{255, 255 * sbdprotocol.SBD_SLOT_SIZE},
+	}
+
+	for _, tc := range tests {
+		got := agent.slotOffset(tc.nodeID)
+		if got != tc.want {
+			t.Errorf("slotOffset(%d) = %d, want %d", tc.nodeID, got, tc.want)
+		}
+	}
+}
+
+func TestSlotOffset_BlockMode_MaxNodeID_FitsInRegion(t *testing.T) {
+	agent := &SBRAgent{blockMode: true}
+
+	// nodeID 255 (SBD_MAX_NODES) must produce an offset that, plus one
+	// full slot read, stays within the heartbeat region.
+	maxOffset := agent.slotOffset(sbdprotocol.SBD_MAX_NODES)
+	endByte := maxOffset + blockformat.BlockSlotSize
+	regionSize := blockformat.BlockMaxNodes * blockformat.BlockSlotSize
+
+	if endByte > regionSize {
+		t.Errorf("nodeID %d: offset %d + slot %d = %d exceeds region %d",
+			sbdprotocol.SBD_MAX_NODES, maxOffset, blockformat.BlockSlotSize,
+			endByte, regionSize)
+	}
+}

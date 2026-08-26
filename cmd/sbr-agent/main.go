@@ -559,7 +559,16 @@ func (s *SBRAgent) slotSize() int64 {
 }
 
 // slotOffset returns the byte offset for the given node's slot.
+// In block mode the design packs slots starting at position 0:
+//
+//	slot_offset = (nodeID - 1) * BlockSlotSize
+//
+// so 255 nodeIDs (1–255) fit exactly in 255 * BlockSlotSize bytes.
+// In filesystem mode nodeID is used directly (slot 0 is simply unused).
 func (s *SBRAgent) slotOffset(nodeID uint16) int64 {
+	if s.blockMode {
+		return int64(nodeID-1) * s.slotSize()
+	}
 	return int64(nodeID) * s.slotSize()
 }
 
