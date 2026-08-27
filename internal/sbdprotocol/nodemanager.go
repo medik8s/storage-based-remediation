@@ -84,6 +84,7 @@ type NodeManager struct {
 	syncInterval       time.Duration
 	staleNodeTimeout   time.Duration
 	fileLockingEnabled bool
+	ownNodeName        string // set via SetOwnNodeName; refreshed each sync tick to prevent stale-node eviction
 }
 
 // NodeManagerConfig holds configuration for the node manager
@@ -164,6 +165,15 @@ func NewNodeManager(device SBDDevice, config NodeManagerConfig) (*NodeManager, e
 	}
 
 	return manager, nil
+}
+
+// SetOwnNodeName records the name of the local node so that
+// StartPeriodicSync can refresh its LastSeen timestamp before
+// each stale-node cleanup, preventing live nodes from being evicted.
+func (nm *NodeManager) SetOwnNodeName(name string) {
+	nm.mutex.Lock()
+	defer nm.mutex.Unlock()
+	nm.ownNodeName = name
 }
 
 // GetNodeIDForNode returns the node ID for a given node name, assigning one if necessary
@@ -431,10 +441,12 @@ func (nm *NodeManager) StartPeriodicSync() chan struct{} {
 				nm.logger.Info("Stopping periodic sync")
 				return
 			case <-ticker.C:
+				nm.refreshOwnLastSeen()
 				if err := nm.Sync(); err != nil {
 					nm.logger.Error(err, "Periodic sync failed")
 				}
 			case <-cleanupTicker.C:
+				nm.refreshOwnLastSeen()
 				if _, err := nm.CleanupStaleNodes(); err != nil {
 					nm.logger.Error(err, "Periodic cleanup failed")
 				}
@@ -444,6 +456,21 @@ func (nm *NodeManager) StartPeriodicSync() chan struct{} {
 
 	nm.logger.Info("Started periodic sync", "syncInterval", nm.syncInterval, "staleTimeout", nm.staleNodeTimeout)
 	return stopChan
+}
+
+// refreshOwnLastSeen updates the local node's LastSeen timestamp on
+// the shared device so that CleanupStaleNodes never evicts a live agent.
+func (nm *NodeManager) refreshOwnLastSeen() {
+	nm.mutex.RLock()
+	name := nm.ownNodeName
+	nm.mutex.RUnlock()
+
+	if name == "" {
+		return
+	}
+	if err := nm.atomicUpdateLastSeen(name); err != nil {
+		nm.logger.Error(err, "Failed to refresh own node LastSeen", "nodeName", name)
+	}
 }
 
 // loadFromDevice loads the node mapping table from the separate node mapping file

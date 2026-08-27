@@ -957,6 +957,7 @@ func (s *SBRAgent) initializeNodeManagers(clusterName string, fileLockingEnabled
 
 	// Update the node ID to use the hash-based slot
 	s.nodeID = nodeID
+	s.nodeManager.SetOwnNodeName(s.nodeName)
 	logger.Info("Node assigned to slot via hash-based mapping",
 		"nodeName", s.nodeName,
 		"nodeID", nodeID,
