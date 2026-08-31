@@ -26,6 +26,7 @@ import (
 
 	"github.com/go-logr/logr"
 
+	"github.com/medik8s/storage-based-remediation/internal/agent"
 	"github.com/medik8s/storage-based-remediation/internal/blockformat"
 )
 
@@ -309,5 +310,150 @@ func TestCheckSBRDevice_FilesystemModeIgnoresSuperblock(t *testing.T) {
 	// since the caller explicitly said this is not a block device)
 	if err := checkSBRDevice(path, 1, "test-node", false); err != nil {
 		t.Fatalf("checkSBRDevice(blockModeExpected=false) failed on device with superblock: %v", err)
+	}
+}
+
+// --- Filesystem mode init tests ---
+
+func TestRunFSInit_CreatesDeviceFiles(t *testing.T) {
+	mountPath := t.TempDir()
+
+	err := runFSInit(mountPath, logr.Discard())
+	if err != nil {
+		t.Fatalf("runFSInit failed: %v", err)
+	}
+
+	heartbeatPath := filepath.Join(mountPath, agent.SharedStorageSBRDeviceFile)
+	fencePath := heartbeatPath + agent.SharedStorageFenceDeviceSuffix
+
+	for _, p := range []string{heartbeatPath, fencePath} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("expected file %q to exist: %v", p, err)
+		}
+		if info.Size() != 0 {
+			t.Errorf("expected file %q to be empty, got %d bytes", p, info.Size())
+		}
+	}
+}
+
+func TestRunFSInit_IdempotentBothFiles(t *testing.T) {
+	mountPath := t.TempDir()
+
+	// First init
+	if err := runFSInit(mountPath, logr.Discard()); err != nil {
+		t.Fatalf("first runFSInit failed: %v", err)
+	}
+
+	heartbeatPath := filepath.Join(mountPath, agent.SharedStorageSBRDeviceFile)
+	fencePath := heartbeatPath + agent.SharedStorageFenceDeviceSuffix
+
+	// Write data to both files to verify neither is overwritten
+	for _, p := range []string{heartbeatPath, fencePath} {
+		if err := os.WriteFile(p, []byte("existing-data"), 0664); err != nil {
+			t.Fatalf("failed to write test data to %q: %v", p, err)
+		}
+	}
+
+	// Second init — should not overwrite either file
+	if err := runFSInit(mountPath, logr.Discard()); err != nil {
+		t.Fatalf("second runFSInit failed: %v", err)
+	}
+
+	for _, p := range []string{heartbeatPath, fencePath} {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("failed to read %q: %v", p, err)
+		}
+		if string(data) != "existing-data" {
+			t.Errorf("file %q was overwritten: got %q", p, data)
+		}
+	}
+}
+
+func TestRunFSInit_RejectsDirectoryAtDevicePath(t *testing.T) {
+	mountPath := t.TempDir()
+	heartbeatPath := filepath.Join(mountPath, agent.SharedStorageSBRDeviceFile)
+
+	// Create a directory where the device file should be
+	if err := os.Mkdir(heartbeatPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runFSInit(mountPath, logr.Discard())
+	if err == nil {
+		t.Fatal("expected error when device path is a directory")
+	}
+	if !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("expected 'not a regular file' error, got: %v", err)
+	}
+}
+
+func TestRunFSInit_EmptyPath(t *testing.T) {
+	err := runFSInit("", logr.Discard())
+	if err == nil {
+		t.Fatal("expected error for empty path")
+	}
+}
+
+func TestRunFSInit_NonExistentPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist")
+	err := runFSInit(path, logr.Discard())
+	if err == nil {
+		t.Fatal("expected error for non-existent path")
+	}
+}
+
+func TestRunInit_NonExistentPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist")
+	err := runInit(path, 30*time.Second, logr.Discard())
+	if err == nil {
+		t.Fatal("expected error for non-existent path")
+	}
+}
+
+func TestRunInit_AutoDetectsDirectory(t *testing.T) {
+	mountPath := t.TempDir()
+
+	// runInit should detect the directory and run fs init
+	err := runInit(mountPath, 30*time.Second, logr.Discard())
+	if err != nil {
+		t.Fatalf("runInit failed on directory: %v", err)
+	}
+
+	// Verify files were created
+	heartbeatPath := filepath.Join(mountPath, agent.SharedStorageSBRDeviceFile)
+	if _, err := os.Stat(heartbeatPath); err != nil {
+		t.Fatalf("heartbeat file not created: %v", err)
+	}
+
+	fencePath := heartbeatPath + agent.SharedStorageFenceDeviceSuffix
+	if _, err := os.Stat(fencePath); err != nil {
+		t.Fatalf("fence file not created: %v", err)
+	}
+}
+
+func TestRunInit_AutoDetectsFile(t *testing.T) {
+	// runInit on a file should run block init (existing behavior)
+	path := createInitTestDevice(t, blockformat.BlockMinDeviceSize)
+
+	err := runInit(path, 30*time.Second, logr.Discard())
+	if err != nil {
+		t.Fatalf("runInit failed on file: %v", err)
+	}
+
+	// Verify superblock was written
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open device: %v", err)
+	}
+	defer f.Close()
+
+	sector := make([]byte, blockformat.BlockSectorSize)
+	if _, err := f.ReadAt(sector, 0); err != nil {
+		t.Fatalf("failed to read superblock: %v", err)
+	}
+	if !bytes.HasPrefix(sector, blockformat.SuperblockMagic[:]) {
+		t.Fatal("superblock magic not found — block init did not run")
 	}
 }
