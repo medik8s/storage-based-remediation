@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
@@ -2745,14 +2746,69 @@ func (s *SBRAgent) addSBRRemediationController() error {
 	return nil
 }
 
-// runInit initializes a block device with a V1 superblock.
-// It opens the device, checks its size, and calls blockformat.InitDevice.
+// runInit detects whether devicePath is a directory (filesystem mode) or a
+// file/block device (block mode) and runs the appropriate initialization.
+//
+// Filesystem mode (directory): creates empty heartbeat and fence device files.
+// Block mode (file/device): writes a V1 superblock.
+//
 // Returns nil on success (including idempotent no-op).
 func runInit(devicePath string, ioTimeout time.Duration, log logr.Logger) error {
 	if devicePath == "" {
 		return fmt.Errorf("--%s is required in init mode", agent.FlagSBRDevice)
 	}
 
+	info, err := os.Stat(devicePath)
+	if err != nil {
+		return fmt.Errorf("cannot stat %q: %w", devicePath, err)
+	}
+
+	if info.IsDir() {
+		return runFSInit(devicePath, log)
+	}
+
+	return runBlockInit(devicePath, ioTimeout, log)
+}
+
+// runFSInit creates the heartbeat and fence device files for filesystem mode.
+// The files are created empty; the agent extends them via WriteAt on startup.
+// Node mapping is created by the agent on first startup, not by init.
+func runFSInit(mountPath string, log logr.Logger) error {
+	if mountPath == "" {
+		return fmt.Errorf("mount path cannot be empty")
+	}
+	heartbeatPath := filepath.Join(mountPath, agent.SharedStorageSBRDeviceFile)
+	fencePath := heartbeatPath + agent.SharedStorageFenceDeviceSuffix
+
+	for _, p := range []string{heartbeatPath, fencePath} {
+		info, err := os.Stat(p)
+		switch {
+		case err == nil:
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("device path %q exists but is not a regular file (mode %s)", p, info.Mode())
+			}
+			log.Info("Device file already exists", "path", p)
+			continue
+		case !os.IsNotExist(err):
+			return fmt.Errorf("failed to stat device file %q: %w", p, err)
+		}
+		f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY, 0664)
+		if err != nil {
+			return fmt.Errorf("failed to create device file %q: %w", p, err)
+		}
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("failed to close device file %q: %w", p, err)
+		}
+		log.Info("Created device file", "path", p)
+	}
+
+	log.Info("Filesystem mode device initialization complete", "mountPath", mountPath)
+	return nil
+}
+
+// runBlockInit initializes a block device with a V1 superblock.
+// It opens the device, checks its size, and calls blockformat.InitDevice.
+func runBlockInit(devicePath string, ioTimeout time.Duration, log logr.Logger) error {
 	// Use O_DIRECT + O_SYNC (OpenWithTimeout) for init. Concurrent init Jobs
 	// on different nodes can share the same RWX block device. O_DIRECT avoids
 	// relying on the local page cache when checking the existing superblock.
@@ -2801,15 +2857,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Handle --init mode: initialize block device and exit immediately.
+	// Handle --init mode: initialize devices and exit immediately.
+	// Auto-detects filesystem mode (directory) vs block mode (file/device).
 	// This runs before any Kubernetes client setup, watchdog, or agent logic.
 	if *initMode {
-		logger.Info("Running in init mode")
+		logger.Info("Running in init mode", "path", *sbrDevice)
 		if err := runInit(*sbrDevice, *ioTimeout, logger); err != nil {
-			logger.Error(err, "Block device initialization failed")
+			logger.Error(err, "Device initialization failed")
 			os.Exit(1)
 		}
-		logger.Info("Block device initialization complete")
+		logger.Info("Device initialization complete")
 		os.Exit(0)
 	}
 
