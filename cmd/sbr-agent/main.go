@@ -861,6 +861,15 @@ func (s *SBRAgent) initializeBlockModeDevices(sb *blockformat.Superblock) error 
 		return fmt.Errorf("failed to open block device %s: %w", s.heartbeatDevicePath, err)
 	}
 
+	// Verify the backing storage is suitable for block mode. Some
+	// filesystem-backed storage implementations do not provide the direct-I/O
+	// and cross-node visibility semantics required by block mode, even when
+	// O_DIRECT is accepted on the file descriptor.
+	if err := blockdevice.DefaultStorageChecker.ValidateBlockModeStorage(dev.File(), s.heartbeatDevicePath); err != nil {
+		dev.Close()
+		return fmt.Errorf("storage backend incompatible with block mode: %w", err)
+	}
+
 	// Check quiesce flag before committing state
 	if sb.IsQuiesced() {
 		dev.Close()

@@ -26,9 +26,21 @@ import (
 
 	"github.com/go-logr/logr"
 
+	"github.com/medik8s/storage-based-remediation/internal/blockdevice"
 	"github.com/medik8s/storage-based-remediation/internal/blockformat"
 	"github.com/medik8s/storage-based-remediation/internal/sbdprotocol"
 )
+
+// noopStorageChecker skips O_DIRECT and fstatfs validation in tests that use
+// temp files (which lack O_DIRECT and run on tmpfs). Production validation is
+// tested in internal/blockdevice/ where directOpener is used explicitly.
+type noopStorageChecker struct{}
+
+func (noopStorageChecker) ValidateBlockModeStorage(_ *os.File, _ string) error { return nil }
+
+func init() {
+	blockdevice.DefaultStorageChecker = noopStorageChecker{}
+}
 
 // createBlockModeDevice creates a temp file with a valid V1 superblock.
 func createBlockModeDevice(t *testing.T) string {

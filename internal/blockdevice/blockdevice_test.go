@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"golang.org/x/sys/unix"
 )
 
 // syncOpener opens block devices without O_DIRECT for unit tests.
@@ -815,5 +816,104 @@ func TestOpenWithTimeout(t *testing.T) {
 
 			_ = device.Close()
 		})
+	}
+}
+
+// TestValidateBlockModeStorage_ODirectNotSet verifies that the F_GETFL check
+// detects when O_DIRECT is not set on the file descriptor.
+func TestValidateBlockModeStorage_ODirectNotSet(t *testing.T) {
+	devicePath, cleanup := setupTestDevice(t, 4096)
+	defer cleanup()
+
+	// Open without O_DIRECT — simulates a code bug where the open path
+	// accidentally omits O_DIRECT.
+	dev, err := OpenBuffered(devicePath, 5*time.Second, logr.Discard())
+	if err != nil {
+		t.Fatalf("OpenBuffered failed: %v", err)
+	}
+	defer dev.Close()
+
+	err = DefaultStorageChecker.ValidateBlockModeStorage(dev.File(), devicePath)
+	if err == nil {
+		t.Fatal("should reject fd without O_DIRECT")
+	}
+	if !strings.Contains(err.Error(), "O_DIRECT is not set") {
+		t.Fatalf("error should mention O_DIRECT, got: %v", err)
+	}
+}
+
+// TestBlockModeFilesystemUnsupported_BlacklistedTypes verifies that the
+// production blocklist rejects NFS, CIFS, and FUSE filesystem types.
+func TestBlockModeFilesystemUnsupported_BlacklistedTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		fsType   int64
+		wantName string
+	}{
+		{"NFS", int64(unix.NFS_SUPER_MAGIC), "NFS"},
+		{"CIFS", int64(unix.CIFS_SUPER_MAGIC), "CIFS"},
+		{"FUSE", int64(unix.FUSE_SUPER_MAGIC), "FUSE"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			name, unsupported := blockModeFilesystemUnsupported(tt.fsType)
+			if !unsupported {
+				t.Fatalf("expected %s (0x%x) to be unsupported", tt.name, tt.fsType)
+			}
+			if !strings.Contains(name, tt.wantName) {
+				t.Fatalf("expected name to contain %q, got %q", tt.wantName, name)
+			}
+		})
+	}
+}
+
+// TestBlockModeFilesystemUnsupported_NotBlacklistedTypes verifies that
+// filesystem types not in the blocklist are allowed through. This does not
+// imply these filesystems are validated for block-mode correctness.
+func TestBlockModeFilesystemUnsupported_NotBlacklistedTypes(t *testing.T) {
+	tests := []struct {
+		name   string
+		fsType int64
+	}{
+		{"ext4", int64(unix.EXT4_SUPER_MAGIC)},
+		{"xfs", int64(unix.XFS_SUPER_MAGIC)},
+		{"tmpfs", int64(unix.TMPFS_MAGIC)},
+		{"btrfs", int64(unix.BTRFS_SUPER_MAGIC)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, unsupported := blockModeFilesystemUnsupported(tt.fsType)
+			if unsupported {
+				t.Fatalf("%s (0x%x) should not be rejected", tt.name, tt.fsType)
+			}
+		})
+	}
+}
+
+// TestValidateBlockModeStorage_SuccessfulPath verifies that the full checker
+// accepts a file descriptor that has O_DIRECT set and is backed by a
+// compatible filesystem. This exercises the sequential F_GETFL → fstatfs path.
+func TestValidateBlockModeStorage_SuccessfulPath(t *testing.T) {
+	devicePath, cleanup := setupTestDevice(t, 4096)
+	defer cleanup()
+
+	// Open with O_DIRECT via the production directOpener path.
+	// On tmpfs the fstatfs check will see TMPFS_MAGIC, which is not in
+	// the blocklist, so the full checker should accept it.
+	//
+	// Note: DeviceOpener is overridden to syncOpener in test init(), so
+	// we call directOpener explicitly to get a real O_DIRECT fd.
+	do := directOpener{}
+	f, err := do.Open(devicePath)
+	if err != nil {
+		t.Skipf("O_DIRECT not supported on test filesystem, skipping: %v", err)
+	}
+	defer f.Close()
+
+	err = DefaultStorageChecker.ValidateBlockModeStorage(f, devicePath)
+	if err != nil {
+		t.Fatalf("expected successful validation, got: %v", err)
 	}
 }
