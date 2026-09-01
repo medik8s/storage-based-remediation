@@ -908,41 +908,49 @@ func (s *SBRAgent) initializeBlockModeDevices(sb *blockformat.Superblock) error 
 	return nil
 }
 
-// openWithDirectFallback tries O_DIRECT first for cache-coherent reads. If the
-// storage backend rejects O_DIRECT (e.g. Portworx), it falls back to buffered
-// I/O with FADV_DONTNEED to reduce stale page-cache reads.
-func openWithDirectFallback(path string, ioTimeout time.Duration, log logr.Logger) (*blockdevice.Device, error) {
+// openWithDirectOrReopen tries O_DIRECT first for cache-coherent reads. If the
+// storage backend rejects O_DIRECT, it falls back to a reopen-per-read device.
+// On NFS-backed storage (most RWX volumes) the reopen triggers close-to-open
+// revalidation. On non-NFS storage that also rejects O_DIRECT, reopening still
+// avoids long-lived fd caching but does not provide the same CTO guarantee.
+//
+// The ioTimeout is only used for the O_DIRECT path (Device). The reopen
+// fallback uses synchronous blocking I/O with no timeout — if the storage
+// backend is unresponsive, the caller blocks, which is the correct behavior
+// for a fencing device (blocked heartbeat → watchdog fires).
+func openWithDirectOrReopen(path string, ioTimeout time.Duration, log logr.Logger) (mocks.BlockDeviceInterface, error) {
 	dev, err := blockdevice.OpenWithTimeout(path, ioTimeout, log)
 	if err == nil {
 		log.Info("Opened device with O_DIRECT", "path", path)
 		return dev, nil
 	}
 
-	log.Info("O_DIRECT not supported, falling back to buffered I/O with FADV_DONTNEED",
+	log.Info("O_DIRECT not supported, falling back to reopen-per-read (synchronous, no timeout)",
 		"path", path, "directError", err.Error())
 
-	dev, bufErr := blockdevice.OpenBuffered(path, ioTimeout, log)
-	if bufErr != nil {
-		return nil, fmt.Errorf("failed to open device %s (O_DIRECT: %v, buffered: %w)", path, err, bufErr)
+	reopenDev, reopenErr := blockdevice.NewReopenDevice(path, log)
+	if reopenErr != nil {
+		return nil, fmt.Errorf("failed to open device %s (O_DIRECT: %v, reopen: %w)", path, err, reopenErr)
 	}
 
-	return dev, nil
+	return reopenDev, nil
 }
 
 // initializeFilesystemModeDevices opens separate heartbeat and fence device files.
-// It tries O_DIRECT first for cache-coherent reads, falling back to buffered
-// I/O with FADV_DONTNEED when the storage backend does not support O_DIRECT.
+// It tries O_DIRECT first for cache-coherent reads, falling back to a
+// reopen-per-read strategy that leverages NFS close-to-open consistency
+// when O_DIRECT is not supported by the storage backend.
 func (s *SBRAgent) initializeFilesystemModeDevices() error {
-	heartbeatDevice, err := openWithDirectFallback(s.heartbeatDevicePath, s.ioTimeout,
+	heartbeatDevice, err := openWithDirectOrReopen(s.heartbeatDevicePath, s.ioTimeout,
 		logger.WithName("heartbeat-device"))
 	if err != nil {
-		return fmt.Errorf("failed to open heartbeat device %s with timeout %v: %w",
-			s.heartbeatDevicePath, s.ioTimeout, err)
+		return fmt.Errorf("failed to open heartbeat device %s: %w",
+			s.heartbeatDevicePath, err)
 	}
 
-	fenceDevice, err := openWithDirectFallback(s.fenceDevicePath, s.ioTimeout, logger.WithName("fence-device"))
+	fenceDevice, err := openWithDirectOrReopen(s.fenceDevicePath, s.ioTimeout, logger.WithName("fence-device"))
 	if err != nil {
-		return fmt.Errorf("failed to open fence device %s with timeout %v: %w", s.fenceDevicePath, s.ioTimeout, err)
+		return fmt.Errorf("failed to open fence device %s: %w", s.fenceDevicePath, err)
 	}
 
 	s.heartbeatDevice = heartbeatDevice
