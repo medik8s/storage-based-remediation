@@ -50,37 +50,41 @@ metadata:
       ]
     capabilities: Basic Install
     categories: OpenShift Optional
-    containerImage: quay.io/medik8s/storage-based-remediation-operator:v5.8.0
+    containerImage: quay.io/medik8s/storage-based-remediation-operator:latest
     createdAt: ""
-    description: Storage-Based Remediation Operator for remediating nodes using storage-based fencing (SBD/STONITH).
-    olm.skipRange: '>=0.3.0 <5.8.0'
+    description: Storage-Based Remediation Operator for remediating nodes using storage-based
+      fencing (SBD/STONITH).
+    olm.skipRange: '>=0.0.1'
     operatorframework.io/suggested-namespace: openshift-workload-availability
     operatorframework.io/suggested-namespace-template: '{"kind":"Namespace","apiVersion":"v1","metadata":{"name":"openshift-workload-availability","annotations":{"openshift.io/node-selector":""}}}'
     operators.operatorframework.io/builder: operator-sdk-v1.42.2
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/medik8s/storage-based-remediation
     support: Medik8s
-  name: storage-based-remediation.v5.8.0
+  name: storage-based-remediation.v0.0.1
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
   customresourcedefinitions:
     owned:
-      - description: StorageBasedRemediationConfig is the Schema for the storagebasedremediationconfigs API.
-        displayName: StorageBasedRemediationConfig
-        kind: StorageBasedRemediationConfig
-        name: storagebasedremediationconfigs.storage-based-remediation.medik8s.io
-        version: v1alpha1
-      - description: StorageBasedRemediation is the Schema for the storagebasedremediations API.
-        displayName: StorageBasedRemediation
-        kind: StorageBasedRemediation
-        name: storagebasedremediations.storage-based-remediation.medik8s.io
-        version: v1alpha1
-      - description: StorageBasedRemediationTemplate is the Schema for the storagebasedremediationtemplates API.
-        displayName: StorageBasedRemediation Template
-        kind: StorageBasedRemediationTemplate
-        name: storagebasedremediationtemplates.storage-based-remediation.medik8s.io
-        version: v1alpha1
+    - description: StorageBasedRemediationConfig is the Schema for the storagebasedremediationconfigs
+        API.
+      displayName: StorageBasedRemediationConfig
+      kind: StorageBasedRemediationConfig
+      name: storagebasedremediationconfigs.storage-based-remediation.medik8s.io
+      version: v1alpha1
+    - description: StorageBasedRemediation is the Schema for the storagebasedremediations
+        API.
+      displayName: StorageBasedRemediation
+      kind: StorageBasedRemediation
+      name: storagebasedremediations.storage-based-remediation.medik8s.io
+      version: v1alpha1
+    - description: StorageBasedRemediationTemplate is the Schema for the storagebasedremediationtemplates
+        API.
+      displayName: StorageBasedRemediation Template
+      kind: StorageBasedRemediationTemplate
+      name: storagebasedremediationtemplates.storage-based-remediation.medik8s.io
+      version: v1alpha1
   description: |
     ### Introduction
     Storage-Based Remediation (SBR) is a Kubernetes operator that provides automated node remediation when nodes become unresponsive by leveraging shared block storage for fencing operations.
@@ -97,344 +101,343 @@ spec:
     - **Cloud-Native** - Built for Kubernetes environments with native CRD integration and support for various storage backends (e.g., Ceph RBD, OpenShift Data Foundation).
   displayName: Storage-Based Remediation Operator
   icon:
-    - base64data: base64EncodedIcon
-      mediatype: image/png
+  - base64data: base64EncodedIcon
+    mediatype: image/png
   install:
     spec:
       clusterPermissions:
-        - rules:
-            - apiGroups:
-                - authentication.k8s.io
-              resources:
-                - tokenreviews
-              verbs:
-                - create
-            - apiGroups:
-                - authorization.k8s.io
-              resources:
-                - subjectaccessreviews
-              verbs:
-                - create
-            - apiGroups:
-                - ""
-              resources:
-                - events
-              verbs:
-                - create
-                - list
-                - patch
-                - watch
-            - apiGroups:
-                - ""
-              resources:
-                - nodes
-              verbs:
-                - get
-                - list
-                - patch
-                - update
-                - watch
-            - apiGroups:
-                - ""
-              resources:
-                - nodes/status
-              verbs:
-                - get
-                - patch
-                - update
-            - apiGroups:
-                - ""
-              resources:
-                - persistentvolumeclaims
-                - serviceaccounts
-              verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
-            - apiGroups:
-                - ""
-              resources:
-                - persistentvolumes
-              verbs:
-                - get
-                - list
-                - update
-                - watch
-            - apiGroups:
-                - ""
-              resources:
-                - pods
-              verbs:
-                - get
-                - list
-                - watch
-            - apiGroups:
-                - apps
-              resources:
-                - daemonsets
-              verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
-            - apiGroups:
-                - batch
-              resources:
-                - jobs
-              verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
-            - apiGroups:
-                - config.openshift.io
-              resources:
-                - apiservers
-              verbs:
-                - get
-                - list
-                - watch
-            - apiGroups:
-                - coordination.k8s.io
-              resources:
-                - leases
-              verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
-            - apiGroups:
-                - rbac.authorization.k8s.io
-              resources:
-                - clusterrolebindings
-                - clusterroles
-              verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
-            - apiGroups:
-                - security.openshift.io
-              resources:
-                - securitycontextconstraints
-              verbs:
-                - get
-                - list
-                - patch
-                - update
-                - watch
-            - apiGroups:
-                - security.openshift.io
-              resourceNames:
-                - privileged
-              resources:
-                - securitycontextconstraints
-              verbs:
-                - use
-            - apiGroups:
-                - storage-based-remediation.medik8s.io
-              resources:
-                - storagebasedremediationconfigs
-                - storagebasedremediations
-              verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
-            - apiGroups:
-                - storage-based-remediation.medik8s.io
-              resources:
-                - storagebasedremediationconfigs/finalizers
-                - storagebasedremediations/finalizers
-              verbs:
-                - update
-            - apiGroups:
-                - storage-based-remediation.medik8s.io
-              resources:
-                - storagebasedremediationconfigs/status
-                - storagebasedremediations/status
-              verbs:
-                - get
-                - patch
-                - update
-            - apiGroups:
-                - storage.k8s.io
-              resources:
-                - storageclasses
-              verbs:
-                - get
-                - list
-                - watch
-          serviceAccountName: sbr-operator-controller-manager
+      - rules:
+        - apiGroups:
+          - authentication.k8s.io
+          resources:
+          - tokenreviews
+          verbs:
+          - create
+        - apiGroups:
+          - authorization.k8s.io
+          resources:
+          - subjectaccessreviews
+          verbs:
+          - create
+        - apiGroups:
+          - ""
+          resources:
+          - events
+          verbs:
+          - create
+          - list
+          - patch
+          - watch
+        - apiGroups:
+          - ""
+          resources:
+          - nodes
+          verbs:
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - ""
+          resources:
+          - nodes/status
+          verbs:
+          - get
+          - patch
+          - update
+        - apiGroups:
+          - ""
+          resources:
+          - persistentvolumeclaims
+          - serviceaccounts
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - ""
+          resources:
+          - persistentvolumes
+          verbs:
+          - get
+          - list
+          - update
+          - watch
+        - apiGroups:
+          - ""
+          resources:
+          - pods
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - apps
+          resources:
+          - daemonsets
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - batch
+          resources:
+          - jobs
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - config.openshift.io
+          resources:
+          - apiservers
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - coordination.k8s.io
+          resources:
+          - leases
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - rbac.authorization.k8s.io
+          resources:
+          - clusterrolebindings
+          - clusterroles
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - security.openshift.io
+          resources:
+          - securitycontextconstraints
+          verbs:
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - security.openshift.io
+          resourceNames:
+          - privileged
+          resources:
+          - securitycontextconstraints
+          verbs:
+          - use
+        - apiGroups:
+          - storage-based-remediation.medik8s.io
+          resources:
+          - storagebasedremediationconfigs
+          - storagebasedremediations
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - storage-based-remediation.medik8s.io
+          resources:
+          - storagebasedremediationconfigs/finalizers
+          - storagebasedremediations/finalizers
+          verbs:
+          - update
+        - apiGroups:
+          - storage-based-remediation.medik8s.io
+          resources:
+          - storagebasedremediationconfigs/status
+          - storagebasedremediations/status
+          verbs:
+          - get
+          - patch
+          - update
+        - apiGroups:
+          - storage.k8s.io
+          resources:
+          - storageclasses
+          verbs:
+          - get
+          - list
+          - watch
+        serviceAccountName: sbr-operator-controller-manager
       deployments:
-        - label:
-            app.kubernetes.io/managed-by: kustomize
-            app.kubernetes.io/name: sbr-operator
-            control-plane: controller-manager
-          name: sbr-operator-controller-manager
-          spec:
-            replicas: 2
-            selector:
-              matchLabels:
+      - label:
+          app.kubernetes.io/managed-by: kustomize
+          app.kubernetes.io/name: sbr-operator
+          control-plane: controller-manager
+        name: sbr-operator-controller-manager
+        spec:
+          replicas: 2
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: sbr-operator
+              control-plane: controller-manager
+          strategy:
+            rollingUpdate:
+              maxSurge: 0
+              maxUnavailable: 1
+            type: RollingUpdate
+          template:
+            metadata:
+              annotations:
+                kubectl.kubernetes.io/default-container: manager
+              labels:
                 app.kubernetes.io/name: sbr-operator
                 control-plane: controller-manager
-            strategy:
-              rollingUpdate:
-                maxSurge: 0
-                maxUnavailable: 1
-              type: RollingUpdate
-            template:
-              metadata:
-                annotations:
-                  kubectl.kubernetes.io/default-container: manager
-                labels:
-                  app.kubernetes.io/name: sbr-operator
-                  control-plane: controller-manager
-              spec:
-                containers:
-                  - args:
-                      - --metrics-bind-address=:8443
-                      - --leader-elect
-                      - --health-probe-bind-address=:8081
-                      - --enable-webhooks=false
-                    command:
-                      - /manager
-                    env:
-                      - name: POD_NAME
-                        valueFrom:
-                          fieldRef:
-                            fieldPath: metadata.name
-                      - name: POD_NAMESPACE
-                        valueFrom:
-                          fieldRef:
-                            fieldPath: metadata.namespace
-                      - name: RELATED_IMAGE_AGENT
-                        value: quay.io/medik8s/storage-based-remediation-agent:v5.8.0
-                    image: quay.io/medik8s/storage-based-remediation-operator:v5.8.0
-                    livenessProbe:
-                      httpGet:
-                        path: /healthz
-                        port: 8081
-                      initialDelaySeconds: 15
-                      periodSeconds: 20
-                    name: manager
-                    ports:
-                      - containerPort: 8443
-                        name: https
-                        protocol: TCP
-                    readinessProbe:
-                      httpGet:
-                        path: /readyz
-                        port: 8081
-                      initialDelaySeconds: 5
-                      periodSeconds: 10
-                    resources:
-                      limits:
-                        cpu: 500m
-                        memory: 128Mi
-                      requests:
-                        cpu: 10m
-                        memory: 64Mi
-                    securityContext:
-                      allowPrivilegeEscalation: false
-                      capabilities:
-                        drop:
-                          - ALL
-                priorityClassName: system-cluster-critical
+            spec:
+              containers:
+              - args:
+                - --metrics-bind-address=:8443
+                - --leader-elect
+                - --health-probe-bind-address=:8081
+                - --enable-webhooks=false
+                command:
+                - /manager
+                env:
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                - name: RELATED_IMAGE_AGENT
+                  value: quay.io/medik8s/storage-based-remediation-agent:latest
+                image: quay.io/medik8s/storage-based-remediation-operator:latest
+                livenessProbe:
+                  httpGet:
+                    path: /healthz
+                    port: 8081
+                  initialDelaySeconds: 15
+                  periodSeconds: 20
+                name: manager
+                ports:
+                - containerPort: 8443
+                  name: https
+                  protocol: TCP
+                readinessProbe:
+                  httpGet:
+                    path: /readyz
+                    port: 8081
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                resources:
+                  limits:
+                    cpu: 500m
+                    memory: 128Mi
+                  requests:
+                    cpu: 10m
+                    memory: 64Mi
                 securityContext:
-                  runAsNonRoot: true
-                  seccompProfile:
-                    type: RuntimeDefault
-                serviceAccountName: sbr-operator-controller-manager
-                terminationGracePeriodSeconds: 10
-                topologySpreadConstraints:
-                  - labelSelector:
-                      matchLabels:
-                        app.kubernetes.io/name: sbr-operator
-                        control-plane: controller-manager
-                    maxSkew: 1
-                    topologyKey: kubernetes.io/hostname
-                    whenUnsatisfiable: DoNotSchedule
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+              priorityClassName: system-cluster-critical
+              securityContext:
+                runAsNonRoot: true
+                seccompProfile:
+                  type: RuntimeDefault
+              serviceAccountName: sbr-operator-controller-manager
+              terminationGracePeriodSeconds: 10
+              topologySpreadConstraints:
+              - labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: sbr-operator
+                    control-plane: controller-manager
+                maxSkew: 1
+                topologyKey: kubernetes.io/hostname
+                whenUnsatisfiable: DoNotSchedule
       permissions:
-        - rules:
-            - apiGroups:
-                - ""
-              resources:
-                - configmaps
-              verbs:
-                - get
-                - list
-                - watch
-                - create
-                - update
-                - patch
-                - delete
-            - apiGroups:
-                - coordination.k8s.io
-              resources:
-                - leases
-              verbs:
-                - get
-                - list
-                - watch
-                - create
-                - update
-                - patch
-                - delete
-            - apiGroups:
-                - ""
-              resources:
-                - events
-              verbs:
-                - create
-                - patch
-          serviceAccountName: sbr-operator-controller-manager
+      - rules:
+        - apiGroups:
+          - ""
+          resources:
+          - configmaps
+          verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+        - apiGroups:
+          - coordination.k8s.io
+          resources:
+          - leases
+          verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+        - apiGroups:
+          - ""
+          resources:
+          - events
+          verbs:
+          - create
+          - patch
+        serviceAccountName: sbr-operator-controller-manager
     strategy: deployment
   installModes:
-    - supported: false
-      type: OwnNamespace
-    - supported: false
-      type: SingleNamespace
-    - supported: false
-      type: MultiNamespace
-    - supported: true
-      type: AllNamespaces
+  - supported: false
+    type: OwnNamespace
+  - supported: false
+    type: SingleNamespace
+  - supported: false
+    type: MultiNamespace
+  - supported: true
+    type: AllNamespaces
   keywords:
-    - sbr
-    - storage
-    - remediation
+  - sbr
+  - storage
+  - remediation
   links:
-    - name: Storage-Based Remediation
-      url: https://medik8s.io
+  - name: Storage-Based Remediation
+    url: https://medik8s.io
   maintainers:
-    - email: medik8s@googlegroups.com
-      name: Medik8s Team
+  - email: medik8s@googlegroups.com
+    name: Medik8s Team
   maturity: alpha
   minKubeVersion: 1.26.0
   provider:
     name: medik8s
     url: https://github.com/medik8s
   relatedImages:
-    - image: quay.io/medik8s/storage-based-remediation-agent:v5.8.0
-      name: agent
-  version: 5.8.0
-  replaces: storage-based-remediation.v0.3.0
+  - image: quay.io/medik8s/storage-based-remediation-agent:latest
+    name: agent
+  version: 0.0.1
