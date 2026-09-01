@@ -13,7 +13,7 @@ metadata:
   name: sbr-debug
   namespace: openshift-workload-availability
 spec:
-  nodeName: REPLACE_WITH_VICTIM_NODE
+  nodeName: ip-10-0-30-33.us-west-2.compute.internal
   hostPID: true
   restartPolicy: Never
   containers:
@@ -46,6 +46,13 @@ spec:
 
        Inspect SBR superblock:
          hexdump -C -n 80 $RBD_DEV
+
+       Reset the SBR Node Condition:
+         NODE=ip-10-0-30-33.us-west-2.compute.internal
+         IDX=\$(oc get node \$NODE -o json | \\
+           jq '[.status.conditions[].type] | index("SBRStorageUnhealthy")')
+         oc patch node \$NODE --type=json --subresource=status \\
+           -p="[{\"op\":\"remove\",\"path\":\"/status/conditions/\$IDX\"}]"
 
       ============================================
       MOTD
