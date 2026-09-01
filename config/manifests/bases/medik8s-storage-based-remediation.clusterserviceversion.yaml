@@ -13,7 +13,7 @@ metadata:
     operatorframework.io/suggested-namespace-template: '{"kind":"Namespace","apiVersion":"v1","metadata":{"name":"openshift-workload-availability","annotations":{"openshift.io/node-selector":""}}}'
     repository: https://github.com/medik8s/storage-based-remediation
     support: Medik8s
-  name: storage-based-remediation.v0.0.0
+  name: medik8s-storage-based-remediation.v0.0.0
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
