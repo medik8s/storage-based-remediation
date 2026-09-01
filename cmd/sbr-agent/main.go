@@ -1287,7 +1287,13 @@ func (s *SBRAgent) readPeerHeartbeat(peerNodeID uint16) error {
 	}
 	n, err := s.heartbeatDevice.ReadAt(slotData, slotOffset)
 	if err != nil {
-		// Increment SBR I/O errors counter for read failures
+		// EOF means the slot has never been written (file too short).
+		// Treat it the same as an empty slot — not an I/O failure.
+		if errors.Is(err, io.EOF) {
+			logger.V(2).Info("Peer slot beyond file end", "peerNodeID", peerNodeID)
+			return nil
+		}
+		// Increment SBR I/O errors counter for real read failures
 		sbrIOErrorsCounter.Inc()
 		s.incrementFailureCount("heartbeat")
 		return fmt.Errorf("failed to read peer %d heartbeat from offset %d: %w", peerNodeID, slotOffset, err)
@@ -1870,6 +1876,9 @@ func (s *SBRAgent) cleanOwnFenceSlotIfPresent(logger logr.Logger) error {
 	}
 	n, err := s.fenceDevice.ReadAt(headerBuf, slotOffset)
 	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil // slot not yet written
+		}
 		return fmt.Errorf("failed to read header from own slot %d at offset %d: %w", s.nodeID, slotOffset, err)
 	}
 	if n < sbdprotocol.SBD_HEADER_SIZE {
@@ -2250,6 +2259,9 @@ func (s *SBRAgent) readOwnSlotForFenceMessage() error {
 	}
 	n, err := s.fenceDevice.ReadAt(slotData, slotOffset)
 	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil // slot not yet written
+		}
 		return fmt.Errorf("failed to read own slot %d from offset %d: %w", s.nodeID, slotOffset, err)
 	}
 
@@ -2802,7 +2814,8 @@ func runInit(devicePath string, ioTimeout time.Duration, log logr.Logger) error 
 }
 
 // runFSInit creates the heartbeat and fence device files for filesystem mode.
-// The files are created empty; the agent extends them via WriteAt on startup.
+// Each file is pre-allocated to SBD_MAX_NODES * SBD_SLOT_SIZE bytes so that
+// reads of any valid slot return zero-filled data rather than EOF.
 // Node mapping is created by the agent on first startup, not by init.
 func runFSInit(mountPath string, log logr.Logger) error {
 	if mountPath == "" {
@@ -2811,6 +2824,8 @@ func runFSInit(mountPath string, log logr.Logger) error {
 	heartbeatPath := filepath.Join(mountPath, agent.SharedStorageSBRDeviceFile)
 	fencePath := heartbeatPath + agent.SharedStorageFenceDeviceSuffix
 
+	requiredSize := int64(sbdprotocol.SBD_MAX_NODES) * int64(sbdprotocol.SBD_SLOT_SIZE)
+
 	for _, p := range []string{heartbeatPath, fencePath} {
 		info, err := os.Stat(p)
 		switch {
@@ -2818,8 +2833,11 @@ func runFSInit(mountPath string, log logr.Logger) error {
 			if !info.Mode().IsRegular() {
 				return fmt.Errorf("device path %q exists but is not a regular file (mode %s)", p, info.Mode())
 			}
-			log.Info("Device file already exists", "path", p)
-			continue
+			if info.Size() >= requiredSize {
+				log.Info("Device file already exists with sufficient size", "path", p, "size", info.Size())
+				continue
+			}
+			log.Info("Device file exists but is too small, extending", "path", p, "currentSize", info.Size(), "requiredSize", requiredSize)
 		case !os.IsNotExist(err):
 			return fmt.Errorf("failed to stat device file %q: %w", p, err)
 		}
@@ -2827,10 +2845,14 @@ func runFSInit(mountPath string, log logr.Logger) error {
 		if err != nil {
 			return fmt.Errorf("failed to create device file %q: %w", p, err)
 		}
+		if err := f.Truncate(requiredSize); err != nil {
+			f.Close()
+			return fmt.Errorf("failed to pre-allocate device file %q to %d bytes: %w", p, requiredSize, err)
+		}
 		if err := f.Close(); err != nil {
 			return fmt.Errorf("failed to close device file %q: %w", p, err)
 		}
-		log.Info("Created device file", "path", p)
+		log.Info("Created device file", "path", p, "size", requiredSize)
 	}
 
 	log.Info("Filesystem mode device initialization complete", "mountPath", mountPath)
