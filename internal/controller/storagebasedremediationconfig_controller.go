@@ -735,204 +735,14 @@ func (r *StorageBasedRemediationConfigReconciler) ensureSBRDevice(
 		"pvc.name", pvcName,
 	)
 
-	// Build init job: block mode uses sbr-agent --init; filesystem mode uses shell script
+	// Build init job: both modes use sbr-agent --init with auto-detection.
+	// Block mode passes the block device path; filesystem mode passes the
+	// mount directory. The agent detects IsDir() to choose the init path.
 	var desiredJob *batchv1.Job
 	if sbrConfig.Spec.IsBlockMode() {
 		desiredJob = r.buildBlockInitJob(sbrConfig, jobName, pvcName)
 	} else {
-		desiredJob = &batchv1.Job{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      jobName,
-				Namespace: sbrConfig.Namespace,
-				Labels: map[string]string{
-					"app.kubernetes.io/name":       "sbr-operator",
-					"app.kubernetes.io/component":  "sbr-device-init",
-					"app.kubernetes.io/managed-by": "sbr-operator",
-					"sbrconfig":                    sbrConfig.Name,
-				},
-			},
-			Spec: batchv1.JobSpec{
-				Template: corev1.PodTemplateSpec{
-					ObjectMeta: metav1.ObjectMeta{
-						Labels: map[string]string{
-							"app.kubernetes.io/name":       "sbr-operator",
-							"app.kubernetes.io/component":  "sbr-device-init",
-							"app.kubernetes.io/managed-by": "sbr-operator",
-							"sbrconfig":                    sbrConfig.Name,
-						},
-					},
-					Spec: corev1.PodSpec{
-						RestartPolicy: corev1.RestartPolicyNever,
-						Containers: []corev1.Container{
-							{
-								Name:    "sbr-device-init",
-								Image:   "registry.access.redhat.com/ubi9/ubi-minimal:9.8",
-								Command: []string{"sh", "-c"},
-								Args: []string{
-									fmt.Sprintf(`
-set -e
-SBR_DEVICE_SIZE_KB=1024
-SBR_DEVICE_PREFIX="%s"
-HEARTBEAT_DEVICE_PATH="$SBR_DEVICE_PREFIX/%s"
-FENCE_DEVICE_PATH="$HEARTBEAT_DEVICE_PATH%s"
-NODE_MAP_FILE="$HEARTBEAT_DEVICE_PATH%s"
-CLUSTER_NAME="${CLUSTER_NAME:-default-cluster}"
-
-echo "Initializing SBR devices: heartbeat at $HEARTBEAT_DEVICE_PATH, fence at $FENCE_DEVICE_PATH"
-echo "Using shared node mapping file: $NODE_MAP_FILE"
-
-# Function to create initial node mapping file
-create_initial_node_mapping() {
-    local node_map_file="$1"
-    local cluster_name="$2"
-    
-    echo "Creating initial shared node mapping file: $node_map_file"
-    
-    # Create minimal valid node mapping table JSON
-    local json_data="{
-  \"magic\": [83, 66, 68, 78, 77, 65, 80, 49],
-  \"version\": 1,
-  \"cluster_name\": \"$cluster_name\",
-  \"device_type\": \"shared\",
-  \"entries\": {},
-  \"slot_usage\": {},
-  \"last_update\": \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%S.%%3NZ)\"
-}"
-    
-    # Calculate simple checksum (simplified for shell)
-    local checksum=$(echo -n "$json_data" | cksum | cut -d' ' -f1)
-    
-    # Write checksum (4 bytes little-endian) followed by JSON
-    printf "\\$(printf '%%02x' $((checksum & 0xFF)))" > "$node_map_file"
-    printf "\\$(printf '%%02x' $(((checksum >> 8) & 0xFF)))" >> "$node_map_file"
-    printf "\\$(printf '%%02x' $(((checksum >> 16) & 0xFF)))" >> "$node_map_file"
-    printf "\\$(printf '%%02x' $(((checksum >> 24) & 0xFF)))" >> "$node_map_file"
-    echo -n "$json_data" >> "$node_map_file"
-    
-    chmod 644 "$node_map_file"
-    echo "Created initial node mapping file: $node_map_file ($(wc -c < "$node_map_file") bytes)"
-}
-
-# Function to create SBR device file
-create_sbr_device() {
-    local device_path="$1"
-    local device_type="$2"
-    
-    echo "Creating $device_type SBR device at $device_path"
-    
-    # Create the SBR device file with specific size (1MB = 1024KB)
-    # This provides space for multiple node slots and metadata
-    dd if=/dev/zero of="$device_path" bs=1024 count=$SBR_DEVICE_SIZE_KB
-    
-    # Set appropriate permissions for the SBR device
-    chmod 664 "$device_path"
-    
-    echo "$device_type SBR device created successfully at $device_path"
-}
-
-# Check if both heartbeat and fence devices and the shared node mapping file exist
-HEARTBEAT_EXISTS=false
-FENCE_EXISTS=false
-NODE_MAP_EXISTS=false
-
-if [ -f "$HEARTBEAT_DEVICE_PATH" ] && [ -s "$HEARTBEAT_DEVICE_PATH" ]; then
-    echo "Heartbeat SBR device already exists and is non-empty"
-    HEARTBEAT_EXISTS=true
-fi
-
-if [ -f "$FENCE_DEVICE_PATH" ] && [ -s "$FENCE_DEVICE_PATH" ]; then
-    echo "Fence SBR device already exists and is non-empty"
-    FENCE_EXISTS=true
-fi
-
-if [ -f "$NODE_MAP_FILE" ] && [ -s "$NODE_MAP_FILE" ]; then
-    echo "Shared node mapping file already exists and is non-empty"
-    NODE_MAP_EXISTS=true
-fi
-
-if [ "$HEARTBEAT_EXISTS" = true ] && [ "$FENCE_EXISTS" = true ] && [ "$NODE_MAP_EXISTS" = true ]; then
-    echo "Both SBR devices and shared node mapping are properly initialized"
-    exit 0
-fi
-
-# Create heartbeat device if needed
-if [ "$HEARTBEAT_EXISTS" = false ]; then
-    echo "Creating heartbeat SBR device..."
-    create_sbr_device "$HEARTBEAT_DEVICE_PATH" "heartbeat"
-fi
-
-# Create fence device if needed
-if [ "$FENCE_EXISTS" = false ]; then
-    echo "Creating fence SBR device..."
-    create_sbr_device "$FENCE_DEVICE_PATH" "fence"
-fi
-
-# Create shared node mapping file if needed
-if [ "$NODE_MAP_EXISTS" = false ]; then
-    echo "Creating shared node mapping file..."
-    create_initial_node_mapping "$NODE_MAP_FILE" "$CLUSTER_NAME"
-fi
-
-# Verify all components were created successfully
-if [ -f "$HEARTBEAT_DEVICE_PATH" ] && [ -s "$HEARTBEAT_DEVICE_PATH" ] && \
-   [ -f "$FENCE_DEVICE_PATH" ] && [ -s "$FENCE_DEVICE_PATH" ] && \
-   [ -f "$NODE_MAP_FILE" ] && [ -s "$NODE_MAP_FILE" ]; then
-    echo "Both SBR devices and shared node mapping successfully initialized:"
-    echo "  Heartbeat device: $HEARTBEAT_DEVICE_PATH ($(ls -lh "$HEARTBEAT_DEVICE_PATH" | awk '{print $5}'))"
-    echo "  Fence device: $FENCE_DEVICE_PATH ($(ls -lh "$FENCE_DEVICE_PATH" | awk '{print $5}'))"
-    echo "  Shared node mapping: $NODE_MAP_FILE ($(ls -lh "$NODE_MAP_FILE" | awk '{print $5}'))"
-else
-    echo "ERROR: Failed to create one or more SBR devices or the shared node mapping file"
-    exit 1
-fi
-
-echo "SBR devices initialization completed successfully"
-`,
-										sbrConfig.Spec.GetSharedStorageMountPath(),
-										agent.SharedStorageSBRDeviceFile,
-										agent.SharedStorageFenceDeviceSuffix,
-										agent.SharedStorageNodeMappingSuffix),
-								},
-								Env: []corev1.EnvVar{
-									{
-										Name:  "CLUSTER_NAME",
-										Value: sbrConfig.Name,
-									},
-								},
-								VolumeMounts: []corev1.VolumeMount{
-									{
-										Name:      "shared-storage",
-										MountPath: sbrConfig.Spec.GetSharedStorageMountPath(),
-									},
-								},
-								Resources: corev1.ResourceRequirements{
-									Requests: corev1.ResourceList{
-										corev1.ResourceMemory: mustParseQuantity("64Mi"),
-										corev1.ResourceCPU:    mustParseQuantity("10m"),
-									},
-									Limits: corev1.ResourceList{
-										corev1.ResourceMemory: mustParseQuantity("128Mi"),
-										corev1.ResourceCPU:    mustParseQuantity("100m"),
-									},
-								},
-							},
-						},
-						Volumes: []corev1.Volume{
-							{
-								Name: "shared-storage",
-								VolumeSource: corev1.VolumeSource{
-									PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-										ClaimName: pvcName,
-									},
-								},
-							},
-						},
-					},
-				},
-				// Clean up completed jobs after 1 hour to avoid accumulation
-				TTLSecondsAfterFinished: func() *int32 { i := int32(3600); return &i }(),
-			},
-		}
+		desiredJob = r.buildFSInitJob(sbrConfig, jobName, pvcName)
 	}
 
 	// Set controller reference
@@ -1038,6 +848,81 @@ func (r *StorageBasedRemediationConfigReconciler) buildBlockInitJob(
 								{
 									Name:       "shared-storage",
 									DevicePath: agent.SharedStorageBlockDevicePath,
+								},
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceMemory: mustParseQuantity("64Mi"),
+									corev1.ResourceCPU:    mustParseQuantity("10m"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceMemory: mustParseQuantity("128Mi"),
+									corev1.ResourceCPU:    mustParseQuantity("100m"),
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "shared-storage",
+							VolumeSource: corev1.VolumeSource{
+								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+									ClaimName: pvcName,
+								},
+							},
+						},
+					},
+				},
+			},
+			TTLSecondsAfterFinished: func() *int32 { i := int32(3600); return &i }(),
+		},
+	}
+}
+
+// buildFSInitJob creates a Job that runs sbr-agent --init on the shared
+// storage mount path. The agent detects that the path is a directory and
+// creates the heartbeat and fence device files.
+func (r *StorageBasedRemediationConfigReconciler) buildFSInitJob(
+	sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig, jobName, pvcName string,
+) *batchv1.Job {
+	agentImage, err := r.getAgentImage(logr.Discard())
+	if err != nil {
+		agentImage = DefaultSBRAgentImage
+	}
+
+	mountPath := sbrConfig.Spec.GetSharedStorageMountPath()
+	initLabels := map[string]string{
+		"app.kubernetes.io/name":       "sbr-operator",
+		"app.kubernetes.io/component":  "sbr-device-init",
+		"app.kubernetes.io/managed-by": "sbr-operator",
+		"sbrconfig":                    sbrConfig.Name,
+	}
+
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      jobName,
+			Namespace: sbrConfig.Namespace,
+			Labels:    initLabels,
+		},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: initLabels,
+				},
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyNever,
+					Containers: []corev1.Container{
+						{
+							Name:  "sbr-device-init",
+							Image: agentImage,
+							Args: []string{
+								fmt.Sprintf("--%s=true", agent.FlagInit),
+								fmt.Sprintf("--%s=%s", agent.FlagSBRDevice, mountPath),
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "shared-storage",
+									MountPath: mountPath,
 								},
 							},
 							Resources: corev1.ResourceRequirements{

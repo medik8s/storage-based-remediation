@@ -1463,6 +1463,46 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 			Expect(container.VolumeDevices[0].DevicePath).To(Equal(agent.SharedStorageBlockDevicePath))
 		})
 
+		It("should build filesystem init job with sbr-agent --init", func() {
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "fs-init-test", Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass: blockStorageClass,
+					// No SharedStorageVolumeMode — defaults to filesystem
+				},
+			}
+
+			mountPath := sbrConfig.Spec.GetSharedStorageMountPath()
+			job := blockReconciler.buildFSInitJob(sbrConfig, "test-fs-init-job", "test-pvc")
+
+			By("verifying the init job uses the agent image")
+			Expect(job.Spec.Template.Spec.Containers).To(HaveLen(1))
+			container := job.Spec.Template.Spec.Containers[0]
+			Expect(container.Image).To(Equal(testAgentImage))
+
+			By("verifying --init flag is set")
+			expectedInit := fmt.Sprintf("--%s=true", agent.FlagInit)
+			Expect(container.Args).To(ContainElement(expectedInit))
+
+			By("verifying --sbr-device points to mount path (directory for auto-detection)")
+			expectedDevice := fmt.Sprintf("--%s=%s", agent.FlagSBRDevice, mountPath)
+			Expect(container.Args).To(ContainElement(expectedDevice))
+
+			By("verifying volumeMounts is used instead of volumeDevices")
+			Expect(container.VolumeDevices).To(BeNil())
+			Expect(container.VolumeMounts).To(HaveLen(1))
+			Expect(container.VolumeMounts[0].Name).To(Equal("shared-storage"))
+			Expect(container.VolumeMounts[0].MountPath).To(Equal(mountPath))
+
+			By("verifying PVC volume is configured")
+			Expect(job.Spec.Template.Spec.Volumes).To(HaveLen(1))
+			Expect(job.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName).To(Equal("test-pvc"))
+
+			By("verifying resource requests and limits")
+			Expect(container.Resources.Requests).ToNot(BeEmpty())
+			Expect(container.Resources.Limits).ToNot(BeEmpty())
+		})
+
 		It("should validate RBD provisioner as block-compatible", func() {
 			Expect(blockReconciler.isRWXBlockCompatibleProvisioner("rbd.csi.ceph.com")).To(BeTrue())
 			Expect(blockReconciler.isRWXBlockCompatibleProvisioner("openshift-storage.rbd.csi.ceph.com")).To(BeTrue())
