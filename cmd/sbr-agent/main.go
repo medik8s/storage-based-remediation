@@ -908,16 +908,39 @@ func (s *SBRAgent) initializeBlockModeDevices(sb *blockformat.Superblock) error 
 	return nil
 }
 
+// openWithDirectFallback tries O_DIRECT first for cache-coherent reads. If the
+// storage backend rejects O_DIRECT (e.g. Portworx), it falls back to buffered
+// I/O with FADV_DONTNEED to reduce stale page-cache reads.
+func openWithDirectFallback(path string, ioTimeout time.Duration, log logr.Logger) (*blockdevice.Device, error) {
+	dev, err := blockdevice.OpenWithTimeout(path, ioTimeout, log)
+	if err == nil {
+		log.Info("Opened device with O_DIRECT", "path", path)
+		return dev, nil
+	}
+
+	log.Info("O_DIRECT not supported, falling back to buffered I/O with FADV_DONTNEED",
+		"path", path, "directError", err.Error())
+
+	dev, bufErr := blockdevice.OpenBuffered(path, ioTimeout, log)
+	if bufErr != nil {
+		return nil, fmt.Errorf("failed to open device %s (O_DIRECT: %v, buffered: %w)", path, err, bufErr)
+	}
+
+	return dev, nil
+}
+
 // initializeFilesystemModeDevices opens separate heartbeat and fence device files.
+// It tries O_DIRECT first for cache-coherent reads, falling back to buffered
+// I/O with FADV_DONTNEED when the storage backend does not support O_DIRECT.
 func (s *SBRAgent) initializeFilesystemModeDevices() error {
-	heartbeatDevice, err := blockdevice.OpenWithTimeout(s.heartbeatDevicePath, s.ioTimeout,
+	heartbeatDevice, err := openWithDirectFallback(s.heartbeatDevicePath, s.ioTimeout,
 		logger.WithName("heartbeat-device"))
 	if err != nil {
 		return fmt.Errorf("failed to open heartbeat device %s with timeout %v: %w",
 			s.heartbeatDevicePath, s.ioTimeout, err)
 	}
 
-	fenceDevice, err := blockdevice.OpenWithTimeout(s.fenceDevicePath, s.ioTimeout, logger.WithName("fence-device"))
+	fenceDevice, err := openWithDirectFallback(s.fenceDevicePath, s.ioTimeout, logger.WithName("fence-device"))
 	if err != nil {
 		return fmt.Errorf("failed to open fence device %s with timeout %v: %w", s.fenceDevicePath, s.ioTimeout, err)
 	}
