@@ -23,11 +23,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"syscall"
 	"time"
 
 	"github.com/go-logr/logr"
+	"golang.org/x/sys/unix"
 
 	"github.com/medik8s/storage-based-remediation/internal/retry"
 )
@@ -62,6 +64,11 @@ type Device struct {
 	retryConfig retry.Config
 	// ioTimeout is the timeout for individual I/O operations to prevent hanging
 	ioTimeout time.Duration
+	// fadvise, when non-nil, is called before each ReadAt to request eviction
+	// of the corresponding page-cache range. This is best-effort;
+	// FADV_DONTNEED does not guarantee cache invalidation.
+	// Set to unix.Fadvise by OpenBuffered; nil (no-op) for O_DIRECT devices.
+	fadvise func(fd int, offset int64, length int64, advice int) error
 }
 
 // Opener opens a block device path for read/write access.
@@ -125,10 +132,18 @@ func OpenWithLogger(path string, logger logr.Logger) (*Device, error) {
 }
 
 // OpenBuffered opens a block device without O_DIRECT (buffered I/O).
-// Use this for one-shot operations like --init where O_DIRECT-aligned buffers
-// are not available and cache bypass is unnecessary.
+// When O_DIRECT is not available (e.g. Portworx), this is the only option.
+// Reads request eviction of the corresponding page-cache range before
+// accessing the device to reduce the likelihood of stale cached data.
+// Cache eviction is best-effort and does not provide a cache-coherency
+// guarantee.
 func OpenBuffered(path string, ioTimeout time.Duration, logger logr.Logger) (*Device, error) {
-	return openWithOpener(path, ioTimeout, logger, BufferedDeviceOpener)
+	dev, err := openWithOpener(path, ioTimeout, logger, BufferedDeviceOpener)
+	if err != nil {
+		return nil, err
+	}
+	dev.fadvise = unix.Fadvise
+	return dev, nil
 }
 
 // OpenWithTimeout opens a raw block device with custom I/O timeout and logger.
@@ -321,6 +336,27 @@ func (d *Device) ReadAt(p []byte, off int64) (n int, err error) {
 		return 0, fmt.Errorf("negative offset %d not allowed", off)
 	}
 
+	// When fadvise is configured, ask the kernel to evict cached pages for
+	// this range before reading. This reduces the chance of reading stale
+	// page-cache data when the underlying shared storage may have been
+	// modified by another node. FADV_DONTNEED is advisory and does not
+	// guarantee cache invalidation. The range is aligned outward to page
+	// boundaries because Linux ignores requests to discard partial pages.
+	if d.fadvise != nil {
+		alignedOff, alignedLen, alignErr := pageAlignedRange(off, int64(len(p)))
+		if alignErr != nil {
+			d.logger.V(2).Info("Page alignment failed, skipping FADV_DONTNEED",
+				"offset", off, "length", len(p), "error", alignErr)
+		} else if alignedLen > 0 {
+			if err := d.fadvise(int(d.file.Fd()), alignedOff, alignedLen, unix.FADV_DONTNEED); err != nil {
+				// FADV_DONTNEED is best-effort; failure does not affect correctness
+				// beyond leaving cached data in place.
+				d.logger.V(2).Info("FADV_DONTNEED failed, proceeding with read",
+					"offset", off, "alignedOffset", alignedOff, "alignedLength", alignedLen, "error", err)
+			}
+		}
+	}
+
 	// Retry read operations for transient errors
 	ctx := context.Background()
 	err = retry.Do(ctx, d.retryConfig, "read from block device", func() error {
@@ -509,6 +545,34 @@ func (d *Device) File() *os.File {
 // IsClosed returns true if the device has been closed.
 func (d *Device) IsClosed() bool {
 	return d.file == nil
+}
+
+// pageAlignedRange expands [off, off+length) outward to page boundaries.
+// Linux ignores FADV_DONTNEED for partial pages, so the range must be aligned.
+// Returns an error for negative length or arithmetic overflow.
+func pageAlignedRange(off, length int64) (int64, int64, error) {
+	if length < 0 {
+		return 0, 0, fmt.Errorf("negative length %d", length)
+	}
+
+	pageSize := int64(os.Getpagesize())
+	alignedOff := off / pageSize * pageSize
+
+	if length == 0 {
+		return alignedOff, 0, nil
+	}
+
+	end := off + length
+	if end < off { // overflow
+		return 0, 0, fmt.Errorf("offset %d + length %d overflows int64", off, length)
+	}
+
+	if end > math.MaxInt64-(pageSize-1) {
+		return 0, 0, fmt.Errorf("page-aligned end overflows int64 for range [%d, %d)", off, end)
+	}
+	alignedEnd := (end + pageSize - 1) / pageSize * pageSize
+
+	return alignedOff, alignedEnd - alignedOff, nil
 }
 
 // StorageChecker checks whether a device's backing storage is compatible with

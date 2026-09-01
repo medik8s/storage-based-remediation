@@ -17,6 +17,7 @@ limitations under the License.
 package blockdevice
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -683,6 +684,226 @@ func TestOpenBuffered(t *testing.T) {
 	if string(readBuf[:n]) != string(testData) {
 		t.Errorf("read data mismatch: expected %q, got %q", testData, readBuf[:n])
 	}
+}
+
+func TestOpenBufferedInvokesFadvise(t *testing.T) {
+	devicePath, cleanup := setupTestDevice(t, 4096)
+	defer cleanup()
+
+	device, err := OpenBuffered(devicePath, 5*time.Second, logr.Discard())
+	if err != nil {
+		t.Fatalf("OpenBuffered failed: %v", err)
+	}
+	defer device.Close()
+
+	// Verify OpenBuffered configured the production fadvise
+	if device.fadvise == nil {
+		t.Fatal("expected fadvise to be configured for OpenBuffered device")
+	}
+
+	// Inject a recording fadvise to verify ReadAt calls it
+	var calls []fadviseCall
+	device.fadvise = func(fd int, offset int64, length int64, advice int) error {
+		calls = append(calls, fadviseCall{fd: fd, offset: offset, length: length, advice: advice})
+		return nil
+	}
+
+	// Write then read — fadvise should be called on the read
+	testData := []byte("hello")
+	if _, err := device.WriteAt(testData, 100); err != nil {
+		t.Fatalf("WriteAt failed: %v", err)
+	}
+
+	buf := make([]byte, len(testData))
+	if _, err := device.ReadAt(buf, 100); err != nil {
+		t.Fatalf("ReadAt failed: %v", err)
+	}
+
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 fadvise call, got %d", len(calls))
+	}
+
+	c := calls[0]
+
+	// Verify the advice is FADV_DONTNEED
+	if c.advice != unix.FADV_DONTNEED {
+		t.Errorf("fadvise advice: got %d, want FADV_DONTNEED (%d)", c.advice, unix.FADV_DONTNEED)
+	}
+
+	// Verify the range is page-aligned
+	pageSize := int64(os.Getpagesize())
+	if c.offset%pageSize != 0 {
+		t.Errorf("fadvise offset %d is not page-aligned (page size %d)", c.offset, pageSize)
+	}
+	if c.length%pageSize != 0 {
+		t.Errorf("fadvise length %d is not page-aligned (page size %d)", c.length, pageSize)
+	}
+	// The aligned range must cover the original [100, 105) range
+	if c.offset > 100 {
+		t.Errorf("fadvise offset %d does not cover requested offset 100", c.offset)
+	}
+	if c.offset+c.length < 105 {
+		t.Errorf("fadvise range [%d, %d) does not cover requested end 105",
+			c.offset, c.offset+c.length)
+	}
+}
+
+func TestOpenWithTimeoutDoesNotInvokeFadvise(t *testing.T) {
+	devicePath, cleanup := setupTestDevice(t, 4096)
+	defer cleanup()
+
+	device, err := OpenWithTimeout(devicePath, 5*time.Second, logr.Discard())
+	if err != nil {
+		t.Fatalf("OpenWithTimeout failed: %v", err)
+	}
+	defer device.Close()
+
+	// O_DIRECT devices must have fadvise=nil so ReadAt skips cache eviction
+	if device.fadvise != nil {
+		t.Fatal("expected fadvise=nil for OpenWithTimeout device")
+	}
+
+	// Verify ReadAt works without fadvise (no panic, no error)
+	buf := make([]byte, 10)
+	if _, err := device.ReadAt(buf, 0); err != nil {
+		t.Fatalf("ReadAt failed on non-buffered device: %v", err)
+	}
+}
+
+func TestFadviseContinuesOnError(t *testing.T) {
+	devicePath, cleanup := setupTestDevice(t, 4096)
+	defer cleanup()
+
+	device, err := OpenBuffered(devicePath, 5*time.Second, logr.Discard())
+	if err != nil {
+		t.Fatalf("OpenBuffered failed: %v", err)
+	}
+	defer device.Close()
+
+	// Write data first
+	testData := []byte("test data")
+	if _, err := device.WriteAt(testData, 0); err != nil {
+		t.Fatalf("WriteAt failed: %v", err)
+	}
+
+	// Inject a failing fadvise — read should still succeed
+	device.fadvise = func(fd int, offset int64, length int64, advice int) error {
+		return fmt.Errorf("simulated fadvise failure")
+	}
+
+	buf := make([]byte, len(testData))
+	n, err := device.ReadAt(buf, 0)
+	if err != nil {
+		t.Fatalf("ReadAt should succeed even when fadvise fails: %v", err)
+	}
+	if string(buf[:n]) != string(testData) {
+		t.Errorf("read data mismatch: expected %q, got %q", testData, buf[:n])
+	}
+}
+
+func TestPageAlignedRange(t *testing.T) {
+	pageSize := int64(os.Getpagesize())
+
+	tests := []struct {
+		name       string
+		off        int64
+		length     int64
+		wantOff    int64
+		wantLength int64
+		wantErr    bool
+	}{
+		{
+			name:       "already aligned",
+			off:        0,
+			length:     pageSize,
+			wantOff:    0,
+			wantLength: pageSize,
+		},
+		{
+			name:       "offset mid-page",
+			off:        100,
+			length:     512,
+			wantOff:    0,
+			wantLength: pageSize,
+		},
+		{
+			name:       "spans two pages",
+			off:        pageSize - 10,
+			length:     20,
+			wantOff:    0,
+			wantLength: 2 * pageSize,
+		},
+		{
+			name:       "zero length at page boundary",
+			off:        pageSize,
+			length:     0,
+			wantOff:    pageSize,
+			wantLength: 0,
+		},
+		{
+			name:       "large offset",
+			off:        pageSize*100 + 123,
+			length:     1,
+			wantOff:    pageSize * 100,
+			wantLength: pageSize,
+		},
+		{
+			name:    "negative length",
+			off:     0,
+			length:  -1,
+			wantErr: true,
+		},
+		{
+			name:    "overflow off+length",
+			off:     1<<62 + 1,
+			length:  1<<62 + 1,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotOff, gotLen, err := pageAlignedRange(tt.off, tt.length)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if gotOff != tt.wantOff {
+				t.Errorf("offset: got %d, want %d", gotOff, tt.wantOff)
+			}
+			if gotLen != tt.wantLength {
+				t.Errorf("length: got %d, want %d", gotLen, tt.wantLength)
+			}
+			// Invariant: aligned range must cover original range
+			if gotOff > tt.off {
+				t.Errorf("aligned offset %d > original offset %d", gotOff, tt.off)
+			}
+			if tt.length > 0 && gotOff+gotLen < tt.off+tt.length {
+				t.Errorf("aligned end %d < original end %d", gotOff+gotLen, tt.off+tt.length)
+			}
+			// Invariant: both must be page-aligned
+			if gotOff%pageSize != 0 {
+				t.Errorf("aligned offset %d not page-aligned", gotOff)
+			}
+			if gotLen > 0 && gotLen%pageSize != 0 {
+				t.Errorf("aligned length %d not page-aligned", gotLen)
+			}
+		})
+	}
+}
+
+type fadviseCall struct {
+	fd     int
+	offset int64
+	length int64
+	advice int
 }
 
 func TestOpenBufferedValidation(t *testing.T) {
