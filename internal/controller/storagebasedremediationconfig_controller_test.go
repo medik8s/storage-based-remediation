@@ -240,6 +240,182 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 			Expect(sbrconfig.Name).To(Equal(resourceName))
 		})
 
+		It("should set ActiveDeadlineSeconds and BackoffLimit on device-init Job", func() {
+			By("creating the StorageBasedRemediationConfig resource")
+			resource := defaultStorageBasedRemediationConfig(resourceName, namespace)
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("reconciling until the init Job appears")
+			_, _, err := runReconcile(ctx, controllerReconciler, typeNamespacedName)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("DaemonSet creation will be delayed until job completes"))
+
+			By("fetching the init Job")
+			jobs := &batchv1.JobList{}
+			Expect(k8sClient.List(ctx, jobs, client.InNamespace(namespace))).To(Succeed())
+			Expect(jobs.Items).To(HaveLen(1))
+			job := &jobs.Items[0]
+
+			By("verifying ActiveDeadlineSeconds is set")
+			Expect(job.Spec.ActiveDeadlineSeconds).NotTo(BeNil())
+			Expect(*job.Spec.ActiveDeadlineSeconds).To(Equal(DeviceInitJobDeadline))
+
+			By("verifying BackoffLimit is set")
+			Expect(job.Spec.BackoffLimit).NotTo(BeNil())
+			Expect(*job.Spec.BackoffLimit).To(Equal(DeviceInitJobBackoffLimit))
+		})
+
+		It("should emit a warning event and recreate the init Job on failure", func() {
+			By("setting up mock event recorder")
+			mockRecorder := mocks.NewMockEventRecorder()
+			controllerReconciler.Recorder = mockRecorder
+
+			By("creating the StorageBasedRemediationConfig resource")
+			resource := defaultStorageBasedRemediationConfig(resourceName, namespace)
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("reconciling until the init Job appears")
+			_, _, err := runReconcile(ctx, controllerReconciler, typeNamespacedName)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("DaemonSet creation will be delayed until job completes"))
+
+			By("fetching the init Job")
+			jobs := &batchv1.JobList{}
+			Expect(k8sClient.List(ctx, jobs, client.InNamespace(namespace))).To(Succeed())
+			Expect(jobs.Items).To(HaveLen(1))
+			job := &jobs.Items[0]
+
+			By("simulating Job failure")
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Failed = 1
+			job.Status.Conditions = []batchv1.JobCondition{
+				{
+					Type:               batchv1.JobFailureTarget,
+					Status:             corev1.ConditionTrue,
+					Reason:             "DeadlineExceeded",
+					Message:            "Job was active longer than specified deadline",
+					LastTransitionTime: now,
+				},
+				{
+					Type:               batchv1.JobFailed,
+					Status:             corev1.ConditionTrue,
+					Reason:             "DeadlineExceeded",
+					Message:            "Job was active longer than specified deadline",
+					LastTransitionTime: now,
+				},
+			}
+			Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+
+			By("reconciling after Job failure — controller deletes the Job and requeues")
+			mockRecorder.Reset()
+			_, _, err = runReconcile(ctx, controllerReconciler, typeNamespacedName)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("is terminating"))
+
+			By("verifying a warning event was emitted for the failure")
+			events := mockRecorder.GetEvents()
+			failureEventFound := false
+			for _, event := range events {
+				if event.Reason == ReasonSBRDeviceInitFailed && event.EventType == EventTypeWarning {
+					failureEventFound = true
+					Expect(event.Message).To(ContainSubstring("failed"))
+					break
+				}
+			}
+			Expect(failureEventFound).To(BeTrue(), "expected a Warning event with reason SBRDeviceInitFailed")
+
+			By("verifying the failed Job has a deletion timestamp")
+			deletedJob := &batchv1.Job{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(job), deletedJob)).To(Succeed())
+			Expect(deletedJob.DeletionTimestamp).NotTo(BeNil(), "expected the failed Job to be marked for deletion")
+
+			By("stripping finalizers so envtest can complete deletion (no Job controller in envtest)")
+			jobKey := client.ObjectKeyFromObject(job)
+			staleJob := &batchv1.Job{}
+			Expect(k8sClient.Get(ctx, jobKey, staleJob)).To(Succeed())
+			if len(staleJob.Finalizers) > 0 {
+				patch := client.MergeFrom(staleJob.DeepCopy())
+				staleJob.Finalizers = nil
+				Expect(k8sClient.Patch(ctx, staleJob, patch)).To(Succeed())
+			}
+			Eventually(func() bool {
+				return errors.IsNotFound(k8sClient.Get(ctx, jobKey, &batchv1.Job{}))
+			}, timeout, interval).Should(BeTrue(), "expected the deleted Job to be removed")
+
+			By("reconciling again — controller should recreate the init Job")
+			_, _, err = runReconcile(ctx, controllerReconciler, typeNamespacedName)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("DaemonSet creation will be delayed until job completes"))
+
+			By("verifying a new Job was created")
+			newJobs := &batchv1.JobList{}
+			Expect(k8sClient.List(ctx, newJobs, client.InNamespace(namespace))).To(Succeed())
+			Expect(newJobs.Items).To(HaveLen(1))
+			newJob := &newJobs.Items[0]
+			Expect(newJob.DeletionTimestamp).To(BeNil(), "new Job should not be marked for deletion")
+			Expect(*newJob.Spec.ActiveDeadlineSeconds).To(Equal(DeviceInitJobDeadline))
+		})
+
+		It("should handle BackoffLimitExceeded failure the same as DeadlineExceeded", func() {
+			By("creating the StorageBasedRemediationConfig resource")
+			resource := defaultStorageBasedRemediationConfig(resourceName, namespace)
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("reconciling until the init Job appears")
+			_, _, err := runReconcile(ctx, controllerReconciler, typeNamespacedName)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("DaemonSet creation will be delayed until job completes"))
+
+			By("fetching the init Job")
+			jobs := &batchv1.JobList{}
+			Expect(k8sClient.List(ctx, jobs, client.InNamespace(namespace))).To(Succeed())
+			Expect(jobs.Items).To(HaveLen(1))
+			job := &jobs.Items[0]
+
+			By("simulating BackoffLimitExceeded failure")
+			mockRecorder := mocks.NewMockEventRecorder()
+			controllerReconciler.Recorder = mockRecorder
+
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Failed = 2
+			job.Status.Conditions = []batchv1.JobCondition{
+				{
+					Type:               batchv1.JobFailureTarget,
+					Status:             corev1.ConditionTrue,
+					Reason:             "BackoffLimitExceeded",
+					Message:            "Job has reached the specified backoff limit",
+					LastTransitionTime: now,
+				},
+				{
+					Type:               batchv1.JobFailed,
+					Status:             corev1.ConditionTrue,
+					Reason:             "BackoffLimitExceeded",
+					Message:            "Job has reached the specified backoff limit",
+					LastTransitionTime: now,
+				},
+			}
+			Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+
+			By("reconciling after BackoffLimitExceeded — same behavior as DeadlineExceeded")
+			_, _, err = runReconcile(ctx, controllerReconciler, typeNamespacedName)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("is terminating"))
+
+			By("verifying a warning event was emitted")
+			events := mockRecorder.GetEvents()
+			failureEventFound := false
+			for _, event := range events {
+				if event.Reason == ReasonSBRDeviceInitFailed && event.EventType == EventTypeWarning {
+					failureEventFound = true
+					Expect(event.Message).To(ContainSubstring("BackoffLimitExceeded"))
+					break
+				}
+			}
+			Expect(failureEventFound).To(BeTrue(), "expected a Warning event with reason SBRDeviceInitFailed")
+		})
+
 		It("should handle reconciling a non-existent resource", func() {
 			nonExistentName := types.NamespacedName{
 				Name:      "non-existent-sbrconfig",
