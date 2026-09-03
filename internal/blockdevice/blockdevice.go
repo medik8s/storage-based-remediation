@@ -510,3 +510,18 @@ func (d *Device) File() *os.File {
 func (d *Device) IsClosed() bool {
 	return d.file == nil
 }
+
+// StorageChecker checks whether a device's backing storage is compatible with
+// block mode. The default implementation uses Linux fstatfs(2) to detect
+// known-incompatible network filesystem types. Tests can inject a stub.
+type StorageChecker interface {
+	// ValidateBlockModeStorage checks whether the backing storage of the given
+	// file is suitable for block mode. Returns nil if acceptable, or an error
+	// describing the incompatibility.
+	ValidateBlockModeStorage(f *os.File, path string) error
+}
+
+// DefaultStorageChecker is the production StorageChecker. Tests may replace it
+// with a stub to simulate NFS or other network filesystems without needing a
+// real mount.
+var DefaultStorageChecker StorageChecker = linuxStorageChecker{}
