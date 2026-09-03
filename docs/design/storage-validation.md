@@ -142,23 +142,39 @@ Known-good provisioners are not affected. They still pass right away.
 
 ### 4.3 Change 2: Enhance agent's pre flight check
 
-The agents will do a real write in their pre-flight checks.
+The agent's preflight check does a real write, and readiness is gated on that
+check passing. This is one mechanism with three parts: the write, a sentinel the
+agent creates only after the write passes, and a readiness probe that waits for
+the sentinel.
 
-**Code change needed.** Today the block-mode startup check only reads the
-superblock (`checkSBRBlockDevice`). Add a write step: the agent writes its own
-slot and reads it back. Use the existing timeout helper in
-`internal/blockdevice`. Filesystem mode already does this (`performSBRReadWriteTest`); 
-block mode needs the same.
+**The write.** Today the block-mode startup check only reads the superblock
+(`checkSBRBlockDevice`). Add a write step: the agent writes its own slot and reads
+it back. Use the existing timeout helper in `internal/blockdevice`, so a hang
+returns an error instead of blocking forever. Filesystem mode already does this
+(`performSBRReadWriteTest`); block mode needs the same.
+
+**The sentinel.** After `runPreflightChecks` succeeds, the agent creates a marker
+file, for example `/var/run/sbr/preflight-ok`. It creates the marker only on
+success. A failing or hanging preflight never creates it.
+
+**The readiness probe waits for the sentinel.** The readiness probe checks for the
+marker in addition to its current checks, for example:
+`test -f /var/run/sbr/preflight-ok && test -c <watchdog> && <process alive>`.
+
+On bad storage, it is important for us to ensure that the pod doesnt become ready
+until and unless the preflight check is completed. Having the readiness probe tied
+into the preflight check through the sentinel file does that.
 
 **What this gives us.** After the change:
 
-- On good storage, every agent writes, passes its startup check, and becomes
-  Ready.
-- On bad storage, any agent failing to write fails.
+- On good storage, every agent writes, passes preflight, creates the sentinel, and
+  becomes Ready.
+- On bad storage, any agent that cannot write fails preflight, never creates the
+  sentinel, and never becomes Ready.
 
 So "the DaemonSet became fully Ready" now means "every node could write to the
-real disk at the same time." That is the write check. We get it from the real
-disk and the real set of nodes, with no extra pods.
+real disk at the same time." That is the write check. We get it from the real disk
+and the real set of nodes, with no extra pods.
 
 ### 4.4 Record the write-check result, keyed to node count
 
@@ -166,10 +182,16 @@ The controller already computes DaemonSet readiness in `updateStatus`, and
 already reconciles when the DaemonSet changes. So it can record the result with no
 new watch.
 
+Both filesystem and block mode follow the same path: each agent passes
+its preflight write check, the pod becomes Ready, and the controller reads
+DaemonSet full-Ready. Filesystem mode already does a real write+readback at
+preflight (`performSBRReadWriteTest`); block mode gets the equivalent (4.3). So
+the flag is recorded identically in both modes.
+
 Rules:
 
 1. The write check passes when the DaemonSet reaches full Ready
-   (`NumberReady == DesiredNumberScheduled`) with `DesiredNumberScheduled >= 2`.
+   (`NumberReady == DesiredNumberScheduled`).
 2. When that happens, set `ConcurrentWriteable = true` and record
    `ProbedNodeCount = DesiredNumberScheduled`.
 3. Record the pass **once**. Do not clear it just because readiness later dips. A
@@ -198,6 +220,23 @@ we need a signal from the controller to the agent.
 2. The agent's remediation reconciler reads that condition before it fences. If it
    is not `True`, the reconciler does not mark a node as fenced. It requeues and
    records why.
+
+**This gate applies in both volume modes.** Filesystem-mode agents check
+`ConcurrentWriteable == true` before fencing, exactly like block-mode agents. The
+gate is not a block-only concern. Setting the flag but only enforcing it in block
+mode would be inconsistent and would leave a real hole: filesystem mode has its
+own write-capability failures (for example an unaligned O_DIRECT preflight write
+returning EINVAL on a sharedv4/NFS server node, which CrashLoops the agent). The
+gate should withhold fencing in that case too.
+
+**What the gate guarantees per mode.** The gate means the same thing in both
+modes — every node can write — but that guarantee covers different failures:
+
+- **Block mode:** catches coordinator-exclusivity (only the first attacher can
+  write), which is the false self-fence problem this design targets.
+- **Filesystem mode:** catches total write breakage. It does **not** catch stale
+  cross-node reads (see the non-goal in section 3). So "filesystem is gated" must
+  not be read as "filesystem is safe from all substrate problems."
 
 **Two rules that must hold.**
 
