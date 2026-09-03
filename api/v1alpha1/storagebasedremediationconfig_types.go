@@ -23,7 +23,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/medik8s/storage-based-remediation/internal/agent"
+	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!

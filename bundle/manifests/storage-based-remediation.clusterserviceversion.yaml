@@ -61,7 +61,7 @@ metadata:
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/medik8s/storage-based-remediation
     support: Medik8s
-  name: storage-based-remediation.v0.0.1
+  name: storage-based-remediation.v5.8.0
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -448,4 +448,4 @@ spec:
   relatedImages:
   - image: quay.io/medik8s/storage-based-remediation-agent:latest
     name: agent
-  version: 0.0.1
+  version: 5.8.0
