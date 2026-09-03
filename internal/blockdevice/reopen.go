@@ -18,6 +18,7 @@ package blockdevice
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
@@ -31,16 +32,52 @@ import (
 // longer valid. CTO is not an unconditional freshness guarantee — actual
 // behavior depends on the NFS client implementation and mount options.
 //
-// Before each read, FADV_DONTNEED is called on the fresh fd to request
-// eviction of the corresponding page-cache range. This addresses a
-// different caching layer than CTO: on NFS, CTO revalidates the NFS
-// client cache while FADV_DONTNEED evicts the local page cache. On
-// non-NFS backends that reject O_DIRECT, CTO has no effect but
-// FADV_DONTNEED provides best-effort page-cache eviction.
+// When the filesystem supports POSIX byte-range locking (fcntl), each read
+// acquires a shared lock and each write acquires an exclusive lock on the
+// accessed range. On NFS, locking participates in the NFS client's
+// cache-coherency protocol: the Linux NFS documentation recommends file
+// locking as the mechanism for cache coherence, and NFS writes are flushed
+// when locks are acquired/released. The actual coherency behavior depends
+// on the NFS client implementation, server, and mount options — locking
+// improves freshness but is not an absolute guarantee in all configurations.
+//
+// Locking support is probed once at startup. If the probe fails (e.g.
+// unsupported filesystem), locking is disabled entirely with no runtime
+// overhead. Note: a successful local probe does not prove that remote
+// nodes participate in the same lock domain — for example, NFS mounted
+// with 'nolock' allows local locking but does not synchronize across
+// clients. SBR relies on correct NFS mount configuration by the CSI driver.
+//
+// FADV_DONTNEED is called before each read to request eviction of
+// page-cache entries for the read range. This is advisory and does not
+// guarantee cache invalidation.
 //
 // Writes use a persistent O_SYNC handle so each write uses synchronous
-// write semantics. Visibility to other NFS clients still depends on their
-// cache-revalidation behavior.
+// write semantics.
+//
+// Locking and SBR slot layout:
+//   - Readers use shared locks (F_RDLCK) — multiple nodes can read
+//     simultaneously without blocking each other.
+//   - Writers use exclusive locks (F_WRLCK) — but each node writes only to
+//     its own slot (a different byte range), so writers on different nodes
+//     never contend, provided all clients participate in the same lock
+//     domain. A reader that overlaps a write-locked range blocks briefly
+//     until the write completes, preventing partial reads.
+//
+// Lock implementation notes:
+//
+// Traditional POSIX fcntl locks (F_SETLKW) are used rather than OFD locks
+// (F_OFD_SETLKW). POSIX locks are process-scoped: closing ANY fd referring
+// to the same file releases ALL locks held by the process on that file.
+// This is safe here because all operations are serialized by d.mu — there
+// is never a concurrent lock/unlock on the same file from this process.
+// OFD locks would avoid this footgun but are Linux-specific and their
+// behavior over NFS NLM (the distributed lock protocol) is not established.
+// Traditional POSIX locks are the standard NFS locking mechanism.
+//
+// On the read path, the lock is released implicitly by closing the read fd
+// rather than by an explicit F_UNLCK call. Since d.mu prevents concurrent
+// operations, closing the read fd cannot interfere with write-path locks.
 //
 // All I/O is synchronous and blocking. There is no artificial timeout
 // mechanism — if the NFS server is unresponsive, the calling goroutine
@@ -56,7 +93,10 @@ import (
 // if a read or write blocks indefinitely (unresponsive storage), Close()
 // also blocks until that operation completes.
 type ReopenDevice struct {
-	// mu serializes all operations to prevent data races on closed/writeFile
+	// mu serializes all operations to prevent data races on closed/writeFile.
+	// This also ensures that traditional POSIX fcntl locks (which are
+	// process-scoped, not fd-scoped) do not interfere across operations:
+	// no concurrent lock/unlock can occur on the same file.
 	mu sync.Mutex
 	// writeFile is kept open for the lifetime of the device for writes
 	writeFile *os.File
@@ -66,15 +106,59 @@ type ReopenDevice struct {
 	// ReadAt to request page-cache eviction. Set to unix.Fadvise by
 	// NewReopenDevice; tests may override.
 	fadvise func(fd int, offset int64, length int64, advice int) error
+	// fcntlFlock, when non-nil, is called to acquire/release POSIX byte-range
+	// locks. Probed at startup and set to unix.FcntlFlock only if the local
+	// filesystem supports it. When nil, locking is skipped entirely.
+	// Note: a successful probe only proves local locking works; it does not
+	// guarantee that remote NFS clients participate in the same lock domain.
+	fcntlFlock func(fd uintptr, cmd int, lk *unix.Flock_t) error
 	// logger for operations
 	logger logr.Logger
 	// closed tracks whether Close() has been called
 	closed bool
 }
 
+// probeFcntlLocking tests whether the filesystem supports POSIX byte-range
+// locking by attempting to acquire and release a lock on a single byte.
+//
+// A successful probe proves that the local kernel and filesystem support
+// fcntl locking. It does NOT prove that remote clients (e.g. other NFS
+// clients) participate in the same lock domain — that depends on the NFS
+// mount options (e.g. 'nolock' disables remote lock coordination).
+//
+// Returns the locking function if supported, nil otherwise.
+func probeFcntlLocking(f *os.File, logger logr.Logger) func(fd uintptr, cmd int, lk *unix.Flock_t) error {
+	lk := unix.Flock_t{
+		Type:   unix.F_WRLCK,
+		Whence: int16(io.SeekStart),
+		Start:  0,
+		Len:    1, // Lock exactly 1 byte (Len=0 would mean "to EOF")
+	}
+
+	if err := unix.FcntlFlock(f.Fd(), unix.F_SETLK, &lk); err != nil {
+		logger.Info("fcntl byte-range locking not available on this filesystem, disabling",
+			"error", err)
+		return nil
+	}
+
+	// Unlock the probe range
+	lk.Type = unix.F_UNLCK
+	_ = unix.FcntlFlock(f.Fd(), unix.F_SETLK, &lk)
+
+	logger.Info("fcntl byte-range locking available, enabling for cache coherency")
+	return unix.FcntlFlock
+}
+
 // NewReopenDevice creates a ReopenDevice. It opens the file once for writes
 // (persistent O_SYNC handle) and reopens before each read to allow NFS
 // close-to-open semantics to revalidate cached file state.
+//
+// At construction time, fcntl byte-range locking is probed on the write
+// handle. If the probe succeeds, locking is enabled for all subsequent I/O
+// and runtime lock failures are treated as errors (not silently ignored).
+// If the probe fails (unsupported filesystem), locking is disabled and the
+// device uses CTO + FADV_DONTNEED only. This ensures full backwards
+// compatibility with all storage backends.
 func NewReopenDevice(path string, logger logr.Logger) (*ReopenDevice, error) {
 	if path == "" {
 		return nil, fmt.Errorf("device path cannot be empty")
@@ -86,18 +170,88 @@ func NewReopenDevice(path string, logger logr.Logger) (*ReopenDevice, error) {
 		return nil, fmt.Errorf("failed to open %s for writing: %w", path, err)
 	}
 
-	logger.Info("Opened reopen-per-read device", "path", path)
+	devLogger := logger.WithName("reopen-device").WithValues("path", path)
+
+	// Probe whether fcntl locking works on this filesystem
+	fcntlFn := probeFcntlLocking(writeFile, devLogger)
+
+	if fcntlFn != nil {
+		logger.Info("Opened reopen-per-read device with fcntl locking", "path", path)
+	} else {
+		logger.Info("Opened reopen-per-read device without fcntl locking (CTO + FADV_DONTNEED only)", "path", path)
+	}
 
 	return &ReopenDevice{
-		writeFile: writeFile,
-		path:      path,
-		fadvise:   unix.Fadvise,
-		logger:    logger.WithName("reopen-device").WithValues("path", path),
+		writeFile:  writeFile,
+		path:       path,
+		fadvise:    unix.Fadvise,
+		fcntlFlock: fcntlFn,
+		logger:     devLogger,
 	}, nil
 }
 
-// ReadAt opens a fresh file descriptor, reads, then closes it. On NFS this
-// allows close-to-open semantics to revalidate cached file state.
+// lockRange acquires a POSIX byte-range lock on the given fd. lockType should
+// be unix.F_RDLCK for shared (read) locks or unix.F_WRLCK for exclusive
+// (write) locks. The lock is acquired with F_SETLKW (blocking wait).
+//
+// On NFS, acquiring a lock participates in the NFS client's cache-coherency
+// protocol: the client flushes dirty data and invalidates cached data for
+// the locked region as part of the lock handshake. The exact behavior
+// depends on the NFS client, server, and mount configuration.
+//
+// Skips locking if fcntlFlock is nil (locking disabled at startup) or if
+// length is zero (fcntl Len=0 means "lock to EOF", which is not intended).
+//
+// When locking was enabled at startup (fcntlFlock != nil), a runtime lock
+// failure returns an error — it is not silently ignored. This distinguishes
+// "locking unsupported" (detected at startup, intentional legacy mode) from
+// "locking unexpectedly failed" (runtime error that should not be masked).
+func (d *ReopenDevice) lockRange(fd uintptr, lockType int16, off int64, length int64) error {
+	if d.fcntlFlock == nil {
+		return nil
+	}
+
+	// Len=0 in fcntl means "from Start to EOF" — skip to avoid locking
+	// the entire file when the caller passes a zero-length buffer.
+	if length == 0 {
+		return nil
+	}
+
+	lk := unix.Flock_t{
+		Type:   lockType,
+		Whence: int16(io.SeekStart),
+		Start:  off,
+		Len:    length,
+	}
+
+	return d.fcntlFlock(fd, unix.F_SETLKW, &lk)
+}
+
+// unlockRange releases a POSIX byte-range lock on the given fd.
+// Skips if locking is disabled or length is zero.
+func (d *ReopenDevice) unlockRange(fd uintptr, off int64, length int64) error {
+	if d.fcntlFlock == nil || length == 0 {
+		return nil
+	}
+
+	lk := unix.Flock_t{
+		Type:   unix.F_UNLCK,
+		Whence: int16(io.SeekStart),
+		Start:  off,
+		Len:    length,
+	}
+
+	return d.fcntlFlock(fd, unix.F_SETLK, &lk)
+}
+
+// ReadAt opens a fresh file descriptor, acquires a shared fcntl lock for
+// cache coherency, reads, then closes the fd (which implicitly releases
+// the lock).
+//
+// The read fd is opened, locked, read, and closed within a single d.mu
+// critical section. Because traditional POSIX locks are process-scoped
+// (closing ANY fd for a file releases ALL process locks on it), the mutex
+// ensures no concurrent operation can be affected by the close.
 //
 // The call blocks until the I/O completes. If the storage backend is
 // unresponsive, the caller blocks indefinitely — this is intentional for
@@ -114,14 +268,27 @@ func (d *ReopenDevice) ReadAt(p []byte, off int64) (int, error) {
 		return 0, fmt.Errorf("negative offset %d not allowed", off)
 	}
 
+	if len(p) == 0 {
+		return 0, nil
+	}
+
 	f, err := os.OpenFile(d.path, os.O_RDONLY, 0)
 	if err != nil {
 		return 0, fmt.Errorf("failed to reopen %s for reading: %w", d.path, err)
 	}
 
-	// Evict page-cache for this range before reading. On NFS this
-	// complements CTO (which handles the NFS client cache). On non-NFS
-	// backends this is the primary cache-eviction mechanism.
+	// Acquire shared (read) lock. On NFS this participates in the client's
+	// cache-coherency protocol, causing the client to revalidate/invalidate
+	// cached data for the locked range. When locking was enabled at startup,
+	// a runtime failure is an error, not a silent degradation.
+	if err := d.lockRange(f.Fd(), unix.F_RDLCK, off, int64(len(p))); err != nil {
+		f.Close()
+		return 0, fmt.Errorf("failed to acquire read lock on %s at offset %d: %w", d.path, off, err)
+	}
+
+	// Evict page-cache for this range before reading. This is advisory and
+	// complements locking: on NFS, locking handles the NFS client cache
+	// while FADV_DONTNEED targets the local kernel page cache.
 	if d.fadvise != nil {
 		alignedOff, alignedLen, alignErr := pageAlignedRange(off, int64(len(p)))
 		if alignErr != nil {
@@ -136,6 +303,9 @@ func (d *ReopenDevice) ReadAt(p []byte, off int64) (int, error) {
 	}
 
 	n, readErr := f.ReadAt(p, off)
+
+	// Close the fd — this implicitly releases the POSIX lock. No explicit
+	// unlock needed on the read path because the fd is not kept open.
 	closeErr := f.Close()
 
 	if readErr != nil {
@@ -151,8 +321,14 @@ func (d *ReopenDevice) ReadAt(p []byte, off int64) (int, error) {
 	return n, nil
 }
 
-// WriteAt writes to the persistent write handle. The call blocks until the
-// kernel (and, with O_SYNC, the server) acknowledges the write.
+// WriteAt acquires an exclusive fcntl lock on the write range, writes to the
+// persistent write handle, then explicitly releases the lock. The exclusive
+// lock participates in NFS cache-coherency: subsequent readers that acquire
+// a lock will have their cached data invalidated as part of the lock protocol.
+//
+// An explicit unlock is required on the write path because the write fd
+// is kept open for the lifetime of the device — closing it would make the
+// device unusable.
 func (d *ReopenDevice) WriteAt(p []byte, off int64) (int, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -165,9 +341,30 @@ func (d *ReopenDevice) WriteAt(p []byte, off int64) (int, error) {
 		return 0, fmt.Errorf("negative offset %d not allowed", off)
 	}
 
-	n, err := d.writeFile.WriteAt(p, off)
-	if err != nil {
-		return n, fmt.Errorf("failed to write to %s at offset %d: %w", d.path, off, err)
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	// Acquire exclusive (write) lock. When locking was enabled at startup,
+	// a runtime failure is an error, not a silent degradation.
+	if err := d.lockRange(d.writeFile.Fd(), unix.F_WRLCK, off, int64(len(p))); err != nil {
+		return 0, fmt.Errorf("failed to acquire write lock on %s at offset %d: %w", d.path, off, err)
+	}
+
+	n, writeErr := d.writeFile.WriteAt(p, off)
+
+	// Explicit unlock is required because the write fd stays open.
+	// An unlock failure is logged but the write result is preserved. The
+	// write may already have completed successfully, so returning an error
+	// here could cause callers to incorrectly retry a successful write.
+	// The lock will be implicitly released when the fd is eventually closed.
+	if unlockErr := d.unlockRange(d.writeFile.Fd(), off, int64(len(p))); unlockErr != nil {
+		d.logger.V(1).Info("fcntl F_UNLCK failed on write fd",
+			"offset", off, "error", unlockErr)
+	}
+
+	if writeErr != nil {
+		return n, fmt.Errorf("failed to write to %s at offset %d: %w", d.path, off, writeErr)
 	}
 
 	if n != len(p) {
