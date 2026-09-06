@@ -12,9 +12,9 @@ BUILD_DATE=$(date --utc -Iseconds)
 
 mkdir -p bin
 
-LDFLAGS_VALUE="-X github.com/medik8s/storage-based-remediation/pkg/version.GitCommit=${COMMIT} "
-LDFLAGS_VALUE+="-X github.com/medik8s/storage-based-remediation/pkg/version.GitDescribe=${VERSION} "
-LDFLAGS_VALUE+="-X github.com/medik8s/storage-based-remediation/pkg/version.BuildDate=${BUILD_DATE} "
+LDFLAGS_VALUE="-X github.com/medik8s/storage-based-remediation/internal/version.GitCommit=${COMMIT} "
+LDFLAGS_VALUE+="-X github.com/medik8s/storage-based-remediation/internal/version.GitDescribe=${VERSION} "
+LDFLAGS_VALUE+="-X github.com/medik8s/storage-based-remediation/internal/version.BuildDate=${BUILD_DATE} "
 # allow override for debugging flags
 LDFLAGS_DEBUG="${LDFLAGS_DEBUG:-" -s -w"}"
 LDFLAGS_VALUE+="${LDFLAGS_DEBUG}"
