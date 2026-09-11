@@ -156,7 +156,6 @@ olm-tools: olm-controller-gen olm-operator-sdk olm-kustomize ## Download pinned 
 .PHONY: olm-build-push
 olm-build-push: olm-tools ## Build and push source and OLM bundle images to ttl.sh.
 	@command -v "$(OLM_CONTAINER_TOOL)" >/dev/null 2>&1 || { echo "Container tool '$(OLM_CONTAINER_TOOL)' is not available" >&2; exit 1; }
-	@command -v envsubst >/dev/null 2>&1 || { echo "envsubst is required to render the OLM bundle" >&2; exit 1; }
 	@echo "Building $(OLM_OPERATOR_IMAGE) with the Konveyor builder"
 	$(OLM_CONTAINER_TOOL) build --platform=$(OLM_PLATFORM) \
 		-f Dockerfile -t $(OLM_OPERATOR_IMAGE) .
@@ -165,12 +164,16 @@ olm-build-push: olm-tools ## Build and push source and OLM bundle images to ttl.
 	GOFLAGS=-mod=mod $(OLM_CONTROLLER_GEN) rbac:roleName=sbr-agent-role,fileName=sbr_agent_generated_role.yaml paths="./cmd/sbr-agent/..." output:rbac:artifacts:config=config/rbac/
 	$(OLM_OPERATOR_SDK) generate kustomize manifests -q
 	cd config/manager && $(OLM_KUSTOMIZE) edit set image controller=$(OLM_OPERATOR_IMAGE)
-	AGENT_IMG=$(OLM_AGENT_IMAGE) $(OLM_KUSTOMIZE) build config/manifests | envsubst '$$AGENT_IMG' | \
+	$(OLM_KUSTOMIZE) build config/manifests | sed 's|[$$]{AGENT_IMG}|$(OLM_AGENT_IMAGE)|g' | \
 		$(OLM_OPERATOR_SDK) generate bundle -q --manifests --metadata --overwrite \
 		--version $(OLM_VERSION) --channels=$(OLM_CHANNEL) --default-channel=$(OLM_CHANNEL)
-	@csv="$$(find bundle/manifests -maxdepth 1 -name '*.clusterserviceversion.yaml' -print -quit)"; \
+	@csv=""; \
+	for candidate in bundle/manifests/*.clusterserviceversion.yaml; do \
+		[ -f "$$candidate" ] && { csv="$$candidate"; break; }; \
+	done; \
 	test -n "$$csv" || { echo "No ClusterServiceVersion was generated" >&2; exit 1; }; \
-	sed -i -E 's|^    containerImage: .*|    containerImage: $(OLM_OPERATOR_IMAGE)|' "$$csv"; \
+	sed -i.bak 's|^    containerImage: .*|    containerImage: $(OLM_OPERATOR_IMAGE)|' "$$csv"; \
+	rm "$$csv.bak"; \
 	"$(OLM_OPERATOR_SDK)" bundle validate ./bundle --select-optional suite=operatorframework
 	@echo "Building $(OLM_BUNDLE_IMAGE)"
 	$(OLM_CONTAINER_TOOL) build --platform=$(OLM_PLATFORM) -f bundle.Dockerfile -t $(OLM_BUNDLE_IMAGE) .
