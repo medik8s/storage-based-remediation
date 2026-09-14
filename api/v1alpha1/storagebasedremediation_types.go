@@ -17,6 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
+	commonConditions "github.com/medik8s/common/pkg/conditions"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -32,6 +34,15 @@ const (
 	SBRRemediationConditionFencingSucceeded SBRRemediationConditionType = "FencingSucceeded"
 	// SBRRemediationConditionReady indicates the overall readiness of the remediation
 	SBRRemediationConditionReady SBRRemediationConditionType = "Ready"
+
+	// SBRRemediationConditionProcessing is the standard medik8s condition that signals remediation
+	// is in progress or has finished. NHC checks this to track remediation lifecycle.
+	SBRRemediationConditionProcessing SBRRemediationConditionType = SBRRemediationConditionType(
+		commonConditions.ProcessingType)
+	// SBRRemediationConditionSucceeded is the standard medik8s condition that signals whether
+	// remediation was successful. NHC checks this to short-circuit escalation timeouts.
+	SBRRemediationConditionSucceeded SBRRemediationConditionType = SBRRemediationConditionType(
+		commonConditions.SucceededType)
 )
 
 // Node condition type set by SBR when it detects a node as unhealthy (e.g. heartbeat timeout).
@@ -55,7 +66,10 @@ type StorageBasedRemediationSpec struct {
 
 // StorageBasedRemediationStatus defines the observed state of StorageBasedRemediation.
 type StorageBasedRemediationStatus struct {
-	// Conditions represent the latest available observations of the remediation's current state
+	// Conditions represent the latest available observations of the remediation's current state.
+	// Known types include LeadershipAcquired, FencingInProgress, FencingSucceeded, Ready,
+	// Processing, and Succeeded. Processing and Succeeded are the standard medik8s conditions
+	// used by NHC for escalating remediations.
 	// +patchMergeKey=type
 	// +patchStrategy=merge
 	// +listType=map
@@ -66,6 +80,8 @@ type StorageBasedRemediationStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Node",type="string",JSONPath=".metadata.name"
+// +kubebuilder:printcolumn:name="Processing",type="string",JSONPath=".status.conditions[?(@.type=='Processing')].status"
+// +kubebuilder:printcolumn:name="Succeeded",type="string",JSONPath=".status.conditions[?(@.type=='Succeeded')].status"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
 // +kubebuilder:printcolumn:name="Fencing Succeeded",type="string",JSONPath=".status.conditions[?(@.type=='FencingSucceeded')].status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
@@ -166,6 +182,22 @@ func (r *StorageBasedRemediation) IsFencingSucceeded() bool {
 // IsFencingInProgress returns true if fencing is currently in progress
 func (r *StorageBasedRemediation) IsFencingInProgress() bool {
 	return r.IsConditionTrue(SBRRemediationConditionFencingInProgress)
+}
+
+// IsProcessing returns true if the standard medik8s Processing condition is True
+func (r *StorageBasedRemediation) IsProcessing() bool {
+	return r.IsConditionTrue(SBRRemediationConditionProcessing)
+}
+
+// IsSucceeded returns true if the standard medik8s Succeeded condition is True
+func (r *StorageBasedRemediation) IsSucceeded() bool {
+	return r.IsConditionTrue(SBRRemediationConditionSucceeded)
+}
+
+// IsFailed returns true if the standard medik8s Succeeded condition is False.
+// NHC uses this to short-circuit escalating-remediation timeouts.
+func (r *StorageBasedRemediation) IsFailed() bool {
+	return r.IsConditionFalse(SBRRemediationConditionSucceeded)
 }
 
 // IsReady returns true if the remediation is ready (either succeeded or failed)

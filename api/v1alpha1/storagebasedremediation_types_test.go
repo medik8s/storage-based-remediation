@@ -426,6 +426,49 @@ func TestSBRRemediation_HelperMethods(t *testing.T) {
 		}
 	})
 
+	t.Run("IsProcessing", func(t *testing.T) {
+		remediation := &StorageBasedRemediation{}
+		if remediation.IsProcessing() {
+			t.Error("Expected IsProcessing to be false initially")
+		}
+		remediation.SetCondition(SBRRemediationConditionProcessing, metav1.ConditionTrue, "InProgress", "Processing")
+		if !remediation.IsProcessing() {
+			t.Error("Expected IsProcessing to be true after setting condition")
+		}
+	})
+
+	t.Run("IsSucceeded", func(t *testing.T) {
+		remediation := &StorageBasedRemediation{}
+		if remediation.IsSucceeded() {
+			t.Error("Expected IsSucceeded to be false initially")
+		}
+		remediation.SetCondition(SBRRemediationConditionSucceeded, metav1.ConditionTrue, "Completed", "Succeeded")
+		if !remediation.IsSucceeded() {
+			t.Error("Expected IsSucceeded to be true after setting condition")
+		}
+		if remediation.IsFailed() {
+			t.Error("Expected IsFailed to be false when Succeeded is True")
+		}
+	})
+
+	t.Run("IsFailed", func(t *testing.T) {
+		remediation := &StorageBasedRemediation{}
+		if remediation.IsFailed() {
+			t.Error("Expected IsFailed to be false initially")
+		}
+		remediation.SetCondition(SBRRemediationConditionSucceeded, metav1.ConditionUnknown, "InProgress", "Unknown")
+		if remediation.IsFailed() {
+			t.Error("Expected IsFailed to be false when Succeeded is Unknown")
+		}
+		remediation.SetCondition(SBRRemediationConditionSucceeded, metav1.ConditionFalse, "Failed", "Failed")
+		if !remediation.IsFailed() {
+			t.Error("Expected IsFailed to be true after setting Succeeded to False")
+		}
+		if remediation.IsSucceeded() {
+			t.Error("Expected IsSucceeded to be false when Succeeded is False")
+		}
+	})
+
 	// Test IsReady
 	t.Run("IsReady", func(t *testing.T) {
 		remediation := &StorageBasedRemediation{}
@@ -546,6 +589,8 @@ func TestSBRRemediationConstants(t *testing.T) {
 		SBRRemediationConditionFencingInProgress:  "FencingInProgress",
 		SBRRemediationConditionFencingSucceeded:   "FencingSucceeded",
 		SBRRemediationConditionReady:              "Ready",
+		SBRRemediationConditionProcessing:         "Processing",
+		SBRRemediationConditionSucceeded:          "Succeeded",
 	}
 
 	for condType, expectedString := range expectedConditions {

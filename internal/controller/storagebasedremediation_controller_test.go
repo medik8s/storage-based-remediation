@@ -448,6 +448,64 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 			reconciler = &SBRRemediationReconciler{Client: clientBuilder.Build()}
 		})
 
+		Context("when Succeeded is already False", func() {
+			BeforeEach(func() {
+				sbr.Finalizers = []string{SBRRemediationFinalizer}
+				sbr.SetCondition(
+					medik8sv1alpha1.SBRRemediationConditionSucceeded,
+					metav1.ConditionFalse, ReasonFailed, "already failed")
+				clientBuilder = fake.NewClientBuilder().
+					WithObjects(sbr).
+					WithStatusSubresource(&medik8sv1alpha1.StorageBasedRemediation{})
+			})
+
+			It("should not retry fencing", func() {
+				result, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: client.ObjectKeyFromObject(sbr),
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(ctrl.Result{}))
+
+				sbrFound := &medik8sv1alpha1.StorageBasedRemediation{}
+				Expect(reconciler.Client.Get(ctx, client.ObjectKeyFromObject(sbr), sbrFound)).To(Succeed())
+				Expect(sbrFound.IsFailed()).To(BeTrue())
+				Expect(sbrFound.IsFencingInProgress()).To(BeFalse())
+				Expect(sbrFound.IsProcessing()).To(BeFalse())
+			})
+		})
+
+		Context("handleFencingInProgress", func() {
+			When("status update succeeds", func() {
+				It("should persist processing and unknown succeeded conditions in one status update", func() {
+					err := reconciler.handleFencingInProgress(ctx, sbr, logr.Discard())
+					Expect(err).NotTo(HaveOccurred())
+
+					sbrFound := &medik8sv1alpha1.StorageBasedRemediation{}
+					Expect(reconciler.Client.Get(ctx, client.ObjectKeyFromObject(sbr), sbrFound)).To(Succeed())
+
+					fencingInProgressCondition := sbrFound.GetCondition(medik8sv1alpha1.SBRRemediationConditionFencingInProgress)
+					verifyCondition(fencingInProgressCondition, metav1.ConditionTrue, ReasonInProgress, "Fencing node worker-2")
+
+					processingCondition := sbrFound.GetCondition(medik8sv1alpha1.SBRRemediationConditionProcessing)
+					verifyCondition(processingCondition, metav1.ConditionTrue, ReasonInProgress, "Fencing node worker-2")
+
+					succeededCondition := sbrFound.GetCondition(medik8sv1alpha1.SBRRemediationConditionSucceeded)
+					verifyCondition(succeededCondition, metav1.ConditionUnknown, ReasonInProgress, "Fencing node worker-2")
+				})
+			})
+
+			When("status update fails", func() {
+				BeforeEach(func() {
+					clientBuilder = clientBuilder.WithInterceptorFuncs(interceptorStatusSubresourceUpdateOrDelegate())
+				})
+
+				It("should return an error", func() {
+					err := reconciler.handleFencingInProgress(ctx, sbr, logr.Discard())
+					Expect(err).To(HaveOccurred())
+				})
+			})
+		})
+
 		Context("handleFencingSuccess", func() {
 			When("status update succeeds", func() {
 				It("should persist fencing success conditions in one status update", func() {
@@ -466,6 +524,11 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 					remediationReadyCondition := sbrFound.GetCondition(medik8sv1alpha1.SBRRemediationConditionReady)
 					verifyCondition(remediationReadyCondition, metav1.ConditionTrue, ReasonCompleted, "Remediation completed successfully")
 
+					processingCondition := sbrFound.GetCondition(medik8sv1alpha1.SBRRemediationConditionProcessing)
+					verifyCondition(processingCondition, metav1.ConditionFalse, ReasonCompleted, "Remediation completed successfully")
+
+					succeededCondition := sbrFound.GetCondition(medik8sv1alpha1.SBRRemediationConditionSucceeded)
+					verifyCondition(succeededCondition, metav1.ConditionTrue, ReasonCompleted, "Node worker-2 remediated successfully")
 				})
 			})
 
@@ -488,7 +551,8 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 
 			When("status update succeeds", func() {
 				It("should persist fencing failure conditions in one status update", func() {
-					reconciler.handleFencingFailure(ctx, sbr, fenceErr, logr.Discard())
+					err := reconciler.handleFencingFailure(ctx, sbr, fenceErr, logr.Discard())
+					Expect(err).NotTo(HaveOccurred())
 
 					sbrFound := &medik8sv1alpha1.StorageBasedRemediation{}
 					Expect(reconciler.Client.Get(ctx, client.ObjectKeyFromObject(sbr), sbrFound)).To(Succeed())
@@ -498,6 +562,12 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 
 					rdy := sbrFound.GetCondition(medik8sv1alpha1.SBRRemediationConditionReady)
 					verifyCondition(rdy, metav1.ConditionFalse, ReasonFailed, fenceErr.Error())
+
+					processing := sbrFound.GetCondition(medik8sv1alpha1.SBRRemediationConditionProcessing)
+					verifyCondition(processing, metav1.ConditionFalse, ReasonFailed, fenceErr.Error())
+
+					succeeded := sbrFound.GetCondition(medik8sv1alpha1.SBRRemediationConditionSucceeded)
+					verifyCondition(succeeded, metav1.ConditionFalse, ReasonFailed, fenceErr.Error())
 				})
 			})
 
@@ -507,12 +577,15 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 				})
 
 				It("should not persist fencing failure conditions", func() {
-					reconciler.handleFencingFailure(ctx, sbr, fenceErr, logr.Discard())
+					err := reconciler.handleFencingFailure(ctx, sbr, fenceErr, logr.Discard())
+					Expect(err).To(HaveOccurred())
 
 					sbrFound := &medik8sv1alpha1.StorageBasedRemediation{}
 					Expect(reconciler.Client.Get(ctx, client.ObjectKeyFromObject(sbr), sbrFound)).To(Succeed())
 					Expect(sbrFound.GetCondition(medik8sv1alpha1.SBRRemediationConditionFencingInProgress)).To(BeNil())
 					Expect(sbrFound.GetCondition(medik8sv1alpha1.SBRRemediationConditionReady)).To(BeNil())
+					Expect(sbrFound.GetCondition(medik8sv1alpha1.SBRRemediationConditionProcessing)).To(BeNil())
+					Expect(sbrFound.GetCondition(medik8sv1alpha1.SBRRemediationConditionSucceeded)).To(BeNil())
 				})
 			})
 		})

@@ -334,9 +334,17 @@ func (r *SBRRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	)
 
 	// Check if we already completed this remediation
-	if sbrRemediation.IsFencingSucceeded() {
+	if sbrRemediation.IsFencingSucceeded() || sbrRemediation.IsSucceeded() {
 		logger.Info("StorageBasedRemediation already completed successfully",
-			"fencingSucceeded", true)
+			"fencingSucceeded", sbrRemediation.IsFencingSucceeded(),
+			"succeeded", sbrRemediation.IsSucceeded())
+		return ctrl.Result{}, nil
+	}
+
+	// Terminal failure: do not retry, so NHC can escalate without waiting for the timeout
+	if sbrRemediation.IsFailed() {
+		logger.Info("StorageBasedRemediation already failed",
+			"succeeded", false)
 		return ctrl.Result{}, nil
 	}
 
@@ -353,12 +361,14 @@ func (r *SBRRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 		case fencingTimedOut:
 			// Monitor window elapsed without proof of death. Do NOT apply the OutOfService taint —
-			// releasing storage now would risk a dual writer. Report failure and requeue with
-			// backoff so the fence is re-attempted (and so a remediator such as NHC can escalate).
+			// releasing storage now would risk a dual writer. Persist Succeeded=False so NHC can
+			// escalate immediately instead of waiting for its timeout.
 			timeoutErr := fmt.Errorf("fencing timed out after %ds without confirmed heartbeat-stop for node %s",
 				DefaultFencingMonitorTimeoutSeconds, nodeName)
-			r.handleFencingFailure(ctx, &sbrRemediation, timeoutErr, logger)
-			return ctrl.Result{}, timeoutErr
+			if statusErr := r.handleFencingFailure(ctx, &sbrRemediation, timeoutErr, logger); statusErr != nil {
+				return ctrl.Result{}, statusErr
+			}
+			return ctrl.Result{}, nil
 
 		case fencingComplete:
 			// Fencing proven - apply OutOfService taint prior to success handling.
@@ -413,15 +423,17 @@ func (r *SBRRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// Update status to indicate fencing is in progress
-	if err := r.updateRemediationCondition(ctx, &sbrRemediation, medik8sv1alpha1.SBRRemediationConditionFencingInProgress, metav1.ConditionTrue, ReasonInProgress, fmt.Sprintf("Fencing node %s", nodeName), logger); err != nil {
-		logger.Error(err, "Failed to update remediation condition to in progress")
+	if err := r.handleFencingInProgress(ctx, &sbrRemediation, logger); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Execute fencing
 	if err := r.executeFencing(&sbrRemediation, logger); err != nil {
-		r.handleFencingFailure(ctx, &sbrRemediation, err, logger)
-		return ctrl.Result{}, err
+		if statusErr := r.handleFencingFailure(ctx, &sbrRemediation, err, logger); statusErr != nil {
+			return ctrl.Result{}, statusErr
+		}
+		// Succeeded=False is persisted; stop reconciling so NHC can escalate immediately
+		return ctrl.Result{}, nil
 	}
 
 	// Fence message written successfully, now monitor for actual fencing completion
@@ -592,20 +604,6 @@ func (r *SBRRemediationReconciler) emitEventf(obj *medik8sv1alpha1.StorageBasedR
 	}
 }
 
-// updateRemediationCondition updates a condition on an StorageBasedRemediation CR
-func (r *SBRRemediationReconciler) updateRemediationCondition(ctx context.Context, remediation *medik8sv1alpha1.StorageBasedRemediation, conditionType medik8sv1alpha1.SBRRemediationConditionType, status metav1.ConditionStatus, reason, message string, logger logr.Logger) error {
-	logger.Info("Setting Condition on StorageBasedRemediation:", "conditionType", conditionType, "reason", reason, "message", message)
-	// Set the condition
-	remediation.SetCondition(conditionType, status, reason, message)
-
-	// Update the status
-	if err := r.Status().Update(ctx, remediation); err != nil {
-		return fmt.Errorf("failed to update StorageBasedRemediation condition: %w", err)
-	}
-
-	return nil
-}
-
 // emitEventOnly emits an event without attempting to update any conditions
 // This is useful for pure observability when condition updates might fail due to RBAC or other issues
 func (r *SBRRemediationReconciler) emitEventOnly(remediation *medik8sv1alpha1.StorageBasedRemediation,
@@ -613,11 +611,37 @@ func (r *SBRRemediationReconciler) emitEventOnly(remediation *medik8sv1alpha1.St
 	r.emitEventf(remediation, eventType, eventReason, eventMessage)
 }
 
-// handleFencingFailure records fencing failure on the remediation (FencingInProgress and Ready)
-// in a single status update.
-// This method does not need to return an error because the Reconcile loop will always return only the original root cause.
+// handleFencingInProgress records that fencing has started
+// (FencingInProgress, Processing, and Succeeded=Unknown) in a single status update.
+func (r *SBRRemediationReconciler) handleFencingInProgress(
+	ctx context.Context, remediation *medik8sv1alpha1.StorageBasedRemediation, logger logr.Logger) error {
+	nodeName := remediation.Name
+	message := fmt.Sprintf("Fencing node %s", nodeName)
+
+	remediation.SetCondition(
+		medik8sv1alpha1.SBRRemediationConditionFencingInProgress,
+		metav1.ConditionTrue, ReasonInProgress, message)
+	remediation.SetCondition(
+		medik8sv1alpha1.SBRRemediationConditionProcessing,
+		metav1.ConditionTrue, ReasonInProgress, message)
+	remediation.SetCondition(
+		medik8sv1alpha1.SBRRemediationConditionSucceeded,
+		metav1.ConditionUnknown, ReasonInProgress, message)
+	logger.Info("Setting fencing in-progress conditions on StorageBasedRemediation", "targetNode", nodeName)
+
+	if err := r.Status().Update(ctx, remediation); err != nil {
+		logger.Error(err, "Failed to update remediation condition to in progress")
+		return err
+	}
+	return nil
+}
+
+// handleFencingFailure records fencing failure on the remediation
+// (FencingInProgress, Ready, Processing, and Succeeded) in a single status update.
+// It returns an error only when the status update fails, so Reconcile can retry persisting
+// Succeeded=False. After a successful update, Reconcile must not requeue.
 func (r *SBRRemediationReconciler) handleFencingFailure(
-	ctx context.Context, remediation *medik8sv1alpha1.StorageBasedRemediation, err error, logger logr.Logger) {
+	ctx context.Context, remediation *medik8sv1alpha1.StorageBasedRemediation, err error, logger logr.Logger) error {
 	nodeName := remediation.Name
 	logger.Error(err, "Fencing operation failed")
 
@@ -625,15 +649,27 @@ func (r *SBRRemediationReconciler) handleFencingFailure(
 	r.emitEventOnly(remediation, EventTypeWarning, ReasonFencingFailed,
 		fmt.Sprintf("Fencing failed for node '%s': %v", nodeName, err))
 
-	remediation.SetCondition(medik8sv1alpha1.SBRRemediationConditionFencingInProgress, metav1.ConditionFalse, ReasonFailed, err.Error())
-	remediation.SetCondition(medik8sv1alpha1.SBRRemediationConditionReady, metav1.ConditionFalse, ReasonFailed, err.Error())
+	remediation.SetCondition(
+		medik8sv1alpha1.SBRRemediationConditionFencingInProgress,
+		metav1.ConditionFalse, ReasonFailed, err.Error())
+	remediation.SetCondition(
+		medik8sv1alpha1.SBRRemediationConditionReady,
+		metav1.ConditionFalse, ReasonFailed, err.Error())
+	remediation.SetCondition(
+		medik8sv1alpha1.SBRRemediationConditionProcessing,
+		metav1.ConditionFalse, ReasonFailed, err.Error())
+	remediation.SetCondition(
+		medik8sv1alpha1.SBRRemediationConditionSucceeded,
+		metav1.ConditionFalse, ReasonFailed, err.Error())
 	logger.Info("Setting failure conditions on StorageBasedRemediation", "targetNode", nodeName)
 
 	if updateErr := r.Status().Update(ctx, remediation); updateErr != nil {
 		logger.Error(updateErr, "Failed to update StorageBasedRemediation status after fencing failure")
 		r.emitEventOnly(remediation, EventTypeWarning, ReasonConditionUpdateFailed,
 			fmt.Sprintf("Failed to update StorageBasedRemediation status after fencing failure: %v", updateErr))
+		return updateErr
 	}
+	return nil
 }
 
 // handleFencingSuccess applies all success conditions in one status update, then emits events.
@@ -643,9 +679,21 @@ func (r *SBRRemediationReconciler) handleFencingSuccess(
 	logger.Info("Fencing operation completed successfully",
 		"targetNode", nodeName)
 
-	remediation.SetCondition(medik8sv1alpha1.SBRRemediationConditionFencingInProgress, metav1.ConditionFalse, ReasonCompleted, "Fencing completed")
-	remediation.SetCondition(medik8sv1alpha1.SBRRemediationConditionFencingSucceeded, metav1.ConditionTrue, ReasonCompleted, fmt.Sprintf("Node %s fenced successfully", nodeName))
-	remediation.SetCondition(medik8sv1alpha1.SBRRemediationConditionReady, metav1.ConditionTrue, ReasonCompleted, "Remediation completed successfully")
+	remediation.SetCondition(
+		medik8sv1alpha1.SBRRemediationConditionFencingInProgress,
+		metav1.ConditionFalse, ReasonCompleted, "Fencing completed")
+	remediation.SetCondition(
+		medik8sv1alpha1.SBRRemediationConditionFencingSucceeded,
+		metav1.ConditionTrue, ReasonCompleted, fmt.Sprintf("Node %s fenced successfully", nodeName))
+	remediation.SetCondition(
+		medik8sv1alpha1.SBRRemediationConditionReady,
+		metav1.ConditionTrue, ReasonCompleted, "Remediation completed successfully")
+	remediation.SetCondition(
+		medik8sv1alpha1.SBRRemediationConditionProcessing,
+		metav1.ConditionFalse, ReasonCompleted, "Remediation completed successfully")
+	remediation.SetCondition(
+		medik8sv1alpha1.SBRRemediationConditionSucceeded,
+		metav1.ConditionTrue, ReasonCompleted, fmt.Sprintf("Node %s remediated successfully", nodeName))
 	logger.Info("Setting fencing success conditions on StorageBasedRemediation", "targetNode", nodeName)
 
 	if err := r.Status().Update(ctx, remediation); err != nil {
