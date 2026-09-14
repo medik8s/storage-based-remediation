@@ -44,7 +44,7 @@ OLM_GO_TOOLCHAIN_VERSION := $(shell awk '$$1 == "toolchain" {print $$2}' go.mod 
 OLM_CATALOG_SOURCE_NAME ?= $(OLM_PACKAGE_NAME)-catalog
 OLM_CATALOG_SOURCE_NAMESPACE ?= $(OLM_OPERATOR_NAMESPACE)
 OLM_OPERATOR_GROUP_NAME ?= operator-sdk-og
-OLM_AGENT_IMAGE ?= quay.io/medik8s/storage-based-remediation-agent:latest
+OLM_AGENT_IMAGE ?= $(OLM_IMAGE_PREFIX)-agent:$(OLM_TTL_DURATION)
 OLM_INSTALL_MODE ?= AllNamespaces
 OLM_SECURITY_CONTEXT_CONFIG ?= restricted
 
@@ -159,6 +159,9 @@ olm-build-push: olm-tools ## Build and push source and OLM bundle images to ttl.
 	@echo "Building $(OLM_OPERATOR_IMAGE) with the Konveyor builder"
 	$(OLM_CONTAINER_TOOL) build --platform=$(OLM_PLATFORM) \
 		-f Dockerfile -t $(OLM_OPERATOR_IMAGE) .
+	$(OLM_CONTAINER_TOOL) build --platform=$(OLM_PLATFORM) \
+		-f cmd/sbr-agent/Dockerfile -t localhost/sbr-agent:$(OLM_GIT_REV) .
+	$(OLM_CONTAINER_TOOL) tag localhost/sbr-agent:$(OLM_GIT_REV) $(OLM_AGENT_IMAGE)
 	@echo "Generating OLM bundle with operator-sdk $(OLM_OPERATOR_SDK_VERSION)"
 	GOFLAGS=-mod=mod $(OLM_CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 	GOFLAGS=-mod=mod $(OLM_CONTROLLER_GEN) rbac:roleName=sbr-agent-role,fileName=sbr_agent_generated_role.yaml paths="./cmd/sbr-agent/..." output:rbac:artifacts:config=config/rbac/
@@ -179,6 +182,7 @@ olm-build-push: olm-tools ## Build and push source and OLM bundle images to ttl.
 	$(OLM_CONTAINER_TOOL) build --platform=$(OLM_PLATFORM) -f bundle.Dockerfile -t $(OLM_BUNDLE_IMAGE) .
 	@echo "Pushing source images to ttl.sh"
 	$(OLM_CONTAINER_TOOL) push $(OLM_OPERATOR_IMAGE)
+	$(OLM_CONTAINER_TOOL) push $(OLM_AGENT_IMAGE)
 	$(OLM_CONTAINER_TOOL) push $(OLM_BUNDLE_IMAGE)
 
 .PHONY: deploy-olm
