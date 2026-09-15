@@ -305,7 +305,17 @@ func (r *StorageBasedRemediationConfigReconciler) validateStorageClass(
 					"ReadWriteMany block volumes required for SBR block mode",
 				storageClassName, provisioner)
 		}
-		logger.Info("StorageClass uses unknown provisioner, cannot verify RWX block support", "provisioner", provisioner)
+
+		// For unknown provisioners (including NetApp Trident, whose RWX block support depends
+		// on the backend configured for the StorageClass), test with a temporary block-mode PVC
+		// instead of guessing from the provisioner name alone.
+		logger.Info("StorageClass uses unknown provisioner, testing ReadWriteMany block support", "provisioner", provisioner)
+		if err := r.testRWXSupport(ctx, sbrConfig, storageClassName, true, logger); err != nil {
+			return fmt.Errorf("StorageClass '%s' does not support ReadWriteMany block volumes required for SBR block mode: %w",
+				storageClassName, err)
+		}
+
+		logger.Info("StorageClass validation passed (block mode)", "provisioner", provisioner)
 		return nil
 	}
 
@@ -336,7 +346,7 @@ func (r *StorageBasedRemediationConfigReconciler) validateStorageClass(
 
 	// For unknown provisioners, test with a temporary PVC
 	logger.Info("StorageClass uses unknown provisioner, testing ReadWriteMany support", "provisioner", provisioner)
-	if err := r.testRWXSupport(ctx, sbrConfig, storageClassName, logger); err != nil {
+	if err := r.testRWXSupport(ctx, sbrConfig, storageClassName, false, logger); err != nil {
 		return fmt.Errorf("StorageClass '%s' does not support ReadWriteMany access mode required for SBR shared storage: %w",
 			storageClassName, err)
 	}
@@ -413,8 +423,11 @@ func (r *StorageBasedRemediationConfigReconciler) isRWXIncompatibleProvisioner(p
 		"cinder.csi.openstack.org": true,
 
 		// Other known block storage provisioners
-		"csi.trident.netapp.io": true, // NetApp Trident (when configured for block)
-		"iscsi.csi.k8s.io":      true, // iSCSI CSI driver
+		// NetApp Trident ("csi.trident.netapp.io") is deliberately not listed here: its RWX
+		// support depends on the backend configured for the StorageClass (e.g. ontap-nas
+		// supports RWX, ontap-san does not), so it's routed through the live PVC test below
+		// instead of being classified by provisioner name alone.
+		"iscsi.csi.k8s.io": true, // iSCSI CSI driver
 	}
 
 	return rwxIncompatibleProvisioners[provisioner]
@@ -516,9 +529,17 @@ func (r *StorageBasedRemediationConfigReconciler) patchPVReclaimToDelete(
 	return nil
 }
 
-// testRWXSupport tests if a storage class actually supports ReadWriteMany by creating a temporary PVC
+// testRWXSupport tests if a storage class actually supports ReadWriteMany by creating a temporary
+// PVC. When blockMode is true, the test PVC requests a raw block volume so that RWX block support
+// (rather than RWX filesystem support) is what gets verified.
+//
+// KNOWN LIMITATION: this only checks for an
+// explicit rejection Event within a fixed window; it never requires the PVC to reach Bound.
+// StorageClasses using volumeBindingMode: WaitForFirstConsumer never attempt binding without a
+// consuming Pod, so they will always "pass" here with no positive evidence of RWX support.
 func (r *StorageBasedRemediationConfigReconciler) testRWXSupport(
-	ctx context.Context, sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig, storageClassName string, logger logr.Logger) error {
+	ctx context.Context, sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig, storageClassName string,
+	blockMode bool, logger logr.Logger) error {
 	// Create a temporary PVC with ReadWriteMany to test compatibility
 	testPVCName := fmt.Sprintf("%s-rwx-test", sbrConfig.Name)
 
@@ -544,6 +565,11 @@ func (r *StorageBasedRemediationConfigReconciler) testRWXSupport(
 			},
 			StorageClassName: &storageClassName,
 		},
+	}
+
+	if blockMode {
+		blockVolumeMode := corev1.PersistentVolumeBlock
+		testPVC.Spec.VolumeMode = &blockVolumeMode
 	}
 
 	// Best-effort delete of any stale PVC with this name before creating a fresh one.

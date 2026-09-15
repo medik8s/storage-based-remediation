@@ -1234,6 +1234,7 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 				{"AWS EFS", "efs.csi.aws.com", false},
 				{"Azure Files", "file.csi.azure.com", false},
 				{"Unknown provisioner", "unknown.provisioner.example.com", false},
+				{"NetApp Trident", "csi.trident.netapp.io", false}, // config-dependent, routed to live test instead
 			}
 
 			for _, tc := range testCases {
@@ -1243,6 +1244,30 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 				Expect(incompatible).To(Equal(tc.incompatible),
 					fmt.Sprintf("Expected %s (%s) to be incompatible=%t", tc.name, tc.provisioner, tc.incompatible))
 			}
+		})
+		It("should route NetApp Trident through the live RWX test in filesystem mode", func() {
+			By("creating a StorageClass using the Trident provisioner")
+			tridentStorageClass := &storagev1.StorageClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "trident-fs-test-sc",
+				},
+				Provisioner: "csi.trident.netapp.io",
+			}
+			Expect(k8sClient.Create(ctx, tridentStorageClass)).To(Succeed())
+
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "trident-fs-test", Namespace: validationNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass: tridentStorageClass.Name,
+				},
+			}
+			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
+
+			err := validationReconciler.validateStorageClass(ctx, sbrConfig, logr.Discard())
+
+			// No CSI driver in envtest, so the PVC just stays Pending with no rejection event —
+			// the live test should treat that as "passed", same as any other unknown provisioner.
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		Context("When testing unknown provisioners", func() {
@@ -1896,6 +1921,109 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 
 			err := blockReconciler.validateStorageClass(ctx, sbrConfig, logr.Discard())
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should route an unknown block-mode provisioner through a block-mode live RWX test", func() {
+			By("creating a StorageClass using the Trident provisioner (config-dependent RWX support)")
+			tridentBlockSC := &storagev1.StorageClass{
+				ObjectMeta:  metav1.ObjectMeta{Name: "trident-block-test-sc"},
+				Provisioner: "csi.trident.netapp.io",
+			}
+			Expect(k8sClient.Create(ctx, tridentBlockSC)).To(Succeed())
+
+			blockMode := medik8sv1alpha1.SharedStorageVolumeModeBlock
+			const sbrConfigName = "trident-block-test"
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: sbrConfigName, Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass:      tridentBlockSC.Name,
+					SharedStorageVolumeMode: &blockMode,
+				},
+			}
+			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
+
+			// testRWXSupport creates the test PVC and then sleeps 5s before re-fetching it.
+			// Run validation in the background so we can inspect the PVC during that window.
+			errCh := make(chan error, 1)
+			go func() {
+				defer GinkgoRecover()
+				errCh <- blockReconciler.validateStorageClass(ctx, sbrConfig, logr.Discard())
+			}()
+
+			testPVCName := fmt.Sprintf("%s-rwx-test", sbrConfigName)
+			testPVC := &corev1.PersistentVolumeClaim{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx,
+					types.NamespacedName{Name: testPVCName, Namespace: blockNamespace}, testPVC)
+			}, 8*time.Second, 200*time.Millisecond).Should(Succeed())
+
+			By("verifying the live test PVC requested a raw block volume, not a filesystem")
+			Expect(testPVC.Spec.VolumeMode).NotTo(BeNil())
+			Expect(*testPVC.Spec.VolumeMode).To(Equal(corev1.PersistentVolumeBlock))
+
+			// No CSI driver in envtest, so the PVC just stays Pending with no rejection event —
+			// the live test should treat that as "passed", same as any other unknown provisioner.
+			Eventually(errCh, 8*time.Second, 200*time.Millisecond).Should(Receive(BeNil()))
+		})
+
+		It("should fail block-mode validation when the live RWX test detects rejection", func() {
+			By("creating a StorageClass using an unknown provisioner")
+			unknownBlockSC := &storagev1.StorageClass{
+				ObjectMeta:  metav1.ObjectMeta{Name: "unknown-block-rejected-sc"},
+				Provisioner: "custom.example.com/unknown-block-provisioner",
+			}
+			Expect(k8sClient.Create(ctx, unknownBlockSC)).To(Succeed())
+
+			blockMode := medik8sv1alpha1.SharedStorageVolumeModeBlock
+			const sbrConfigName = "block-rejected-test"
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: sbrConfigName, Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass:      unknownBlockSC.Name,
+					SharedStorageVolumeMode: &blockMode,
+				},
+			}
+			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
+
+			errCh := make(chan error, 1)
+			go func() {
+				defer GinkgoRecover()
+				errCh <- blockReconciler.validateStorageClass(ctx, sbrConfig, logr.Discard())
+			}()
+
+			testPVCName := fmt.Sprintf("%s-rwx-test", sbrConfigName)
+			testPVC := &corev1.PersistentVolumeClaim{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx,
+					types.NamespacedName{Name: testPVCName, Namespace: blockNamespace}, testPVC)
+			}, 8*time.Second, 200*time.Millisecond).Should(Succeed())
+
+			By("simulating the provisioner rejecting the block-mode RWX request")
+			rejectionEvent := &corev1.Event{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "rwx-rejection-",
+					Namespace:    blockNamespace,
+				},
+				InvolvedObject: corev1.ObjectReference{
+					Kind:      "PersistentVolumeClaim",
+					Name:      testPVCName,
+					Namespace: blockNamespace,
+					UID:       testPVC.UID,
+				},
+				Reason:         "ProvisioningFailed",
+				Message:        "readwritemany access mode is not supported by this storage class",
+				Type:           corev1.EventTypeWarning,
+				FirstTimestamp: metav1.Now(),
+				LastTimestamp:  metav1.Now(),
+				Count:          1,
+			}
+			Expect(k8sClient.Create(ctx, rejectionEvent)).To(Succeed())
+
+			var validateErr error
+			Eventually(errCh, 8*time.Second, 200*time.Millisecond).Should(Receive(&validateErr))
+			Expect(validateErr).To(HaveOccurred())
+			Expect(validateErr.Error()).To(ContainSubstring(
+				"does not support ReadWriteMany block volumes required for SBR block mode"))
 		})
 
 		It("should set volumeMode Block on PVC for block mode", func() {
