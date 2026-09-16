@@ -57,3 +57,4 @@ deploy/sbr-agent-daemonset-*.yaml
 # Generated catalog files
 catalog/
 catalog.Dockerfile
+.DS_Store
