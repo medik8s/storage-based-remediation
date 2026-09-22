@@ -40,7 +40,8 @@ const (
 	SBRRemediationConditionProcessing SBRRemediationConditionType = SBRRemediationConditionType(
 		commonConditions.ProcessingType)
 	// SBRRemediationConditionSucceeded is the standard medik8s condition that signals whether
-	// remediation was successful. NHC checks this to short-circuit escalation timeouts.
+	// remediation completed successfully. NHC treats Succeeded=True as success. SBR sets
+	// Succeeded=False only after NHC adds the nhc-timed-out annotation, not on fencing errors.
 	SBRRemediationConditionSucceeded SBRRemediationConditionType = SBRRemediationConditionType(
 		commonConditions.SucceededType)
 )
@@ -195,7 +196,6 @@ func (r *StorageBasedRemediation) IsSucceeded() bool {
 }
 
 // IsFailed returns true if the standard medik8s Succeeded condition is False.
-// NHC uses this to short-circuit escalating-remediation timeouts.
 func (r *StorageBasedRemediation) IsFailed() bool {
 	return r.IsConditionFalse(SBRRemediationConditionSucceeded)
 }

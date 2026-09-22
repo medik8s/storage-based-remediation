@@ -48,7 +48,7 @@ Fencing completion is monitored for a fixed duration (60 seconds, matching the f
 
 Status is reported on **`status`** (not a single `phase` / `message` pair). Important fields:
 
-- **conditions**: Standard **`metav1.Condition`** entries with `status`, `reason`, `message`, and timestamps. SBR-specific types include **`Ready`**, **`FencingSucceeded`**, **`FencingInProgress`**, and **`LeadershipAcquired`**. **`Processing`** and **`Succeeded`** are the standard medik8s conditions NHC uses to track remediation and to short-circuit escalating-remediation timeouts (`Succeeded=False` fails immediately; `Succeeded=True` marks success). Use `kubectl describe storagebasedremediation <name>` or `-o yaml` to inspect them.
+- **conditions**: Standard **`metav1.Condition`** entries (for example **`Ready`**, **`FencingSucceeded`**, **`FencingInProgress`**, **`LeadershipAcquired`**, **`Processing`**, **`Succeeded`**) with `status`, `reason`, `message`, and timestamps. Use `kubectl describe storagebasedremediation <name>` or `-o yaml` to inspect them.
 - **nodeID**: Numeric ID assigned to the target node for SBR operations
 - **fenceMessageWritten**: Whether the fence message was successfully written to the SBR device
 - **operatorInstance**: Which operator instance is handling this remediation
