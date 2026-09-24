@@ -255,6 +255,9 @@ create-ns: ## Create namespace
 build: manifests generate fmt vet ## Build manager binary.
 	./hack/build.sh -o bin/manager ./cmd/main.go
 
+.PHONY: manager
+manager: build ## Alias for building the manager binary
+
 .PHONY: build-agent
 build-agent: manifests generate fmt vet ## Build SBR agent binary.
 	./hack/build.sh -o bin/sbr-agent ./cmd/sbr-agent/main.go
