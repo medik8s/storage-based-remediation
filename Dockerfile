@@ -1,10 +1,8 @@
 # Build the manager binary
-# podman search registry.access.redhat.com/ubi9/go-toolset --list-tags --limit 200 
-FROM registry.access.redhat.com/ubi9/go-toolset:latest AS builder
+# podman search quay.io/konveyor/builder --list-tags --limit 200
+FROM quay.io/konveyor/builder:ubi9-latest AS builder
 ARG TARGETOS
 ARG TARGETARCH
-
-USER default
 
 # Set GOTOOLCHAIN to auto to allow Go to download newer versions
 # Set to local to avoid downloading newer versions of Go
@@ -24,10 +22,6 @@ COPY hack/ hack/
 COPY .git/ .git/
 
 RUN go version
-
-USER root
-RUN mkdir -p bin && chown -R default:root bin
-USER default
 
 RUN git config --global --add safe.directory /workspace
 RUN ./hack/build.sh -o bin/manager ./cmd/main.go

@@ -100,6 +100,24 @@ operator-sdk run bundle quay.io/medik8s/storage-based-remediation-operator-bundl
 kubectl apply -f config/samples/storage-based-remediation_v1alpha1_storagebasedremediationconfig.yaml
 ```
 
+### Deploying the current source to OpenShift
+
+For PR or branch testing, build the operator with the pinned source-deployment
+toolchain, push temporary images to `ttl.sh`, and install the generated OLM
+bundle with operator-sdk:
+
+```bash
+make dev-olm-deploy
+```
+
+The temporary images expire after one hour by default. Override the duration
+and deployment namespace when needed, for example:
+
+```bash
+TTL_DURATION=4h OLM_OPERATOR_NAMESPACE=openshift-workload-availability make dev-olm-deploy
+make dev-olm-undeploy
+```
+
 ### Development
 
 Build and test locally:
