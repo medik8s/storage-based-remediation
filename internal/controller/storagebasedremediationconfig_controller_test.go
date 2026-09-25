@@ -30,6 +30,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -602,6 +603,54 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 			Expect(container.Ports[0].ContainerPort).To(BeEquivalentTo(8080))
 			Expect(container.Ports[1].Name).To(Equal("agent-metrics"))
 			Expect(container.Ports[1].ContainerPort).To(BeEquivalentTo(agent.DefaultMetricsPort))
+		})
+
+		It("should create a NetworkPolicy for the agent pods when StorageBasedRemediationConfig is applied", func() {
+			By("creating the StorageBasedRemediationConfig resource")
+			sbrConfig := defaultStorageBasedRemediationConfig(resourceName, namespace)
+			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
+
+			By("reconciling the StorageBasedRemediationConfig multiple times for finalizer and resource creation")
+			counter, result, err := reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
+			checkForDefaultReconcile(counter, result, err)
+
+			By("verifying the NetworkPolicy was created")
+			expectedName := fmt.Sprintf("sbr-agent-%s", resourceName)
+			networkPolicy := &networkingv1.NetworkPolicy{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedName,
+					Namespace: namespace,
+				}, networkPolicy)
+			}, timeout, interval).Should(Succeed())
+
+			By("verifying the NetworkPolicy has the correct owner reference")
+			Expect(networkPolicy.OwnerReferences).To(HaveLen(1))
+			Expect(networkPolicy.OwnerReferences[0].Name).To(Equal(resourceName))
+			Expect(networkPolicy.OwnerReferences[0].Kind).To(Equal("StorageBasedRemediationConfig"))
+			Expect(*networkPolicy.OwnerReferences[0].Controller).To(BeTrue())
+
+			By("verifying the NetworkPolicy selects the agent pods")
+			Expect(networkPolicy.Spec.PodSelector.MatchLabels).To(HaveKeyWithValue("app", "sbr-agent"))
+			Expect(networkPolicy.Spec.PodSelector.MatchLabels).To(HaveKeyWithValue("sbrconfig", resourceName))
+
+			By("verifying the NetworkPolicy restricts both ingress and egress")
+			Expect(networkPolicy.Spec.PolicyTypes).To(ConsistOf(
+				networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress))
+
+			By("verifying ingress is limited to the two metrics ports")
+			Expect(networkPolicy.Spec.Ingress).To(HaveLen(1))
+			ingressPorts := networkPolicy.Spec.Ingress[0].Ports
+			Expect(ingressPorts).To(HaveLen(2))
+			Expect(ingressPorts[0].Port.IntValue()).To(Equal(RuntimeMetricsPort))
+			Expect(*ingressPorts[0].Protocol).To(Equal(corev1.ProtocolTCP))
+			Expect(ingressPorts[1].Port.IntValue()).To(Equal(agent.DefaultMetricsPort))
+			Expect(*ingressPorts[1].Protocol).To(Equal(corev1.ProtocolTCP))
+
+			By("verifying egress is left unrestricted")
+			Expect(networkPolicy.Spec.Egress).To(HaveLen(1))
+			Expect(networkPolicy.Spec.Egress[0].To).To(BeEmpty())
+			Expect(networkPolicy.Spec.Egress[0].Ports).To(BeEmpty())
 		})
 
 		It("should update DaemonSet when StorageBasedRemediationConfig is modified", func() {
