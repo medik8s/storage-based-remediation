@@ -249,17 +249,40 @@ func (s *BlockNodeMapStore) saveAttempt(data []byte) error {
 	time.Sleep(delay)
 
 	// Step 5: Verify
-	verifyState := s.readBuffer(targetBuf, targetName)
-	if !verifyState.valid {
+	// Read back both buffers to detect if another writer superseded our write
+	// on the other buffer, or overwrote our target buffer.
+	verifyA := s.readBuffer(s.bufA, "A")
+	verifyB := s.readBuffer(s.bufB, "B")
+
+	var verifyTarget bufferState
+	var verifyOther bufferState
+	var otherName string
+	if targetName == "A" {
+		verifyTarget = verifyA
+		verifyOther = verifyB
+		otherName = "B"
+	} else {
+		verifyTarget = verifyB
+		verifyOther = verifyA
+		otherName = "A"
+	}
+
+	if !verifyTarget.valid {
 		return &ConflictError{msg: fmt.Sprintf("buffer %s invalid after write (CRC mismatch)", targetName)}
 	}
-	if verifyState.generation != newGen {
+	if verifyTarget.generation != newGen {
 		return &ConflictError{msg: fmt.Sprintf("buffer %s generation mismatch: expected %d, got %d",
-			targetName, newGen, verifyState.generation)}
+			targetName, newGen, verifyTarget.generation)}
 	}
-	if verifyState.writerUUID != writerUUID {
+	if verifyTarget.writerUUID != writerUUID {
 		return &ConflictError{msg: fmt.Sprintf("buffer %s WriterUUID mismatch: expected %x, got %x",
-			targetName, writerUUID, verifyState.writerUUID)}
+			targetName, writerUUID, verifyTarget.writerUUID)}
+	}
+
+	// Check if the other buffer advanced beyond our write
+	if verifyOther.valid && verifyOther.generation > newGen {
+		return &ConflictError{msg: fmt.Sprintf("write superseded by concurrent writer on buffer %s (generation %d > %d)",
+			otherName, verifyOther.generation, newGen)}
 	}
 
 	s.logger.V(1).Info("Save: write-verify succeeded", "buffer", targetName, "generation", newGen)

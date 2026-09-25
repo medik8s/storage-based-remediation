@@ -466,6 +466,38 @@ func TestBlockNodeMapStore_ConflictReturnsError(t *testing.T) {
 	}
 }
 
+func TestBlockNodeMapStore_ConcurrentWriterAdvancesOtherBuffer(t *testing.T) {
+	base := newMemDevice(BlockMinDeviceSize)
+
+	// Seed buffer A with gen=1 so we're past first boot
+	seedUUID, _ := generateWriterID()
+	copy(base.data[BlockNodeMapAOffset:], marshalBuffer(1, seedUUID, []byte("seed")))
+
+	// Our Save will target buffer B (gen=2).
+	// We simulate a concurrent writer that targets buffer A (gen=3)
+	// and completes its write after our write to buffer B, but before our verify.
+	conflictUUID, _ := generateWriterID()
+	conflictBuf := marshalBuffer(3, conflictUUID, []byte("concurrent winner"))
+
+	td := &tamperDevice{
+		memDevice:    base,
+		tamperAfterN: 1,                   // after our write attempt to buffer B
+		tamperOffset: BlockNodeMapAOffset, // concurrent writer targets the OTHER buffer
+		tamperData:   conflictBuf,
+	}
+
+	store := NewBlockNodeMapStore(td, logr.Discard())
+
+	// Save should return a ConflictError because the other buffer advanced
+	err := store.Save([]byte("my data"))
+	if err == nil {
+		t.Fatal("Save should return ConflictError when a concurrent writer advances the other buffer")
+	}
+	if !IsConflictError(err) {
+		t.Fatalf("expected ConflictError, got: %v", err)
+	}
+}
+
 func TestBlockNodeMapStore_CallerRetryPreservesData(t *testing.T) {
 	// Regression test for the stale-data retry bug.
 	//
