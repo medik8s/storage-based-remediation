@@ -1162,6 +1162,18 @@ func testNodeRemediation(cluster ClusterInfo) {
 		return false
 	}, time.Minute*3, time.Second*10).Should(BeTrue(), "FencingSucceeded did not become True")
 
+	By("Waiting for StorageBasedRemediation condition Succeeded=True")
+	Eventually(func() bool {
+		cur := &medik8sv1alpha1.StorageBasedRemediation{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{
+			Namespace: sbrRemediation.Namespace,
+			Name:      sbrRemediation.Name,
+		}, cur); err != nil {
+			return false
+		}
+		return cur.IsSucceeded() && !cur.IsProcessing()
+	}, time.Minute*3, time.Second*10).Should(BeTrue(), "Succeeded did not become True")
+
 	// Verify out-of-service taint is applied after successful fencing
 	By("Waiting for out-of-service taint to be applied")
 	Eventually(func() bool {

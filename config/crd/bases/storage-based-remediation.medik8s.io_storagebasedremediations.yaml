@@ -18,6 +18,12 @@ spec:
     - jsonPath: .metadata.name
       name: Node
       type: string
+    - jsonPath: .status.conditions[?(@.type=='Processing')].status
+      name: Processing
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Succeeded')].status
+      name: Succeeded
+      type: string
     - jsonPath: .status.conditions[?(@.type=='Ready')].status
       name: Ready
       type: string
@@ -65,8 +71,11 @@ spec:
               of StorageBasedRemediation.
             properties:
               conditions:
-                description: Conditions represent the latest available observations
-                  of the remediation's current state
+                description: |-
+                  Conditions represent the latest available observations of the remediation's current state.
+                  Known types include LeadershipAcquired, FencingInProgress, FencingSucceeded, Ready,
+                  Processing, and Succeeded. Processing and Succeeded are the standard medik8s conditions
+                  used by NHC for escalating remediations.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

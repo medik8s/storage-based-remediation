@@ -171,7 +171,7 @@ func TestCheckFencingCompletionSafety(t *testing.T) {
 			want:         fencingComplete,
 		},
 		{
-			name:         "timeout-without-heartbeat-stop-is-failure",
+			name:         "timeout-without-heartbeat-stop",
 			heartbeatAge: 5 * time.Second,
 			fencingAgo:   time.Duration(DefaultFencingMonitorTimeoutSeconds+10) * time.Second,
 			want:         fencingTimedOut,

@@ -12,6 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/iam v1.50.2
 	github.com/go-logr/logr v1.4.3
 	github.com/go-logr/zapr v1.3.0
+	github.com/medik8s/common v1.17.0
 	github.com/onsi/ginkgo/v2 v2.28.3
 	github.com/onsi/gomega v1.40.0
 	github.com/openshift/api v0.0.0-20260805215214-cfb63858e9d7
