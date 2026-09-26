@@ -107,9 +107,10 @@ func (r *StorageBasedRemediationReconciler) performFencingWithRetry(ctx context.
 ### Success Path
 
 1. **LeadershipAcquired=True** → Operator has leadership for fencing
-2. **FencingInProgress=True** → Writing fence message to SBD (STONITH Block Device) device
-3. **FencingSucceeded=True** → Fence message written and verified
-4. **Ready=True** → Overall remediation completed successfully
+2. **Storage write check gate** → Reconciler reads `StorageValidation.ConcurrentWriteable` from the owning StorageBasedRemediationConfig. If not `true`, fencing is withheld (`FencingWithheld` event emitted, requeue every 10s). Proceeds only when confirmed.
+3. **FencingInProgress=True** → Writing fence message to SBD (STONITH Block Device) device
+4. **FencingSucceeded=True** → Fence message written and verified
+5. **Ready=True** → Overall remediation completed successfully
 
 ### Error Handling
 
@@ -160,6 +161,7 @@ const (
 | Marshaling error | No | 1 | FencingSucceeded=False, Ready=True | No requeue |
 | Status update conflict | Yes | 10 | Varies | Retry with backoff |
 | Leadership unavailable | N/A | N/A | LeadershipAcquired=False, Ready=False | 10s requeue |
+| Storage write check not passed | N/A | N/A | FencingWithheld event emitted | 10s requeue |
 
 ## Integration Tests
 

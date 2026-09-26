@@ -170,6 +170,18 @@ by the operator — do not set `spec.image` (the field does not exist in the CRD
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `conditions` | array | Kubernetes-standard conditions array |
+| `storageValidation` | object | Storage write check result (see below) |
+
+### Storage Validation
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `concurrentWriteable` | *bool | `true` once confirmed; `nil` while waiting |
+| `probedNodeCount` | int32 | Node count when write check last passed |
+| `lastProbeTime` | timestamp | When the check last ran |
+| `message` | string | Human-readable detail |
+
+The write check passes when at least min(2, desired) agents are Ready. Once confirmed, the result is sticky (survives readiness dips). If `desiredNumberScheduled` grows past `probedNodeCount`, re-confirmation is required. See [Storage Validation Design](design/storage-validation.md).
 
 ### Condition Types
 
@@ -177,7 +189,7 @@ by the operator — do not set `spec.image` (the field does not exist in the CRD
 | ---- | ------------------------- |
 | `DaemonSetReady` | All desired agent pods are ready |
 | `SharedStorageReady` | Shared storage PVC is configured and available, or not used |
-| `Ready` | All above conditions are True |
+| `Ready` | DaemonSetReady, SharedStorageReady, and the storage write check are all True |
 
 ---
 

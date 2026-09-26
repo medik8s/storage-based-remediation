@@ -37,6 +37,10 @@ The controller maintains a list of known RWX-compatible provisioners:
 
 For unknown provisioners, the controller creates a temporary PVC with `ReadWriteMany` access mode to test compatibility. The test PVC is automatically cleaned up regardless of the test outcome.
 
+### 3. Storage Write Check (Per-Node)
+
+StorageClass validation confirms the PVC can bind, but does not confirm that every node can actually write to the shared device concurrently. A separate **storage write check** runs at agent startup: each agent writes and reads back its own heartbeat and fence slots as part of preflight checks. The controller records the result in `.status.storageValidation` and gates fencing on it — see [Storage Validation Design](design/storage-validation.md) for details.
+
 ## Configuration
 
 No additional configuration is required. The validation happens automatically when you specify a `sharedStorageClass` in your StorageBasedRemediationConfig:
