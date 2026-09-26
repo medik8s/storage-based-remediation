@@ -1,0 +1,130 @@
+name: Kind E2E (Block Storage)
+
+on:
+  push:
+    branches: [main*, release-*]
+  pull_request:
+    branches: [main*, release-*]
+  workflow_dispatch: {}
+
+jobs:
+  kind-block-e2e:
+    name: Kind E2E (Block Storage)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      # Shared dev environment (checked out into .tools below)
+      TOOLS_DIR: ${{ github.workspace }}/.tools
+      MEDIK8S_CLUSTER_NAME: sbr-block-ci
+      CONTAINER_TOOL: docker
+
+      # Block storage configuration
+      KIND_BLOCK_STORAGE: "true"
+      KIND_BLOCK_STATE_DIR: ${{ github.workspace }}/dist/block-ci
+      KUBECONFIG: ${{ github.workspace }}/dist/block-ci/kubeconfig
+      SETUP_NULL_DEVICE_WATCHDOG: "true"
+
+      # Local registry (created by dev-setup)
+      MEDIK8S_REGISTRY_NAME: kind-registry
+      MEDIK8S_REGISTRY_PORT: "5000"
+      IMAGE_REGISTRY: kind-registry:5000/medik8s
+      OPM_RENDER_FLAGS: --skip-tls-verify
+      OPERATOR_NAMESPACE: sbr-operator-system
+
+    steps:
+      - name: Checkout SBR repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install operator-sdk
+        run: |
+          make operator-sdk
+          sudo cp ./bin/operator-sdk /usr/local/bin/
+
+      - name: Load loop kernel module on runner
+        run: sudo modprobe loop
+
+      - name: Create Kind cluster with shared block storage
+        run: make dev-setup
+
+      - name: Prepare operator namespace
+        run: |
+          kubectl create ns ${OPERATOR_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+          kubectl label --overwrite ns ${OPERATOR_NAMESPACE} \
+            pod-security.kubernetes.io/enforce=privileged \
+            pod-security.kubernetes.io/audit=privileged \
+            pod-security.kubernetes.io/warn=privileged
+
+      - name: Build and push operator + agent images
+        run: make build-images push-images
+
+      - name: Build and push OLM bundle
+        run: make bundle bundle-build bundle-push
+
+      - name: Deploy SBR via OLM bundle
+        run: |
+          operator-sdk run bundle -n ${OPERATOR_NAMESPACE} --use-http \
+            --timeout 5m \
+            ${IMAGE_REGISTRY}/storage-based-remediation-operator-bundle:latest
+
+      - name: Wait for operator to be ready
+        run: make dev-wait
+
+      - name: Start kind reboot watcher
+        run: |
+          nohup ${TOOLS_DIR}/dev/kind-reboot-watcher.sh --mode sbr > /tmp/wd-helper.log 2>&1 &
+          echo $! > /tmp/wd-helper.pid
+          disown || true
+          echo "kind reboot watcher started (pid $(cat /tmp/wd-helper.pid))"
+
+      - name: Run e2e tests (block storage subset)
+        timeout-minutes: 60
+        env:
+          CERT_MANAGER_INSTALL_SKIP: "true"
+          E2E_KIND: "true"
+          OPERATOR_NS: sbr-operator-system
+          LABEL_FILTER: "block"
+        run: make test-e2e
+
+      - name: Stop kind reboot watcher
+        if: ${{ always() }}
+        run: |
+          [ -f /tmp/wd-helper.pid ] && kill "$(cat /tmp/wd-helper.pid)" 2>/dev/null || true
+          mkdir -p .tests
+          cp /tmp/wd-helper.log .tests/reboot-watcher.log 2>/dev/null || true
+
+      - name: Debug on failure
+        if: ${{ always() }}
+        run: |
+          echo "=== SBR configs ==="
+          kubectl get storagebasedremediationconfig -A -o yaml > .tests/sbr-configs.yaml || true
+          echo "=== SBR remediations ==="
+          kubectl get storagebasedremediation -A -o yaml > .tests/sbr-remediations.yaml || true
+          echo "=== PVCs ==="
+          kubectl get pvc -A > .tests/pvcs.yaml || true
+          echo "=== Agent pods ==="
+          kubectl get pods -A -l app.kubernetes.io/component=agent -o wide > .tests/agent-pods.yaml || true
+          echo "=== Operator logs ==="
+          kubectl logs -n ${OPERATOR_NAMESPACE} -l control-plane=controller-manager --tail=200 > .tests/operator-logs.txt || true
+          make dev-ci-debug 2>/dev/null || true
+
+      - name: Teardown Kind cluster
+        if: ${{ always() }}
+        run: make dev-teardown
+
+      - name: Upload test artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: block-e2e-artifacts
+          path: .tests/
+          include-hidden-files: true
+          if-no-files-found: ignore

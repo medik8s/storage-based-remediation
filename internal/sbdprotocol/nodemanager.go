@@ -158,8 +158,8 @@ func NewNodeManager(device SBDDevice, config NodeManagerConfig) (*NodeManager, e
 	}
 
 	// Try to load existing mapping table from file
-	if err := manager.loadFromDevice(); err != nil {
-		manager.logger.Info("Failed to load existing node mapping, creating new table", "error", err)
+	if err := manager.loadFromDeviceWithRecovery(); err != nil {
+		manager.logger.Info("Failed to load existing node mapping even after recovery, creating new table", "error", err)
 		manager.table = NewNodeMapTable(config.ClusterName)
 		manager.dirty = true
 	}
@@ -215,16 +215,13 @@ func (nm *NodeManager) atomicAssignSlot(nodeName string) (uint16, error) {
 	defer func() { _ = nm.releaseDeviceLock(lockFile) }()
 
 	for attempt := 0; attempt < MaxAtomicRetries; attempt++ {
-		// Step 1: Load current state from device
+		// Step 1: Load current state from device with recovery
 		nm.mutex.Lock()
-		if err := nm.loadFromDevice(); err != nil {
+		if err := nm.loadFromDeviceWithRecovery(); err != nil {
 			nm.mutex.Unlock()
-			// If loading fails, create a new table
-			nm.table = NewNodeMapTable(nm.clusterName)
-			nm.dirty = true
-		} else {
-			nm.mutex.Unlock()
+			return 0, fmt.Errorf("failed to load node mapping: %w", err)
 		}
+		nm.mutex.Unlock()
 
 		// Step 2: Check if node already exists (another node might have assigned it)
 		nm.mutex.RLock()
@@ -285,7 +282,7 @@ func (nm *NodeManager) atomicUpdateLastSeen(nodeName string) error {
 	for attempt := 0; attempt < MaxAtomicRetries; attempt++ {
 		// Step 1: Load current state
 		nm.mutex.Lock()
-		if err := nm.loadFromDevice(); err != nil {
+		if err := nm.loadFromDeviceWithRecovery(); err != nil {
 			nm.mutex.Unlock()
 			return fmt.Errorf("failed to load current state: %w", err)
 		}
@@ -383,9 +380,9 @@ func (nm *NodeManager) ReloadFromDevice() error {
 // CleanupStaleNodes removes nodes that haven't been seen for the configured timeout
 func (nm *NodeManager) CleanupStaleNodes() ([]string, error) {
 	for attempt := 0; attempt < MaxAtomicRetries; attempt++ {
-		// Step 1: Load current state from device
+		// Step 1: Load current state from device with recovery
 		nm.mutex.Lock()
-		if err := nm.loadFromDevice(); err != nil {
+		if err := nm.loadFromDeviceWithRecovery(); err != nil {
 			nm.mutex.Unlock()
 			return nil, fmt.Errorf("failed to load current state for cleanup: %w", err)
 		}
@@ -692,7 +689,7 @@ func (nm *NodeManager) syncToDevice() error {
 	if err := nm.store.Save(data); err != nil {
 		if isSaveConflict(err) {
 			nm.logger.Info("Write-verify conflict in syncToDevice, reloading device state", "error", err)
-			if loadErr := nm.loadFromDevice(); loadErr != nil {
+			if loadErr := nm.loadFromDeviceWithRecovery(); loadErr != nil {
 				return fmt.Errorf("failed to reload after write conflict: %w", loadErr)
 			}
 			return nil
