@@ -22,12 +22,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/medik8s/storage-based-remediation/internal/agent"
-	"github.com/medik8s/storage-based-remediation/internal/blockdevice"
-	"github.com/medik8s/storage-based-remediation/internal/blockformat"
-	"github.com/medik8s/storage-based-remediation/internal/mocks"
-	"github.com/medik8s/storage-based-remediation/internal/sbdprotocol"
-	"github.com/medik8s/storage-based-remediation/internal/watchdog"
+	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
+	"github.com/medik8s/storage-based-remediation/v5/internal/blockdevice"
+	"github.com/medik8s/storage-based-remediation/v5/internal/blockformat"
+	"github.com/medik8s/storage-based-remediation/v5/internal/mocks"
+	"github.com/medik8s/storage-based-remediation/v5/internal/sbdprotocol"
+	"github.com/medik8s/storage-based-remediation/v5/internal/watchdog"
 )
 
 // preflightBlockProbeTimeout bounds the superblock read used to detect block mode at pre-flight;

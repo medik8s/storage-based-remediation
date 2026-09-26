@@ -26,9 +26,9 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/medik8s/storage-based-remediation/internal/blockdevice"
-	"github.com/medik8s/storage-based-remediation/internal/blockformat"
-	"github.com/medik8s/storage-based-remediation/internal/sbdprotocol"
+	"github.com/medik8s/storage-based-remediation/v5/internal/blockdevice"
+	"github.com/medik8s/storage-based-remediation/v5/internal/blockformat"
+	"github.com/medik8s/storage-based-remediation/v5/internal/sbdprotocol"
 )
 
 // noopStorageChecker skips O_DIRECT and fstatfs validation in tests that use

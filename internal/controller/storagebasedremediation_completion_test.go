@@ -28,9 +28,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
-	"github.com/medik8s/storage-based-remediation/internal/mocks"
-	"github.com/medik8s/storage-based-remediation/internal/sbdprotocol"
+	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/v5/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/v5/internal/mocks"
+	"github.com/medik8s/storage-based-remediation/v5/internal/sbdprotocol"
 )
 
 // newCompletionReconciler builds a reconciler with a mock heartbeat device + node manager and

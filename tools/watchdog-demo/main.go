@@ -21,7 +21,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/medik8s/storage-based-remediation/internal/watchdog"
+	"github.com/medik8s/storage-based-remediation/v5/internal/watchdog"
 )
 
 func main() {

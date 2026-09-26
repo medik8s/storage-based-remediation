@@ -6,7 +6,7 @@ domain: medik8s.io
 layout:
 - go.kubebuilder.io/v4
 projectName: storage-based-remediation
-repo: github.com/medik8s/storage-based-remediation
+repo: github.com/medik8s/storage-based-remediation/v5
 resources:
 - api:
     crdVersion: v1
@@ -14,7 +14,7 @@ resources:
   domain: medik8s.io
   group: storage-based-remediation
   kind: StorageBasedRemediationConfig
-  path: github.com/medik8s/storage-based-remediation/api/v1alpha1
+  path: github.com/medik8s/storage-based-remediation/v5/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -23,7 +23,7 @@ resources:
   domain: medik8s.io
   group: storage-based-remediation
   kind: StorageBasedRemediation
-  path: github.com/medik8s/storage-based-remediation/api/v1alpha1
+  path: github.com/medik8s/storage-based-remediation/v5/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -32,6 +32,6 @@ resources:
   domain: medik8s.io
   group: storage-based-remediation
   kind: StorageBasedRemediationTemplate
-  path: github.com/medik8s/storage-based-remediation/api/v1alpha1
+  path: github.com/medik8s/storage-based-remediation/v5/api/v1alpha1
   version: v1alpha1
 version: "3"

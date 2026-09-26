@@ -24,8 +24,8 @@ import (
 	"strings"
 	"testing"
 
-	mocks "github.com/medik8s/storage-based-remediation/internal/mocks"
-	"github.com/medik8s/storage-based-remediation/internal/sbdprotocol"
+	mocks "github.com/medik8s/storage-based-remediation/v5/internal/mocks"
+	"github.com/medik8s/storage-based-remediation/v5/internal/sbdprotocol"
 )
 
 // TestPreflightChecks_Success tests successful pre-flight checks

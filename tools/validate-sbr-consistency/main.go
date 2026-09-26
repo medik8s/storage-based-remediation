@@ -18,8 +18,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/medik8s/storage-based-remediation/internal/agent"
-	"github.com/medik8s/storage-based-remediation/test/utils"
+	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
+	"github.com/medik8s/storage-based-remediation/v5/test/utils"
 )
 
 func main() {

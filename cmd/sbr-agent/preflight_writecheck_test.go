@@ -27,7 +27,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/medik8s/storage-based-remediation/internal/blockformat"
+	"github.com/medik8s/storage-based-remediation/v5/internal/blockformat"
 )
 
 // formatTestBlockDevice creates a temp file of blockformat.BlockMinDeviceSize and runs the

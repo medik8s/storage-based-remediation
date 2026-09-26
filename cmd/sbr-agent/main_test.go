@@ -42,12 +42,12 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
-	"github.com/medik8s/storage-based-remediation/internal/agent"
-	"github.com/medik8s/storage-based-remediation/internal/blockdevice"
-	mocks "github.com/medik8s/storage-based-remediation/internal/mocks"
-	"github.com/medik8s/storage-based-remediation/internal/sbdprotocol"
-	testutils "github.com/medik8s/storage-based-remediation/test/utils"
+	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/v5/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
+	"github.com/medik8s/storage-based-remediation/v5/internal/blockdevice"
+	mocks "github.com/medik8s/storage-based-remediation/v5/internal/mocks"
+	"github.com/medik8s/storage-based-remediation/v5/internal/sbdprotocol"
+	testutils "github.com/medik8s/storage-based-remediation/v5/test/utils"
 )
 
 // sbrAgentTestOpener opens block devices without O_DIRECT for unit tests.
