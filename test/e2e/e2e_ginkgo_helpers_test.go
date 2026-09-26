@@ -35,12 +35,57 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
 	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/api/v1alpha1"
 	"github.com/medik8s/storage-based-remediation/test/utils"
 )
+
+// portworxProvisioner is the Portworx CSI provisioner name. Its presence as a StorageClass
+// provisioner in the cluster is used as a proxy for "Portworx is installed", per
+// docs/design/storage-validation.md.
+const portworxProvisioner = "pxd.portworx.com"
+
+// portworxTestStorageClassName is the name of the StorageClass this suite creates (and
+// cleans up) for the block-mode storage write-check scenario.
+const portworxTestStorageClassName = "px-test-sc"
+
+// isRWXIncompatibleProvisioner checks if a CSI provisioner is known to NOT support ReadWriteMany.
+// Matches the controller's fast-fail list for RWO-only block storage.
+func isRWXIncompatibleProvisioner(provisioner string) bool {
+	rwxIncompatibleProvisioners := map[string]bool{
+		"ebs.csi.aws.com":          true,
+		"aws-ebs":                  true,
+		"disk.csi.azure.com":       true,
+		"azure-disk":               true,
+		"pd.csi.storage.gke.io":    true,
+		"gce-pd":                   true,
+		"csi.vsphere.vmware.com":   true,
+		"cinder.csi.openstack.org": true,
+		"rancher.io/local-path":    true,
+	}
+	return rwxIncompatibleProvisioners[provisioner]
+}
+
+// isRWXCompatibleProvisioner checks if a CSI provisioner is known to support ReadWriteMany
+func isRWXCompatibleProvisioner(provisioner string) bool {
+	rwxProvisioners := map[string]bool{
+		"efs.csi.aws.com":                               true,
+		"file.csi.azure.com":                            true,
+		"filestore.csi.storage.gke.io":                  true,
+		"nfs.csi.k8s.io":                                true,
+		"cluster.local/nfs-subdir-external-provisioner": true,
+		"k8s-sigs.io/nfs-subdir-external-provisioner":   true,
+		"cephfs.csi.ceph.com":                           true,
+		"openshift-storage.cephfs.csi.ceph.com":         true,
+		"gluster.org/glusterfs":                         true,
+		"nfs-provisioner":                               true,
+		"csi-nfsplugin":                                 true,
+	}
+	return rwxProvisioners[provisioner]
+}
 
 // Cleanup removes the test namespace and all its resources
 func cleanupNamespace(tn *utils.TestNamespace) error {
@@ -178,7 +223,49 @@ func cleanupStorageBasedRemediationConfig(tn *utils.TestNamespace, sbrConfig *me
 		return len(daemonSets.Items)
 	}, time.Minute*5, time.Second*5).Should(Equal(0), fmt.Sprintf("StorageBasedRemediationConfig %s DaemonSets not deleted", sbrConfig.Name))
 
+	// Reset any static PVs (e.g., medik8s-kind-block) bound to the test namespace so they return to Available status
+	resetReleasedPVs(tn)
+
 	return nil
+}
+
+// resetReleasedPVs waits for PVCs in the test namespace to be fully deleted,
+// then clears claimRef on matching PVs so static PVs return to Available status for subsequent tests.
+func resetReleasedPVs(tn *utils.TestNamespace) {
+	Eventually(func() error {
+		pvList := &corev1.PersistentVolumeList{}
+		if err := tn.Clients.Client.List(tn.Clients.Context, pvList); err != nil {
+			return fmt.Errorf("failed to list PVs: %w", err)
+		}
+
+		for i := range pvList.Items {
+			pv := &pvList.Items[i]
+			if pv.Spec.ClaimRef != nil && pv.Spec.ClaimRef.Namespace == tn.Name {
+				// 1. Ensure the underlying PVC is completely gone before clearing claimRef
+				pvc := &corev1.PersistentVolumeClaim{}
+				err := tn.Clients.Client.Get(tn.Clients.Context, types.NamespacedName{
+					Name:      pv.Spec.ClaimRef.Name,
+					Namespace: pv.Spec.ClaimRef.Namespace,
+				}, pvc)
+
+				if err == nil {
+					return fmt.Errorf("PVC %s/%s still exists (phase: %s), waiting for deletion",
+						pv.Spec.ClaimRef.Namespace, pv.Spec.ClaimRef.Name, pvc.Status.Phase)
+				} else if !errors.IsNotFound(err) {
+					return fmt.Errorf("failed to verify PVC status: %w", err)
+				}
+
+				// 2. Clear claimRef once PVC is confirmed deleted
+				GinkgoWriter.Printf("Resetting claimRef on PV %s to return it to Available status\n", pv.Name)
+				patch := client.MergeFrom(pv.DeepCopy())
+				pv.Spec.ClaimRef = nil
+				if err := tn.Clients.Client.Patch(tn.Clients.Context, pv, patch); err != nil {
+					return fmt.Errorf("failed to patch claimRef on PV %s: %w", pv.Name, err)
+				}
+			}
+		}
+		return nil
+	}, time.Minute*2, time.Second*5).Should(Succeed(), "failed to reset released PVs to Available state")
 }
 
 type podStatusChecker struct {
@@ -1118,10 +1205,14 @@ type validateAgentDeploymentOptions struct {
 
 // defaultValidateAgentDeploymentOptions returns sensible defaults for validation
 func defaultValidateAgentDeploymentOptions(sbrConfigName string) validateAgentDeploymentOptions {
+	expectedWatchdog := "--watchdog-path=/dev/watchdog"
+	if os.Getenv("LABEL_FILTER") == "block" {
+		expectedWatchdog = "--watchdog-path=/host-dev/watchdog"
+	}
 	return validateAgentDeploymentOptions{
 		StorageBasedRemediationConfigName: sbrConfigName,
 		ExpectedArgs: []string{
-			"--watchdog-path=/dev/watchdog",
+			expectedWatchdog,
 		},
 		MinReadyPods:     3,
 		DaemonSetTimeout: time.Minute * 5,
@@ -1232,7 +1323,6 @@ func (sav *sbrAgentValidator) validateAgentDeployment(opts validateAgentDeployme
 	// Try to get logs but don't fail the test if pod isn't ready or logs are empty
 	Eventually(func() string {
 		logStr, err := podChecker.getPodLogs(podName, nil)
-		//		logStr, err := podChecker.getPodLogs(podName, func() *int64 { val := int64(20); return &val }())
 		if err != nil {
 			GinkgoWriter.Printf("Failed to get logs from pod %s: %v\n", podName, err)
 			return "ERROR_GETTING_LOGS"
@@ -1240,7 +1330,6 @@ func (sav *sbrAgentValidator) validateAgentDeployment(opts validateAgentDeployme
 		if logStr == "" {
 			return "NO_LOGS_YET"
 		}
-		// GinkgoWriter.Printf("Pod %s logs sample:\n%s\n", podName, logStr)
 		return logStr
 	}, opts.LogCheckTimeout, time.Second*10).Should(SatisfyAny(
 		// Accept various states - the test is mainly about configuration correctness
@@ -1260,7 +1349,6 @@ func (sav *sbrAgentValidator) validateAgentDeployment(opts validateAgentDeployme
 
 	// These errors would indicate problems with our implementation
 	errorStrings := []string{
-		//	"level\":\"error", #reduce flakiness
 		"Failed to start SBR agent",
 		"failed to pet watchdog",
 		"watchdog device is not open",
@@ -1280,9 +1368,7 @@ func (sav *sbrAgentValidator) validateAgentDeployment(opts validateAgentDeployme
 	}
 
 	// Assert deployment success from the operator's own status conditions rather
-	// than by scraping agent logs for expected messages. Which success lines are
-	// emitted depends on log level and storage mode; the status conditions are
-	// the operator's contract and the same signal an admin would check.
+	// than by scraping agent logs for expected messages.
 	By("verifying the StorageBasedRemediationConfig reports Ready via status conditions")
 	sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{}
 	Eventually(func() error {
@@ -1376,7 +1462,6 @@ func (sav *sbrAgentValidator) validateNoNodeReboots(opts validateAgentDeployment
 
 func cleanupStorageBasedRemediationConfigs(testNamespace *utils.TestNamespace) {
 	By("Cleaning up SBR configuration and waiting for agents to terminate")
-	// Clean up all StorageBasedRemediationConfigs in the test namespace
 	sbrConfigs := &medik8sv1alpha1.StorageBasedRemediationConfigList{}
 	err := testNamespace.Clients.Client.List(
 		testNamespace.Clients.Context, sbrConfigs, client.InNamespace(testNamespace.Name))
@@ -1390,7 +1475,6 @@ func cleanupStorageBasedRemediationConfigs(testNamespace *utils.TestNamespace) {
 	}
 
 	By("Cleaning up StorageBasedRemediation CRs to prevent namespace deletion issues")
-	// Clean up all SBRRemediations in the test namespace
 	sbrRemediations := &medik8sv1alpha1.StorageBasedRemediationList{}
 	err = testNamespace.Clients.Client.List(
 		testNamespace.Clients.Context, sbrRemediations, client.InNamespace(testNamespace.Name))
@@ -1400,7 +1484,6 @@ func cleanupStorageBasedRemediationConfigs(testNamespace *utils.TestNamespace) {
 	}
 	for i := range sbrRemediations.Items {
 		remediation := sbrRemediations.Items[i]
-		// Remove finalizers first to prevent stuck resources
 		if len(remediation.Finalizers) > 0 {
 			remediation.Finalizers = nil
 			if err := testNamespace.Clients.Client.Update(testNamespace.Clients.Context, &remediation); err != nil && !errors.IsNotFound(err) {
@@ -1417,14 +1500,12 @@ func cleanupStorageBasedRemediationConfigs(testNamespace *utils.TestNamespace) {
 }
 
 func checkClusterConnection() error {
-
 	GinkgoWriter.Print("Checking for Kubernetes configuration\n")
 	testClients, err := utils.SetupKubernetesClients()
 	if err != nil {
 		return fmt.Errorf("failed to setup Kubernetes clients: %v", err)
 	}
 
-	// Verify we can connect to the cluster
 	GinkgoWriter.Print("Verifying cluster connection\n")
 	if serverVersion, err := testClients.Clientset.Discovery().ServerVersion(); err == nil {
 		GinkgoWriter.Printf("Connected to Kubernetes cluster version: %s\n", serverVersion.String())
@@ -1435,7 +1516,6 @@ func checkClusterConnection() error {
 }
 
 func suiteSetup(prefix string) (*utils.TestNamespace, error) {
-
 	testFlags := utils.GetTestFlags()
 	namespace := fmt.Sprintf("%s-%s", prefix, testFlags.TestID)
 	By("Verifying test environment setup")
@@ -1449,7 +1529,6 @@ func suiteSetup(prefix string) (*utils.TestNamespace, error) {
 	testClients, err := utils.SetupKubernetesClients()
 	Expect(err).NotTo(HaveOccurred(), "Failed to setup Kubernetes clients")
 
-	// Verify we can connect to the cluster
 	By("Verifying cluster connection")
 	serverVersion, err := testClients.Clientset.Discovery().ServerVersion()
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to connect to cluster")
@@ -1459,10 +1538,6 @@ func suiteSetup(prefix string) (*utils.TestNamespace, error) {
 	testNamespace, err := testClients.CreateTestNamespace(namespace)
 	Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
 
-	// The smoke tests are intended to run on a temporary cluster that is created and destroyed for testing.
-	// To prevent errors when tests run in environments with CertManager already installed,
-	// we check for its presence before execution.
-	// Setup CertManager before the suite if not skipped and if not already installed
 	if !utils.SkipCertManagerInstall() {
 		By("checking if cert manager is installed already")
 		utils.SetCertManagerAlreadyInstalled(utils.IsCertManagerCRDsInstalled())
@@ -1475,7 +1550,6 @@ func suiteSetup(prefix string) (*utils.TestNamespace, error) {
 	}
 
 	By("Verifying CRDs are installed")
-	// Check for SBR CRDs by looking for API resources in the storage-based-remediation.medik8s.io group
 	apiResourceList, err := testClients.Clientset.Discovery().ServerResourcesForGroupVersion("storage-based-remediation.medik8s.io/v1alpha1")
 	Expect(err).NotTo(HaveOccurred(), "Failed to get API resources for storage-based-remediation.medik8s.io/v1alpha1")
 
@@ -1501,7 +1575,6 @@ func suiteSetup(prefix string) (*utils.TestNamespace, error) {
 	Expect(err).NotTo(HaveOccurred(),
 		"Expected controller-manager to be deployed (should be done by Makefile setup)")
 
-	// Confirm the operator is running
 	By("confirming the operator is running")
 	Eventually(func() bool {
 		podList, err := testClients.Clientset.CoreV1().Pods("sbr-operator-system").List(testClients.Context,
@@ -1520,15 +1593,12 @@ func suiteSetup(prefix string) (*utils.TestNamespace, error) {
 func describeEnvironment(testClients *utils.TestClients, testNamespace *utils.TestNamespace) {
 	By(fmt.Sprintf("Describing the %s environment", testNamespace.Name))
 
-	// Determine if this is a controller or agent namespace
 	isControllerNamespace := false
 	isAgentNamespace := false
 
-	// Heuristic: "sbr-operator-system" is the default controller namespace
 	if testNamespace.Name == "sbr-operator-system" {
 		isControllerNamespace = true
 	} else {
-		// Check for presence of controller-manager pods
 		pods := &corev1.PodList{}
 		err := testClients.Client.List(testClients.Context, pods,
 			client.InNamespace(testNamespace.Name),
@@ -1538,7 +1608,6 @@ func describeEnvironment(testClients *utils.TestClients, testNamespace *utils.Te
 		}
 	}
 
-	// Heuristic: agent pods are labeled "app=sbr-agent"
 	agentPods := &corev1.PodList{}
 	err := testClients.Client.List(testClients.Context, agentPods,
 		client.InNamespace(testNamespace.Name),
@@ -1547,7 +1616,6 @@ func describeEnvironment(testClients *utils.TestClients, testNamespace *utils.Te
 		isAgentNamespace = true
 	}
 
-	// Log the determination
 	if isControllerNamespace && isAgentNamespace {
 		GinkgoWriter.Printf("Namespace %q contains both controller and agent pods (hybrid or test namespace)\n",
 			testNamespace.Name)
@@ -1560,7 +1628,6 @@ func describeEnvironment(testClients *utils.TestClients, testNamespace *utils.Te
 	}
 
 	debugCollector := newDebugCollector(testClients, testNamespace.ArtifactsDir)
-	// Collect Kubernetes events
 	debugCollector.collectKubernetesEvents(testNamespace.Name)
 	debugCollector.collectStorageJobs(testNamespace.Name)
 	debugCollector.collectPVCs(testNamespace.Name)
@@ -1583,17 +1650,13 @@ func describeEnvironment(testClients *utils.TestClients, testNamespace *utils.Te
 	}
 
 	if isAgentNamespace {
-
-		// Save the definition and logs of all pods in the namespace for debugging
 		podList := &corev1.PodList{}
 		err := testClients.Client.List(testClients.Context, podList, client.InNamespace(testNamespace.Name))
 		if err != nil {
 			GinkgoWriter.Printf("Failed to list pods in namespace %q: %v\n", testNamespace.Name, err)
 		} else {
 			for _, pod := range podList.Items {
-				// Save pod definition
 				debugCollector.collectPodDescription(testNamespace.Name, pod.Name)
-				// Save pod logs for all containers
 				for _, container := range pod.Spec.Containers {
 					debugCollector.collectPodLogs(testNamespace.Name, pod.Name, container.Name)
 				}
@@ -1607,14 +1670,12 @@ func describeEnvironment(testClients *utils.TestClients, testNamespace *utils.Te
 
 		By("validating that SBR agent pods are running as expected")
 		verifyAgentsUp := func(g Gomega) {
-			// Get SBR agent pods
 			pods := &corev1.PodList{}
 			err := testClients.Client.List(testClients.Context, pods,
 				client.InNamespace(testNamespace.Name),
 				client.MatchingLabels{"app": "sbr-agent"})
 			g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve SBR agent pod information")
 
-			// Filter out pods that are being deleted
 			var activePods []corev1.Pod
 			for _, pod := range pods.Items {
 				if pod.DeletionTimestamp == nil {
@@ -1623,7 +1684,6 @@ func describeEnvironment(testClients *utils.TestClients, testNamespace *utils.Te
 			}
 			g.Expect(activePods).ToNot(BeEmpty(), "expected at least 1 SBR agent pod running")
 
-			// Validate each agent pod's status
 			for _, pod := range activePods {
 				g.Expect(pod.Name).To(ContainSubstring("sbr-agent"))
 				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning), "Incorrect SBR agent pod status")
@@ -1652,7 +1712,7 @@ func describeEnvironment(testClients *utils.TestClients, testNamespace *utils.Te
 				GinkgoWriter.Printf("Failed to get node mapping summary: %s\n", err)
 			}
 		}
-		// Run verification but don't fail cleanup if it errors
+
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -1661,7 +1721,6 @@ func describeEnvironment(testClients *utils.TestClients, testNamespace *utils.Te
 			}()
 			Eventually(verifyAgentsUp).Should(Succeed())
 		}()
-
 	}
 
 	By("Fetching curl-metrics logs")
@@ -1675,20 +1734,10 @@ func describeEnvironment(testClients *utils.TestClients, testNamespace *utils.Te
 	} else {
 		GinkgoWriter.Printf("Failed to get curl-metrics logs: %s\n", err)
 	}
-
 }
 
-// portworxProvisioner is the Portworx CSI provisioner name. Its presence as a StorageClass
-// provisioner in the cluster is used as a proxy for "Portworx is installed", per
-// docs/design/storage-validation.md.
-const portworxProvisioner = "pxd.portworx.com"
-
-// portworxTestStorageClassName is the name of the StorageClass this suite creates (and
-// cleans up) for the block-mode storage write-check scenario.
-const portworxTestStorageClassName = "px-test-sc"
-
 // findRWXFilesystemStorageClass returns the first StorageClass using a known RWX-compatible
-// filesystem provisioner, or nil if none is found.
+// filesystem provisioner or local test StorageClass, or nil if none is found.
 func findRWXFilesystemStorageClass() (*storagev1.StorageClass, error) {
 	storageClasses := &storagev1.StorageClassList{}
 	if err := k8sClient.List(ctx, storageClasses); err != nil {
@@ -1696,8 +1745,8 @@ func findRWXFilesystemStorageClass() (*storagev1.StorageClass, error) {
 	}
 	for i := range storageClasses.Items {
 		sc := &storageClasses.Items[i]
-		if isRWXCompatibleProvisioner(sc.Provisioner) {
-			GinkgoWriter.Printf("Found RWX-compatible storage class: %s (provisioner: %s)\n", sc.Name, sc.Provisioner)
+		if isRWXCompatibleProvisioner(sc.Provisioner) || strings.Contains(sc.Name, "nfs") {
+			GinkgoWriter.Printf("Found RWX-compatible filesystem storage class: %s (provisioner: %s)\n", sc.Name, sc.Provisioner)
 			return sc, nil
 		}
 	}
@@ -1720,28 +1769,36 @@ func findPortworxStorageClass() (*storagev1.StorageClass, error) {
 	return nil, nil
 }
 
-// cephRBDProvisioners are the Ceph RBD CSI provisioner names known to support RWX block
-// volumes via multi-attach, per isRWXBlockCompatibleProvisioner in the controller.
-var cephRBDProvisioners = map[string]bool{
-	"rbd.csi.ceph.com":                   true,
-	"openshift-storage.rbd.csi.ceph.com": true,
-}
-
-// findCephRBDStorageClass returns an existing StorageClass using a Ceph RBD provisioner
-// (RWX-capable for block volumes via multi-attach), or nil if none is found.
-func findCephRBDStorageClass() (*storagev1.StorageClass, error) {
+// findBlockStorageClass returns the first StorageClass in the cluster suitable for block-mode testing.
+// It filters out provisioners known to be RWO-only and dedicated negative-test provisioners (Portworx),
+// accepting any candidate block storage class (e.g. Ceph RBD or medik8s-kind-block).
+func findBlockStorageClass() (*storagev1.StorageClass, error) {
 	storageClasses := &storagev1.StorageClassList{}
 	if err := k8sClient.List(ctx, storageClasses); err != nil {
 		return nil, fmt.Errorf("failed to list StorageClasses: %w", err)
 	}
 	for i := range storageClasses.Items {
-		if cephRBDProvisioners[storageClasses.Items[i].Provisioner] {
-			GinkgoWriter.Printf("Found Ceph RBD storage class: %s (provisioner: %s)\n",
-				storageClasses.Items[i].Name, storageClasses.Items[i].Provisioner)
-			return &storageClasses.Items[i], nil
+		sc := &storageClasses.Items[i]
+
+		// Skip provisioners known to be RWO-only
+		if isRWXIncompatibleProvisioner(sc.Provisioner) {
+			continue
 		}
+
+		// Skip Portworx because it has its own dedicated withheld-fencing test
+		if sc.Provisioner == portworxProvisioner {
+			continue
+		}
+
+		GinkgoWriter.Printf("Found candidate block storage class: %s (provisioner: %s)\n", sc.Name, sc.Provisioner)
+		return sc, nil
 	}
 	return nil, nil
+}
+
+// findCephRBDStorageClass is an alias for findBlockStorageClass for backward compatibility across the test suite.
+func findCephRBDStorageClass() (*storagev1.StorageClass, error) {
+	return findBlockStorageClass()
 }
 
 func skipUnlessStorageAvailable(available bool, unavailableReason string) {
