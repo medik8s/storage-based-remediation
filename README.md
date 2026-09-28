@@ -1,4 +1,4 @@
-# Storage Based Remediation Operator
+# Storage-Based Remediation Operator
 
 A Kubernetes operator for managing STONITH Block Device (SBD) configurations
 and remediations for high-availability clustering. The operator provides

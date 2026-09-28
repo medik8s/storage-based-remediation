@@ -1,6 +1,6 @@
 # SBR Operator RBAC Security Model
 
-This document outlines the Role-Based Access Control (RBAC) configuration for the SBR (Storage Based Remediation) Operator and its components, designed following the **Principle of Least Privilege**.
+This document outlines the Role-Based Access Control (RBAC) configuration for the SBR (Storage-Based Remediation) Operator and its components, designed following the **Principle of Least Privilege**.
 
 ## Overview
 

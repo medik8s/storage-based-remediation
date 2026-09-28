@@ -119,7 +119,7 @@ kubectl apply -f https://github.com/medik8s/storage-based-remediation/releases/l
 
 1. **Install from OperatorHub:**
    - Navigate to **Operators** → **OperatorHub**
-   - Search for "Storage Based Remediation"
+   - Search for "Storage-Based Remediation"
    - Click **Install** and follow the wizard
 
 2. **Verify operator installation:**

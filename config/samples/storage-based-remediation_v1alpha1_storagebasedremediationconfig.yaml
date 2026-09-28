@@ -1,6 +1,6 @@
 # StorageBasedRemediationConfig Sample Configuration
 #
-# This is a sample configuration for the Storage Based Remediation operator.
+# This is a sample configuration for the Storage-Based Remediation operator.
 # The SBR operator provides watchdog-based fencing for Kubernetes clusters
 # to ensure high availability through automatic node remediation.
 #

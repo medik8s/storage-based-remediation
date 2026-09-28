@@ -75,7 +75,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           draft: true
           body: |
-            # Storage Based Remediation v${{ inputs.version }}
+            # Storage-Based Remediation v${{ inputs.version }}
 
             ## Notable Changes
 

@@ -52,7 +52,7 @@ The SCC is automatically bound to the `sbr-agent` service account in the `sbr-sy
 
 The SBR Agent requires these elevated privileges because it needs to:
 - Access hardware watchdog devices (`/dev/watchdog*`)
-- Read/write SBR (Storage Based Remediation) block devices
+- Read/write SBR (Storage-Based Remediation) block devices
 - Monitor system health and perform emergency reboots
 - Interact with low-level system components
 
