@@ -18,8 +18,13 @@ This is a **breaking change** for users upgrading via OLM. Because OLM treats di
 
 To upgrade from the old package name to the new one, users must manually migrate their OLM Subscription.
 
+> [!WARNING]
+> **DO NOT delete your `StorageBasedRemediationConfig` or `StorageBasedRemediation` custom resources as part of this migration.**
+> The upgraded operator can pick them up automatically in Step 4. Deleting these CRs will result in loss of your remediation configuration,
+  and is **not** required or recommended for this upgrade.
+
 ### Step 1: Delete the Old Subscription
-Delete the Subscription associated with the old package name. This will not delete your `StorageBasedRemediationConfig` or `StorageBasedRemediation` custom resources.
+Delete the Subscription associated with the old package name. This will **not** delete your `StorageBasedRemediationConfig` or `StorageBasedRemediation` custom resources — do not delete them yourself.
 
 ```bash
 # Find the subscription name
@@ -30,6 +35,9 @@ kubectl delete subscription <subscription-name> -n openshift-operators
 ```
 
 ### Step 2: Delete the Old ClusterServiceVersion (CSV)
+
+> [!WARNING]
+> Again, only delete the CSV itself. Do **not** delete your `StorageBasedRemediationConfig` or `StorageBasedRemediation` CRs.
 
 ```bash
 # Find the CSV name
