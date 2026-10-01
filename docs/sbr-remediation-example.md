@@ -7,9 +7,10 @@ The StorageBasedRemediation controller provides automated fencing capabilities f
 When a node becomes unresponsive or requires manual fencing, create an `StorageBasedRemediation` resource to initiate the fencing process. The controller will:
 
 1. Validate that it's the leader (if leader election is enabled)
-2. Map the node name to a numeric node ID
-3. Write a fence message to the shared SBD device
-4. Monitor and update the remediation status
+2. Verify the storage write check has passed (`StorageValidation.ConcurrentWriteable=true` on the owning StorageBasedRemediationConfig). If not, fencing is withheld with a `FencingWithheld` event and the reconciler requeues every 10 seconds.
+3. Map the node name to a numeric node ID
+4. Write a fence message to the shared SBD device
+5. Monitor and update the remediation status
 
 ## Prerequisites
 

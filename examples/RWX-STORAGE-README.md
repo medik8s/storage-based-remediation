@@ -335,7 +335,7 @@ spec:
 The SBR operator controller automatically:
 
 1. **Detects shared storage configuration** when `sharedStorageClass` is specified
-2. **Creates a PVC** using the specified StorageClass (named `sbr-shared-{config-name}`)
+2. **Creates a PVC** using the specified StorageClass (named `{config-name}-shared-storage`)
 3. **Validates PVC creation** and waits for it to be bound
 4. **Adds PVC volume to DaemonSet** template
 5. **Mounts shared storage** at the specified path in all agent pods
