@@ -833,56 +833,7 @@ func (s *SBRAgent) initializeSBRDevices() error {
 //   - (false, nil, nil) — filesystem mode (directory path or no valid superblock)
 //   - (false, nil, err) — device exists but I/O failed or superblock layout invalid
 func (s *SBRAgent) probeBlockMode() (bool, *blockformat.Superblock, error) {
-	// Check if the path is a directory — that is always filesystem mode.
-	info, statErr := os.Stat(s.heartbeatDevicePath)
-	if statErr == nil && info.IsDir() {
-		logger.V(1).Info("Path is a directory, using filesystem mode",
-			"path", s.heartbeatDevicePath)
-		return false, nil, nil
-	}
-
-	// Use O_DIRECT + O_SYNC so the superblock probe bypasses the local page
-	// cache and reads fresh data from the shared RWX block device.
-	dev, err := blockdevice.OpenWithTimeout(s.heartbeatDevicePath, s.ioTimeout,
-		logger.WithName("probe-device"))
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to open device for block probe: %w", err)
-	}
-	defer dev.Close()
-
-	buf := blockdevice.DirectIOAlloc(int(blockformat.BlockSuperblockSize))
-	n, err := dev.ReadAt(buf, blockformat.BlockSuperblockOffset)
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			// File is smaller than the superblock region — not a block-format device.
-			logger.V(1).Info("Device too small for superblock, using filesystem mode",
-				"path", s.heartbeatDevicePath)
-			return false, nil, nil
-		}
-		return false, nil, fmt.Errorf("failed to read superblock from %s (read %d bytes): %w",
-			s.heartbeatDevicePath, n, err)
-	}
-	if n < blockformat.SuperblockTotalSize {
-		// Short read without error — treat as filesystem mode.
-		logger.V(1).Info("Short read from device, using filesystem mode",
-			"path", s.heartbeatDevicePath, "bytesRead", n)
-		return false, nil, nil
-	}
-
-	sb, err := blockformat.UnmarshalSuperblock(buf)
-	if err != nil {
-		// No valid superblock magic/version/CRC — this is a regular file, not
-		// a block-format device. Treat as filesystem mode.
-		logger.V(1).Info("No valid superblock found, using filesystem mode",
-			"path", s.heartbeatDevicePath, "error", err)
-		return false, nil, nil
-	}
-
-	if err := sb.Validate(); err != nil {
-		return false, nil, fmt.Errorf("superblock found but invalid layout: %w", err)
-	}
-
-	return true, sb, nil
+	return probeBlockModeAt(s.heartbeatDevicePath, s.ioTimeout)
 }
 
 // initializeBlockModeDevices sets up block mode: opens one device and
@@ -2453,7 +2404,11 @@ func probeBlockModeAt(devicePath string, ioTimeout time.Duration) (bool, *blockf
 
 	sb, err := blockformat.UnmarshalSuperblock(buf)
 	if err != nil {
-		// No valid superblock magic/version/CRC — a regular file, not a block-format device.
+		if blockformat.HasSuperblockMagic(buf) {
+			return false, nil, fmt.Errorf("device %s has SBR superblock magic but an invalid superblock: %w",
+				devicePath, err)
+		}
+		// No magic — a regular file, not a block-format device.
 		logger.V(1).Info("No valid superblock found, using filesystem mode", "path", devicePath, "error", err)
 		return false, nil, nil
 	}

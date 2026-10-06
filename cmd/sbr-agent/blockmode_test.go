@@ -237,6 +237,42 @@ func TestProbeBlockMode_ValidMagicInvalidLayout(t *testing.T) {
 	}
 }
 
+func TestProbeBlockMode_ValidMagicCorruptCRC(t *testing.T) {
+	initTestLogger(t)
+	path := createBlockModeDevice(t)
+
+	// Corrupt a data byte past the magic without recomputing the CRC: the device
+	// still self-identifies as SBR block format (magic intact) but the superblock
+	// fails to unmarshal. This must fail closed, not silently downgrade to
+	// filesystem mode.
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("failed to open: %v", err)
+	}
+	sector := make([]byte, blockformat.BlockSuperblockSize)
+	if _, err := f.ReadAt(sector, 0); err != nil {
+		t.Fatalf("failed to read: %v", err)
+	}
+	sector[32] ^= 0xFF // flip a byte well past the magic; breaks the CRC
+	if !blockformat.HasSuperblockMagic(sector) {
+		t.Fatal("test setup error: magic should remain intact")
+	}
+	if _, err := f.WriteAt(sector, 0); err != nil {
+		t.Fatalf("failed to write: %v", err)
+	}
+	f.Close()
+
+	agent := &SBRAgent{
+		heartbeatDevicePath: path,
+		ioTimeout:           30 * time.Second,
+	}
+
+	_, _, err = agent.probeBlockMode()
+	if err == nil {
+		t.Fatal("expected error for device with valid magic but corrupt superblock")
+	}
+}
+
 func TestProbeBlockMode_NonExistentPath(t *testing.T) {
 	initTestLogger(t)
 
