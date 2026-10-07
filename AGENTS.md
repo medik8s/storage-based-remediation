@@ -13,7 +13,9 @@ Other medik8s remediators (SNR, MDR, FAR) implement the same NHC template contra
 
 ## What SBR does
 
-Implements cloud-native SBD (Storage-Based Death / STONITH Block Device) for Kubernetes clusters that lack out-of-band power management (IPMI/BMC). It uses shared RWX storage for node heartbeats and fence messages. The operator reconciles StorageBasedRemediationConfig resources; each agent embeds the remediation reconciler. Peer agents process StorageBasedRemediation requests and write fence messages. The target agent reads its fence slot and initiates self-fencing; the watchdog is a separate reboot mechanism, not a reader of storage slots. Detect-only mode disables remediation and watchdog arming.
+Implements cloud-native SBD (Storage-Based Death / STONITH Block Device) for Kubernetes clusters that lack out-of-band power management (IPMI/BMC). It uses shared RWX storage for node heartbeats and fence messages. The operator reconciles StorageBasedRemediationConfig resources; each agent embeds the remediation reconciler. Peer agents process StorageBasedRemediation requests and write fence messages. The target agent reads its fence slot and initiates self-fencing; the watchdog is a separate reboot mechanism, not a reader of storage slots.
+
+SBR also acts as a node health detector: agents monitor peer heartbeats on shared storage and set the `SBRStorageUnhealthy` Node condition when a peer's heartbeat times out. NHC can be configured to watch this condition and trigger remediation. Detection runs in both normal and detect-only modes; detect-only mode disables remediation and watchdog arming while keeping heartbeat monitoring and Node condition updates active.
 
 Two storage backends are supported:
 - **Filesystem mode** — RWX PVC mounted as a filesystem; requires compatible shared storage; cache-coherency mount options are set on provisioned NFS/CephFS StorageClasses
