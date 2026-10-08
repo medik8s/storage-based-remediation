@@ -20,7 +20,7 @@ VERSION ?= $(DEFAULT_VERSION)
 # so the generated catalog always has a valid upgrade edge (override for point releases).
 PREVIOUS_VERSION ?= 0.3.1
 # Lower bound for the skipRange field, should be set to the oldest supported version.
-SKIP_RANGE_LOWER ?= 0.1.0
+SKIP_RANGE_LOWER ?= 0.3.0
 export VERSION
 
 # Use the selected version for operator and agent image tags.

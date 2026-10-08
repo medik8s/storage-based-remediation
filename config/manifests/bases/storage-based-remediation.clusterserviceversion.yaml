@@ -8,7 +8,7 @@ metadata:
     containerImage: quay.io/medik8s/storage-based-remediation-operator:v5.8.0
     createdAt: ""
     description: Storage-Based Remediation Operator for remediating nodes using storage-based fencing (SBD/STONITH).
-    olm.skipRange: '>=0.1.0 <5.8.0'
+    olm.skipRange: '>=0.3.0 <5.8.0'
     operatorframework.io/suggested-namespace: openshift-workload-availability
     operatorframework.io/suggested-namespace-template: '{"kind":"Namespace","apiVersion":"v1","metadata":{"name":"openshift-workload-availability","annotations":{"openshift.io/node-selector":""}}}'
     repository: https://github.com/medik8s/storage-based-remediation
