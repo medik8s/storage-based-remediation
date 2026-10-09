@@ -28,6 +28,8 @@ import (
 
 	"github.com/medik8s/storage-based-remediation/v5/internal/blockdevice"
 	"github.com/medik8s/storage-based-remediation/v5/internal/blockformat"
+	"github.com/medik8s/storage-based-remediation/v5/internal/controller"
+	"github.com/medik8s/storage-based-remediation/v5/internal/mocks"
 	"github.com/medik8s/storage-based-remediation/v5/internal/sbdprotocol"
 )
 
@@ -558,6 +560,44 @@ func TestSlotOffset_FilesystemMode(t *testing.T) {
 	}
 }
 
+// TestSlotOffsetAgreesWithReconciler is the cross-component guard for the drift that broke block
+// mode: the agent and the remediation reconciler each keep their own copy of the slot arithmetic,
+// and the reconciler is handed the agent's own region-relative OffsetDevice adapters, so the two
+// copies must resolve every node to the same byte.
+//
+// They did not. The agent was changed to the packed block-mode base (nodeID-1) to fix the slot-255
+// region overflow; the reconciler's copy was left on nodeID. The reconciler then wrote the fence
+// pill one slot past where the victim reads it, and read liveness one slot past where the victim
+// writes it — and since a zeroed neighbouring slot fails to unmarshal, which is treated as "node
+// stopped", fencing was reported complete while the victim was still alive and writing.
+//
+// Neither side's own unit tests could catch that: each was self-consistent. Only comparing the two
+// does. If you change one slotOffset, this fails until you change the other.
+func TestSlotOffsetAgreesWithReconciler(t *testing.T) {
+	for _, blockMode := range []bool{false, true} {
+		name := "filesystem-mode"
+		if blockMode {
+			name = "block-mode"
+		}
+		t.Run(name, func(t *testing.T) {
+			agent := &SBRAgent{blockMode: blockMode}
+			r := &controller.SBRRemediationReconciler{}
+			if blockMode {
+				r.SetBlockMode(true, blockformat.BlockSlotSize,
+					make([]byte, blockformat.BlockSlotSize), make([]byte, blockformat.BlockSlotSize))
+			}
+
+			for nodeID := uint16(1); nodeID <= sbdprotocol.SBD_MAX_NODES; nodeID++ {
+				want := agent.slotOffset(nodeID)
+				if got := r.SlotOffset(nodeID); got != want {
+					t.Fatalf("node %d: reconciler SlotOffset = %d, agent slotOffset = %d; "+
+						"the controller would target the wrong slot", nodeID, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestSlotOffset_BlockMode_MaxNodeID_FitsInRegion(t *testing.T) {
 	agent := &SBRAgent{blockMode: true}
 
@@ -571,5 +611,59 @@ func TestSlotOffset_BlockMode_MaxNodeID_FitsInRegion(t *testing.T) {
 		t.Errorf("nodeID %d: offset %d + slot %d = %d exceeds region %d",
 			sbdprotocol.SBD_MAX_NODES, maxOffset, blockformat.BlockSlotSize,
 			endByte, regionSize)
+	}
+}
+
+// TestCleanOwnFenceSlotIfPresent_BlockMode guards the startup disarm that was a silent no-op in
+// block mode. It reads a full 4096-byte slot into fenceReadBuf and used to hand the whole buffer
+// to Unmarshal, which checksums data[:len(data)-4] — so it checksummed 4092 bytes of slot instead
+// of the header and could never match. The function bailed at the parse step and left the fence
+// in place; five seconds later the peer monitor read the same bytes, parsed them correctly, and
+// self-fenced a healthy node.
+//
+// Filesystem mode was unaffected because its buffer is exactly SBD_HEADER_SIZE, which is why this
+// asserts the block geometry specifically.
+func TestCleanOwnFenceSlotIfPresent_BlockMode(t *testing.T) {
+	initTestLogger(t)
+
+	const nodeID = uint16(8)
+	dev := mocks.NewMockBlockDevice("fence", int(blockformat.BlockMaxNodes*blockformat.BlockSlotSize))
+
+	agent := &SBRAgent{
+		blockMode:     true,
+		nodeID:        nodeID,
+		fenceDevice:   dev,
+		fenceReadBuf:  make([]byte, blockformat.BlockSlotSize),
+		fenceWriteBuf: make([]byte, blockformat.BlockSlotSize),
+	}
+
+	// Seed the victim's slot with a live fence, as the reconciler would write it.
+	fenceBytes, err := sbdprotocol.MarshalFence(
+		sbdprotocol.NewFence(130, nodeID, 1, sbdprotocol.FENCE_REASON_MANUAL))
+	if err != nil {
+		t.Fatalf("marshal fence: %v", err)
+	}
+	slot := make([]byte, blockformat.BlockSlotSize)
+	copy(slot, fenceBytes)
+	offset := agent.slotOffset(nodeID)
+	if _, err := dev.WriteAt(slot, offset); err != nil {
+		t.Fatalf("seed fence into slot: %v", err)
+	}
+
+	if err := agent.cleanOwnFenceSlotIfPresent(logr.Discard()); err != nil {
+		t.Fatalf("cleanOwnFenceSlotIfPresent: %v", err)
+	}
+
+	readBuf := make([]byte, blockformat.BlockSlotSize)
+	if _, err := dev.ReadAt(readBuf, offset); err != nil {
+		t.Fatalf("read slot back: %v", err)
+	}
+	got, err := sbdprotocol.UnmarshalFence(readBuf[:sbdprotocol.SBD_HEADER_SIZE+3])
+	if err != nil {
+		t.Fatalf("slot should hold a parseable cleared fence after disarm: %v", err)
+	}
+	if got.Reason != sbdprotocol.FENCE_REASON_NONE {
+		t.Fatalf("stale fence was not disarmed: reason = %d, want FENCE_REASON_NONE (%d); "+
+			"a fresh agent on this node would self-fence", got.Reason, sbdprotocol.FENCE_REASON_NONE)
 	}
 }
