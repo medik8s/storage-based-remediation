@@ -2,9 +2,14 @@ name: CI
 
 on:
   push:
-    branches: ['**']
+    branches: [main*, medik8s-*, release-*]
   pull_request:
     branches: ['**']
+
+# A single run per pull request or branch, superseding any stale one.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   ci:
