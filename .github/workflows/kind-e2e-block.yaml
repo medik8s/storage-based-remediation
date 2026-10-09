@@ -86,6 +86,47 @@ jobs:
           disown || true
           echo "kind reboot watcher started (pid $(cat /tmp/wd-helper.pid))"
 
+      # Agent logs must be snapshotted while the test runs, not collected at teardown.
+      # kubelet garbage-collects /var/log/pods as soon as a pod is deleted, so by teardown the
+      # logs for every healthy node are already gone — the only node that still has them is one
+      # whose kubelet died and could not clean up. That loses exactly the peer agent that
+      # performs the fencing, leaving only the victim.
+      - name: Start agent log collector
+        run: |
+          mkdir -p .tests/agent-logs
+          cat > /tmp/agent-log-collector.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          while true; do
+            kubectl get pods -A -l app=sbr-agent \
+              -o 'jsonpath={range .items[*]}{.metadata.namespace} {.metadata.name} {.spec.nodeName}{"\n"}{end}' \
+              2>/dev/null |
+              while read -r ns pod node; do
+                [ -n "${pod}" ] || continue
+                base=".tests/agent-logs/${node}_${pod}"
+                # Each snapshot is the whole log so far. Write to .tmp and only move on success,
+                # so a failed read (node down) never truncates a good earlier capture.
+                if kubectl logs -n "${ns}" "${pod}" --timestamps > "${base}.log.tmp" 2>/dev/null; then
+                  mv "${base}.log.tmp" "${base}.log"
+                else
+                  rm -f "${base}.log.tmp"
+                fi
+                # A self-fence that restarted the container leaves its last words here only.
+                if kubectl logs -n "${ns}" "${pod}" --timestamps --previous \
+                     > "${base}.previous.log.tmp" 2>/dev/null; then
+                  mv "${base}.previous.log.tmp" "${base}.previous.log"
+                else
+                  rm -f "${base}.previous.log.tmp"
+                fi
+              done
+            sleep 10
+          done
+          SCRIPT
+          chmod +x /tmp/agent-log-collector.sh
+          nohup /tmp/agent-log-collector.sh > /tmp/agent-log-collector.out 2>&1 &
+          echo $! > /tmp/agent-log-collector.pid
+          disown || true
+          echo "agent log collector started (pid $(cat /tmp/agent-log-collector.pid))"
+
       - name: Run e2e tests (block storage subset)
         timeout-minutes: 60
         env:
@@ -102,6 +143,13 @@ jobs:
           mkdir -p .tests
           cp /tmp/wd-helper.log .tests/reboot-watcher.log 2>/dev/null || true
 
+      - name: Stop agent log collector
+        if: ${{ always() }}
+        run: |
+          [ -f /tmp/agent-log-collector.pid ] && kill "$(cat /tmp/agent-log-collector.pid)" 2>/dev/null || true
+          rm -f .tests/agent-logs/*.tmp 2>/dev/null || true
+          ls -la .tests/agent-logs/ 2>/dev/null || echo "no agent logs captured"
+
       - name: Debug on failure
         if: ${{ always() }}
         run: |
@@ -112,10 +160,40 @@ jobs:
           echo "=== PVCs ==="
           kubectl get pvc -A > .tests/pvcs.yaml || true
           echo "=== Agent pods ==="
-          kubectl get pods -A -l app.kubernetes.io/component=agent -o wide > .tests/agent-pods.yaml || true
+          # Agent pods carry app=sbr-agent; the previous selector matched nothing.
+          kubectl get pods -A -l app=sbr-agent -o wide > .tests/agent-pods.txt || true
+          kubectl get pods -A -l app=sbr-agent -o yaml > .tests/agent-pods.yaml || true
+          echo "=== Events ==="
+          kubectl get events -A --sort-by=.metadata.creationTimestamp > .tests/events.txt || true
           echo "=== Operator logs ==="
           kubectl logs -n ${OPERATOR_NAMESPACE} -l control-plane=controller-manager --tail=200 > .tests/operator-logs.txt || true
           make dev-ci-debug 2>/dev/null || true
+
+      # Agent logs must come off the node filesystem, not the API. A self-fenced node takes its
+      # kubelet down, so `kubectl logs` returns nothing for exactly the pod we need to inspect,
+      # and the reboot watcher then restarts the node container. /var/log/pods survives both,
+      # so copy it straight out of each Kind node.
+      - name: Collect agent logs from node filesystems
+        if: ${{ always() }}
+        run: |
+          mkdir -p .tests/node-pod-logs
+          for node in $(docker ps --filter "label=io.x-k8s.kind.cluster=${MEDIK8S_CLUSTER_NAME}" --format '{{.Names}}'); do
+            echo "=== ${node} ==="
+            # Agent pod log dirs are named <namespace>_<pod>_<uid>; keep only SBR agent ones.
+            docker exec "${node}" sh -c 'ls /var/log/pods 2>/dev/null | grep sbr-agent || true' |
+              while read -r dir; do
+                [ -n "${dir}" ] || continue
+                mkdir -p ".tests/node-pod-logs/${node}"
+                docker cp "${node}:/var/log/pods/${dir}" ".tests/node-pod-logs/${node}/" 2>/dev/null \
+                  && echo "  collected ${dir}" \
+                  || echo "  failed ${dir}"
+              done
+          done
+          # Kubelet journal explains an unexpected node restart (watchdog reboot vs container kill).
+          for node in $(docker ps --filter "label=io.x-k8s.kind.cluster=${MEDIK8S_CLUSTER_NAME}" --format '{{.Names}}'); do
+            docker exec "${node}" journalctl -u kubelet --no-pager -n 500 \
+              > ".tests/node-pod-logs/${node}-kubelet.log" 2>/dev/null || true
+          done
 
       - name: Teardown Kind cluster
         if: ${{ always() }}

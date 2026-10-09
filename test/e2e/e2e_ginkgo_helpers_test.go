@@ -477,43 +477,63 @@ func (dc *debugCollector) collectAgentLogs(namespace string) {
 		return
 	}
 
-	// Filter out pods that are being deleted
-	var activePods []corev1.Pod
-	for _, pod := range pods.Items {
-		if pod.DeletionTimestamp == nil {
-			activePods = append(activePods, pod)
-		}
-	}
-
-	if len(activePods) == 0 {
-		GinkgoWriter.Printf("No active SBR agent pods found\n")
+	if len(pods.Items) == 0 {
+		GinkgoWriter.Printf("No SBR agent pods found\n")
 		return
 	}
 
-	// Collect logs from each agent pod
-	for _, pod := range activePods {
-		GinkgoWriter.Printf("\n=== SBR Agent Pod: %s (Node: %s) ===\n", pod.Name, pod.Spec.NodeName)
+	// Terminating pods are collected too: an agent that self-fenced is mid-deletion by the time
+	// teardown runs, and skipping it drops the one log that explains why the node went down.
+	for _, pod := range pods.Items {
+		terminating := ""
+		if pod.DeletionTimestamp != nil {
+			terminating = " (terminating)"
+		}
+		GinkgoWriter.Printf("\n=== SBR Agent Pod: %s (Node: %s)%s ===\n", pod.Name, pod.Spec.NodeName, terminating)
 
-		req := dc.Clients.Clientset.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{})
-		podLogs, err := req.Stream(dc.Clients.Context)
-		if err == nil {
-			defer func() { _ = podLogs.Close() }()
-			buf := new(bytes.Buffer)
-			_, _ = io.Copy(buf, podLogs)
-			// Save the logs to a file named after the pod name
-			logFileName := fmt.Sprintf("%s/%s.log", dc.ArtifactsDir, pod.Name)
-			if f, fileErr := os.Create(logFileName); fileErr == nil {
-				defer func() { _ = f.Close() }()
-				_, _ = f.Write(buf.Bytes())
-				GinkgoWriter.Printf("Agent logs for pod %s saved to %s\n", pod.Name, logFileName)
-			} else {
-				GinkgoWriter.Printf("Failed to write agent logs to file %s: %s\n", logFileName, fileErr)
-				GinkgoWriter.Printf("Agent logs:\n %s\n", buf.String())
+		dc.saveAgentPodLog(namespace, pod.Name, "", false)
+
+		// A self-fence that actually restarted the container leaves its last words only in the
+		// previous instance's log.
+		for _, cs := range pod.Status.ContainerStatuses {
+			if cs.RestartCount > 0 {
+				dc.saveAgentPodLog(namespace, pod.Name, cs.Name, true)
 			}
-		} else {
-			GinkgoWriter.Printf("Failed to get agent logs from pod %s: %s\n", pod.Name, err)
 		}
 	}
+}
+
+// saveAgentPodLog writes one container's log to the artifacts dir. previous selects the prior
+// container instance.
+func (dc *debugCollector) saveAgentPodLog(namespace, podName, container string, previous bool) {
+	suffix := ""
+	if previous {
+		suffix = "-previous"
+	}
+
+	opts := &corev1.PodLogOptions{Container: container, Previous: previous}
+	podLogs, err := dc.Clients.Clientset.CoreV1().Pods(namespace).GetLogs(podName, opts).Stream(dc.Clients.Context)
+	if err != nil {
+		// Expected when the node hosting the pod is down; the workflow copies /var/log/pods off
+		// the node filesystem to cover exactly that case.
+		GinkgoWriter.Printf("Failed to get agent logs from pod %s%s: %s\n", podName, suffix, err)
+		return
+	}
+	defer func() { _ = podLogs.Close() }()
+
+	buf := new(bytes.Buffer)
+	_, _ = io.Copy(buf, podLogs)
+
+	logFileName := fmt.Sprintf("%s/%s%s.log", dc.ArtifactsDir, podName, suffix)
+	f, fileErr := os.Create(logFileName)
+	if fileErr != nil {
+		GinkgoWriter.Printf("Failed to write agent logs to file %s: %s\n", logFileName, fileErr)
+		GinkgoWriter.Printf("Agent logs:\n %s\n", buf.String())
+		return
+	}
+	defer func() { _ = f.Close() }()
+	_, _ = f.Write(buf.Bytes())
+	GinkgoWriter.Printf("Agent logs for pod %s%s saved to %s\n", podName, suffix, logFileName)
 }
 
 // CollectKubernetesEvents collects Kubernetes events from a namespace
