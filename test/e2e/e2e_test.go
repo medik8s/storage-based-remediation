@@ -17,9 +17,11 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -580,61 +582,62 @@ func getNodeBootIDs(cluster ClusterInfo) map[string]string {
 }
 
 func getNodeBootID(nodeName string) string {
-	node := &corev1.Node{}
-	Eventually(func() bool {
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, node)
-		if err == nil {
-			return node.Status.NodeInfo.BootID != ""
+	var bootID string
+	Eventually(func() (string, error) {
+		var err error
+		bootID, err = readNodeBootID(nodeName)
+		return bootID, err
+	}, time.Minute*2, time.Second*10).ShouldNot(BeEmpty())
+	return bootID
+}
+
+func readNodeBootID(nodeName string) (string, error) {
+	if os.Getenv("E2E_KIND") == "true" {
+		// Kind containers share the host boot ID; StartedAt changes on container restart.
+		containerTool := os.Getenv("CONTAINER_TOOL")
+		if containerTool == "" {
+			containerTool = "docker"
 		}
-		return false
-	}, time.Minute*2, time.Second*10).Should(BeTrue())
-	return node.Status.NodeInfo.BootID
+		commandCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		output, err := exec.CommandContext(commandCtx, containerTool, "inspect",
+			"--format", "{{.State.StartedAt}}", nodeName).CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("inspect Kind node %s: %w: %s", nodeName, err, output)
+		}
+		startedAt := strings.TrimSpace(string(output))
+		started, err := time.Parse(time.RFC3339Nano, startedAt)
+		if err != nil || started.IsZero() {
+			return "", fmt.Errorf("invalid container start time for %s: %q", nodeName, startedAt)
+		}
+		return startedAt, nil
+	}
+
+	node := &corev1.Node{}
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, node); err != nil {
+		return "", err
+	}
+	return node.Status.NodeInfo.BootID, nil
 }
 
 func checkNodeReboot(nodeName, reason, originalBootTime string, timeout time.Duration, target bool) {
-	if target && os.Getenv("E2E_KIND") == "true" {
-		By(fmt.Sprintf("Waiting for node %s to be Ready %s (kind: reboot verification disabled)", nodeName, reason))
-		Eventually(func() bool {
-			node := &corev1.Node{}
-			if err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, node); err != nil {
-				return false
-			}
-			for _, condition := range node.Status.Conditions {
-				if condition.Type == corev1.NodeReady {
-					return condition.Status == corev1.ConditionTrue
-				}
-			}
-			return false
-		}, timeout, time.Second*10).Should(BeTrue(), "Node %s should be Ready %s", nodeName, reason)
+	Expect(originalBootTime).NotTo(BeEmpty(), "Original boot identity is required for node %s", nodeName)
+	By(fmt.Sprintf("Checking reboot of node %s %s (expected: %t)", nodeName, reason, target))
+	readBootID := func(g Gomega) string {
+		bootID, err := readNodeBootID(nodeName)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(bootID).NotTo(BeEmpty())
+		return bootID
+	}
+	if target {
+		Eventually(readBootID, timeout, time.Second*10).ShouldNot(Equal(originalBootTime),
+			"Node %s should have rebooted %s", nodeName, reason)
 	} else {
-		rebootText := ""
-		if !target {
-			rebootText = "not "
-		}
-		By(fmt.Sprintf("Verifying node %s has %srebooted %s", nodeName, rebootText, reason))
-		result := Eventually(func() bool {
-			currentBootID := getNodeBootID(nodeName)
-			if originalBootTime != "" && currentBootID != originalBootTime {
-				GinkgoWriter.Printf("Node %s boot ID changed - node has rebooted: %v -> %v\n",
-					nodeName, originalBootTime, currentBootID)
-				return true
-			}
-			return false
-		}, timeout, time.Second*45)
-
-		resultText := fmt.Sprintf("Node %s should %shave rebooted %s", nodeName, rebootText, reason)
-
-		if target {
-			result.Should(BeTrue(), resultText)
-		} else {
-			result.ShouldNot(BeTrue(), resultText)
-		}
+		Consistently(readBootID, timeout, time.Second*10).Should(Equal(originalBootTime),
+			"Node %s should not have rebooted %s", nodeName, reason)
 	}
 
 	if target {
-		By(fmt.Sprintf("Cleaning up remediated node %s", nodeName))
-		cleanupRemediatedWorkloads(testNamespace, nodeName)
-
 		By(fmt.Sprintf("Waiting for node %s to come back online after reboot", nodeName))
 		Eventually(func() bool {
 			node := &corev1.Node{}
@@ -651,6 +654,9 @@ func checkNodeReboot(nodeName, reason, originalBootTime string, timeout time.Dur
 			}
 			return false
 		}, time.Minute*10, time.Second*30).Should(BeTrue())
+
+		By(fmt.Sprintf("Cleaning up remediated node %s", nodeName))
+		cleanupRemediatedWorkloads(testNamespace, nodeName)
 
 		By("Waiting for Ceph cluster to be healthy")
 		Eventually(func() bool {
@@ -933,22 +939,13 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 	Expect(err).NotTo(HaveOccurred())
 	By(fmt.Sprintf("Created StorageBasedRemediation CR for node %s", targetNode.Metadata.Name))
 
-	By("Verifying SBR remediation is triggered and processed for the disrupted node")
-	Eventually(func() bool {
-		remediations := &medik8sv1alpha1.StorageBasedRemediationList{}
-		err := k8sClient.List(ctx, remediations, client.InNamespace(testNamespace.Name))
-		if err != nil {
-			return false
-		}
-
-		for _, remediation := range remediations.Items {
-			if remediation.Name == targetNode.Metadata.Name {
-				By(fmt.Sprintf("SBR remediation found for node %s: %+v", targetNode.Metadata.Name, remediation.Status))
-				return true
-			}
-		}
-		return false
-	}, time.Minute*5, time.Second*30).Should(BeTrue())
+	By("Waiting for fencing success on the created StorageBasedRemediation")
+	Eventually(func(g Gomega) bool {
+		current := &medik8sv1alpha1.StorageBasedRemediation{}
+		g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sbrRemediation), current)).To(Succeed())
+		g.Expect(current.UID).To(Equal(sbrRemediation.UID), "Remediation CR was replaced")
+		return current.IsFencingSucceeded()
+	}, time.Minute*5, time.Second*5).Should(BeTrue(), "FencingSucceeded did not become True")
 
 	checkNodeReboot(targetNode.Metadata.Name, "due to remediation CR",
 		originalBootTimes[targetNode.Metadata.Name], time.Minute*10, true)
