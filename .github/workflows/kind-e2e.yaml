@@ -1,11 +1,22 @@
 name: Kind E2E
 
 on:
+  # main* also covers fork branches (main-<topic>), so a push to a fork runs
+  # the suite without opening a PR first.
   push:
-    branches: [main*, release-*]
+    branches: [main*, medik8s-*, release-*]
+  # Any target branch: main, medik8s-X.Y, release-X.Y, and cherry-pick PRs.
   pull_request:
-    branches: [main*, release-*]
+    branches: ['**']
   workflow_dispatch: {}
+
+# A single run per pull request or branch, superseding any stale one.
+concurrency:
+  group: kind-e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   kind-e2e:
