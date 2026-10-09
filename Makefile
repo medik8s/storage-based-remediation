@@ -663,7 +663,7 @@ YQ_VERSION ?= v4.53.2
 # Icon configuration
 BLUE_ICON_PATH = "./config/assets/medik8s_blue_icon.png"
 
-DEFAULT_ICON_BASE64 := $(shell base64 --wrap=0 ${BLUE_ICON_PATH})
+DEFAULT_ICON_BASE64 := $(shell base64 < ${BLUE_ICON_PATH} | tr -d '\n')
 export ICON_BASE64 ?= ${DEFAULT_ICON_BASE64}
 
 # Derived bundle metadata opts
@@ -811,19 +811,19 @@ add-replaces-field: ## Add replaces to CSV for versioned builds
 		echo "Error: PREVIOUS_VERSION must differ from VERSION"; \
 		exit 1; \
 	fi
-	sed -r -i "/^  replaces:.*/d" ${CSV}
+	sed -i.bak '/^  replaces:.*/d' ${CSV} && rm -f ${CSV}.bak
 	@if [ -n "$(PREVIOUS_VERSION)" ]; then \
-		sed -r -i "/^  version: $(VERSION)$$/ a\  replaces: $(OPERATOR_NAME).v$(PREVIOUS_VERSION)" ${CSV}; \
+		sed -i.bak -e "$$(printf '/^  version: $(VERSION)$$/a\\\n  replaces: $(OPERATOR_NAME).v$(PREVIOUS_VERSION)\n')" ${CSV} && rm -f ${CSV}.bak; \
 	fi
 
 .PHONY: bundle-reset
 bundle-reset: ## Revert all version or build date related changes
-	VERSION=$(DEFAULT_VERSION) $(MAKE) bundle
-	VERSION=$(DEFAULT_VERSION) $(MAKE) add-replaces-field
-	sed -r -i "s|olm.skipRange: .*|olm.skipRange: '>=${SKIP_RANGE_LOWER} <$(DEFAULT_VERSION)'|;" ${CSV}
+	$(MAKE) bundle VERSION=$(DEFAULT_VERSION)
+	$(MAKE) add-replaces-field VERSION=$(DEFAULT_VERSION)
+	sed -i.bak "s|olm.skipRange: .*|olm.skipRange: '>=${SKIP_RANGE_LOWER} <$(DEFAULT_VERSION)'|;" ${CSV} && rm -f ${CSV}.bak
 	@# empty creation date
-	sed -r -i "s|createdAt: .*|createdAt: \"\"|;" ${CSV}
-	VERSION=$(DEFAULT_VERSION) $(MAKE) bundle-validate
+	sed -i.bak 's|createdAt: .*|createdAt: ""|;' ${CSV} && rm -f ${CSV}.bak
+	$(MAKE) bundle-validate VERSION=$(DEFAULT_VERSION)
 
 .PHONY: operator-sdk
 operator-sdk: $(OPERATOR_SDK) ## Download operator-sdk locally if necessary.
@@ -906,7 +906,7 @@ bundle-ocp: bundle ## Build bundle for OCP
 
 .PHONY: add-community-edition-to-display-name
 add-community-edition-to-display-name: ## Add community edition suffix to display name
-	sed -r -i "s|displayName: Storage-Based Remediation.*|displayName: Storage-Based Remediation - Community Edition|" ${CSV}
+	sed -i.bak 's|displayName: Storage-Based Remediation.*|displayName: Storage-Based Remediation - Community Edition|' ${CSV} && rm -f ${CSV}.bak
 
 .PHONY: full-gen
 full-gen: go-verify manifests  generate manifests fmt bundle fix-imports bundle-reset ## generates all automatically generated content
