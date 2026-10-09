@@ -29,6 +29,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -37,10 +38,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -61,13 +64,13 @@ const (
 	// Event reasons for StorageBasedRemediationConfig operations
 	ReasonStorageBasedRemediationConfigReconciled = "StorageBasedRemediationConfigReconciled"
 	ReasonDaemonSetManaged                        = "DaemonSetManaged"
+	ReasonNetworkPolicyManaged                    = "NetworkPolicyManaged"
+	ReasonNetworkPolicyError                      = "NetworkPolicyError"
 	ReasonServiceAccountCreated                   = "ServiceAccountCreated"
 	ReasonClusterRoleBindingCreated               = "ClusterRoleBindingCreated"
-	ReasonSCCManaged                              = "SCCManaged"
 	ReasonReconcileError                          = "ReconcileError"
 	ReasonDaemonSetError                          = "DaemonSetError"
 	ReasonServiceAccountError                     = "ServiceAccountError"
-	ReasonSCCError                                = "SCCError"
 	ReasonValidationError                         = "ValidationError"
 	ReasonCleanupCompleted                        = "CleanupCompleted"
 	ReasonCleanupError                            = "CleanupError"
@@ -94,6 +97,16 @@ const (
 	// Default image constants
 	DefaultSBRAgentImage = "sbr-agent:latest"
 	SBROperatorName      = "sbr-operator"
+
+	// RuntimeMetricsPort is the TCP port exposed by the sbr-agent for runtime metrics.
+	// The agent-metrics port is agent.DefaultMetricsPort.
+	RuntimeMetricsPort = 8080
+
+	// MetricsNamespaceSelectorLabelKey/Value scope NetworkPolicy ingress on the metrics ports to
+	// namespaces carrying this label, matching the convention used by the operator's own static
+	// NetworkPolicy
+	MetricsNamespaceSelectorLabelKey   = "metrics"
+	MetricsNamespaceSelectorLabelValue = "enabled"
 
 	// BlockModeHostDevMountPath is where the host /dev is mounted inside the agent container in block
 	// mode. A bind mount at destination /dev makes the OCI runtime skip creating every linux.devices
@@ -719,7 +732,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildFSInitJob(
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,verbs=use,resourceNames=privileged
-// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=create;delete;update
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -828,7 +841,10 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 		logger.Error(err, "Failed to ensure SCC permissions after retries",
 			"namespace", sbrConfig.Namespace,
 			"operation", "scc-permissions")
-		r.emitEventf(&sbrConfig, EventTypeWarning, ReasonSCCError,
+		// ensureSCCPermissions is currently a no-op and never returns a non-nil error; this branch
+		// is defensive in case that changes. Use the generic reconcile-error reason rather than a
+		// dedicated SCCError reason.
+		r.emitEventf(&sbrConfig, EventTypeWarning, ReasonReconcileError,
 			"Failed to ensure SCC permissions for service account 'sbr-agent' in namespace '%s': %v", sbrConfig.Namespace, err)
 
 		// Return requeue with backoff for transient errors
@@ -926,6 +942,17 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 		r.emitEventf(&sbrConfig, EventTypeNormal, ReasonDaemonSetManaged,
 			"DaemonSet '%s' for SBR Agent %s successfully", actualDaemonSet.Name, action)
 		daemonSetLogger.Info(fmt.Sprintf("DaemonSet %s successfully", action))
+	}
+
+	// Ensure the NetworkPolicy restricting traffic to/from the agent pods exists
+	if _, err = r.ensureNetworkPolicy(ctx, &sbrConfig, logger); err != nil {
+		logger.Error(err, "Failed to ensure NetworkPolicy after retries",
+			"namespace", sbrConfig.Namespace,
+			"operation", "networkpolicy-create-or-update")
+		r.emitEventf(&sbrConfig, EventTypeWarning, ReasonNetworkPolicyError,
+			"Failed to create or update NetworkPolicy for SBR Agent in namespace '%s': %v", sbrConfig.Namespace, err)
+
+		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	}
 
 	// Update the StorageBasedRemediationConfig status with retry logic
@@ -1455,7 +1482,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "runtime-metrics",
-									ContainerPort: 8080,
+									ContainerPort: RuntimeMetricsPort,
 									Protocol:      corev1.ProtocolTCP,
 								},
 								{
@@ -1510,6 +1537,115 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 			},
 		},
 	}
+}
+
+// buildNetworkPolicy constructs a NetworkPolicy for the sbr-agent pods.
+// Ingress is restricted to the two metrics ports
+func (r *StorageBasedRemediationConfigReconciler) buildNetworkPolicy(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig) *networkingv1.NetworkPolicy {
+	networkPolicyName := fmt.Sprintf("sbr-agent-%s", sbrConfig.Name)
+	labels := map[string]string{
+		"app":        "sbr-agent",
+		"component":  "sbr-agent",
+		"managed-by": "sbr-operator",
+		"sbrconfig":  sbrConfig.Name,
+	}
+
+	tcp := corev1.ProtocolTCP
+	runtimeMetricsPort := intstr.FromInt32(RuntimeMetricsPort)
+	agentMetricsPort := intstr.FromInt32(int32(agent.DefaultMetricsPort))
+
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      networkPolicyName,
+			Namespace: sbrConfig.Namespace,
+			Labels:    labels,
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			// Select the sbr-agent pods created by this DaemonSet
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app":       "sbr-agent",
+					"sbrconfig": sbrConfig.Name,
+				},
+			},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeIngress,
+				networkingv1.PolicyTypeEgress,
+			},
+			// Allow ingress to the metrics ports only from namespaces labeled
+			// "metrics: enabled" (e.g. openshift-monitoring on OpenShift). This keeps the
+			// metrics endpoints from being reachable by any pod in any namespace
+			Ingress: []networkingv1.NetworkPolicyIngressRule{
+				{
+					From: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									MetricsNamespaceSelectorLabelKey: MetricsNamespaceSelectorLabelValue,
+								},
+							},
+						},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{Protocol: &tcp, Port: &runtimeMetricsPort},
+						{Protocol: &tcp, Port: &agentMetricsPort},
+					},
+				},
+			},
+			// Allow all egress. Unlike peer-to-peer fencing agents that talk to a fixed port on a
+			// known peer-pod selector, the sbr-agent's fencing coordination happens through
+			// the shared storage backend. The network endpoints, ports, and IP ranges for
+			// that storage traffic vary by provisioner and cluster and are not known to the operator,
+			// on top of the need to reach the API server and DNS. Scoping egress would require hardcoding
+			// storage-provider-specific assumptions, so egress is left unrestricted here
+			Egress: []networkingv1.NetworkPolicyEgressRule{
+				{},
+			},
+		},
+	}
+}
+
+// ensureNetworkPolicy creates or updates the NetworkPolicy that restricts traffic to/from the
+// sbr-agent pods
+func (r *StorageBasedRemediationConfigReconciler) ensureNetworkPolicy(
+	ctx context.Context,
+	sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig,
+	logger logr.Logger,
+) (controllerutil.OperationResult, error) {
+	desired := r.buildNetworkPolicy(sbrConfig)
+
+	logger = logger.WithValues(
+		"networkpolicy.name", desired.Name,
+		"networkpolicy.namespace", desired.Namespace,
+	)
+
+	actual := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      desired.Name,
+			Namespace: desired.Namespace,
+		},
+	}
+
+	result, err := controllerutil.CreateOrUpdate(ctx, r.Client, actual, func() error {
+		actual.Labels = desired.Labels
+		actual.Spec = desired.Spec
+
+		// Set the controller reference so the NetworkPolicy is cleaned up with the CR
+		return controllerutil.SetControllerReference(sbrConfig, actual, r.Scheme)
+	})
+	if err != nil {
+		return result, fmt.Errorf("failed to create or update NetworkPolicy '%s': %w", desired.Name, err)
+	}
+
+	if result != controllerutil.OperationResultNone {
+		r.emitEventf(sbrConfig, EventTypeNormal, ReasonNetworkPolicyManaged,
+			"NetworkPolicy '%s' for SBR Agent %s successfully", desired.Name, result)
+		logger.Info(fmt.Sprintf("NetworkPolicy %s successfully", result))
+	} else {
+		logger.V(1).Info("NetworkPolicy unchanged")
+	}
+
+	return result, nil
 }
 
 // buildSBRAgentArgs builds the command line arguments for the sbr-agent container
@@ -1887,11 +2023,22 @@ func (r *StorageBasedRemediationConfigReconciler) SetupWithManager(mgr ctrl.Mana
 
 	r.FilterLog = logger.WithName("filter")
 
+	// only react when the spec generation actually changes. DeleteFunc explicitly
+	// documents the intent to re-create the NetworkPolicy if it is ever deleted out-of-band.
+	generationChangePredicate := predicate.GenerationChangedPredicate{}
+	networkPolicyPredicates := predicate.Funcs{
+		UpdateFunc: func(ev event.UpdateEvent) bool {
+			return generationChangePredicate.Update(ev)
+		},
+		DeleteFunc: func(_ event.DeleteEvent) bool { return true },
+	}
+
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&medik8sv1alpha1.StorageBasedRemediationConfig{}).
 		Owns(&appsv1.DaemonSet{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
+		Owns(&networkingv1.NetworkPolicy{}, builder.WithPredicates(networkPolicyPredicates)).
 		Named("sbrconfig").
 		Complete(r)
 

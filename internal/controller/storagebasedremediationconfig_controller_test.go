@@ -30,12 +30,15 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/v5/api/v1alpha1"
@@ -56,6 +59,16 @@ func checkForDefaultReconcile(counter int, result reconcile.Result, err error) {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(result).To(Equal(reconcile.Result{}))
 	Expect(counter).To(BeNumerically("==", 6))
+}
+
+// hasEvent reports whether events contains at least one event with the given reason and type.
+func hasEvent(events []mocks.Event, reason, eventType string) bool {
+	for _, event := range events {
+		if event.Reason == reason && event.EventType == eventType {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultStorageBasedRemediationConfig(resourceName, namespace string) *medik8sv1alpha1.StorageBasedRemediationConfig {
@@ -604,6 +617,160 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 			Expect(container.Ports[1].ContainerPort).To(BeEquivalentTo(agent.DefaultMetricsPort))
 		})
 
+		It("should create a NetworkPolicy for the agent pods when StorageBasedRemediationConfig is applied", func() {
+			By("creating the StorageBasedRemediationConfig resource")
+			sbrConfig := defaultStorageBasedRemediationConfig(resourceName, namespace)
+			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
+
+			By("reconciling the StorageBasedRemediationConfig multiple times for finalizer and resource creation")
+			counter, result, err := reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
+			checkForDefaultReconcile(counter, result, err)
+
+			By("verifying the NetworkPolicy was created")
+			expectedName := fmt.Sprintf("sbr-agent-%s", resourceName)
+			networkPolicy := &networkingv1.NetworkPolicy{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedName,
+					Namespace: namespace,
+				}, networkPolicy)
+			}, timeout, interval).Should(Succeed())
+
+			By("verifying the NetworkPolicy has the correct owner reference")
+			Expect(networkPolicy.OwnerReferences).To(HaveLen(1))
+			Expect(networkPolicy.OwnerReferences[0].Name).To(Equal(resourceName))
+			Expect(networkPolicy.OwnerReferences[0].Kind).To(Equal("StorageBasedRemediationConfig"))
+			Expect(*networkPolicy.OwnerReferences[0].Controller).To(BeTrue())
+
+			By("verifying the NetworkPolicy selects the agent pods")
+			Expect(networkPolicy.Spec.PodSelector.MatchLabels).To(HaveKeyWithValue("app", "sbr-agent"))
+			Expect(networkPolicy.Spec.PodSelector.MatchLabels).To(HaveKeyWithValue("sbrconfig", resourceName))
+
+			By("verifying the NetworkPolicy restricts both ingress and egress")
+			Expect(networkPolicy.Spec.PolicyTypes).To(ConsistOf(
+				networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress))
+
+			By("verifying ingress is limited to the two metrics ports")
+			Expect(networkPolicy.Spec.Ingress).To(HaveLen(1))
+			ingressPorts := networkPolicy.Spec.Ingress[0].Ports
+			Expect(ingressPorts).To(HaveLen(2))
+			Expect(ingressPorts[0].Port.IntValue()).To(Equal(RuntimeMetricsPort))
+			Expect(*ingressPorts[0].Protocol).To(Equal(corev1.ProtocolTCP))
+			Expect(ingressPorts[1].Port.IntValue()).To(Equal(agent.DefaultMetricsPort))
+			Expect(*ingressPorts[1].Protocol).To(Equal(corev1.ProtocolTCP))
+
+			By("verifying ingress to the metrics ports is scoped to namespaces labeled metrics: enabled")
+			ingressFrom := networkPolicy.Spec.Ingress[0].From
+			Expect(ingressFrom).To(HaveLen(1))
+			Expect(ingressFrom[0].PodSelector).To(BeNil())
+			Expect(ingressFrom[0].IPBlock).To(BeNil())
+			Expect(ingressFrom[0].NamespaceSelector).NotTo(BeNil())
+			Expect(ingressFrom[0].NamespaceSelector.MatchLabels).To(HaveKeyWithValue(
+				MetricsNamespaceSelectorLabelKey, MetricsNamespaceSelectorLabelValue))
+
+			By("verifying egress is intentionally left unrestricted (documents the allow-all decision; " +
+				"see buildNetworkPolicy's Egress comment for rationale)")
+			Expect(networkPolicy.Spec.Egress).To(HaveLen(1))
+			Expect(networkPolicy.Spec.Egress[0].To).To(BeEmpty())
+			Expect(networkPolicy.Spec.Egress[0].Ports).To(BeEmpty())
+		})
+
+		It("should recreate the NetworkPolicy if it is deleted out-of-band", func() {
+			By("creating the StorageBasedRemediationConfig resource")
+			sbrConfig := defaultStorageBasedRemediationConfig(resourceName, namespace)
+			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
+
+			By("reconciling the StorageBasedRemediationConfig multiple times for finalizer and resource creation")
+			counter, result, err := reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
+			checkForDefaultReconcile(counter, result, err)
+
+			expectedName := fmt.Sprintf("sbr-agent-%s", resourceName)
+			networkPolicy := &networkingv1.NetworkPolicy{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedName,
+					Namespace: namespace,
+				}, networkPolicy)
+			}, timeout, interval).Should(Succeed())
+
+			By("deleting the NetworkPolicy directly")
+			Expect(k8sClient.Delete(ctx, networkPolicy)).To(Succeed())
+			Eventually(func() bool {
+				return errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedName,
+					Namespace: namespace,
+				}, &networkingv1.NetworkPolicy{}))
+			}, timeout, interval).Should(BeTrue())
+
+			By("reconciling again — the controller should recreate the NetworkPolicy")
+			_, _, err = runReconcile(ctx, controllerReconciler, typeNamespacedName)
+			Expect(err).NotTo(HaveOccurred())
+
+			recreated := &networkingv1.NetworkPolicy{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedName,
+					Namespace: namespace,
+				}, recreated)
+			}, timeout, interval).Should(Succeed())
+			Expect(recreated.Spec.Ingress).To(HaveLen(1))
+		})
+
+		It("should restore a manually-modified NetworkPolicy spec back to the desired state on reconcile", func() {
+			By("creating the StorageBasedRemediationConfig resource")
+			sbrConfig := defaultStorageBasedRemediationConfig(resourceName, namespace)
+			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
+
+			By("reconciling the StorageBasedRemediationConfig multiple times for finalizer and resource creation")
+			counter, result, err := reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
+			checkForDefaultReconcile(counter, result, err)
+
+			expectedName := fmt.Sprintf("sbr-agent-%s", resourceName)
+			networkPolicy := &networkingv1.NetworkPolicy{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedName,
+					Namespace: namespace,
+				}, networkPolicy)
+			}, timeout, interval).Should(Succeed())
+
+			By("manually widening the ingress rule to drop the namespace restriction (simulated drift)")
+			networkPolicy.Spec.Ingress[0].From = nil
+			Expect(k8sClient.Update(ctx, networkPolicy)).To(Succeed())
+
+			By("reconciling again — CreateOrUpdate should overwrite the drifted spec")
+			action, err := controllerReconciler.ensureNetworkPolicy(ctx, sbrConfig, logr.Discard())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(action).To(Equal(controllerutil.OperationResultUpdated))
+
+			By("verifying the namespace-scoped ingress rule was restored")
+			restored := &networkingv1.NetworkPolicy{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      expectedName,
+				Namespace: namespace,
+			}, restored)).To(Succeed())
+			Expect(restored.Spec.Ingress[0].From).To(HaveLen(1))
+			Expect(restored.Spec.Ingress[0].From[0].NamespaceSelector.MatchLabels).To(HaveKeyWithValue(
+				MetricsNamespaceSelectorLabelKey, MetricsNamespaceSelectorLabelValue))
+		})
+
+		It("should report OperationResultCreated then OperationResultNone from ensureNetworkPolicy "+
+			"(idempotent reconciliation)", func() {
+			By("creating the StorageBasedRemediationConfig resource")
+			sbrConfig := defaultStorageBasedRemediationConfig(resourceName, namespace)
+			Expect(k8sClient.Create(ctx, sbrConfig)).To(Succeed())
+
+			By("first call creates the NetworkPolicy")
+			action, err := controllerReconciler.ensureNetworkPolicy(ctx, sbrConfig, logr.Discard())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(action).To(Equal(controllerutil.OperationResultCreated))
+
+			By("second call with no changes is a no-op")
+			action, err = controllerReconciler.ensureNetworkPolicy(ctx, sbrConfig, logr.Discard())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(action).To(Equal(controllerutil.OperationResultNone))
+		})
+
 		It("should update DaemonSet when StorageBasedRemediationConfig is modified", func() {
 			By("creating the StorageBasedRemediationConfig resource")
 			sbrConfig := defaultStorageBasedRemediationConfig(resourceName, namespace)
@@ -939,6 +1106,17 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 			}
 			Expect(daemonSetEvent).To(BeTrue(), "DaemonSet management event should be emitted")
 
+			// Check for NetworkPolicy management event
+			networkPolicyEvent := false
+			for _, event := range events {
+				if event.Reason == ReasonNetworkPolicyManaged && event.EventType == EventTypeNormal {
+					networkPolicyEvent = true
+					Expect(event.Message).To(ContainSubstring("NetworkPolicy"))
+					break
+				}
+			}
+			Expect(networkPolicyEvent).To(BeTrue(), "NetworkPolicy management event should be emitted")
+
 			// Check for reconciliation success event
 			reconcileEvent := false
 			for _, event := range events {
@@ -949,6 +1127,252 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 				}
 			}
 			Expect(reconcileEvent).To(BeTrue(), "StorageBasedRemediationConfig reconciled event should be emitted")
+			Expect(hasEvent(events, ReasonServiceAccountCreated, EventTypeNormal)).To(BeTrue(),
+				"ServiceAccountCreated event should be emitted on first service account creation")
+			Expect(hasEvent(events, ReasonClusterRoleBindingCreated, EventTypeNormal)).To(BeTrue(),
+				"ClusterRoleBindingCreated event should be emitted on first ClusterRoleBinding creation")
+			Expect(hasEvent(events, ReasonPVCManaged, EventTypeNormal)).To(BeTrue(),
+				"PVCManaged event should be emitted when the shared-storage PVC is created")
+			Expect(hasEvent(events, ReasonSBRDeviceInitialized, EventTypeNormal)).To(BeTrue(),
+				"SBRDeviceInitialized event should be emitted when the device-init Job is created")
+			Expect(hasEvent(events, ReasonSBRDeviceInitWaiting, EventTypeWarning)).To(BeTrue(),
+				"SBRDeviceInitWaiting event should be emitted while the device-init Job is still running")
+		})
+
+		It("should emit a ValidationError warning event when the spec fails validation", func() {
+			By("creating an StorageBasedRemediationConfig with an invalid spec " +
+				"(Block mode requires a SharedStorageClass)")
+			blockMode := medik8sv1alpha1.SharedStorageVolumeModeBlock
+			resource := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: namespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					WatchdogPath:            "/dev/watchdog",
+					SharedStorageVolumeMode: &blockMode,
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("reconciling — the first call adds the finalizer, the second fails ValidateAll")
+			_, _, err := runReconcile(ctx, controllerReconciler, typeNamespacedName)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("validation failed"))
+
+			By("verifying a ValidationError warning event was emitted")
+			events := mockRecorder.GetEvents()
+			Expect(hasEvent(events, ReasonValidationError, EventTypeWarning)).To(BeTrue(),
+				"expected a Warning event with reason ValidationError")
+		})
+
+		It("should emit a CleanupCompleted event on successful deletion", func() {
+			By("creating an StorageBasedRemediationConfig without shared storage " +
+				"(HasSharedStorage()==false skips the node-map-cleanup Job, which would otherwise " +
+				"block for CleanupJobPollTimeout since envtest has no Job controller to complete it)")
+			resource := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: namespace},
+				Spec:       medik8sv1alpha1.StorageBasedRemediationConfigSpec{WatchdogPath: "/dev/watchdog"},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("adding the finalizer directly (equivalent to the controller's first reconcile; the " +
+				"forward reconcile for a config with no shared storage fails fast at storage-class " +
+				"validation, so we don't rely on it to reach a 'created' state here)")
+			controllerutil.AddFinalizer(resource, StorageBasedRemediationConfigFinalizerName)
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			By("deleting the resource and reconciling the deletion through the normal Reconcile entrypoint")
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+			mockRecorder.Reset()
+			_, result, err := runReconcile(ctx, controllerReconciler, typeNamespacedName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(reconcile.Result{}))
+
+			By("verifying a CleanupCompleted event was emitted")
+			events := mockRecorder.GetEvents()
+			Expect(hasEvent(events, ReasonCleanupCompleted, EventTypeNormal)).To(BeTrue(),
+				"expected a Normal event with reason CleanupCompleted")
+		})
+
+		It("should emit a CleanupError warning event when finalizer removal hits a conflict", func() {
+			By("creating an StorageBasedRemediationConfig without shared storage")
+			resource := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: namespace},
+				Spec:       medik8sv1alpha1.StorageBasedRemediationConfigSpec{WatchdogPath: "/dev/watchdog"},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("adding the finalizer directly (equivalent to the controller's first reconcile)")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			controllerutil.AddFinalizer(resource, StorageBasedRemediationConfigFinalizerName)
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			By("capturing a stale copy before a concurrent update advances the ResourceVersion")
+			staleCopy := resource.DeepCopy()
+
+			By("simulating a concurrent update (e.g. another controller/user) that bumps the ResourceVersion")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			if resource.Labels == nil {
+				resource.Labels = map[string]string{}
+			}
+			resource.Labels["concurrent-update"] = "true"
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			By("deleting the resource — DeletionTimestamp is set but the finalizer blocks removal")
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+			By("calling handleDeletion directly with the stale copy — finalizer removal should conflict")
+			mockRecorder.Reset()
+			_, err := controllerReconciler.handleDeletion(ctx, staleCopy, logr.Discard())
+			Expect(err).To(HaveOccurred())
+			Expect(errors.IsConflict(err)).To(BeTrue())
+
+			By("verifying a CleanupError warning event was emitted")
+			events := mockRecorder.GetEvents()
+			Expect(hasEvent(events, ReasonCleanupError, EventTypeWarning)).To(BeTrue(),
+				"expected a Warning event with reason CleanupError")
+
+			By("cleaning up: removing the finalizer so the namespace teardown in AfterEach isn't blocked")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			controllerutil.RemoveFinalizer(resource, StorageBasedRemediationConfigFinalizerName)
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+		})
+
+		It("should emit a DaemonSetError warning event when DaemonSet management hits an ownership conflict", func() {
+			By("creating the StorageBasedRemediationConfig resource")
+			resource := defaultStorageBasedRemediationConfig(resourceName, namespace)
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("pre-creating a DaemonSet with the expected name, owned by an unrelated controller")
+			conflictingOwner := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: "conflicting-owner-ds", Namespace: namespace},
+			}
+			Expect(k8sClient.Create(ctx, conflictingOwner)).To(Succeed())
+
+			conflictingDS := &appsv1.DaemonSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("sbr-agent-%s", resourceName),
+					Namespace: namespace,
+				},
+				Spec: appsv1.DaemonSetSpec{
+					Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "conflict"}},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "conflict"}},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{{Name: "conflict", Image: "busybox"}},
+						},
+					},
+				},
+			}
+			Expect(controllerutil.SetControllerReference(conflictingOwner, conflictingDS, controllerReconciler.Scheme)).To(Succeed())
+			Expect(k8sClient.Create(ctx, conflictingDS)).To(Succeed())
+
+			By("reconciling — once the device-init Job completes, DaemonSet management should fail " +
+				"on the ownership conflict")
+			_, _, err := reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
+			Expect(err).To(HaveOccurred())
+
+			By("verifying a DaemonSetError warning event was emitted")
+			events := mockRecorder.GetEvents()
+			Expect(hasEvent(events, ReasonDaemonSetError, EventTypeWarning)).To(BeTrue(),
+				"expected a Warning event with reason DaemonSetError")
+		})
+
+		It("should emit a NetworkPolicyError warning event when NetworkPolicy management hits an ownership conflict", func() {
+			By("creating the StorageBasedRemediationConfig resource")
+			resource := defaultStorageBasedRemediationConfig(resourceName, namespace)
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("pre-creating a NetworkPolicy with the expected name, owned by an unrelated controller")
+			conflictingOwner := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: "conflicting-owner-np", Namespace: namespace},
+			}
+			Expect(k8sClient.Create(ctx, conflictingOwner)).To(Succeed())
+
+			conflictingNP := &networkingv1.NetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("sbr-agent-%s", resourceName),
+					Namespace: namespace,
+				},
+				Spec: networkingv1.NetworkPolicySpec{
+					PodSelector: metav1.LabelSelector{},
+				},
+			}
+			Expect(controllerutil.SetControllerReference(conflictingOwner, conflictingNP, controllerReconciler.Scheme)).To(Succeed())
+			Expect(k8sClient.Create(ctx, conflictingNP)).To(Succeed())
+
+			By("reconciling — once the device-init Job completes, NetworkPolicy management should " +
+				"fail on the ownership conflict")
+			_, _, err := reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("NetworkPolicy"))
+
+			By("verifying a NetworkPolicyError warning event was emitted")
+			events := mockRecorder.GetEvents()
+			Expect(hasEvent(events, ReasonNetworkPolicyError, EventTypeWarning)).To(BeTrue(),
+				"expected a Warning event with reason NetworkPolicyError")
+		})
+
+		It("should emit a ServiceAccountError warning event when service account creation fails", func() {
+			By("creating the StorageBasedRemediationConfig resource")
+			resource := defaultStorageBasedRemediationConfig(resourceName, namespace)
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("wrapping the client so creating the sbr-agent ServiceAccount fails")
+			watchClient, err := client.NewWithWatch(cfg, client.Options{Scheme: k8sClient.Scheme()})
+			Expect(err).NotTo(HaveOccurred())
+			controllerReconciler.Client = interceptor.NewClient(watchClient, interceptor.Funcs{
+				Create: func(
+					ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption,
+				) error {
+					if _, ok := obj.(*corev1.ServiceAccount); ok {
+						return fmt.Errorf("mock service account creation failure")
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+			})
+
+			By("reconciling — service account creation should fail")
+			_, _, err = runReconcile(ctx, controllerReconciler, typeNamespacedName)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("mock service account creation failure"))
+
+			By("verifying a ServiceAccountError warning event was emitted")
+			events := mockRecorder.GetEvents()
+			Expect(hasEvent(events, ReasonServiceAccountError, EventTypeWarning)).To(BeTrue(),
+				"expected a Warning event with reason ServiceAccountError")
+		})
+
+		It("should emit a ReconcileError warning event when the status update fails", func() {
+			By("creating the StorageBasedRemediationConfig resource")
+			resource := defaultStorageBasedRemediationConfig(resourceName, namespace)
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("wrapping the client so the StorageBasedRemediationConfig status update fails")
+			watchClient, err := client.NewWithWatch(cfg, client.Options{Scheme: k8sClient.Scheme()})
+			Expect(err).NotTo(HaveOccurred())
+			controllerReconciler.Client = interceptor.NewClient(watchClient, interceptor.Funcs{
+				SubResourceUpdate: func(
+					ctx context.Context, c client.Client, subResourceName string, obj client.Object,
+					opts ...client.SubResourceUpdateOption,
+				) error {
+					if subResourceName == "status" {
+						if _, ok := obj.(*medik8sv1alpha1.StorageBasedRemediationConfig); ok {
+							return fmt.Errorf("mock status update failure")
+						}
+					}
+					return c.Status().Update(ctx, obj, opts...)
+				},
+			})
+
+			By("reconciling — once the device-init Job completes, the status update should fail")
+			_, _, err = reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("mock status update failure"))
+
+			By("verifying a ReconcileError warning event was emitted")
+			events := mockRecorder.GetEvents()
+			Expect(hasEvent(events, ReasonReconcileError, EventTypeWarning)).To(BeTrue(),
+				"expected a Warning event with reason ReconcileError")
 		})
 
 		It("should emit events for helper methods", func() {
