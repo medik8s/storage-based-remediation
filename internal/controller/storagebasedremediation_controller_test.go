@@ -833,7 +833,7 @@ func writeHeartbeatForTest(r *SBRRemediationReconciler, nodeID uint16, age time.
 	h.Timestamp = uint64(time.Now().Add(-age).UnixNano())
 	data, err := sbdprotocol.Marshal(h)
 	Expect(err).NotTo(HaveOccurred())
-	_, err = r.sbrDevice.WriteAt(data, r.slotOffset(nodeID))
+	_, err = r.sbrDevice.WriteAt(data, r.SlotOffset(nodeID))
 	Expect(err).NotTo(HaveOccurred())
 }
 
@@ -866,7 +866,7 @@ func attachTestSBRFencing(r *SBRRemediationReconciler) uint16 {
 
 func fenceSlotHasFenceMessage(r *SBRRemediationReconciler, nodeID uint16) bool {
 	buf := make([]byte, sbdprotocol.SBD_HEADER_SIZE)
-	n, err := r.fenceDevice.ReadAt(buf, r.slotOffset(nodeID))
+	n, err := r.fenceDevice.ReadAt(buf, r.SlotOffset(nodeID))
 	if err != nil || n < sbdprotocol.SBD_HEADER_SIZE {
 		return false
 	}

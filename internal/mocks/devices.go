@@ -53,7 +53,13 @@ type MockBlockDevice struct {
 	failRead  bool
 	failWrite bool
 	failSync  bool
-	mutex     sync.RWMutex
+	// blockMode and blockSlotSize select the slot layout used by the message-writing helpers
+	// below. The zero value is filesystem mode. The block slot size is supplied by the caller
+	// rather than read from blockformat, because that package is linux-only and this one must
+	// stay cross-platform for the controller tests. Set via SetSlotGeometry.
+	blockMode     bool
+	blockSlotSize int64
+	mutex         sync.RWMutex
 }
 
 // NewMockBlockDevice creates a new mock block device with the specified size
@@ -173,6 +179,30 @@ func (m *MockBlockDevice) GetData() []byte {
 	return result
 }
 
+// SetSlotGeometry selects the slot layout used by WritePeerHeartbeat and WriteFenceMessage.
+// Block-mode callers pass blockformat.BlockSlotSize. Without this, those helpers seed slots with
+// the filesystem geometry, which in block mode is the wrong slot for every node.
+func (m *MockBlockDevice) SetSlotGeometry(blockMode bool, blockSlotSize int64) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.blockMode = blockMode
+	m.blockSlotSize = blockSlotSize
+}
+
+// slotOffset returns the region-relative offset of a node's slot, mirroring
+// (*SBRAgent).slotOffset and (*SBRRemediationReconciler).SlotOffset. Block mode packs slots from
+// position 0, so the node ID is biased by one; filesystem mode indexes by node ID directly and
+// leaves slot 0 unused. A helper that seeds the wrong slot makes a test pass against broken
+// production code, so this must stay in step with those two.
+func (m *MockBlockDevice) slotOffset(nodeID uint16) int64 {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	if m.blockMode {
+		return int64(nodeID-1) * m.blockSlotSize
+	}
+	return int64(nodeID) * sbdprotocol.SBD_SLOT_SIZE
+}
+
 // WritePeerHeartbeat writes a heartbeat message to a specific peer slot for testing
 func (m *MockBlockDevice) WritePeerHeartbeat(nodeID uint16, timestamp uint64, sequence uint64) error {
 	// Create heartbeat message
@@ -186,8 +216,8 @@ func (m *MockBlockDevice) WritePeerHeartbeat(nodeID uint16, timestamp uint64, se
 		return fmt.Errorf("failed to marshal heartbeat message: %w", err)
 	}
 
-	// Calculate slot offset for this node
-	slotOffset := int64(nodeID) * sbdprotocol.SBD_SLOT_SIZE
+	// Calculate slot offset for this node using the active slot geometry
+	slotOffset := m.slotOffset(nodeID)
 
 	// Write heartbeat message to the designated slot
 	_, err = m.WriteAt(msgBytes, slotOffset)
@@ -206,7 +236,7 @@ func (m *MockBlockDevice) WriteFenceMessage(nodeID, targetNodeID uint16, sequenc
 	}
 
 	// Calculate slot offset for the target node (where the fence message is written)
-	slotOffset := int64(targetNodeID) * sbdprotocol.SBD_SLOT_SIZE
+	slotOffset := m.slotOffset(targetNodeID)
 
 	// Write fence message to the designated slot
 	_, err = m.WriteAt(msgBytes, slotOffset)

@@ -72,8 +72,19 @@ func nodeName(i int) string {
 	return "worker-" + string(rune('0'+i))
 }
 
-// writeHeartbeat seeds a valid heartbeat for nodeID into its slot with the given age.
-func writeHeartbeat(t *testing.T, r *SBRRemediationReconciler, nodeID uint16, age time.Duration) {
+// victimSlotOffset is the offset the agent writes its own heartbeat to, mirroring
+// (*SBRAgent).slotOffset. Deliberately not r.slotOffset: the point of these tests is that the
+// reconciler reads the slot the victim writes, so the expectation must be stated independently.
+func victimSlotOffset(nodeID uint16, blockMode bool) int64 {
+	if blockMode {
+		return int64(nodeID-1) * testBlockSlotSize
+	}
+	return int64(nodeID) * sbdprotocol.SBD_SLOT_SIZE
+}
+
+// writeHeartbeat seeds a valid heartbeat for nodeID into the slot the victim would write, with
+// the given age.
+func writeHeartbeat(t *testing.T, r *SBRRemediationReconciler, nodeID uint16, blockMode bool, age time.Duration) {
 	t.Helper()
 	h := sbdprotocol.NewHeartbeat(nodeID, 1)
 	h.Timestamp = uint64(time.Now().Add(-age).UnixNano())
@@ -81,13 +92,14 @@ func writeHeartbeat(t *testing.T, r *SBRRemediationReconciler, nodeID uint16, ag
 	if err != nil {
 		t.Fatalf("marshal heartbeat: %v", err)
 	}
-	if _, err := r.sbrDevice.WriteAt(data, r.slotOffset(nodeID)); err != nil {
+	if _, err := r.sbrDevice.WriteAt(data, victimSlotOffset(nodeID, blockMode)); err != nil {
 		t.Fatalf("write heartbeat: %v", err)
 	}
 }
 
 // TestHasNodeStoppedHeartbeating covers the liveness read in both slot geometries. The block-mode
-// case is a regression guard for the O_DIRECT slot geometry (read at nodeID*4096, not *512).
+// case is a regression guard for the O_DIRECT slot geometry: the reconciler must read the victim's
+// heartbeat at (nodeID-1)*4096, not nodeID*4096 and not nodeID*512.
 func TestHasNodeStoppedHeartbeating(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -103,7 +115,7 @@ func TestHasNodeStoppedHeartbeating(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r, targetID := newCompletionReconciler(t, tc.blockMode)
-			writeHeartbeat(t, r, targetID, tc.age)
+			writeHeartbeat(t, r, targetID, tc.blockMode, tc.age)
 
 			stopped, err := r.hasNodeStoppedHeartbeating("worker-1", logr.Discard())
 			if err != nil {
@@ -182,7 +194,7 @@ func TestCheckFencingCompletionSafety(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r, targetID := newCompletionReconciler(t, false)
 			r.Client = fake.NewClientBuilder().WithScheme(scheme).WithObjects(partitionedNode).Build()
-			writeHeartbeat(t, r, targetID, tc.heartbeatAge)
+			writeHeartbeat(t, r, targetID, false, tc.heartbeatAge)
 
 			got := r.checkFencingCompletion(context.Background(), remediation(tc.fencingAgo), logr.Discard())
 			if got != tc.want {

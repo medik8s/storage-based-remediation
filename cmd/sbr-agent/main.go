@@ -1968,7 +1968,12 @@ func (s *SBRAgent) cleanOwnFenceSlotIfPresent(logger logr.Logger) error {
 		return nil
 	}
 
-	header, err := sbdprotocol.Unmarshal(headerBuf)
+	// Slice to exactly the header. Unmarshal checksums data[:len(data)-4], so handing it the
+	// full 4096-byte block-mode slot buffer checksums 4092 bytes of slot contents instead of
+	// the header and can never match. That made this cleanup a silent no-op in block mode: the
+	// stale fence survived, and the next readOwnSlotForFenceMessage tick acted on it and
+	// rebooted a healthy node.
+	header, err := sbdprotocol.Unmarshal(headerBuf[:sbdprotocol.SBD_HEADER_SIZE])
 	if err != nil {
 		logger.V(1).Info("Failed to unmarshal header from own slot while cleaning", "nodeID", s.nodeID, "error", err)
 		return nil
