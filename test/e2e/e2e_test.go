@@ -607,10 +607,14 @@ func readNodeBootID(nodeName string) (string, error) {
 		}
 		startedAt := strings.TrimSpace(string(output))
 		started, err := time.Parse(time.RFC3339Nano, startedAt)
+		if err != nil {
+			// Some runtimes render StartedAt using Go's time.Time string format.
+			started, err = time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", startedAt)
+		}
 		if err != nil || started.IsZero() {
 			return "", fmt.Errorf("invalid container start time for %s: %q", nodeName, startedAt)
 		}
-		return startedAt, nil
+		return started.UTC().Format(time.RFC3339Nano), nil
 	}
 
 	node := &corev1.Node{}
