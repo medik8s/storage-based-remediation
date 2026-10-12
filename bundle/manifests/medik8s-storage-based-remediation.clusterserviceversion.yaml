@@ -454,4 +454,4 @@ spec:
   - image: quay.io/medik8s/storage-based-remediation-agent:v5.8.0
     name: agent
   version: 5.8.0
-  replaces: storage-based-remediation.v0.3.1
+  replaces: medik8s-storage-based-remediation.v0.3.1
