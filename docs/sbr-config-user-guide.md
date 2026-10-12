@@ -183,8 +183,20 @@ oc get pods -n openshift-operators | grep -E 'storage-based-remediation|sbr'
 - **Default**: `Disabled`
 - **Valid values**: `Disabled`, `Enabled`
 - **Description**: When `Enabled`, the agent detects storage failures and updates node conditions
-  but does **not** perform any remediation actions (no node reboot). Useful for monitoring-only
-  deployments or gradual rollouts.
+  (e.g., `SBRStorageUnhealthy`) but does **not** perform any remediation actions (no self-fence or
+  node reboot). Useful for monitoring-only deployments or gradual rollouts.
+
+> **Warning — NHC interaction**: `detectOnlyMode` only controls the SBR **agent**. If Node Health
+> Check (NHC) is also configured with SBR as a remediator, NHC will still create a
+> `StorageBasedRemediation` CR when it observes the unhealthy node condition. The SBR remediation
+> controller processes that CR normally (cordon, fence message, out-of-service taint) regardless
+> of `detectOnlyMode`. This can cause a healthy-but-detected node to be partially removed from
+> the cluster. When using `detectOnlyMode: Enabled`, either replace SBR with another
+> remediator in the NHC `remediationTemplate`, or disable/delete the `NodeHealthCheck` resource
+> that references SBR. Simply removing the template without providing an alternative leaves NHC
+> without a functioning remediator. See
+> [Integrating with Node Health Check (NHC)](#integrating-with-node-health-check-nhc) for
+> configuration examples.
 
 ---
 
@@ -631,7 +643,7 @@ oc get clusterrolebinding | grep sbr-agent
 3. **Resource planning**: Ensure adequate node resources
 4. **Backup configuration**: Store StorageBasedRemediationConfig in version control
 5. **Tune thresholds**: Adjust `sbrTimeoutSeconds` and `maxConsecutiveFailures` to your storage latency profile
-6. **Roll out detect-only first**: Use `detectOnlyMode: Enabled` initially to validate behavior before enabling fencing
+6. **Roll out detect-only first**: Use `detectOnlyMode: Enabled` initially to validate behavior before enabling fencing. If NHC is deployed, do **not** configure SBR as a remediator while in detect-only mode — see [Integrating with Node Health Check (NHC)](#integrating-with-node-health-check-nhc)
 
 ### High Availability
 
@@ -685,6 +697,95 @@ groups:
       severity: warning
     annotations:
       summary: "Watchdog not being petted on {{ $labels.instance }}"
+```
+
+### Integrating with Node Health Check (NHC)
+
+[Node Health Check (NHC)](https://github.com/medik8s/node-healthcheck-operator) can use SBR as an
+external remediator by referencing a `StorageBasedRemediation` template. When NHC detects an
+unhealthy node, it creates a `StorageBasedRemediation` CR and the SBR remediation controller
+processes it (cordon, fence message, out-of-service taint).
+
+> **Important**: The SBR remediation controller does **not** check `detectOnlyMode`. If NHC is
+> configured with SBR as a remediator and `detectOnlyMode` is `Enabled`, the following happens:
+>
+> 1. The SBR agent detects a storage failure and sets the `SBRStorageUnhealthy` node condition.
+> 2. NHC sees the unhealthy condition and creates a `StorageBasedRemediation` CR.
+> 3. The SBR controller processes the CR normally — cordoning the node, writing a fence message,
+>    and applying the out-of-service taint — even though the agent was told to only detect.
+>
+> This can partially remove a healthy node from the cluster.
+
+#### NHC + SBR with active remediation (`detectOnlyMode: Disabled`)
+
+When SBR is fully active, configure NHC to use SBR as the remediator:
+
+```yaml
+apiVersion: remediation.medik8s.io/v1alpha1
+kind: NodeHealthCheck
+metadata:
+  name: nhc-sbr
+spec:
+  selector:
+    matchExpressions:
+    - key: node-role.kubernetes.io/worker
+      operator: Exists
+    - key: node-role.kubernetes.io/control-plane
+      operator: DoesNotExist
+    - key: node-role.kubernetes.io/master
+      operator: DoesNotExist
+  minHealthy: "1"
+  unhealthyConditions:
+  - type: SBRStorageUnhealthy
+    status: "True"
+    duration: 60s
+  remediationTemplate:
+    apiVersion: storage-based-remediation.medik8s.io/v1alpha1
+    kind: StorageBasedRemediationTemplate
+    namespace: sbr-operator-system
+    name: sbr-remediation-template
+```
+
+#### NHC + SBR with detect-only mode (`detectOnlyMode: Enabled`)
+
+When using detect-only mode, do **not** configure SBR as the NHC remediator. Instead, rely on
+Prometheus alerts or other monitoring to surface the `SBRStorageUnhealthy` node condition:
+
+```yaml
+# StorageBasedRemediationConfig — detect only, no fencing
+apiVersion: storage-based-remediation.medik8s.io/v1alpha1
+kind: StorageBasedRemediationConfig
+metadata:
+  name: detect-only-sbr
+  namespace: sbr-operator-system
+spec:
+  detectOnlyMode: Enabled
+
+# If NHC is deployed, either:
+#   1. Replace the SBR remediationTemplate in the NodeHealthCheck with
+#      another remediator (simply removing it leaves NHC without a
+#      functioning remediator), or
+#   2. Disable or delete the NodeHealthCheck that references SBR.
+#
+# Do NOT keep NHC pointing at SBR while detectOnlyMode is Enabled —
+# NHC will still create StorageBasedRemediation CRs, and the controller
+# will act on them.
+```
+
+You can monitor detected conditions without NHC remediation using a Prometheus alert:
+
+```yaml
+groups:
+- name: sbr-detect-only
+  rules:
+  - alert: SBRStorageUnhealthyDetected
+    expr: kube_node_status_condition{condition="SBRStorageUnhealthy", status="true"} == 1
+    for: 30s
+    labels:
+      severity: warning
+    annotations:
+      summary: "SBR detected storage issue on {{ $labels.node }} (detect-only mode)"
+      description: "Node {{ $labels.node }} has condition SBRStorageUnhealthy=True. No automatic remediation is configured — investigate manually."
 ```
 
 ---
