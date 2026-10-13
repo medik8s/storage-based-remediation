@@ -72,9 +72,15 @@ func nodeName(i int) string {
 	return "worker-" + string(rune('0'+i))
 }
 
+// testBlockSlotSize mirrors blockformat.BlockSlotSize without importing the linux-only
+// blockformat package into these cross-platform tests.
+const testBlockSlotSize int64 = 4096
+
 // victimSlotOffset is the offset the agent writes its own heartbeat to, mirroring
-// (*SBRAgent).slotOffset. Deliberately not r.slotOffset: the point of these tests is that the
+// (*SBRAgent).slotOffset. Deliberately not r.SlotOffset: the point of these tests is that the
 // reconciler reads the slot the victim writes, so the expectation must be stated independently.
+//
+// This and testBlockSlotSize are shared with the other tests in this package; keep them together.
 func victimSlotOffset(nodeID uint16, blockMode bool) int64 {
 	if blockMode {
 		return int64(nodeID-1) * testBlockSlotSize
