@@ -6,12 +6,14 @@ Starting from v5.8.0, the package name for the Storage Based Remediation communi
 
 ## Reason for Change
 
-When multiple catalog sources each publish their own variant of the same
-operator under an identical OLM package name, OLM and tooling such as
-`packagemanifests` can't reliably tell the variants apart, even if they
-share the same name, CRDs, etc. Prefixing the package name with
-`medik8s-` makes it unique, so it can always be unambiguously resolved to
-our operator regardless of which catalog source it's queried from.
+On an OpenShift cluster, there are multiple catalogSources where each includes  
+a different catalog with a set of OLM operators. The Medik8s operators have been
+released to the Red Hat catalog and the [Community OKD](https://okd.io/) catalog 
+using the same OLM package name. OLM and tooling such as `packagemanifests`
+can't reliably distinguish between the operators' variants apart (each from a different
+catalog), even if they share the same name, CRDs, etc. Prefixing the package name 
+with `medik8s-` makes it unique, so it can always be unambiguously resolved to
+our community operator regardless of which catalog source it's queried from.
 
 ## Breaking Change
 
