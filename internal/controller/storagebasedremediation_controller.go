@@ -69,6 +69,7 @@ const (
 	ReasonFinalizerProcessed   = "FinalizerProcessed"
 	ReasonOOSTaintRemoved      = "OOSTaintRemoved"
 	ReasonStoppedByNHC         = "RemediationStoppedByNHC"
+	ReasonDetectOnlyMode       = "DetectOnlyMode"
 
 	// nhcTimeOutAnnotation is the annotation NHC sets on a remediation CR
 	// to signal the remediator to stop. Same key used by SNR and FAR.
@@ -203,6 +204,22 @@ func (r *SBRRemediationReconciler) isStorageWriteable(ctx context.Context) (bool
 	return config.IsStorageWriteable(), nil
 }
 
+// isDetectOnlyMode reads DetectOnlyMode from the StorageBasedRemediationConfig CR that owns
+// this agent. Defense-in-depth: the agent already skips self-fencing in detect-only mode, but
+// if SBR is nonetheless configured as an NHC remediator, this guard prevents the controller
+// from cordoning and tainting a node that will never actually be fenced or rebooted.
+func (r *SBRRemediationReconciler) isDetectOnlyMode(ctx context.Context) (bool, error) {
+	if r.sbrConfigName == "" {
+		return false, fmt.Errorf("no StorageBasedRemediationConfig reference configured for this agent")
+	}
+	config := &medik8sv1alpha1.StorageBasedRemediationConfig{}
+	if err := r.Get(ctx, types.NamespacedName{Name: r.sbrConfigName, Namespace: r.sbrConfigNamespace}, config); err != nil {
+		return false, fmt.Errorf("failed to get StorageBasedRemediationConfig %s/%s: %w",
+			r.sbrConfigNamespace, r.sbrConfigName, err)
+	}
+	return config.Spec.GetDetectOnlyMode(), nil
+}
+
 // getNextSequence returns the next sequence number for messages
 func (r *SBRRemediationReconciler) getNextSequence() uint64 {
 	r.sequence++
@@ -301,6 +318,21 @@ func (r *SBRRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		r.emitEventf(&sbrRemediation, EventTypeNormal, ReasonFinalizerProcessed,
 			"Processing deletion of StorageBasedRemediation for node '%s'", nodeName)
 		return r.handleDeletion(ctx, &sbrRemediation, logger)
+	}
+
+	// Defense-in-depth: SBR should not be configured as an NHC remediator while
+	// detect-only mode is enabled, but if it is, never cordon or fence a node that
+	// the agent will not actually reboot. On error determining the mode, proceed
+	// as if detect-only is disabled (fail open) rather than silently withholding
+	// all remediation cluster-wide on a transient config-read failure.
+	if detectOnly, err := r.isDetectOnlyMode(ctx); err != nil {
+		logger.Error(err, "Failed to determine detect-only mode, proceeding with remediation")
+	} else if detectOnly {
+		logger.Info("Withholding remediation: StorageBasedRemediationConfig has detectOnlyMode enabled",
+			"nodeName", nodeName)
+		r.emitEventf(&sbrRemediation, EventTypeWarning, ReasonDetectOnlyMode,
+			"Withholding cordon/fence/taint for node '%s': detectOnlyMode is enabled", nodeName)
+		return ctrl.Result{}, nil
 	}
 
 	logger.V(1).Info("Checking finalizers for StorageBasedRemediation",
