@@ -23,6 +23,8 @@ This is a **breaking change** for users of `storage-based-remediation` via OLM. 
 
 Moving from the old package name to the new one requires manually uninstalling the old OLM Subscription/CSV and installing a fresh Subscription for the new package, as described below.
 
+**Note -** Before starting this migration, make sure there is no active remediation in progress. Doing this during remediation can leave a node in an inconsistent state.
+
 ### Step 1: Delete the Old Subscription
 
 ```bash
