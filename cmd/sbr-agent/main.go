@@ -1769,10 +1769,14 @@ func (s *SBRAgent) executeSelfFencing(reason string) {
 			"reason", reason,
 			"nodeID", s.nodeID)
 
-		// Try multiple aggressive reboot methods based on destructive test results
+		// Try multiple aggressive reboot methods based on destructive test results.
+		// nsenter variants enter the host mount namespace so that node binaries
+		// (systemctl, reboot) are reachable even when the agent image lacks them.
 		rebootCommands := [][]string{
 			{"systemctl", "reboot", "--force", "--force"},
+			{"nsenter", "-m/proc/1/ns/mnt", "--", "systemctl", "reboot", "--force", "--force"},
 			{"reboot", "-f"},
+			{"nsenter", "-m/proc/1/ns/mnt", "--", "reboot", "-f"},
 			{"sh", "-c", "echo b > /proc/sysrq-trigger"},
 		}
 

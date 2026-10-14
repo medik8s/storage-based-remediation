@@ -142,12 +142,16 @@ test: test-no-verify ## Generate and format code, run tests and verify there are
 
 TEST_ID=$(shell date +'%s')
 TEST_HOME=.tests
-E2E_TEST_DIR = $(TEST_HOME)/$(TEST_ID)
+# Absolute, so the suite writes artifacts to the same place no matter which
+# working directory ginkgo runs the package from.
+E2E_TEST_DIR = $(abspath $(TEST_HOME)/$(TEST_ID))
 
 .PHONY: test-e2e
 test-e2e: ginkgo ## Run e2e tests again (assumes operator already deployed).
 	@echo "Running e2e tests (operator must be already deployed)..."
-	mkdir -p $(E2E_TEST_DIR) && $(GINKGO) -v --timeout=90m --junit-report=$(E2E_TEST_DIR)/junit_e2e.xml $(TEST_ARGS) test/e2e -- --test-id $(TEST_ID) --artifacts-dir $(E2E_TEST_DIR) | tee $(E2E_TEST_DIR)/execution.log
+	# Output goes to stdout (captured by CI). Aligns with other medik8s operators (FAR, MDR, SNR, NHC).
+	# Avoids pipefail/PIPESTATUS complexity from tee - test success depends only on ginkgo's exit code.
+	mkdir -p "$(E2E_TEST_DIR)" && $(GINKGO) -v --timeout=90m --junit-report="$(E2E_TEST_DIR)/junit_e2e.xml" $(TEST_ARGS) test/e2e -- --test-id $(TEST_ID) --artifacts-dir "$(E2E_TEST_DIR)"
 
 
 .PHONY: load-images
@@ -679,6 +683,10 @@ bundle: manifests operator-sdk kustomize yq ## Generate OLM bundle manifests and
 .PHONY: bundle-validate
 bundle-validate: operator-sdk ## Validate bundle directory
 	$(OPERATOR_SDK) bundle validate ./bundle --select-optional suite=operatorframework
+
+.PHONY: print-image-tag
+print-image-tag: ## Print the current image tag (used by CI to know what was just built)
+	@echo $(IMAGE_TAG)
 
 .PHONY: bundle-build
 bundle-build: bundle bundle-update ## Build bundle image
