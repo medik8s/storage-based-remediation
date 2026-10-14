@@ -187,7 +187,7 @@ if [ "${SKIP_BUILD}" = false ]; then
     step "Deploying SBR via OLM bundle"
     SBR_TAG=$(make -s print-image-tag)
     SBR_BUNDLE="${IMAGE_REGISTRY}/storage-based-remediation-operator-bundle:${SBR_TAG}"
-    operator-sdk cleanup storage-based-remediation -n "${OPERATOR_NAMESPACE}" --timeout 2m 2>/dev/null || true
+    operator-sdk cleanup medik8s-storage-based-remediation -n "${OPERATOR_NAMESPACE}" --timeout 2m 2>/dev/null || true
     operator-sdk run bundle -n "${OPERATOR_NAMESPACE}" --use-http \
         --timeout 5m \
         "${SBR_BUNDLE}"
