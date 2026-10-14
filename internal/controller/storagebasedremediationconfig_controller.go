@@ -66,6 +66,7 @@ const (
 	ReasonDaemonSetManaged                        = "DaemonSetManaged"
 	ReasonNetworkPolicyManaged                    = "NetworkPolicyManaged"
 	ReasonNetworkPolicyError                      = "NetworkPolicyError"
+	ReasonMetricsNamespaceLabelMissing            = "MetricsNamespaceLabelMissing"
 	ReasonServiceAccountCreated                   = "ServiceAccountCreated"
 	ReasonClusterRoleBindingCreated               = "ClusterRoleBindingCreated"
 	ReasonReconcileError                          = "ReconcileError"
@@ -107,6 +108,12 @@ const (
 	// NetworkPolicy
 	MetricsNamespaceSelectorLabelKey   = "metrics"
 	MetricsNamespaceSelectorLabelValue = "enabled"
+
+	// ExpectedOpenShiftMonitoringNamespace is the namespace OpenShift's built-in monitoring stack
+	// runs in. It is checked for the MetricsNamespaceSelectorLabelKey/Value label so that a
+	// warning can be surfaced if the sbr-agent NetworkPolicy would otherwise silently cut off
+	// Prometheus from the metrics ports.
+	ExpectedOpenShiftMonitoringNamespace = "openshift-monitoring"
 
 	// BlockModeHostDevMountPath is where the host /dev is mounted inside the agent container in block
 	// mode. A bind mount at destination /dev makes the OCI runtime skip creating every linux.devices
@@ -733,6 +740,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildFSInitJob(
 // +kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,verbs=use,resourceNames=privileged
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -899,6 +907,25 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 		return ctrl.Result{Requeue: true}, err
 	}
 
+	// Ensure the NetworkPolicy restricting traffic to/from the agent pods exists.
+	action, err = r.ensureNetworkPolicy(ctx, &sbrConfig, logger)
+	if err != nil {
+		logger.Error(err, "Failed to ensure NetworkPolicy after retries",
+			"namespace", sbrConfig.Namespace,
+			"operation", "networkpolicy-create-or-update")
+		r.emitEventf(&sbrConfig, EventTypeWarning, ReasonNetworkPolicyError,
+			"Failed to create or update NetworkPolicy for SBR Agent in namespace '%s': %v", sbrConfig.Namespace, err)
+
+		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
+	} else if action != controllerutil.OperationResultNone {
+		logger.V(1).Info(fmt.Sprintf("NetworkPolicy %s successfully", action))
+	}
+
+	// Warn if the namespace expected to run the cluster's Prometheus doesn't carry the label the
+	// NetworkPolicy above requires for ingress to the metrics ports. Without it, metrics scraping
+	// breaks silently once the NetworkPolicy is applied. See docs/sbr-agent-prometheus-metrics.md.
+	r.warnIfMetricsNamespaceLabelMissing(ctx, &sbrConfig, logger)
+
 	// Define the desired DaemonSet
 	desiredDaemonSet := r.buildDaemonSet(&sbrConfig, agentImage)
 	daemonSetLogger := logger.WithValues(
@@ -942,17 +969,6 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 		r.emitEventf(&sbrConfig, EventTypeNormal, ReasonDaemonSetManaged,
 			"DaemonSet '%s' for SBR Agent %s successfully", actualDaemonSet.Name, action)
 		daemonSetLogger.Info(fmt.Sprintf("DaemonSet %s successfully", action))
-	}
-
-	// Ensure the NetworkPolicy restricting traffic to/from the agent pods exists
-	if _, err = r.ensureNetworkPolicy(ctx, &sbrConfig, logger); err != nil {
-		logger.Error(err, "Failed to ensure NetworkPolicy after retries",
-			"namespace", sbrConfig.Namespace,
-			"operation", "networkpolicy-create-or-update")
-		r.emitEventf(&sbrConfig, EventTypeWarning, ReasonNetworkPolicyError,
-			"Failed to create or update NetworkPolicy for SBR Agent in namespace '%s': %v", sbrConfig.Namespace, err)
-
-		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	}
 
 	// Update the StorageBasedRemediationConfig status with retry logic
@@ -1646,6 +1662,36 @@ func (r *StorageBasedRemediationConfigReconciler) ensureNetworkPolicy(
 	}
 
 	return result, nil
+}
+
+// warnIfMetricsNamespaceLabelMissing checks whether the namespace expected to run the cluster's
+// Prometheus carries the MetricsNamespaceSelectorLabelKey/Value label that the sbr-agent
+// NetworkPolicy requires for ingress to the metrics ports. If the label is missing, metrics
+// scraping will fail silently once the NetworkPolicy is applied - the operator reconciles
+// cleanly and the DaemonSet is healthy, but the metrics endpoints are unreachable - so a warning
+// event is emitted to surface the problem.
+func (r *StorageBasedRemediationConfigReconciler) warnIfMetricsNamespaceLabelMissing(
+	ctx context.Context, sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig, logger logr.Logger,
+) {
+	if !r.isRunningOnOpenShift(logger) {
+		return
+	}
+
+	monitoringNamespace := &corev1.Namespace{}
+	if err := r.Get(ctx, types.NamespacedName{Name: ExpectedOpenShiftMonitoringNamespace}, monitoringNamespace); err != nil {
+		logger.V(1).Info("Unable to check monitoring namespace label for metrics NetworkPolicy",
+			"namespace", ExpectedOpenShiftMonitoringNamespace, "error", err.Error())
+		return
+	}
+
+	if monitoringNamespace.Labels[MetricsNamespaceSelectorLabelKey] != MetricsNamespaceSelectorLabelValue {
+		logger.Info("Monitoring namespace is missing the label required for the metrics NetworkPolicy to allow ingress",
+			"namespace", ExpectedOpenShiftMonitoringNamespace,
+			"requiredLabel", fmt.Sprintf("%s=%s", MetricsNamespaceSelectorLabelKey, MetricsNamespaceSelectorLabelValue))
+		r.emitEventf(sbrConfig, EventTypeWarning, ReasonMetricsNamespaceLabelMissing,
+			"Namespace '%s' is missing label '%s=%s'; sbr-agent metrics will be unreachable by Prometheus until it is added (see docs/sbr-agent-prometheus-metrics.md)",
+			ExpectedOpenShiftMonitoringNamespace, MetricsNamespaceSelectorLabelKey, MetricsNamespaceSelectorLabelValue)
+	}
 }
 
 // buildSBRAgentArgs builds the command line arguments for the sbr-agent container
