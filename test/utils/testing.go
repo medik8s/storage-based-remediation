@@ -124,13 +124,12 @@ func SetupKubernetesClients() (*TestClients, error) {
 // CreateTestNamespace creates a test namespace and returns a cleanup function
 func (tc *TestClients) CreateTestNamespace(namespace string) (*TestNamespace, error) {
 	testFlags := GetTestFlags()
-	artifactsDir := fmt.Sprintf("../../%s", testFlags.ArtifactsDir)
-
-	// Ensure the artifacts directory for this test namespace exists
-	if _, err := os.Stat(artifactsDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(artifactsDir, 0755); err != nil {
-			return nil, fmt.Errorf("failed to create artifacts directory %s: %w", testFlags.ArtifactsDir, err)
-		}
+	artifactsDir, err := filepath.Abs(testFlags.ArtifactsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve artifacts directory %s: %w", testFlags.ArtifactsDir, err)
+	}
+	if err := os.MkdirAll(artifactsDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create artifacts directory %s: %w", artifactsDir, err)
 	}
 
 	ns := &corev1.Namespace{
@@ -141,11 +140,11 @@ func (tc *TestClients) CreateTestNamespace(namespace string) (*TestNamespace, er
 
 	tns := &TestNamespace{
 		Name:         namespace,
-		ArtifactsDir: testFlags.ArtifactsDir,
+		ArtifactsDir: artifactsDir,
 		Clients:      tc,
 	}
 
-	err := tc.Client.Create(tc.Context, ns)
+	err = tc.Client.Create(tc.Context, ns)
 	if err != nil && !strings.Contains(err.Error(), "already exists") {
 		return tns, nil
 	}

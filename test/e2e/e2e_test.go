@@ -456,28 +456,47 @@ func getNodeBootID(nodeName string) string {
 }
 
 func checkNodeReboot(nodeName, reason, originalBootTime string, timeout time.Duration, target bool) {
-	// Verify that the node has not rebooted during the network disruption
-	rebootText := ""
-	if !target {
-		rebootText = "not "
-	}
-	By(fmt.Sprintf("Verifying node %s has %srebooted %s", nodeName, rebootText, reason))
-	result := Eventually(func() bool {
-		currentBootID := getNodeBootID(nodeName)
-		if originalBootTime != "" && currentBootID != originalBootTime {
-			GinkgoWriter.Printf("Node %s boot ID changed - node has rebooted: %v -> %v\n",
-				nodeName, originalBootTime, currentBootID)
-			return true
-		}
-		return false
-	}, timeout, time.Second*45)
-
-	resultText := fmt.Sprintf("Node %s should %shave rebooted %s", nodeName, rebootText, reason)
-
-	if target {
-		result.Should(BeTrue(), resultText)
+	// Kind nodes are containers sharing the host kernel, so a node's boot ID does not
+	// change when it "reboots". Assert the node becomes Ready again instead, which is
+	// what the kind reboot watcher drives.
+	if target && os.Getenv("E2E_KIND") == "true" {
+		By(fmt.Sprintf("Waiting for node %s to be Ready %s (kind: reboot verification disabled)", nodeName, reason))
+		Eventually(func() bool {
+			node := &corev1.Node{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, node); err != nil {
+				return false
+			}
+			for _, condition := range node.Status.Conditions {
+				if condition.Type == corev1.NodeReady {
+					return condition.Status == corev1.ConditionTrue
+				}
+			}
+			return false
+		}, timeout, time.Second*10).Should(BeTrue(), "Node %s should be Ready %s", nodeName, reason)
 	} else {
-		result.ShouldNot(BeTrue(), resultText)
+		// Verify that the node has not rebooted during the network disruption
+		rebootText := ""
+		if !target {
+			rebootText = "not "
+		}
+		By(fmt.Sprintf("Verifying node %s has %srebooted %s", nodeName, rebootText, reason))
+		result := Eventually(func() bool {
+			currentBootID := getNodeBootID(nodeName)
+			if originalBootTime != "" && currentBootID != originalBootTime {
+				GinkgoWriter.Printf("Node %s boot ID changed - node has rebooted: %v -> %v\n",
+					nodeName, originalBootTime, currentBootID)
+				return true
+			}
+			return false
+		}, timeout, time.Second*45)
+
+		resultText := fmt.Sprintf("Node %s should %shave rebooted %s", nodeName, rebootText, reason)
+
+		if target {
+			result.Should(BeTrue(), resultText)
+		} else {
+			result.ShouldNot(BeTrue(), resultText)
+		}
 	}
 
 	if target {
@@ -762,10 +781,15 @@ func testKubeletCommunicationFailure(cluster ClusterInfo) {
 	targetNode := selectWorkerNode(cluster)
 	By(fmt.Sprintf("Testing kubelet communication failure on verified worker node %s", targetNode.Metadata.Name))
 
-	// Get AWS instance ID for the target node
+	// Get AWS instance ID for the target node. It is only used for logging here, and
+	// Kind nodes have a kind:// provider ID, so this lookup is informational there.
 	instanceID, err := getInstanceIDFromNode(targetNode.Metadata.Name)
-	Expect(err).NotTo(HaveOccurred())
-	By(fmt.Sprintf("Target node %s has AWS instance ID: %s", targetNode.Metadata.Name, instanceID))
+	if os.Getenv("E2E_KIND") == "true" {
+		By(fmt.Sprintf("Target node %s has no AWS instance ID (kind)", targetNode.Metadata.Name))
+	} else {
+		Expect(err).NotTo(HaveOccurred())
+		By(fmt.Sprintf("Target node %s has AWS instance ID: %s", targetNode.Metadata.Name, instanceID))
+	}
 
 	originalBootTimes := getNodeBootIDs(cluster)
 

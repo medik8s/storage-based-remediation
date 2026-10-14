@@ -1,0 +1,153 @@
+name: Kind E2E
+
+on:
+  # main* also covers fork branches (main-<topic>), so a push to a fork runs
+  # the suite without opening a PR first.
+  push:
+    branches: [main*, medik8s-*, release-*]
+  # Any target branch: main, medik8s-X.Y, release-X.Y, and cherry-pick PRs.
+  pull_request:
+    branches: ['**']
+  workflow_dispatch: {}
+
+# A single run per pull request or branch, superseding any stale one.
+concurrency:
+  group: kind-e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  kind-e2e:
+    name: Kind E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      # Shared dev environment (medik8s/tools, checked out below into .tools)
+      TOOLS_DIR: ${{ github.workspace }}/.tools
+      MEDIK8S_CLUSTER_NAME: medik8s-ci
+      CONTAINER_TOOL: docker
+      # Local registry (created by dev-setup)
+      MEDIK8S_REGISTRY_NAME: kind-registry
+      MEDIK8S_REGISTRY_PORT: "5000"
+      IMAGE_REGISTRY: kind-registry:5000/medik8s
+      OPM_RENDER_FLAGS: --skip-tls-verify
+      OPERATOR_NAMESPACE: sbr-operator-system
+    steps:
+    - name: Checkout SBR
+      uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Setup Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: go.mod
+
+    - name: Install operator-sdk
+      run: |
+        make operator-sdk
+        cp ./bin/operator-sdk /usr/local/bin/
+
+    - name: Load nfsd kernel module on runner
+      run: sudo modprobe nfsd nfs
+
+    - name: Create Kind cluster with registry, OLM, cert-manager, NFS storage, and null watchdog
+      # SETUP_NFS_RWX installs csi-driver-nfs + in-cluster NFS server (requires nfsd loaded above).
+      # SETUP_NULL_DEVICE_WATCHDOG replaces each node's /dev/watchdog with a null-backed char
+      # device so every SBR agent pod can open its own watchdog concurrently (softdog is single-open).
+      env:
+        SETUP_NFS_RWX: "true"
+        SETUP_NULL_DEVICE_WATCHDOG: "true"
+      run: make dev-setup
+
+    - name: Prepare operator namespace
+      run: |
+        kubectl create ns ${OPERATOR_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+        kubectl label --overwrite ns ${OPERATOR_NAMESPACE} \
+          pod-security.kubernetes.io/enforce=privileged \
+          pod-security.kubernetes.io/audit=privileged \
+          pod-security.kubernetes.io/warn=privileged
+
+    - name: Build and push operator + agent images
+      run: make build-images push-images
+
+    - name: Build and push OLM bundle
+      run: make bundle bundle-build bundle-push
+
+    - name: Deploy SBR via OLM bundle
+      run: |
+        SBR_TAG=$(make -s print-image-tag)
+        operator-sdk run bundle -n ${OPERATOR_NAMESPACE} --use-http \
+          --timeout 5m \
+          ${IMAGE_REGISTRY}/storage-based-remediation-operator-bundle:${SBR_TAG}
+
+    - name: Wait for operator to be ready
+      run: make dev-wait
+
+    - name: Start kind reboot watcher
+      # Completes the reboot in Kind: the SBR agent self-fences via reboot(2) in the
+      # node's PID namespace (HostPID+privileged), which STOPS the node container
+      # (RestartPolicy=no keeps it down). This watcher restarts the node once the
+      # operator confirms FencingSucceeded, so testNodeRemediation's fencing +
+      # node-Ready assertions can pass. Runs in the background for the test.
+      run: |
+        nohup ${TOOLS_DIR}/dev/kind-reboot-watcher.sh --mode sbr > /tmp/wd-helper.log 2>&1 &
+        echo $! > /tmp/wd-helper.pid
+        disown || true
+        echo "kind reboot watcher started (pid $(cat /tmp/wd-helper.pid))"
+
+    - name: Run e2e tests (kind-compatible subset)
+      timeout-minutes: 60
+      env:
+        # dev-setup already installed cert-manager; the suite must not reinstall it.
+        CERT_MANAGER_INSTALL_SKIP: "true"
+        E2E_KIND: "true"
+        OPERATOR_NS: sbr-operator-system
+        # This branch's suite has no ginkgo labels, so the one spec that cannot run
+        # here is excluded by name instead. "loses storage access" asserts AWS is
+        # initialised and drives its disruptor pods from registry.redhat.io, which
+        # needs credentials a public runner does not have.
+        #
+        # Everything else runs, including the fencing path: "should handle node
+        # remediation" has the SBR agent self-fence, and the kind reboot watcher
+        # started above brings the node container back.
+        #
+        # Regex, not a quoted string: TEST_ARGS is expanded unquoted in the recipe,
+        # so it must not contain spaces.
+        TEST_ARGS: --skip=loses.storage.access
+      run: make test-e2e
+
+    - name: Stop kind reboot watcher
+      if: ${{ always() }}
+      run: |
+        [ -f /tmp/wd-helper.pid ] && kill "$(cat /tmp/wd-helper.pid)" 2>/dev/null || true
+        mkdir -p .tests
+        cp /tmp/wd-helper.log .tests/reboot-watcher.log 2>/dev/null || true
+
+    - name: Debug on failure
+      if: ${{ always() }}
+      run: |
+        echo "=== SBR configs ==="
+        kubectl get storagebasedremediationconfig -A -o yaml > .tests/sbr-configs.yaml || true
+        echo "=== SBR remediations ==="
+        kubectl get storagebasedremediation -A -o yaml > .tests/sbr-remediations.yaml || true
+        echo "=== PVCs ==="
+        kubectl get pvc -A > .tests/pvcs.yaml || true
+        echo "=== Agent pods ==="
+        kubectl get pods -A -l app.kubernetes.io/component=agent -o wide > .tests/agent-pods.yaml || true
+        echo "=== Operator logs ==="
+        kubectl logs -n ${OPERATOR_NAMESPACE} -l control-plane=controller-manager --tail=200 > .tests/operator-logs.txt || true
+        make dev-ci-debug 2>/dev/null || true
+
+    - name: Upload test artifacts
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: e2e-artifacts
+        path: .tests/
+        include-hidden-files: true
+        if-no-files-found: ignore
