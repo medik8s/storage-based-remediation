@@ -166,8 +166,23 @@ func (r *SBRRemediationReconciler) slotSize() int64 {
 	return sbdprotocol.SBD_SLOT_SIZE
 }
 
-// slotOffset returns the fence-region-relative byte offset for the given node's slot.
-func (r *SBRRemediationReconciler) slotOffset(nodeID uint16) int64 {
+// SlotOffset returns the region-relative byte offset for the given node's slot.
+// In block mode the design packs slots starting at position 0:
+//
+//	slot_offset = (nodeID - 1) * blockSlotSize
+//
+// so 255 nodeIDs (1–255) fit exactly in 255 * blockSlotSize bytes.
+// In filesystem mode nodeID is used directly (slot 0 is simply unused).
+//
+// Must match (*SBRAgent).slotOffset: the reconciler shares the agent's region-relative
+// OffsetDevice adapters, so a mismatch makes the controller write the fence one slot past
+// where the victim reads it, and read liveness one slot past where the victim writes it.
+// Exported solely so the agent's TestSlotOffsetAgreesWithReconciler can assert that match
+// across the package boundary; there is no other reason to call it from outside.
+func (r *SBRRemediationReconciler) SlotOffset(nodeID uint16) int64 {
+	if r.blockMode {
+		return int64(nodeID-1) * r.slotSize()
+	}
 	return int64(nodeID) * r.slotSize()
 }
 
@@ -566,7 +581,7 @@ func (r *SBRRemediationReconciler) writeFenceMessage(targetNodeID uint16, logger
 	}
 
 	// Calculate slot offset for the target node using the active slot geometry.
-	slotOffset := r.slotOffset(targetNodeID)
+	slotOffset := r.SlotOffset(targetNodeID)
 
 	// In block mode the device is O_DIRECT: the write must be a page-aligned, zero-padded
 	// full-slot buffer, otherwise WriteAt fails with EINVAL. In filesystem mode the raw
@@ -940,7 +955,7 @@ func (r *SBRRemediationReconciler) hasNodeStoppedHeartbeating(nodeName string, l
 	// O_DIRECT: read a full page-aligned slot into the pre-allocated aligned buffer, otherwise the
 	// read fails with EINVAL (same constraint as the fence write). Use the active slot geometry so
 	// the offset matches where the victim actually writes its heartbeat.
-	slotOffset := r.slotOffset(targetNodeID)
+	slotOffset := r.SlotOffset(targetNodeID)
 	slotData := make([]byte, sbdprotocol.SBD_SLOT_SIZE)
 	if r.blockMode {
 		slotData = r.blockReadBuf
