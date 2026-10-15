@@ -119,6 +119,15 @@ spec:
         - apiGroups:
           - ""
           resources:
+          - namespaces
+          - pods
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - ""
+          resources:
           - nodes
           verbs:
           - get
@@ -155,14 +164,6 @@ spec:
           - get
           - list
           - update
-          - watch
-        - apiGroups:
-          - ""
-          resources:
-          - pods
-          verbs:
-          - get
-          - list
           - watch
         - apiGroups:
           - apps
@@ -214,8 +215,10 @@ spec:
           - networkpolicies
           verbs:
           - create
-          - delete
+          - get
+          - list
           - update
+          - watch
         - apiGroups:
           - rbac.authorization.k8s.io
           resources:
