@@ -2,6 +2,22 @@
 
 The SBR Agent now exposes Prometheus metrics to provide observability into its health, performance, and cluster status.
 
+> **⚠️ NetworkPolicy label requirement**: The operator creates a `NetworkPolicy`
+> for the sbr-agent pods that only allows ingress to the metrics ports
+> (`8080` and the agent metrics port) from namespaces labeled
+> `metrics: enabled`. **Your Prometheus/monitoring namespace must carry this
+> label or metrics scraping will fail silently** 
+>
+> - On **OpenShift**, this is normally the `openshift-monitoring` namespace.
+>   The operator checks this automatically and emits a `Warning` event
+>   on the `StorageBasedRemediationConfig` if the label is absent.
+> - On **vanilla Kubernetes**, there is no single well-known monitoring
+>   namespace, so you must label it yourself, for example:
+>
+>   ```bash
+>   kubectl label namespace <your-monitoring-namespace> metrics=enabled
+>   ```
+
 ## Metrics Configuration
 
 ### Command Line Flag
