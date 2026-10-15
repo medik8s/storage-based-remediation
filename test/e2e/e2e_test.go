@@ -1057,10 +1057,8 @@ func testNodeRemediation(cluster ClusterInfo) {
 		return false
 	}, time.Minute*5, time.Second*30).Should(BeTrue())
 
-	checkNodeReboot(nodeName, "due to remediation CR",
-		originalBootTimes[nodeName], time.Minute*10, true)
-
 	By("Waiting for StorageBasedRemediation condition FencingSucceeded=True")
+	var fencingCompletedAt time.Time
 	Eventually(func() bool {
 		cur := &medik8sv1alpha1.StorageBasedRemediation{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{
@@ -1073,6 +1071,7 @@ func testNodeRemediation(cluster ClusterInfo) {
 			c := cur.Status.Conditions[i]
 			if c.Type == string(medik8sv1alpha1.SBRRemediationConditionFencingSucceeded) &&
 				c.Status == metav1.ConditionTrue {
+				fencingCompletedAt = c.LastTransitionTime.Time
 				return true
 			}
 		}
@@ -1123,6 +1122,27 @@ func testNodeRemediation(cluster ClusterInfo) {
 		}
 		return false
 	}, time.Minute*3, time.Second*10).Should(BeTrue(), "Ready did not become True")
+
+	// A fencing retry can take the node down again after an earlier reboot.
+	// Keep the CR available to the watcher until recovery follows fencing completion.
+	By("Waiting for a fresh Ready heartbeat after fencing completed")
+	Expect(fencingCompletedAt.IsZero()).To(BeFalse(), "FencingSucceeded transition time is required")
+	Eventually(func() bool {
+		node := &corev1.Node{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, node); err != nil {
+			return false
+		}
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady {
+				return condition.Status == corev1.ConditionTrue &&
+					condition.LastHeartbeatTime.Time.After(fencingCompletedAt)
+			}
+		}
+		return false
+	}, time.Minute*10, time.Second*10).Should(BeTrue(), "Node did not recover after fencing completed")
+
+	checkNodeReboot(nodeName, "due to remediation CR",
+		originalBootTimes[nodeName], time.Minute*10, true)
 
 	By("Verifying other nodes remained stable during network disruption")
 	for _, node := range cluster.WorkerNodes {
