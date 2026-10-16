@@ -114,7 +114,7 @@ type StorageBasedRemediationConfigSpec struct {
 	// (~3 scans per heartbeat) so shared-storage jitter is less likely to look like a missed heartbeat.
 	// Time-to-detection scales with maxConsecutiveFailures × heartbeatInterval.
 	// Allowed range is enforced by CRD validation (10-300 seconds).
-	// +kubebuilder:validation:Minimum=10
+	// +kubebuilder:validation:Minimum=5
 	// +kubebuilder:validation:Maximum=300
 	// +optional
 	SBRTimeoutSeconds *int32 `json:"sbrTimeoutSeconds,omitempty"`

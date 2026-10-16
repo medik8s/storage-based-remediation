@@ -41,7 +41,7 @@ import (
 )
 
 const (
-	SBRRemediationFinalizer = "medik8s.io/sbr-remediation-finalizer"
+	SBRRemediationFinalizer = "medik8s.io/sbr-remediation"
 	// ReasonCompleted indicates the remediation was completed successfully
 	ReasonCompleted = "RemediationCompleted"
 	// ReasonInProgress indicates the remediation is in progress

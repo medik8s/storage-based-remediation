@@ -274,7 +274,7 @@ var (
 	// sbr_self_fenced_total: Total number of self-fence initiations
 	// This metric counts how many times this agent has initiated self-fencing
 	selfFencedCounter = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "sbr_self_fenced_total",
+		Name: "sbr_self_fence_total",
 		Help: "Total number of times the agent has initiated a self-fence",
 	})
 )
