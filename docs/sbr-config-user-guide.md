@@ -183,8 +183,13 @@ oc get pods -n openshift-operators | grep -E 'storage-based-remediation|sbr'
 - **Default**: `Disabled`
 - **Valid values**: `Disabled`, `Enabled`
 - **Description**: When `Enabled`, the agent detects storage failures and updates node conditions
-  but does **not** perform any remediation actions (no node reboot). Useful for monitoring-only
-  deployments or gradual rollouts.
+  (e.g., `SBRStorageUnhealthy`) but does **not** perform any remediation actions (watchdog disarmed,
+  no self-fence or node reboot). Useful for monitoring-only deployments or gradual rollouts.
+
+> **Warning — NHC interaction**: `detectOnlyMode` only controls the SBR **agent**, not the
+> remediation controller. If NHC references a `StorageBasedRemediationTemplate`, remediation can
+> still occur. See [Integrating with Node Health Check (NHC)](#integrating-with-node-health-check-nhc)
+> for details.
 
 ---
 
@@ -278,7 +283,7 @@ metadata:
   namespace: sbr-dev
 spec:
   watchdogPath: "/dev/watchdog"
-  detectOnlyMode: Enabled   # detect without fencing
+  detectOnlyMode: Enabled   # detect without fencing; do not list SBR as an NHC remediator in this mode
 ```
 
 ### Zone-Scoped Configuration
@@ -631,7 +636,7 @@ oc get clusterrolebinding | grep sbr-agent
 3. **Resource planning**: Ensure adequate node resources
 4. **Backup configuration**: Store StorageBasedRemediationConfig in version control
 5. **Tune thresholds**: Adjust `sbrTimeoutSeconds` and `maxConsecutiveFailures` to your storage latency profile
-6. **Roll out detect-only first**: Use `detectOnlyMode: Enabled` initially to validate behavior before enabling fencing
+6. **Roll out detect-only first**: Use `detectOnlyMode: Enabled` initially to validate behavior before enabling fencing. If NHC is deployed, do **not** configure SBR as a remediator while in detect-only mode — see [Integrating with Node Health Check (NHC)](#integrating-with-node-health-check-nhc)
 
 ### High Availability
 
@@ -686,6 +691,38 @@ groups:
     annotations:
       summary: "Watchdog not being petted on {{ $labels.instance }}"
 ```
+
+### Integrating with Node Health Check (NHC)
+
+[Node Health Check (NHC)](https://github.com/medik8s/node-healthcheck-operator) can use SBR as an
+external remediator by referencing a `StorageBasedRemediationTemplate`. When NHC detects an
+unhealthy node (by default, `Ready=False` or `Ready=Unknown` for 300 s — **not**
+`SBRStorageUnhealthy`), it creates a `StorageBasedRemediation` CR and the SBR remediation controller
+processes it.
+
+> **Important**: The CRD API documents that the controller should not write fence messages when
+> detect-only mode is active, but the current implementation does not enforce that check.
+> If NHC references a `StorageBasedRemediationTemplate` (via `remediationTemplate` or
+> `escalatingRemediations`) and `detectOnlyMode` is `Enabled`, the following can happen:
+>
+> 1. NHC creates a `StorageBasedRemediation` CR when any condition it watches (by default
+>    `Ready`) becomes unhealthy — whether or not storage has actually failed. For example,
+>    a kubelet problem can trigger the same remediation path. The SBR remediation controller
+>    acts on **any** `StorageBasedRemediation` CR regardless of what caused the unhealthy
+>    condition.
+> 2. The controller cordons the node and writes a fence message once storage is writeable.
+>    Two outcomes are then possible:
+>    - If the node's storage heartbeat stops (likely when its storage path has failed), the
+>      controller also applies the `node.kubernetes.io/out-of-service` taint — even though
+>      the node was never rebooted — so volumes can be detached while workloads still use them.
+>    - If the heartbeat does not stop, the controller retries the fence indefinitely and the
+>      node stays cordoned with repeated `FencingFailed` events.
+>
+> This can partially remove a running node from the cluster. This gap is tracked in
+> [#142](https://github.com/medik8s/storage-based-remediation/issues/142).
+>
+> **Mitigation**: While `detectOnlyMode` is `Enabled`, make sure no `NodeHealthCheck` references
+> `StorageBasedRemediationTemplate`, either via `remediationTemplate` or `escalatingRemediations`.
 
 ---
 
