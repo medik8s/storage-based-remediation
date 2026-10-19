@@ -322,6 +322,9 @@ func (r *StorageBasedRemediationConfigReconciler) isRWXCompatibleProvisioner(pro
 		"cephfs.csi.ceph.com":                   true,
 		"openshift-storage.cephfs.csi.ceph.com": true,
 
+		// NetApp Trident (NFS mode)
+		"csi.trident.netapp.io": true,
+
 		// GlusterFS
 		"gluster.org/glusterfs": true,
 
@@ -356,8 +359,7 @@ func (r *StorageBasedRemediationConfigReconciler) isRWXIncompatibleProvisioner(p
 		"cinder.csi.openstack.org": true,
 
 		// Other known block storage provisioners
-		"csi.trident.netapp.io": true, // NetApp Trident (when configured for block)
-		"iscsi.csi.k8s.io":      true, // iSCSI CSI driver
+		"iscsi.csi.k8s.io": true, // iSCSI CSI driver
 	}
 
 	return rwxIncompatibleProvisioners[provisioner]
