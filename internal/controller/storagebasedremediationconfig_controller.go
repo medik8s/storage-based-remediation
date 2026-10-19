@@ -739,7 +739,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildFSInitJob(
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,verbs=use,resourceNames=privileged
-// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;delete;update
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
