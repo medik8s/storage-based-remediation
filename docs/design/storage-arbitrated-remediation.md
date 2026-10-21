@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Status** | Proposal — for review |
-| **Target release** | 5.1, with the peer-inspection fallback post-5.1 |
+| **Target release** | 5.9.0 |
 | **Tracking** | `RHWA-1839` · `RHWA-1837` · `RFE-9581` |
 
 ### Contributors
@@ -25,6 +25,7 @@ Michal Pryc ([@mpryc](https://github.com/mpryc))
 4. [System architecture and decision diagrams](#4-system-architecture-and-decision-diagrams)
 5. [Component deployment topology and high availability](#5-component-deployment-topology-and-high-availability)
 6. [Reboot orchestration and pod cleanup](#6-reboot-orchestration-and-pod-cleanup)
+7. [Per-node volume mechanism](#7-per-node-volume-mechanism) — *implementation decision*
 
 ---
 
@@ -50,14 +51,14 @@ This is the acceptance surface for the design: every failure mode the stack is e
 | **4** | **Total datacenter outage** | `API = Offline`<br>`Storage = Offline` | Sees both planes gone and stops petting `/dev/watchdog`. | Both planes are dead; no central decision is possible. | 🟠 **Reboot by design**<br>Nodes reset via hardware watchdog. |
 | **5** | **Single-node API / OVN-K partition** | `API = Offline`<br>`Storage = OK` | Sees `Storage=OK` on its canary block device and keeps petting `/dev/watchdog`. | Node is `NotReady`, but NHC watches only `SBRStorageUnhealthy=True`. | 🟢 **No reboot**<br>VMs on dedicated networks stay up. |
 | **6** | **Single-node storage failure** | `API = OK`<br>`Storage = Offline` | Sets `SBRStorageUnhealthy=True`. When the CR appears, runs the software reboot *and* stops the watchdog. | NHC creates a remediation CR; the controller waits out the safety timer, then force-deletes pods on the node. | 🟠 **Reboot by design**<br>Node reboots; VMs fail over. |
-| **7** | **Kernel panic / freeze / power loss** | Node frozen or dead | `sbr-agent` is frozen or gone, so the watchdog is no longer fed — hardware reset within 60s. | **5.1:** recovers post-reboot. **Post-5.1:** the peer leader inspects the canary block device on demand and sets `SBRStorageUnhealthy=True`. | 🟠 **Reboot by design**<br>Hardware watchdog recovers the hung host. |
-| **8** | **`sbr-agent` upgrade or restart** | `API = OK`<br>`Storage = OK` | On `SIGTERM` writes the magic close character (`'V'`) to `/dev/watchdog`, disarming the timer across the restart. | No action. | 🟢 **No reboot**<br>No false reboots during upgrades. |
+| **7** | **Kernel panic / freeze / power loss** | Node frozen or dead | `sbr-agent` is frozen or gone, so the watchdog is no longer fed — hardware reset within 60s. | **5.9.0:** recovers post-reboot. **Post-5.9.0 peer inspection is not available** with the chosen volume mechanism — see [§7](#7-per-node-volume-mechanism). | 🟠 **Reboot by design**<br>Hardware watchdog recovers the hung host. |
+| **8** | **`sbr-agent` upgrade or restart** | `API = OK`<br>`Storage = OK` | On `SIGTERM` writes the magic close character (`'V'`) to `/dev/watchdog`, disarming the timer across the restart. | No action. | 🟢 **No reboot**<br>No false reboots during upgrades. Requires the fail-open warm-up in [§7](#7-per-node-volume-mechanism). |
 | **9** | **"Zombie kubelet" (kubelet hung)** | `API = OK`<br>`Storage = OK` | `sbr-agent` sees `Storage=OK` and keeps petting `/dev/watchdog`. | Node is `NotReady`, but `SBRStorageUnhealthy` remains `False`. | 🟢 **No reboot**<br>Running VMs are undisturbed. |
 | **10** | **Slow / hanging storage (`D-state`)** | `API = OK`<br>`Storage hung > 15s` | Storage I/O runs in a separate goroutine with a timeout and is treated as `Storage=Offline`. | Resolves into scenario 3 (storm-protected) or scenario 6 (single node). | 🔵 **Policy-driven**<br>Hung I/O never starves the watchdog loop. |
 | **11** | **Split-brain network partition** | `API = Offline`<br>`Storage = OK` | Minority nodes keep petting `/dev/watchdog` while storage stays healthy. | NHC does not delete pods or move VMs unless storage is unhealthy or revoked. | 🟢 **No reboot**<br>Zero split-brain. |
 | **12** | **Last-second network recovery** | Remediation CR active | **Point-of-no-return latch:** once fenced, the agent never resumes petting the watchdog. | Controller waits out the full reboot timer before deleting pods. | 🟠 **Reboot by design**<br>Zero race condition. |
-| **13** | **Different nodes, different storage**<br>*one volume each, but not the same backend* | `Node-X → SC-A only`<br>`Node-Y → SC-B only` | Each node attaches a canary volume from *its own* `StorageClass`. `Node-X` never reads or depends on `Node-Y`'s storage. | Health is judged per node, against that node's own backend. A failure of `SC-A` says nothing about `Node-Y`. | 🔵 **Policy-driven**<br>Mixed-backend clusters work; one node's outage never implicates another. |
-| **14** | **One node, several storage backends**<br>*a single node attached to two at once* | `Node-Z → SC-A = Offline`<br>`Node-Z → SC-B = OK` | Monitors every canary device the node owns and evaluates the results against the configured `HealthPolicy`. | NHC acts on the single `SBRStorageUnhealthy` condition the policy produced. | 🔵 **Policy-driven**<br>`HealthPolicy` defines which combination of failures warrants a reboot. |
+| **13** | **Different nodes, different storage**<br>*one volume each, but not the same backend* | `Node-X → SC-A only`<br>`Node-Y → SC-B only` | Each node attaches a canary volume from *its own* `StorageClass`. `Node-X` never reads or depends on `Node-Y`'s storage. | Health is judged per node, against that node's own backend. A failure of `SC-A` says nothing about `Node-Y`. | 🔵 **Policy-driven**<br>Mixed-backend clusters work; one node's outage never implicates another. **Deferred past 5.9.0** — see [§7](#7-per-node-volume-mechanism). |
+| **14** | **One node, several storage backends**<br>*a single node attached to two at once* | `Node-Z → SC-A = Offline`<br>`Node-Z → SC-B = OK` | Monitors every canary device the node owns and evaluates the results against the configured `HealthPolicy`. | NHC acts on the single `SBRStorageUnhealthy` condition the policy produced. | 🔵 **Policy-driven**<br>`HealthPolicy` defines which combination of failures warrants a reboot. **Deferred past 5.9.0** — see [§7](#7-per-node-volume-mechanism). |
 | **15** | **Un-evictable / stuck terminating pod** | Remediation triggered | Node reboots via software reboot plus release of the SBR hardware watchdog. | Controller applies the taint and force-deletes pods (`GracePeriod=0`) before untainting. | 🟠 **Reboot by design**<br>Stuck pod is deleted before the node rejoins. |
 
 ### Reading scenarios 13 and 14: two different questions
@@ -89,6 +90,8 @@ flowchart TB
 
 > ### 🔑 `HealthPolicy` — the knob that decides when storage loss means "reboot"
 >
+> *Design for the multi-backend work. **Not in 5.9.0**, which ships a single `StorageClass` per node — see [§7](#7-per-node-volume-mechanism).*
+>
 > A node with more than one canary volume needs a rule for turning several device results into the one `SBRStorageUnhealthy` condition NHC watches. `HealthPolicy` is that rule — for example *"any one backend failing marks the node unhealthy"* (safest for VMs whose disks could be on either backend) versus *"all backends must fail"* (avoids rebooting a node that can still serve some of its workloads). It is deliberately a policy rather than hard-coded behaviour, because the right answer depends on how the customer spreads VM disks across their storage.
 
 ---
@@ -105,7 +108,7 @@ OpenShift Virtualization (KubeVirt) requires a storage-aware remediation stack t
 
 **1. Per-node canary block volumes**
 
-Each node mounts its own dedicated, lightweight 10 Mi block-mode PVC (`sbr-node-<name>`), extendable to several `StorageClasses` per node with a `HealthPolicy` deciding the verdict. `ReadWriteOnce` is sufficient — the volume is never shared — but a `ReadWriteMany` backend works just as well, because all SBR needs is a writable block device. One mount per node — `O(1)` — eliminates concurrent-writer locks, cross-node `O_DIRECT` page-cache bugs and on-disk `NodeMap` contention.
+Each node mounts its own dedicated, lightweight 10 Mi block-mode PVC. 5.9.0 ships one `StorageClass` per node; extending to several, with a `HealthPolicy` deciding the verdict, is designed for but deferred. How that per-node volume is bound to the agent pod is an implementation decision — see [§7](#7-per-node-volume-mechanism). `ReadWriteOnce` is sufficient — the volume is never shared — but a `ReadWriteMany` backend works just as well, because all SBR needs is a writable block device. One mount per node — `O(1)` — eliminates concurrent-writer locks, cross-node `O_DIRECT` page-cache bugs and on-disk `NodeMap` contention.
 
 **2. SBR owns `/dev/watchdog`, with a dual-path guard**
 
@@ -140,7 +143,7 @@ Three concrete workflows explain why the two original Jira proposals cannot ship
 > - **Workflow 3A — hung software reboot on broken storage:** when storage is broken, Linux processes such as `qemu-kvm` enter uninterruptible `D-state`, so SNR's software `reboot()` hangs indefinitely.
 >   *Fix:* once NHC creates the remediation CR for `Node-A`, `sbr-agent` on that node must *also* stop feeding `/dev/watchdog`, so the hardware watchdog guarantees a reset within 60s.
 > - **Workflow 3B — dead node / power-loss failover:** a node that loses power, or loses both API and storage, cannot self-report `SBRStorageUnhealthy=True`.
->   *Fix (post-5.1):* the leader-elected SBR controller on a healthy worker peer mounts and inspects the `NotReady` node's canary block device on demand, sees the stale timestamp, and sets `SBRStorageUnhealthy=True` on that node's behalf.
+>   *Fix (originally planned post-5.9.0):* a leader-elected SBR controller on a healthy worker peer would mount the `NotReady` node's canary block device on demand, see the stale timestamp, and set `SBRStorageUnhealthy=True` on that node's behalf. **This is no longer available** — the chosen volume mechanism does not preserve a dead node's volume, see [§7](#7-per-node-volume-mechanism). The node is still recovered: the hardware watchdog resets it regardless.
 
 ---
 
@@ -306,7 +309,7 @@ Handled by the existing `SNR Controller` through `deleteResourcesWrapper`.
 Reuses SNR's existing pod-deletion and reboot-timer controller logic without porting it to SBR.
 
 **⚠️ Trade-off**
-Requires modifying SNR to add a `watchdogDisabled` / `selfFencingDisabled` mode, and runs two DaemonSets and two operators on every cluster.
+Requires modifying SNR to add a `watchdogDisabled` / `selfFencingDisabled` mode, and runs two DaemonSets and two controllers on every cluster.
 
 **Diagram 6 — Dual agent: SBR + SNR responsibilities during remediation**
 
@@ -319,3 +322,98 @@ flowchart LR
     SNRCA -. "3. Stops HW Watchdog" .-> SBRAA["sbr-agent (Worker)<br/>(Owns /dev/watchdog & canary block device)"]
   end
 ```
+
+---
+
+## 7. Per-node volume mechanism
+
+*Implementation decision. Recorded here because it constrains two scenarios in [§1](#1-complete-15-scenario-verification-matrix).*
+
+### 7.1 The constraint
+
+Every node needs its **own** canary volume. Kubernetes offers no way for a single DaemonSet to name a
+different PVC per node:
+
+- `PersistentVolumeClaimVolumeSource` is `{claimName, readOnly}` — there is no templating, so a pod
+  spec cannot say *"the PVC belonging to whichever node I land on"*.
+- `DaemonSetSpec` has no `volumeClaimTemplates` field; only `StatefulSetSpec` does.
+
+Note this is a problem of **per-node identity**, not of StorageClass count. It exists even with a
+single `StorageClass`.
+
+### 7.2 Decision — generic ephemeral volumes
+
+The agent DaemonSet declares one `ephemeral.volumeClaimTemplate` per configured backend. Kubernetes
+creates a PVC per pod, binds it, and deletes it with the pod.
+
+```yaml
+volumes:
+  - name: canary-backend-0
+    ephemeral:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          volumeMode: Block
+          storageClassName: <backend>
+          resources: { requests: { storage: 10Mi } }
+```
+
+Chosen because it keeps the DaemonSet — node add/remove, rolling upgrades and pinning all stay the
+platform's job rather than ours — and because disposable volumes make later storage-topology changes
+cheap. The alternatives considered were a pinned single-replica StatefulSet per node (stable volumes,
+but *N* workloads to reconcile and immutable `volumeClaimTemplates`) and a mutating pod webhook that
+rewrites `claimName` per node (rejected: it places a webhook in the critical path of fencing-agent
+startup).
+
+### 7.3 What this costs
+
+**Peer inspection is not possible (scenario 7).** An ephemeral PVC is owned by its pod and is garbage
+collected with it. When a node dies and its pod is removed, the volume is deleted, so there is nothing
+for a surviving node to attach and inspect. This is a property of the volume type, not a gap to be
+closed later; the post-5.9.0 half of scenario 7 is **dropped**, not deferred. Detection of a dead node
+is unaffected — the hardware watchdog still resets it, and NHC still acts on the node's last reported
+condition.
+
+**All multi-backend work is deferred past 5.9.0 (scenarios 13 and 14).** 5.9.0 ships a **single
+`StorageClass`**, selected by a new mode field on the config CR, so each node keeps exactly one canary
+volume. `NodeStorageClasses` and `HealthPolicy` are not part of 5.9.0 — they only earn their keep once a
+node can have more than one backend. The two scenarios are deferred for different reasons:
+
+- **Scenario 14** (several backends on one node) is purely a scope decision. Ephemeral volumes support
+  it directly — one `ephemeral` entry per backend, each with its own `storageClassName`, with
+  `HealthPolicy` combining the per-device results. Adding it later is an extra volume entry and an
+  extra flag, with no architectural change.
+- **Scenario 13** (different backends on different nodes) is additionally constrained by the DaemonSet:
+  one pod template means every node is offered the same storage. The route, when needed, is one
+  DaemonSet per StorageClass-group, derived by the controller — typically a handful, not one per node.
+
+Neither needs this volume decision revisited, and neither involves migrating a volume, because the
+canaries are disposable.
+
+**Volumes are reprovisioned on pod recreation (scenario 8).** A new PVC is created per *pod*, not per
+container start: a crash-looping agent keeps its volume, but a rollout, eviction or node reboot
+provisions a fresh one. The agent must therefore **fail open on start-up** — it does not arm or pet
+`/dev/watchdog` until every canary device opens successfully, so that attach latency is never mistaken
+for a storage failure. Attach latency should be measured on each target backend, since it sets the
+blind window during an upgrade.
+
+**Volume names are pod-derived.** The PVC is named `<pod-name>-<volume-name>`, and DaemonSet pod names
+carry a random suffix, so there is no stable `sbr-node-<name>` identifier. The operator exposes a
+node → PVC mapping in status so an operator can still answer *"which volume belongs to this node?"*.
+Diagram 3's volume labels are illustrative rather than literal.
+
+### 7.4 What this does not cost
+
+**Multi-backend support is not foreclosed.** Deferring scenarios 13 and 14 is a scope decision for
+5.9.0, not a consequence of choosing ephemeral volumes — see §7.3 for how each is added later.
+
+**Access modes are unchanged.** `ReadWriteOnce` remains sufficient because the volume is never shared;
+a `ReadWriteMany` block backend works equally well.
+
+### 7.5 Revisiting
+
+The decision turns on a single question: whether a surviving node must be able to inspect a dead
+node's volume. If that requirement returns, the volume model has to move to stable per-node PVCs
+(pinned StatefulSets), which is a migration of a fencing component's workload model and would need a
+planned transition rather than an in-place upgrade. Multi-StorageClass support, in either form, does
+**not** require revisiting this decision.
