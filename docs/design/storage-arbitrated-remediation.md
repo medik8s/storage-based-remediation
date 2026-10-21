@@ -61,6 +61,33 @@ This is the acceptance surface for the design: every failure mode the stack is e
 | **14** | **One node, several storage backends**<br>*a single node attached to two at once* | `Node-Z → SC-A = Offline`<br>`Node-Z → SC-B = OK` | Monitors every canary device the node owns and evaluates the results against the configured `HealthPolicy`. | NHC acts on the single `SBRStorageUnhealthy` condition the policy produced. | 🔵 **Policy-driven**<br>`HealthPolicy` defines which combination of failures warrants a reboot. **Deferred past 5.9.0** — see [§7](#7-per-node-volume-mechanism). |
 | **15** | **Un-evictable / stuck terminating pod** | Remediation triggered | Node reboots via software reboot plus release of the SBR hardware watchdog. | Controller applies the taint and force-deletes pods (`GracePeriod=0`) before untainting. | 🟠 **Reboot by design**<br>Stuck pod is deleted before the node rejoins. |
 
+### Scope for 5.9.0
+
+The matrix above is the full behavioural target. Not all of it lands in one release.
+
+**In scope for 5.9.0**
+
+- **Per-node canary volumes.** Each node exercises a block volume of its own rather than writing into
+  a slot in one volume shared by the whole cluster. This is the change that makes the stack work on
+  backends that block concurrent writes or offer only `ReadWriteOnce`.
+- **A single `StorageClass`**, cluster-wide. Every node's canary comes from the same backend.
+- **Both arbitration models ship.** Existing deployments keep the shared-volume behaviour they have
+  today, unchanged and unaffected by upgrade. New deployments get per-node volumes. The model is
+  selectable per deployment, so adopting the new one is a deliberate act.
+- **Scenarios 1–12 and 15**, as described in the matrix.
+- **The SNR change** in [§6](#6-reboot-orchestration-and-pod-cleanup) — the software-reboot-only mode.
+  It lives in another repository and gates scenarios 6 and 15.
+
+**Out of scope for 5.9.0**
+
+- **Scenario 13** — different `StorageClasses` on different nodes.
+- **Scenario 14** — several `StorageClasses` on a single node, and the `HealthPolicy` that would
+  arbitrate between them. Deferred as a scope decision, not a technical barrier.
+- **Scenario 7's peer inspection** — a surviving node attaching a dead node's volume to read its last
+  heartbeat. This one is **dropped rather than deferred**; see [§7](#7-per-node-volume-mechanism) for
+  why, and note the node is still recovered by the hardware watchdog regardless.
+- **Retiring the shared-volume model.** It remains supported; there is no forced migration.
+
 ### Reading scenarios 13 and 14: two different questions
 
 These two rows are often confused because both mention several `StorageClasses`. They are asking different things. **Scenario 13 is about the cluster** — nodes do not all have to use the same storage backend, and each node is judged only against its own. **Scenario 14 is about a single node** — one node attached to two backends at once, where something has to decide whether losing one of them is grounds for a reboot. That decision is the `HealthPolicy`.
