@@ -1905,7 +1905,6 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 					ds := blockReconciler.buildDaemonSet(sbrConfig, testAgentImage)
 					command := ds.Spec.Template.Spec.Containers[0].ReadinessProbe.Exec.Command[2]
 					Expect(command).To(ContainSubstring("test -f " + agent.PreflightSentinelPath))
-					Expect(command).To(ContainSubstring("grep -l sbr-agent /proc/*/cmdline"))
 					if sbrConfig.Spec.GetDetectOnlyMode() {
 						Expect(command).NotTo(ContainSubstring("test -c"))
 					} else {
@@ -1917,6 +1916,112 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 						"sentinel must stay in the container filesystem, outside mounted volumes")
 				}
 			}
+		})
+
+		It("should not set a liveness or startup probe on the agent container", func() {
+			// A liveness or startup probe restarts the agent, and a restart releases the
+			// watchdog. If that lands while the node is cut off from shared storage the
+			// replacement cannot pass pre-flight, so nothing is left to reboot a node its
+			// peers have already fenced. The agent is the container ENTRYPOINT, so genuine
+			// agent death already exits the container and kubelet restarts it.
+			for _, mode := range []medik8sv1alpha1.SharedStorageVolumeModeType{
+				medik8sv1alpha1.SharedStorageVolumeModeFilesystem,
+				medik8sv1alpha1.SharedStorageVolumeModeBlock,
+			} {
+				for _, detectOnly := range []*medik8sv1alpha1.DetectOnlyModeType{
+					nil,
+					new(medik8sv1alpha1.DetectOnlyModeEnabled),
+					new(medik8sv1alpha1.DetectOnlyModeDisabled),
+				} {
+					sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+						ObjectMeta: metav1.ObjectMeta{Name: "probe-test", Namespace: blockNamespace},
+						Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+							SharedStorageClass:      validSharedStorageClass,
+							SharedStorageVolumeMode: &mode,
+							DetectOnlyMode:          detectOnly,
+						},
+					}
+
+					container := blockReconciler.buildDaemonSet(sbrConfig, testAgentImage).Spec.Template.Spec.Containers[0]
+
+					Expect(container.LivenessProbe).To(BeNil(),
+						"agent must not carry a liveness probe (volumeMode=%s, detectOnly=%v)",
+						mode, sbrConfig.Spec.GetDetectOnlyMode())
+					Expect(container.StartupProbe).To(BeNil(),
+						"agent must not carry a startup probe (volumeMode=%s, detectOnly=%v)",
+						mode, sbrConfig.Spec.GetDetectOnlyMode())
+				}
+			}
+		})
+
+		It("should not scan the host process table in any agent probe", func() {
+			// "grep -l sbr-agent /proc/*/cmdline" is self-matching under hostPID (the probe's
+			// own sh and grep carry the string), so it can never detect a dead agent, and it
+			// exits 2 whenever a process disappears mid-scan. Its only reachable outcome is a
+			// false positive.
+			for _, mode := range []medik8sv1alpha1.SharedStorageVolumeModeType{
+				medik8sv1alpha1.SharedStorageVolumeModeFilesystem,
+				medik8sv1alpha1.SharedStorageVolumeModeBlock,
+			} {
+				for _, detectOnly := range []*medik8sv1alpha1.DetectOnlyModeType{
+					nil,
+					new(medik8sv1alpha1.DetectOnlyModeEnabled),
+					new(medik8sv1alpha1.DetectOnlyModeDisabled),
+				} {
+					sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+						ObjectMeta: metav1.ObjectMeta{Name: "probe-proc-test", Namespace: blockNamespace},
+						Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+							SharedStorageClass:      validSharedStorageClass,
+							SharedStorageVolumeMode: &mode,
+							DetectOnlyMode:          detectOnly,
+						},
+					}
+
+					container := blockReconciler.buildDaemonSet(sbrConfig, testAgentImage).Spec.Template.Spec.Containers[0]
+
+					for name, probe := range map[string]*corev1.Probe{
+						"liveness":  container.LivenessProbe,
+						"readiness": container.ReadinessProbe,
+						"startup":   container.StartupProbe,
+					} {
+						if probe == nil || probe.Exec == nil {
+							continue
+						}
+						command := strings.Join(probe.Exec.Command, " ")
+						Expect(command).NotTo(ContainSubstring("/proc"),
+							"%s probe must not scan the host process table", name)
+						Expect(command).NotTo(ContainSubstring("grep"),
+							"%s probe must not grep for the agent process", name)
+					}
+				}
+			}
+		})
+
+		It("should keep the agent readiness probe tuning unchanged", func() {
+			// Guards against an unintended behavioural change alongside the probe removal:
+			// readiness itself is untouched apart from dropping the process-table clause.
+			sbrConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "probe-tuning-test", Namespace: blockNamespace},
+				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+					SharedStorageClass: validSharedStorageClass,
+				},
+			}
+
+			container := blockReconciler.buildDaemonSet(sbrConfig, testAgentImage).Spec.Template.Spec.Containers[0]
+
+			Expect(container.ReadinessProbe).NotTo(BeNil())
+			Expect(container.ReadinessProbe.Exec).NotTo(BeNil())
+			Expect(container.ReadinessProbe.Exec.Command[0]).To(Equal("/bin/sh"))
+			Expect(container.ReadinessProbe.Exec.Command[1]).To(Equal("-c"))
+			Expect(container.ReadinessProbe.InitialDelaySeconds).To(Equal(int32(60)))
+			Expect(container.ReadinessProbe.PeriodSeconds).To(Equal(int32(10)))
+			Expect(container.ReadinessProbe.TimeoutSeconds).To(Equal(int32(5)))
+			Expect(container.ReadinessProbe.FailureThreshold).To(Equal(int32(6)))
+			Expect(container.ReadinessProbe.SuccessThreshold).To(Equal(int32(1)))
+
+			By("verifying the readiness command is exactly the sentinel and watchdog checks")
+			Expect(container.ReadinessProbe.Exec.Command[2]).To(Equal(fmt.Sprintf(
+				"test -f %s && test -c %s", agent.PreflightSentinelPath, getEffectiveWatchdogPath(sbrConfig))))
 		})
 
 		It("should use volumeDevices for block mode DaemonSet", func() {
