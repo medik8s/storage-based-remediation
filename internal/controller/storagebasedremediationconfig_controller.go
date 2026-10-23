@@ -1370,11 +1370,14 @@ func (r *StorageBasedRemediationConfigReconciler) ensureServiceAccount(
 
 // buildDaemonSet constructs the desired DaemonSet based on the StorageBasedRemediationConfig
 func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig, agentImage string) *appsv1.DaemonSet {
+	// Readiness gates on observable agent state only: the pre-flight sentinel (written after the
+	// storage write/read-back test passes) and, outside detect-only mode, the watchdog character
+	// device. Deliberately no process-table check here: see the note on the absent liveness and
+	// startup probes below.
 	readinessCommand := fmt.Sprintf("test -f %s", agent.PreflightSentinelPath)
 	if !sbrConfig.Spec.GetDetectOnlyMode() {
 		readinessCommand += fmt.Sprintf(" && test -c %s", getEffectiveWatchdogPath(sbrConfig))
 	}
-	readinessCommand += " && grep -l sbr-agent /proc/*/cmdline 2>/dev/null"
 
 	daemonSetName := fmt.Sprintf("sbr-agent-%s", sbrConfig.Name)
 	labels := map[string]string{
@@ -1509,18 +1512,30 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 							},
 							VolumeMounts:  r.buildVolumeMounts(sbrConfig),
 							VolumeDevices: r.buildVolumeDevices(sbrConfig),
-							LivenessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{
-									Exec: &corev1.ExecAction{
-										Command: []string{"/bin/sh", "-c", "grep -l sbr-agent /proc/*/cmdline 2>/dev/null"},
-									},
-								},
-								InitialDelaySeconds: 30,
-								PeriodSeconds:       30,
-								TimeoutSeconds:      10,
-								FailureThreshold:    3,
-								SuccessThreshold:    1,
-							},
+							// No liveness or startup probe by design. Do not add a process-table
+							// probe such as "grep -l sbr-agent /proc/*/cmdline" here:
+							//
+							//  1. It cannot detect a dead agent. With hostPID the probe's own
+							//     /bin/sh and grep carry "sbr-agent" in their command lines, so
+							//     the grep always matches itself and exits 0 even when no agent
+							//     is running.
+							//  2. Its only reachable outcome is a false positive. The shell
+							//     expands /proc/*/cmdline, and any process exiting before grep
+							//     opens its entry makes grep exit 2 ("match found, but an error
+							//     occurred"), which 2>/dev/null hides but kubelet still sees.
+							//     On a busy node that killed healthy agents at random.
+							//  3. Restarting the agent is the unsafe response anyway. The agent
+							//     is the container ENTRYPOINT, so if it exits the container
+							//     exits and kubelet restarts it regardless of any probe. A
+							//     restart releases the watchdog, and the replacement cannot
+							//     complete pre-flight while the node is cut off from shared
+							//     storage, leaving a node that peers have already fenced with
+							//     nothing left to reboot it. The watchdog, not kubelet, is the
+							//     liveness supervisor for a fencing agent: an agent that stops
+							//     petting causes the reboot that fencing requires.
+							//
+							// If hang detection is wanted later, expose an HTTP health endpoint
+							// on the agent metrics server rather than scanning /proc.
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									Exec: &corev1.ExecAction{
@@ -1529,18 +1544,6 @@ func (r *StorageBasedRemediationConfigReconciler) buildDaemonSet(sbrConfig *medi
 								},
 								InitialDelaySeconds: 60,
 								PeriodSeconds:       10,
-								TimeoutSeconds:      5,
-								FailureThreshold:    6,
-								SuccessThreshold:    1,
-							},
-							StartupProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{
-									Exec: &corev1.ExecAction{
-										Command: []string{"/bin/sh", "-c", "grep -l sbr-agent /proc/*/cmdline 2>/dev/null"},
-									},
-								},
-								InitialDelaySeconds: 5,
-								PeriodSeconds:       5,
 								TimeoutSeconds:      5,
 								FailureThreshold:    6,
 								SuccessThreshold:    1,
