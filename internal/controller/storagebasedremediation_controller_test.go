@@ -441,7 +441,7 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 					},
 				}
 				Expect(k8sClient.Create(ctx, detectOnlyConfig)).To(Succeed())
-				DeferCleanup(func() { Expect(k8sClient.Delete(ctx, detectOnlyConfig)).To(Succeed()) })
+				DeferCleanup(k8sClient.Delete, ctx, detectOnlyConfig)
 
 				recorder := record.NewFakeRecorder(10)
 				reconciler.Recorder = recorder
@@ -453,10 +453,11 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 					Spec:       medik8sv1alpha1.StorageBasedRemediationSpec{},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+				DeferCleanup(k8sClient.Delete, ctx, resource)
 
 				workerNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: testNodeName}}
 				Expect(k8sClient.Create(ctx, workerNode)).To(Succeed())
-				DeferCleanup(func() { Expect(k8sClient.Delete(ctx, workerNode)).To(Succeed()) })
+				DeferCleanup(k8sClient.Delete, ctx, workerNode)
 
 				By("Reconciling once: the detect-only gate must withhold before finalizer/cordon/fence logic runs")
 				req := reconcile.Request{NamespacedName: types.NamespacedName{Name: testNodeName, Namespace: "default"}}
@@ -474,6 +475,22 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNodeName, Namespace: "default"}, finalResource)).To(Succeed())
 				Expect(controllerutil.ContainsFinalizer(finalResource, SBRRemediationFinalizer)).To(BeFalse())
 
+				By("Verifying the SBR status records that detect-only mode withheld remediation")
+				for _, conditionType := range []medik8sv1alpha1.SBRRemediationConditionType{
+					medik8sv1alpha1.SBRRemediationConditionFencingInProgress,
+					medik8sv1alpha1.SBRRemediationConditionFencingSucceeded,
+					medik8sv1alpha1.SBRRemediationConditionProcessing,
+					medik8sv1alpha1.SBRRemediationConditionSucceeded,
+					medik8sv1alpha1.SBRRemediationConditionReady,
+				} {
+					condition := finalResource.GetCondition(conditionType)
+					Expect(condition).NotTo(BeNil(), "condition %s should be recorded", conditionType)
+					Expect(condition.Status).To(Equal(metav1.ConditionFalse), "condition %s should be False", conditionType)
+					Expect(condition.Reason).To(
+						Equal(ReasonDetectOnlyMode), "condition %s should explain detect-only mode", conditionType)
+					Expect(condition.Message).To(ContainSubstring("detectOnlyMode is enabled"))
+				}
+
 				Eventually(recorder.Events).Should(Receive(ContainSubstring("DetectOnlyMode")))
 			})
 
@@ -490,7 +507,7 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 					},
 				}
 				Expect(k8sClient.Create(ctx, detectOnlyConfig)).To(Succeed())
-				DeferCleanup(func() { Expect(k8sClient.Delete(ctx, detectOnlyConfig)).To(Succeed()) })
+				DeferCleanup(k8sClient.Delete, ctx, detectOnlyConfig)
 				reconciler.SetSBRConfigRef(detectOnlyConfig.Name, detectOnlyConfig.Namespace)
 
 				testNodeName := "worker-10"
@@ -502,7 +519,7 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 
 				workerNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: testNodeName}}
 				Expect(k8sClient.Create(ctx, workerNode)).To(Succeed())
-				DeferCleanup(func() { Expect(k8sClient.Delete(ctx, workerNode)).To(Succeed()) })
+				DeferCleanup(k8sClient.Delete, ctx, workerNode)
 
 				req := reconcile.Request{NamespacedName: types.NamespacedName{Name: testNodeName, Namespace: "default"}}
 				_, err := reconciler.Reconcile(ctx, req)
