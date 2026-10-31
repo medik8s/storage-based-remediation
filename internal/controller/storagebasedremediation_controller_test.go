@@ -27,6 +27,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -34,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/v5/api/v1alpha1"
@@ -422,6 +424,116 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNodeName}, finalNode)).To(Succeed())
 				Expect(finalNode.Spec.Unschedulable).To(BeFalse(),
 					"block-mode configs must be gated on storage validation exactly like filesystem-mode configs")
+			})
+		})
+
+		Context("when detectOnlyMode is enabled on the StorageBasedRemediationConfig", func() {
+			It("withholds cordon/fence/taint and never adds a finalizer, emitting ReasonDetectOnlyMode", func() {
+				By("Creating a config CR with detectOnlyMode enabled")
+				detectOnly := medik8sv1alpha1.DetectOnlyModeEnabled
+				detectOnlyConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      fmt.Sprintf("test-sbrconfig-detect-only-%d", time.Now().UnixNano()),
+						Namespace: "default",
+					},
+					Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+						DetectOnlyMode: &detectOnly,
+					},
+				}
+				Expect(k8sClient.Create(ctx, detectOnlyConfig)).To(Succeed())
+				DeferCleanup(k8sClient.Delete, ctx, detectOnlyConfig)
+
+				recorder := record.NewFakeRecorder(10)
+				reconciler.Recorder = recorder
+				reconciler.SetSBRConfigRef(detectOnlyConfig.Name, detectOnlyConfig.Namespace)
+
+				testNodeName := "worker-9"
+				resource := &medik8sv1alpha1.StorageBasedRemediation{
+					ObjectMeta: metav1.ObjectMeta{Name: testNodeName, Namespace: "default"},
+					Spec:       medik8sv1alpha1.StorageBasedRemediationSpec{},
+				}
+				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+				DeferCleanup(k8sClient.Delete, ctx, resource)
+
+				workerNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: testNodeName}}
+				Expect(k8sClient.Create(ctx, workerNode)).To(Succeed())
+				DeferCleanup(k8sClient.Delete, ctx, workerNode)
+
+				By("Reconciling once: the detect-only gate must withhold before finalizer/cordon/fence logic runs")
+				req := reconcile.Request{NamespacedName: types.NamespacedName{Name: testNodeName, Namespace: "default"}}
+				result, err := reconciler.Reconcile(ctx, req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(reconcile.Result{}))
+
+				By("Verifying the node was never cordoned")
+				finalNode := &corev1.Node{}
+				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNodeName}, finalNode)).To(Succeed())
+				Expect(finalNode.Spec.Unschedulable).To(BeFalse())
+
+				By("Verifying no finalizer was added, since no remediation action was taken")
+				finalResource := &medik8sv1alpha1.StorageBasedRemediation{}
+				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNodeName, Namespace: "default"}, finalResource)).To(Succeed())
+				Expect(controllerutil.ContainsFinalizer(finalResource, SBRRemediationFinalizer)).To(BeFalse())
+
+				By("Verifying the SBR status records that detect-only mode withheld remediation")
+				for _, conditionType := range []medik8sv1alpha1.SBRRemediationConditionType{
+					medik8sv1alpha1.SBRRemediationConditionFencingInProgress,
+					medik8sv1alpha1.SBRRemediationConditionFencingSucceeded,
+					medik8sv1alpha1.SBRRemediationConditionProcessing,
+					medik8sv1alpha1.SBRRemediationConditionSucceeded,
+					medik8sv1alpha1.SBRRemediationConditionReady,
+				} {
+					condition := finalResource.GetCondition(conditionType)
+					Expect(condition).NotTo(BeNil(), "condition %s should be recorded", conditionType)
+					Expect(condition.Status).To(Equal(metav1.ConditionFalse), "condition %s should be False", conditionType)
+					Expect(condition.Reason).To(
+						Equal(ReasonDetectOnlyMode), "condition %s should explain detect-only mode", conditionType)
+					Expect(condition.Message).To(ContainSubstring("detectOnlyMode is enabled"))
+				}
+
+				Eventually(recorder.Events).Should(Receive(ContainSubstring("DetectOnlyMode")))
+			})
+
+			It("still processes deletion/finalizer cleanup normally even when detectOnlyMode is enabled", func() {
+				By("Creating a config CR with detectOnlyMode enabled")
+				detectOnly := medik8sv1alpha1.DetectOnlyModeEnabled
+				detectOnlyConfig := &medik8sv1alpha1.StorageBasedRemediationConfig{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      fmt.Sprintf("test-sbrconfig-detect-only-del-%d", time.Now().UnixNano()),
+						Namespace: "default",
+					},
+					Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+						DetectOnlyMode: &detectOnly,
+					},
+				}
+				Expect(k8sClient.Create(ctx, detectOnlyConfig)).To(Succeed())
+				DeferCleanup(k8sClient.Delete, ctx, detectOnlyConfig)
+				reconciler.SetSBRConfigRef(detectOnlyConfig.Name, detectOnlyConfig.Namespace)
+
+				testNodeName := "worker-10"
+				resource := &medik8sv1alpha1.StorageBasedRemediation{
+					ObjectMeta: metav1.ObjectMeta{Name: testNodeName, Namespace: "default"},
+					Spec:       medik8sv1alpha1.StorageBasedRemediationSpec{},
+				}
+				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+				workerNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: testNodeName}}
+				Expect(k8sClient.Create(ctx, workerNode)).To(Succeed())
+				DeferCleanup(k8sClient.Delete, ctx, workerNode)
+
+				req := reconcile.Request{NamespacedName: types.NamespacedName{Name: testNodeName, Namespace: "default"}}
+				_, err := reconciler.Reconcile(ctx, req)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Deleting the resource, which never had a finalizer added")
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+				By("Verifying the resource is actually gone, not stuck on a finalizer")
+				Eventually(func() bool {
+					return apierrors.IsNotFound(k8sClient.Get(ctx,
+						types.NamespacedName{Name: testNodeName, Namespace: "default"},
+						&medik8sv1alpha1.StorageBasedRemediation{}))
+				}).Should(BeTrue())
 			})
 		})
 	})
