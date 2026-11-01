@@ -69,6 +69,7 @@ const (
 	ReasonFinalizerProcessed   = "FinalizerProcessed"
 	ReasonOOSTaintRemoved      = "OOSTaintRemoved"
 	ReasonStoppedByNHC         = "RemediationStoppedByNHC"
+	ReasonDetectOnlyMode       = "DetectOnlyMode"
 
 	// nhcTimeOutAnnotation is the annotation NHC sets on a remediation CR
 	// to signal the remediator to stop. Same key used by SNR and FAR.
@@ -218,6 +219,22 @@ func (r *SBRRemediationReconciler) isStorageWriteable(ctx context.Context) (bool
 	return config.IsStorageWriteable(), nil
 }
 
+// isDetectOnlyMode reads DetectOnlyMode from the StorageBasedRemediationConfig CR that owns
+// this agent. Defense-in-depth: the agent already skips self-fencing in detect-only mode, but
+// if SBR is nonetheless configured as an NHC remediator, this guard prevents the controller
+// from cordoning and tainting a node that will never actually be fenced or rebooted.
+func (r *SBRRemediationReconciler) isDetectOnlyMode(ctx context.Context) (bool, error) {
+	if r.sbrConfigName == "" {
+		return false, fmt.Errorf("no StorageBasedRemediationConfig reference configured for this agent")
+	}
+	config := &medik8sv1alpha1.StorageBasedRemediationConfig{}
+	if err := r.Get(ctx, types.NamespacedName{Name: r.sbrConfigName, Namespace: r.sbrConfigNamespace}, config); err != nil {
+		return false, fmt.Errorf("failed to get StorageBasedRemediationConfig %s/%s: %w",
+			r.sbrConfigNamespace, r.sbrConfigName, err)
+	}
+	return config.Spec.GetDetectOnlyMode(), nil
+}
+
 // getNextSequence returns the next sequence number for messages
 func (r *SBRRemediationReconciler) getNextSequence() uint64 {
 	r.sequence++
@@ -318,6 +335,32 @@ func (r *SBRRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return r.handleDeletion(ctx, &sbrRemediation, logger)
 	}
 
+	// Defense-in-depth: SBR should not be configured as an NHC remediator while
+	// detect-only mode is enabled, but if it is, never cordon or fence a node that
+	// the agent will not actually reboot. On error determining the mode, proceed
+	// as if detect-only is disabled (fail open) rather than silently withholding
+	// all remediation cluster-wide on a transient config-read failure.
+	if detectOnly, err := r.isDetectOnlyMode(ctx); err != nil {
+		logger.Error(err, "Failed to determine detect-only mode, proceeding with remediation")
+	} else if detectOnly {
+		if !sbrRemediation.IsFailed() {
+			logger.Info("Withholding remediation: StorageBasedRemediationConfig has detectOnlyMode enabled",
+				"nodeName", nodeName)
+			r.emitEventf(&sbrRemediation, EventTypeWarning, ReasonDetectOnlyMode,
+				"Withholding cordon/fence/taint for node '%s': detectOnlyMode is enabled", nodeName)
+			if err := r.setRemediationStoppedConditions(
+				ctx,
+				&sbrRemediation,
+				ReasonDetectOnlyMode,
+				"Remediation withheld because detectOnlyMode is enabled",
+			); err != nil {
+				logger.Error(err, "Failed to update status after detect-only remediation was withheld")
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
 	logger.V(1).Info("Checking finalizers for StorageBasedRemediation",
 		"nodeName", nodeName)
 
@@ -362,27 +405,12 @@ func (r *SBRRemediationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			logger.Info("NHC added the timed-out annotation, remediation will be stopped")
 			r.emitEventOnly(&sbrRemediation, EventTypeWarning, ReasonStoppedByNHC,
 				fmt.Sprintf("Remediation stopped by NHC for node '%s'", nodeName))
-			sbrRemediation.SetCondition(
-				medik8sv1alpha1.SBRRemediationConditionFencingInProgress,
-				metav1.ConditionFalse, ReasonStoppedByNHC,
-				"Remediation stopped by NHC timeout")
-			sbrRemediation.SetCondition(
-				medik8sv1alpha1.SBRRemediationConditionFencingSucceeded,
-				metav1.ConditionFalse, ReasonStoppedByNHC,
-				"Remediation stopped by NHC timeout")
-			sbrRemediation.SetCondition(
-				medik8sv1alpha1.SBRRemediationConditionProcessing,
-				metav1.ConditionFalse, ReasonStoppedByNHC,
-				"Remediation stopped by NHC timeout")
-			sbrRemediation.SetCondition(
-				medik8sv1alpha1.SBRRemediationConditionSucceeded,
-				metav1.ConditionFalse, ReasonStoppedByNHC,
-				"Remediation stopped by NHC timeout")
-			sbrRemediation.SetCondition(
-				medik8sv1alpha1.SBRRemediationConditionReady,
-				metav1.ConditionFalse, ReasonStoppedByNHC,
-				"Remediation stopped by NHC timeout")
-			if err := r.Status().Update(ctx, &sbrRemediation); err != nil {
+			if err := r.setRemediationStoppedConditions(
+				ctx,
+				&sbrRemediation,
+				ReasonStoppedByNHC,
+				"Remediation stopped by NHC timeout",
+			); err != nil {
 				logger.Error(err, "Failed to update status after NHC stop")
 				return ctrl.Result{}, err
 			}
@@ -676,6 +704,25 @@ func (r *SBRRemediationReconciler) emitEventf(obj *medik8sv1alpha1.StorageBasedR
 func (r *SBRRemediationReconciler) emitEventOnly(remediation *medik8sv1alpha1.StorageBasedRemediation,
 	eventType, eventReason, eventMessage string) {
 	r.emitEventf(remediation, eventType, eventReason, eventMessage)
+}
+
+// setRemediationStoppedConditions records that a remediation was stopped before completion.
+func (r *SBRRemediationReconciler) setRemediationStoppedConditions(
+	ctx context.Context,
+	remediation *medik8sv1alpha1.StorageBasedRemediation,
+	reason, message string,
+) error {
+	for _, conditionType := range []medik8sv1alpha1.SBRRemediationConditionType{
+		medik8sv1alpha1.SBRRemediationConditionFencingInProgress,
+		medik8sv1alpha1.SBRRemediationConditionFencingSucceeded,
+		medik8sv1alpha1.SBRRemediationConditionProcessing,
+		medik8sv1alpha1.SBRRemediationConditionSucceeded,
+		medik8sv1alpha1.SBRRemediationConditionReady,
+	} {
+		remediation.SetCondition(conditionType, metav1.ConditionFalse, reason, message)
+	}
+
+	return r.Status().Update(ctx, remediation)
 }
 
 // isStoppedByNHC returns true if NHC has annotated the CR with the
