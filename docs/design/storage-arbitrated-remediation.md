@@ -1,799 +1,873 @@
 # Storage-Arbitrated Remediation for OpenShift Virtualization
 
-**A storage-aware node remediation stack — NHC + SBR + SNR — that works across every certified CSI block driver, keeps virtual machines running through API and network outages, and reboots a node only when storage arbitration proves it is genuinely unsafe to leave it alone.**
-
-| | |
+| Item | Value |
 |---|---|
-| **Status** | Proposal — for review |
-| **Target release** | 5.9.0 |
-| **Tracking** | `RHWA-1839` · `RHWA-1837` · `RFE-9581` |
-
-### Contributors
-
-This proposal came out of several rounds of design discussion and requirements review by:
-
-Daniel Froehlich ([@DanielFroehlich](https://github.com/DanielFroehlich)) ·
-Wesley Hayutin ([@weshayutin](https://github.com/weshayutin)) ·
-Pranav Gaikwad ([@pranavgaikwad](https://github.com/pranavgaikwad)) ·
-Michal Pryc ([@mpryc](https://github.com/mpryc))
-
-### Contents
-
-1. [Complete 17-scenario verification matrix](#1-complete-17-scenario-verification-matrix)
-2. [Executive summary](#2-executive-summary)
-3. [Why the earlier proposals needed adjustment](#3-why-the-earlier-proposals-needed-adjustment)
-4. [System architecture and decision diagrams](#4-system-architecture-and-decision-diagrams)
-5. [Component deployment topology and high availability](#5-component-deployment-topology-and-high-availability)
-6. [Reboot orchestration and pod cleanup](#6-reboot-orchestration-and-pod-cleanup)
-7. [Per-node volume mechanism](#7-per-node-volume-mechanism) — *implementation decision*
-8. [Node-local state: the host-path status file](#8-node-local-state-the-host-path-status-file) — *implementation decision*
-9. [Grace periods, timeouts and reboot pacing](#9-grace-periods-timeouts-and-reboot-pacing)
-
----
-
-## 1. Complete 17-Scenario Verification Matrix
-
-This is the acceptance surface for the design: every failure mode the stack is expected to survive, and the behaviour it must produce. Each row states what the node agent does locally, what the cluster decides centrally, and the resulting outcome for the customer's virtual machines.
-
-**17 scenarios covered** — spanning API outages, storage outages, kernel hangs, upgrades, mixed-storage topologies and faults in the agent's own node-local state.
-
-| Outcome class | Count | Meaning |
-|---|---|---|
-| 🟢 **No reboot** | 8 | Node keeps feeding the hardware watchdog; VMs are undisturbed. |
-| 🟠 **Reboot by design** | 5 | Node is reset — by remediation or by the watchdog — and workloads recover elsewhere. |
-| 🔵 **Policy-driven** | 4 | Behaviour depends on configured policy — the `HealthPolicy`, a grace period or the reboot budget — or escalates into another scenario. |
-
-> **ℹ️ Note** — Every row is labelled with its outcome class, so the colour is a convenience and never the only signal.
-
-| # | Scenario | Node state | What the node agent(s) do | What the cluster does (NHC + controller) | Outcome |
-|:--:|---|---|---|---|---|
-| **1** | **Healthy steady state** | `API = OK`<br>`Storage = OK` | Writes to its canary block device, pets `/dev/watchdog`, holds `SBRStorageUnhealthy=False`. | No action. | 🟢 **No reboot**<br>VMs run normally. |
-| **2** | **Cluster-wide API outage** | `API = Offline`<br>`Storage = OK` | Sees `Storage=OK` and keeps petting `/dev/watchdog`. Network self-fencing is disabled. | API is down; NHC cannot create remediation CRs. | 🟢 **No reboot**<br>VMs keep running. |
-| **3** | **Cluster-wide storage outage** | `API = OK`<br>`Storage = Offline` | All nodes set `SBRStorageUnhealthy=True`. Because `API=OK`, they keep petting the watchdog unless a CR targets them. | After the debounce window, `maxUnhealthy` and the zero-healthy-peer check block CR creation. | 🟢 **No reboot**<br>Storm protection prevents a mass reboot. |
-| **4** | **Total datacenter outage** | `API = Offline`<br>`Storage = Offline` | Sees both planes gone, waits out `totalOutageGracePeriod`, then stops petting `/dev/watchdog`. Reason, CR identity and reboot count are written to the host-path file first — see [§8](#8-node-local-state-the-host-path-status-file). | Both planes are dead; no central decision is possible. | 🟠 **Reboot by design**<br>Nodes reset via hardware watchdog once the grace period expires. An opt-out is an [open question](#94-open-question--skipping-the-reboot-on-a-total-outage). |
-| **5** | **Single-node API / OVN-K partition** | `API = Offline`<br>`Storage = OK` | Sees `Storage=OK` on its canary block device and keeps petting `/dev/watchdog`. | Node is `NotReady`, but NHC watches only `SBRStorageUnhealthy=True`. | 🟢 **No reboot**<br>VMs on dedicated networks stay up. |
-| **6** | **Single-node storage failure** | `API = OK`<br>`Storage = Offline` | After `storageUnhealthyGracePeriod`, sets `SBRStorageUnhealthy=True` **on its own node only**. When the CR appears, runs the software reboot *and* stops the watchdog, recording the CR `UID`/`generation` in the host-path file so the reboot is attributable and not repeated. | NHC creates a remediation CR; the controller waits out the safety timer, then force-deletes pods on the node. | 🟠 **Reboot by design**<br>Node reboots; VMs fail over. |
-| **7** | **Kernel panic / freeze / power loss** | Node frozen or dead | `sbr-agent` is frozen or gone, so the watchdog is no longer fed — hardware reset within 60s. | **5.9.0:** recovers post-reboot. **Post-5.9.0 peer inspection is not available** with the chosen volume mechanism — see [§7](#7-per-node-volume-mechanism). | 🟠 **Reboot by design**<br>Hardware watchdog recovers the hung host. |
-| **8** | **`sbr-agent` upgrade or restart** | `API = OK`<br>`Storage = OK` | On `SIGTERM` writes the magic close character (`'V'`) to `/dev/watchdog`, disarming the timer across the restart, and records a **clean-shutdown marker** in the host-path file. The next start reads that marker to tell an orderly restart from a watchdog reset. | No action. | 🟢 **No reboot**<br>No false reboots during upgrades. Requires the fail-open warm-up in [§7](#7-per-node-volume-mechanism). |
-| **9** | **"Zombie kubelet" (kubelet hung)** | `API = OK`<br>`Storage = OK` | `sbr-agent` sees `Storage=OK` and keeps petting `/dev/watchdog`. | Node is `NotReady`, but `SBRStorageUnhealthy` remains `False`. | 🟢 **No reboot**<br>Running VMs are undisturbed. |
-| **10** | **Slow / hanging storage (`D-state`)** | `API = OK`<br>`Storage hung > storageIOTimeout` | Every canary read and write runs in a separate goroutine under `storageIOTimeout`; an expired I/O counts as a failure, and sustained failure past `storageUnhealthyGracePeriod` is treated as `Storage=Offline`. | Resolves into scenario 3 (storm-protected) or scenario 6 (single node). | 🔵 **Policy-driven**<br>Hung I/O never starves the watchdog loop; a short blip never trips remediation. |
-| **11** | **Split-brain network partition** | `API = Offline`<br>`Storage = OK` | Minority nodes keep petting `/dev/watchdog` while storage stays healthy. | NHC does not delete pods or move VMs unless storage is unhealthy or revoked. | 🟢 **No reboot**<br>Zero split-brain. |
-| **12** | **Last-second network recovery** | Remediation CR active | **Point-of-no-return latch:** once fenced, the agent never resumes petting the watchdog. | Controller waits out the full reboot timer before deleting pods. | 🟠 **Reboot by design**<br>Zero race condition. |
-| **13** | **Different nodes, different storage**<br>*one volume each, but not the same backend* | `Node-X → SC-A only`<br>`Node-Y → SC-B only` | Each node attaches a canary volume from *its own* `StorageClass`. `Node-X` never reads or depends on `Node-Y`'s storage. | Health is judged per node, against that node's own backend. A failure of `SC-A` says nothing about `Node-Y`. | 🔵 **Policy-driven**<br>Mixed-backend clusters work; one node's outage never implicates another. **Deferred past 5.9.0** — see [§7](#7-per-node-volume-mechanism). |
-| **14** | **One node, several storage backends**<br>*a single node attached to two at once* | `Node-Z → SC-A = Offline`<br>`Node-Z → SC-B = OK` | Monitors every canary device the node owns and evaluates the results against the configured `HealthPolicy`. | NHC acts on the single `SBRStorageUnhealthy` condition the policy produced. | 🔵 **Policy-driven**<br>`HealthPolicy` defines which combination of failures warrants a reboot. **Deferred past 5.9.0** — see [§7](#7-per-node-volume-mechanism). |
-| **15** | **Un-evictable / stuck terminating pod** | Remediation triggered | Node reboots via software reboot plus release of the SBR hardware watchdog. | Controller applies the taint and force-deletes pods (`GracePeriod=0`) before untainting. | 🟠 **Reboot by design**<br>Stuck pod is deleted before the node rejoins. |
-| **16** | **Host-path status file unwritable**<br>*full root filesystem, read-only remount, local disk fault* | `API = OK`<br>`Storage = OK`<br>`Host path = EIO / RO` | Retries the open and the write with backoff. If the path stays unusable the agent **disarms `/dev/watchdog` with `'V'`, reports, and exits** — a fault in the agent's own bookkeeping must never be charged to the workloads. The DaemonSet restart loop and the agent's `Ready` condition make the degradation visible. If a fence is *already* latched, the reset proceeds regardless. | Node is `Ready` and `SBRStorageUnhealthy` stays `False`, so NHC does nothing. Fencing coverage for this node is lost until the host path is repaired — this is deliberately a loud, non-destructive failure. | 🟢 **No reboot**<br>A local agent or disk fault never reboots a node — see [§8.5](#85-host-path-faults-never-reboot-the-node). |
-| **17** | **Repeated remediation of the same node**<br>*reboot loop on a persistently broken backend* | Node rebooted *N* times inside the backoff window | On start the agent replays the reboot history in the host-path file. Each successive self-fence is delayed by an exponential backoff; once the budget in the window is spent the agent stops self-fencing, keeps petting the watchdog, and emits an event naming the exhausted budget. | NHC keeps seeing `SBRStorageUnhealthy=True` and may keep creating CRs; the **node-local** budget — not the API — is what breaks the loop. | 🔵 **Policy-driven**<br>Backoff and budget are configured; a node that cannot be fixed by rebooting stops being rebooted — see [§9.3](#93-reboot-pacing-and-loop-protection). |
+| Status | Proposal for review |
+| Target release | 5.9.0 |
+| Tracking | `RHWA-1839`, `RHWA-1837`, `RFE-9581` |
 
-### Scope for 5.9.0
+Contributors: Daniel Froehlich ([@DanielFroehlich](https://github.com/DanielFroehlich)), Wesley Hayutin ([@weshayutin](https://github.com/weshayutin)), Pranav Gaikwad ([@pranavgaikwad](https://github.com/pranavgaikwad)), and Michal Pryc ([@mpryc](https://github.com/mpryc)).
 
-The matrix above is the full behavioural target. Not all of it lands in one release.
+## 1. Introduction
 
-**In scope for 5.9.0**
+Storage Based Remediation (SBR) currently uses shared storage for heartbeats and fence messages. Node Healthcheck Operator (NHC) creates a `StorageBasedRemediation` custom resource (CR) when its policy permits remediation.
 
-- **Per-node canary volumes.** Each node exercises a block volume of its own rather than writing into
-  a slot in one volume shared by the whole cluster. This is the change that makes the stack work on
-  backends that block concurrent writes or offer only `ReadWriteOnce`.
-- **A single `StorageClass`**, cluster-wide. Every node's canary comes from the same backend.
-- **Both arbitration models ship.** Existing deployments keep the shared-volume behaviour they have
-  today, unchanged and unaffected by upgrade. New deployments get per-node volumes. The model is
-  selectable per deployment, so adopting the new one is a deliberate act.
-- **Scenarios 1–12 and 15–17**, as described in the matrix.
-- **The SNR change** in [§6](#6-reboot-orchestration-and-pod-cleanup) — the software-reboot-only mode.
-  It lives in another repository and gates scenarios 6 and 15.
-- **The host-path status file** in [§8](#8-node-local-state-the-host-path-status-file): node-local, API-independent
-  state and effective configuration, shared with SNR, carrying the reboot history that scenario 17 depends on.
-- **Configurable grace periods and I/O timeouts** in [§9](#9-grace-periods-timeouts-and-reboot-pacing), plus the
-  exponential reboot backoff.
+This proposal adds an optional `nodeLocal` operating mode. Each selected node uses a private Block volume to check storage access. SBR stores remediation history in a file on the host. NHC uses SBR as its only remediation provider for this policy.
 
-**Out of scope for 5.9.0**
+SBR owns the local reboot, reports boot information, and performs API-based workload cleanup. The default `standard` mode retains the current shared-storage behavior.
 
-- **Scenario 13** — different `StorageClasses` on different nodes.
-- **Scenario 14** — several `StorageClasses` on a single node, and the `HealthPolicy` that would
-  arbitrate between them. Deferred as a scope decision, not a technical barrier.
-- **Scenario 7's peer inspection** — a surviving node attaching a dead node's volume to read its last
-  heartbeat. This one is **dropped rather than deferred**; see [§7](#7-per-node-volume-mechanism) for
-  why, and note the node is still recovered by the hardware watchdog regardless.
-- **Retiring the shared-volume model.** It remains supported; there is no forced migration.
-- **A partial opt-out from self-fencing on a total outage** — see the
-  [open question](#94-open-question--skipping-the-reboot-on-a-total-outage). The existing
-  `detectOnlyMode` already provides an all-or-nothing opt-out; the narrower one is not designed yet.
-- **A generalised "rebooter" interface** that would let SBR fence on arbitrary unhealthy conditions
-  rather than storage ones. Discussed and **rejected** — see [§6](#6-reboot-orchestration-and-pod-cleanup).
 
-### Reading scenarios 13 and 14: two different questions
+## 2. Motivation
 
-These two rows are often confused because both mention several `StorageClasses`. They are asking different things. **Scenario 13 is about the cluster** — nodes do not all have to use the same storage backend, and each node is judged only against its own. **Scenario 14 is about a single node** — one node attached to two backends at once, where something has to decide whether losing one of them is grounds for a reboot. That decision is the `HealthPolicy`.
+The current shared Block volume requires concurrent writes from multiple nodes. Some storage drivers cannot provide this access. Private probe volumes remove that shared-write requirement. They do not establish compatibility with every CSI driver.
 
-**Diagram 1 — Scenario 13 vs. scenario 14: per-node storage, and per-node *policy***
+A storage-focused policy should preserve running virtual machines during API or network loss when storage remains usable. When the API remains reachable, NHC should decide whether storage failure permits remediation. When both storage and API access fail, the local agent needs an autonomous decision path.
 
-```mermaid
-flowchart TB
-  subgraph S13["SCENARIO 13 — different nodes, different storage backends"]
-    direction LR
-    NX["Node-X<br/>canary volume on SC-A"] --> SCA[("SC-A")]
-    NY["Node-Y<br/>canary volume on SC-B"] --> SCB[("SC-B")]
-    V13["Each node is judged only against its own backend.<br/>SC-A failing says nothing about Node-Y.<br/>One volume per node — no HealthPolicy involved."]
-  end
+## 3. Goals
 
-  subgraph S14["SCENARIO 14 — one node attached to several backends at once"]
-    direction TB
-    NZ["Node-Z<br/>two canary volumes"] --> ZA[("SC-A<br/>OFFLINE")]
-    NZ --> ZB[("SC-B<br/>OK")]
-    ZA --> HP{"HealthPolicy<br/>Is one failure enough,<br/>or must all of them fail?"}
-    ZB --> HP
-    HP --> VERD["Single verdict:<br/>SBRStorageUnhealthy = True / False"]
-  end
+- Configure NHC with SBR as the sole remediation provider for this storage policy.
+- Preserve existing behavior when `operatingMode` is absent or `standard`.
+- Add `nodeLocal` for private Block probes using one StorageClass.
+- Distinguish transient I/O errors from sustained failure through a storage grace period.
+- Keep the watchdog active during isolated API loss when storage remains healthy.
+- Reboot autonomously after sustained combined storage and API loss.
+- Suppress repeated requested resets while identity history remains available and one agent process controls the node.
+- Persist request identity and boot information across agent and host restarts.
+- Retain SBR's out-of-service taint and add direct Pod cleanup when API access permits.
+- Preserve unfinished cleanup when NHC stops or deletes a request after reboot commitment.
 
-  S13 ~~~ S14
-```
+## 4. Non-Goals
 
-> ### 🔑 `HealthPolicy` — the knob that decides when storage loss means "reboot"
->
-> *Design for the multi-backend work. **Not in 5.9.0**, which ships a single `StorageClass` per node — see [§7](#7-per-node-volume-mechanism).*
->
-> A node with more than one canary volume needs a rule for turning several device results into the one `SBRStorageUnhealthy` condition NHC watches. `HealthPolicy` is that rule — for example *"any one backend failing marks the node unhealthy"* (safest for VMs whose disks could be on either backend) versus *"all backends must fail"* (avoids rebooting a node that can still serve some of its workloads). It is deliberately a policy rather than hard-coded behaviour, because the right answer depends on how the customer spreads VM disks across their storage.
+- Remove or redesign the existing `standard` mode.
+- Inspect another node's private probe volume or exchange fence messages through it.
+- Prevent workloads from restarting after reboot and before cleanup.
+- Perform or queue cleanup for an autonomous remediation during API loss.
+- Support multiple StorageClasses or multiple probes per node in this release.
 
----
+## 5. Design
 
-## 2. Executive Summary
+### 5.1. Components and ownership
 
-OpenShift Virtualization (KubeVirt) requires a storage-aware remediation stack that works across **all** certified CSI block drivers — including backends that block concurrent writes (for example Portworx) or support only `ReadWriteOnce` (`RWO`) — while respecting Node Healthcheck Operator (NHC) storm protection (`maxUnhealthy`) and avoiding unnecessary VM disruption during Kubernetes API or OVN-Kubernetes network outages.
+NHC watches `SBRStorageUnhealthy=True` for the selected nodes. Its remediation template creates only `StorageBasedRemediation`. The CR name continues to identify the target node. No SNR template participates in this policy.
 
-> ### ✅ What this buys the customer
->
-> A node is rebooted only when the design can prove it is unsafe to leave running. Network trouble alone never costs a VM outage; a cluster-wide storage blip never cascades into a cluster-wide reboot; and a genuinely dead or hung host is always recovered by hardware, not hope.
+For `nodeLocal`, the SBR operator manager owns the CR lifecycle and cleanup. It runs the new controller under leader election. The target agent owns local storage decisions, watchdog access, reboot execution, and boot reporting. Standard agents retain their existing shared-storage reconciler.
 
-### Core architectural pillars
-
-**1. Per-node canary block volumes**
-
-Each node mounts its own dedicated, lightweight 10 Mi block-mode PVC. 5.9.0 ships one `StorageClass` per node; extending to several, with a `HealthPolicy` deciding the verdict, is designed for but deferred. How that per-node volume is bound to the agent pod is an implementation decision — see [§7](#7-per-node-volume-mechanism). `ReadWriteOnce` is sufficient — the volume is never shared — but a `ReadWriteMany` backend works just as well, because all SBR needs is a writable block device. One mount per node — `O(1)` — eliminates concurrent-writer locks, cross-node `O_DIRECT` page-cache bugs and on-disk `NodeMap` contention.
-
-**2. SBR owns `/dev/watchdog`, with a dual-path guard**
-
-`sbr-agent` continuously evaluates both local storage health and K8s API reachability. It self-fences autonomously only when **both** storage and API are lost (or on a kernel hang), and otherwise delegates the decision to NHC while the API is reachable.
-
-**3. Zero-reboot storage-array outage protection**
-
-When a storage array suffers a cluster-wide blip while the K8s API is online, nodes self-report `SBRStorageUnhealthy=True` and NHC enforces storm protection plus a healthy-peer check — preventing cascading cluster-wide reboots.
-
-**4. Reboot orchestration and pod cleanup**
-
-When NHC triggers remediation the target node is reset, backed by the hardware watchdog. Once the calculated safety timer expires, stuck pods are force-deleted through SNR's `deleteResourcesWrapper`, so workloads can safely restart elsewhere.
-
-**5. Node-local state that outlives the API and the pod**
-
-Every decision the agent makes — each I/O result, each condition change, each reboot and the reason for it, plus the effective configuration — is appended to a small JSON file on a host path, shared with SNR. Fencing decisions must be possible when the API is unreachable, and the record of them must survive the pod that made them. This is what makes the reboot budget, the attribution of a reboot to a specific remediation CR, and post-mortem over SSH possible at all — see [§8](#8-node-local-state-the-host-path-status-file).
-
-**6. Everything is on a timer the administrator controls**
-
-Storage I/O is bounded, a short storage blip is not an outage, and a total outage does not mean an instant reset. Distinct, configurable grace periods separate *"storage is slow"* from *"storage is gone"* from *"everything is gone"*, and an exponential backoff keeps a node that cannot be fixed by rebooting from being rebooted forever — see [§9](#9-grace-periods-timeouts-and-reboot-pacing).
-
----
-
-## 3. Why the Earlier Proposals Needed Adjustment
-
-Three concrete workflows explain why the two original Jira proposals cannot ship as written, and what changes in the combined design to close each gap.
-
-> ### ❌ Gap 1 — RHWA-1839, concurrent-mount RWX block
->
-> - **Workflow 1A — 100-node scaling (violates AC #4):** if every node mounts *N−1* peer volumes to read heartbeats, a 100-node cluster hits Linux/CSI LUN attachment limits (32–128 disks per node), leaving no room for KubeVirt VM disks.
-> - **Workflow 1B — Portworx single-writer deadlock:** the first node to open a volume for writing holds an exclusive lock. If `Node-A` loses API access while its storage path is still up, it keeps that lock — and peer `Node-B` blocks forever trying to write a `FENCE` message to `Node-A`'s disk.
-> - **Workflow 1C — stale kernel RAM cache:** without coherent cross-node `O_DIRECT`, a peer with a permanent mount reads stale cached sectors from local RAM and false-positive fences a healthy VM host.
-
-> ### ❌ Gap 2 — RHWA-1837 / RFE-9581, NHCControlled mode
->
-> - **Workflow 2A — the "broken storage catch-22" split-brain:** this proposal pets `/dev/watchdog` *unconditionally* when storage is unhealthy (`handleWatchdogTickSBRUnhealthy`) and self-fences only when the agent *reads* a fence message from its SBD slot. But when `Node-A`'s storage connection breaks, **`Node-A` cannot read its SBD slot** to see the fence message. It keeps petting its watchdog forever and never reboots — while 60s later the controller sees the stale heartbeat, assumes the node rebooted, and marks remediation `Succeeded`. Split-brain.
-
-> ### 🔧 Three refinements to the combined SBR + SNR workflow
->
-> - **Workflow 3A — hung software reboot on broken storage:** when storage is broken, Linux processes such as `qemu-kvm` enter uninterruptible `D-state`, so SNR's software `reboot()` hangs indefinitely.
->   *Fix:* once NHC creates the remediation CR for `Node-A`, `sbr-agent` on that node must *also* stop feeding `/dev/watchdog`, so the hardware watchdog guarantees a reset within 60s.
-> - **Workflow 3B — dead node / power-loss failover:** a node that loses power, or loses both API and storage, cannot self-report `SBRStorageUnhealthy=True`.
->   *Fix (originally planned post-5.9.0):* a leader-elected SBR controller on a healthy worker peer would mount the `NotReady` node's canary block device on demand, see the stale timestamp, and set `SBRStorageUnhealthy=True` on that node's behalf. **This is no longer available** — the chosen volume mechanism does not preserve a dead node's volume, see [§7](#7-per-node-volume-mechanism). The node is still recovered: the hardware watchdog resets it regardless.
-> - **Workflow 3C — everything interesting happens while nobody is watching:** the agent's most important decisions are taken in exactly the states where it cannot record them. CR status and node conditions need the API, which is down. Container logs live in the pod, which the reboot destroys. An administrator who SSHes into a node that reset itself overnight has nothing to read, and the agent that comes back up has no idea it is the third reboot in ten minutes.
->   *Fix:* persist the decision record and the effective configuration to a host path that survives both the pod and the reboot, and replay the missed events into the API when it returns — see [§8](#8-node-local-state-the-host-path-status-file).
-
----
-
-## 4. System Architecture and Decision Diagrams
-
-Five views of the same system: who is responsible for what, what runs where, how a single node decides each tick, how the cluster arbitrates across the key failure workflows, and how the two agents divide the reboot.
-
-### Who is responsible for what
-
-The three operators have strictly separate jobs, and the split matters: **NHC decides** whether a node should be remediated, **SBR detects and fences** using the hardware watchdog, and **SNR performs the reboot and cleans up the workloads**. No component does two of those jobs, and exactly one component owns `/dev/watchdog`.
-
-**Diagram 2 — Division of responsibilities: NHC decides, SBR detects and fences, SNR reboots and cleans up**
-
-```mermaid
-flowchart TB
-  subgraph SBRB["1 — SBR: DETECTS & FENCES (DaemonSet on every worker node)"]
-    direction LR
-    S1["DOES<br/>Writes heartbeats to the node's canary block device<br/>Owns /dev/watchdog — the only component that does<br/>Self-reports SBRStorageUnhealthy for ITS OWN node<br/>Maintains the host-path status file (state + config + history)<br/>Releases the watchdog → guaranteed hardware reset"]
-    S2["DOES NOT<br/>Decide remediation<br/>Delete pods<br/>Manage taints<br/>Touch another node's condition<br/>Reboot on a host-path fault"]
-    S1 ~~~ S2
-  end
-
-  subgraph NHCB["2 — NHC: DECIDES (control-plane Deployment)"]
-    direction LR
-    N1["DOES<br/>Watches the SBRStorageUnhealthy=True condition<br/>Applies the 30s debounce window<br/>Enforces maxUnhealthy storm protection<br/>Creates the SelfNodeRemediation CR"]
-    N2["DOES NOT<br/>Reboot anything<br/>Touch any watchdog<br/>React to plain NotReady"]
-    N1 ~~~ N2
-  end
-
-  subgraph SNRB["3 — SNR: REBOOTS & CLEANS UP (software-reboot-only mode)"]
-    direction LR
-    R1["DOES<br/>snr-agent: runs software reboot() when its CR appears<br/>Controller: waits safeTimeToAssumeNodeRebooted<br/>Controller: applies taints, force-deletes pods<br/>Controller: untaints before the node rejoins"]
-    R2["MUST BE MODIFIED<br/>Software-reboot-only mode:<br/>own watchdog OFF<br/>peer-check self-fencing OFF<br/>records every reboot it performs<br/>in the shared host-path file"]
-    R1 ~~~ R2
-  end
-
-  SBRB -- "1. Sets SBRStorageUnhealthy=True" --> NHCB
-  NHCB -- "2. Creates the SNR CR" --> SNRB
-```
-
-> ### 🔒 Invariant — a node's condition is written by that node, and by nothing else
->
-> `SBRStorageUnhealthy` is set **only** by the `sbr-agent` running on the node it describes. No controller, no peer and no leader writes it on another node's behalf. The condition therefore means exactly one thing — *"the agent on this node observed its own storage failing"* — and never *"somebody else inferred something about this node."*
->
-> This follows the loss of peer inspection in [§7.4](#74-what-this-costs) and is a simplification rather than a regression: a node that is dead cannot report, but it also cannot be left running, because the hardware watchdog resets it. The condition is the storage signal; `NotReady` remains the liveness signal, and NHC is deliberately configured to act on the former.
-
-> ### 🚨 Required change — SNR must gain a software-reboot-only mode
->
-> SNR cannot be adopted as-is. Today it arms its own watchdog and can self-fence autonomously after a peer check; in this design **SBR owns `/dev/watchdog` exclusively** and NHC is the only thing allowed to decide that a node should go. SNR therefore needs a configuration mode in which both its watchdog and its peer-check self-fencing are switched off, leaving it responsible for exactly two things: running the software `reboot()` when its CR appears, and performing the timer-gated pod cleanup afterwards. Two components arming watchdogs independently would reintroduce the very split-brain this architecture removes.
->
-> A second, smaller change comes with it: **SNR records every reboot it performs in the shared host-path status file**, through the same common function SBR uses ([§8.6](#86-one-file-two-operators)). Without it the two operators can each conclude, independently and correctly, that this node has not been rebooted yet. **These are the upstream changes the proposal depends on.**
-
-### Component architecture
-
-**Diagram 3 — Component architecture: NHC + SBR + SNR**
-
-```mermaid
-flowchart TB
-  subgraph CP["CONTROL PLANE / SURVIVING CLUSTER"]
-    NHC["Node Healthcheck Operator (NHC)<br/>- Watches: SBRStorageUnhealthy=True<br/>- Debounce duration: 30s<br/>- Enforces: maxUnhealthy (Storm Protection)<br/>- Ignores regular Node NotReady"]
-    SNRC["SNR Controller<br/>- Waits safeTimeToAssumeNodeRebooted<br/>- Applies remediation taints<br/>- Force-deletes pods (deleteResourcesWrapper)"]
-    NHC -- "Creates Remediation CR<br/>(within maxUnhealthy)" --> SNRC
-  end
-
-  subgraph NODE["WORKER NODE (Node-X)"]
-    SBR["sbr-agent<br/>- Owns /dev/watchdog (Armed)<br/>- Writes to Node-X canary block device(s)<br/>- Multi-volume verdict via HealthPolicy<br/>- Stops watchdog if: (API=Off AND Storage=Off<br/>  for totalOutageGracePeriod, budget permitting)<br/>  OR (Remediation CR targets Node-X)"]
-    SNR["snr-agent (MODIFIED)<br/>- Software-reboot-only mode<br/>- Watchdog: DISABLED<br/>- Autonomous Self-Fence: OFF<br/>- Runs software reboot ONLY<br/>  when SNR CR is created<br/>- Records the reboot in the host-path file"]
-    WD[("/dev/watchdog<br/>Hardware Reset Timer")]
-    PVC[("Per-Node Canary Block Volume(s)<br/>- sbr-node-x-sc1 (10Mi, Block mode)<br/>- sbr-node-x-sc2 (Optional)<br/>- RWO is sufficient; RWX also works")]
-    HPF[/"Host path — /var/lib/medik8s/node-state.json<br/>- Survives the pod AND the reboot<br/>- I/O history, conditions, event replay queue<br/>- Reboot history: reason, CR UID, count<br/>- Effective config (grace periods, timeouts)"/]
-
-    SBR --> WD
-    SBR --> PVC
-    SBR <--> HPF
-    SNR --> HPF
-  end
-
-  SBR -- "1. Patches SBRStorageUnhealthy=True<br/>(when API=Online, Storage=Offline)" --> NHC
-  SNRC -- "2. Remediation CR triggers<br/>software reboot" --> SNR
-  SNRC -. "3. Signals sbr-agent to<br/>stop watchdog & reboot" .-> SBR
-```
-
-### Local node decision flow
-
-**Diagram 4 — Local node watchdog decision flow: `sbr-agent`, every 5s tick (one API query per tick)**
-
-```mermaid
-flowchart TD
-  A["sbr-agent Tick (Every 5s)<br/>1. Write + read this node's canary block device(s), each I/O bounded by storageIOTimeout<br/>2. Append the tick result to the host-path status file<br/>3. Query the API once for a Remediation CR targeting this node<br/>(that single query is also the API reachability probe)"] --> HP{"Is the host-path status<br/>file readable and writable?"}
-  HP -- "NO (after bounded retries)" --> HPL{"Is the fence latch<br/>already set?"}
-  HPL -- "YES" --> C
-  HPL -- "NO" --> HPX["Report: event + agent condition + log<br/>DISARM /dev/watchdog with 'V' and EXIT<br/>A host-path fault NEVER reboots the node — §8.5"]
-  HP -- "YES" --> B{"Is the Fenced Latch Set (in memory SBR) OR<br/>did the query return an Active Remediation CR<br/>targeting my node?"}
-  B -- "YES" --> C["Latch fenced = true<br/>Record reason + CR UID/generation in the status file<br/>STOP PETTING WATCHDOG<br/>(Hardware Reset Node in 60s)"]
-  B -- "NO" --> D{"Did the canary block device<br/>I/O succeed in time?<br/>(verdict across devices via HealthPolicy)"}
-  D -- "YES (Storage OK)" --> E["Clear SBRStorageUnhealthy (Set False)<br/>Reset the failure timer<br/>PET /dev/watchdog<br/>(Node & KubeVirt VMs Stay Alive!)"]
-  D -- "NO (Storage Broken)" --> D2{"Failing for longer than<br/>storageUnhealthyGracePeriod?"}
-  D2 -- "NO (still inside the grace period)" --> E2["PET /dev/watchdog<br/>Keep counting — a blip is not an outage"]
-  D2 -- "YES" --> F{"Did that same query<br/>reach the API?<br/>(reuses step 3 — no second probe)"}
-  F -- "YES (API OK)" --> G["Patch Node Condition on THIS node:<br/>SBRStorageUnhealthy = True<br/>PET /dev/watchdog<br/>(Delegate to NHC Storm Protection)"]
-  F -- "NO (Both API & Storage Down)" --> H{"Both planes down for longer<br/>than totalOutageGracePeriod?"}
-  H -- "NO" --> I["PET /dev/watchdog<br/>Queue an event for replay when the API returns<br/>(the API may come back and let NHC decide)"]
-  H -- "YES" --> J{"Reboot budget left?<br/>(history + backoff, read from<br/>the host-path file)"}
-  J -- "YES" --> C
-  J -- "NO (budget exhausted)" --> K["Keep petting /dev/watchdog<br/>Record and replay 'reboot budget exhausted' — §9.3"]
-```
-
-> ### 🔍 Why one query serves both checks — and why the branch still has to exist
->
-> Looking for a Remediation CR *is* an API reachability test, so the agent makes a single call per tick rather than probing the API twice. What the flow must never do is collapse the two possible "no CR" answers into one: **"the API answered, and there is no CR"** is a completely different state from **"the agent could not reach the API at all."**
->
-> If those were treated the same, a node that lost both its storage and its API would see no CR, see a failed disk write, and carry on petting `/dev/watchdog` forever — which is precisely the split-brain described in Gap 2 and the failure that scenario 4 exists to catch. The query therefore returns three states (*CR found* / *answered, no CR* / *unreachable*), and the branch at `F` simply reads the third one. In implementation this must come from the actual call result, not from a cached informer read — a stale cache will happily answer "no CR" on a node whose network is already gone.
-
-### Cluster-level arbitration
-
-**Diagram 5 — How the quorum / NHC decides across the key failure workflows**
-
-```mermaid
-sequenceDiagram
-  participant NodeA as Node-A (Worker Agent)
-  participant DiskA as Node-A Canary Block Device
-  participant HP as Node-A Host-Path Status File
-  participant API as K8s API / NHC (Quorum)
-  participant SNRC as Remediation Controller
-
-  rect rgba(16, 185, 129, 0.12)
-    Note over NodeA,SNRC: WORKFLOW A: API Offline, Storage Online (VMs on Secondary Network)
-    NodeA-xAPI: 1. K8s API Unreachable (Node-A becomes NotReady)
-    NodeA->>DiskA: 2. Write Heartbeat (SUCCEEDS)
-    NodeA->>NodeA: 3. Pet /dev/watchdog (Autonomous network self-fence is OFF)
-    API->>API: 4. NHC ignores NotReady -> ZERO REBOOTS (VMs keep running)
-  end
-
-  rect rgba(239, 68, 68, 0.12)
-    Note over NodeA,SNRC: WORKFLOW B: API Online, Single Node Storage Failure (Node-A Cable/HBA Broken)
-    NodeA-xDiskA: 1. Write Heartbeat FAILS (EIO) for longer than storageUnhealthyGracePeriod
-    NodeA->>API: 2. Set SBRStorageUnhealthy = True on its own Node (Keep petting watchdog)
-    API->>API: 3. Debounce 30s: Only Node-A unhealthy (Peers on SC are OK)
-    API->>SNRC: 4. Create Remediation CR for Node-A
-    SNRC->>NodeA: 5. Node-A detects Remediation CR in API
-    NodeA->>HP: 6. Record: fencing for CR (uid + generation), reboot n in window
-    NodeA->>NodeA: 7. snr-agent runs software reboot AND sbr-agent STOPS watchdog
-    SNRC->>SNRC: 8. Wait safety timer -> Force-delete Node-A pods -> VMs move to Node-B
-    NodeA->>HP: 9. After reboot: read history, apply backoff before any further self-fence
-  end
-
-  rect rgba(59, 130, 246, 0.12)
-    Note over NodeA,SNRC: WORKFLOW C: API Online, Storage Array Outage (All Nodes Lose Storage)
-    NodeA-xDiskA: 1. Write Heartbeat FAILS on ALL nodes
-    NodeA->>API: 2. All nodes set SBRStorageUnhealthy = True
-    API->>API: 3. Debounce 30s: Unhealthy count exceeds maxUnhealthy (0 healthy peers)
-    API->>API: 4. NHC BLOCKS Remediation CR creation
-    NodeA->>NodeA: 5. All nodes keep petting /dev/watchdog -> ZERO REBOOTS
-  end
-
-  rect rgba(249, 115, 22, 0.12)
-    Note over NodeA,SNRC: WORKFLOW D: Total Outage — API and Storage Both Gone (nobody can decide centrally)
-    NodeA-xDiskA: 1. Canary I/O fails or times out
-    NodeA-xAPI: 2. API unreachable — no CR can be fetched and none can be created
-    NodeA->>HP: 3. Start the totalOutageGracePeriod timer and queue events for later replay
-    NodeA->>NodeA: 4. Keep petting /dev/watchdog for the whole grace period
-    NodeA->>HP: 5. Grace period expired -> check the reboot budget in the history
-    NodeA->>NodeA: 6. Budget left: record the reason, RELEASE the watchdog -> hardware reset
-    NodeA->>API: 7. On recovery: replay the queued events so 'oc describe' shows what happened
-  end
-```
-
----
-
-## 5. Component Deployment Topology and High Availability
-
-Where each component runs, and what happens if the node hosting a controller dies.
-
-| Component | DaemonSet on every worker node? | Central controller (Deployment)? | Role and high-availability behaviour |
-|---|---|---|---|
-| **SBR**<br>`sbr-agent` and controller | **Yes**<br>one pod per worker node | **Yes**<br>operator + leader-elected reconciler inside `sbr-agent` | **Per-node agent role:** mounts the node's canary block device(s), owns `/dev/watchdog`, writes heartbeats every 5s and **self-reports `SBRStorageUnhealthy=True` directly to the K8s API** when storage fails while the API is up — no central controller is required to report it.<br><br>**Leader-elected peer role:** every `sbr-agent` pod participates in Kubernetes `Lease` leader election. If the current leader node dies, another healthy worker's agent wins the lease within ~15s — crucial because worker nodes, not control-plane nodes, have access to VM SAN/CSI storage.<br><br>**Node-local state:** maintains the host-path status file ([§8](#8-node-local-state-the-host-path-status-file)) — the only part of the stack that keeps working, and keeps a record, with the API down. |
-| **NHC**<br>Node Healthcheck Operator | **No**<br>never runs as a DaemonSet | **Yes**<br>control-plane Deployment with leader election | **The decision maker and storm protector:** watches `Node` conditions (`SBRStorageUnhealthy=True`) in the K8s API.<br><br>Applies the 30s debounce window and `maxUnhealthy` storm protection before creating the `SelfNodeRemediation` CR. |
-| **SNR**<br>Self Node Remediation<br>*(requires the software-reboot-only mode)* | **Yes** | **Yes** | **Worker role (`snr-agent`):** runs in **software-reboot-only mode** — its own watchdog and peer-check self-fencing are switched off — and sits idle until an `SNR` CR is created for its node, at which point it triggers the software `reboot()`. This mode does not exist upstream today and must be added.<br><br>**Controller role:** waits out `safeTimeToAssumeNodeRebooted`, manages taints and force-deletes pods via `deleteResourcesWrapper`.<br><br>**Shared-state role (new):** every reboot SNR performs is written to the same host-path status file through the common library, so SBR and SNR agree on what has already been done to this node. |
-
----
-
-## 6. Reboot Orchestration and Pod Cleanup
-
-The proposed approach reuses SNR's proven reboot-timer and pod-deletion controller rather than re-implementing it inside SBR.
-
-### Combined NHC + SBR + SNR (Pranav Gaikwad's proposal)
-
-**How it works**
-NHC creates a `SelfNodeRemediation` (SNR) CR when `SBRStorageUnhealthy=True`.
-
-**On the worker node**
-Two DaemonSet pods run per node — `sbr-agent`, which owns `/dev/watchdog` and the canary block device, and `snr-agent`, which has watchdog and self-fencing disabled and runs the software `reboot()` when the SNR CR appears, while `sbr-agent` stops feeding `/dev/watchdog`.
-
-**Workload cleanup**
-Handled by the existing `SNR Controller` through `deleteResourcesWrapper`.
-
-**✅ Advantage**
-Reuses SNR's existing pod-deletion and reboot-timer controller logic without porting it to SBR.
-
-**⚠️ Trade-off**
-Requires modifying SNR to add a `watchdogDisabled` / `selfFencingDisabled` mode and to write its reboot outcomes to the shared host-path file, and runs two DaemonSets and two controllers on every cluster.
-
-**Diagram 6 — Dual agent: SBR + SNR responsibilities during remediation**
+The operator resolves the target node to one applicable SBR configuration. It records the configuration UID, Node UID, and operating mode before authorizing an action. Missing or conflicting configurations prevent authorization. A replacement Node with the same name does not inherit an old request.
 
 ```mermaid
 flowchart LR
-  subgraph OPTA["NHC + SBR + SNR (Dual DaemonSet)"]
-    direction TB
-    NHCA["NHC Controller<br/>(Watches SBRStorageUnhealthy)"] -- "1. Creates SNR CR" --> SNRCA["SNR Controller<br/>(Waits timer & deletes pods)"]
-    SNRCA -- "2. Triggers software reboot" --> SNRAA["snr-agent (Worker) (MODIFIED)<br/>Software-reboot-only mode<br/>(Watchdog OFF, Self-Fence OFF)"]
-    SNRCA -. "3. Stops HW Watchdog" .-> SBRAA["sbr-agent (Worker)<br/>(Owns /dev/watchdog & canary block device)"]
-    SNRAA -- "4a. Records reboot<br/>(reason, CR UID, outcome)" --> HPA[/"Shared host-path status file<br/>/var/lib/medik8s/node-state.json"/]
-    SBRAA -- "4b. Reads before fencing,<br/>writes after" --> HPA
+  NHC["NHC: storage condition and health policy"] --> CR["StorageBasedRemediation CR"]
+  CR --> Controller["SBR operator: elected nodeLocal controller"]
+  Controller --> Ownership{"Exclusive request owner for Node UID?"}
+  Ownership -->|No| Waiting["Competing requests wait"]
+  Ownership -->|Yes| Authorization["Bound request, owner token, and finalizer"]
+  Authorization --> Agent
+  subgraph Node["Selected node"]
+    Agent["SBR agent: local supervisor"] --> Probe["Private Block probe"]
+    Agent --> Journal["Host journal"]
+    Agent --> Watchdog["Software reboot and hardware watchdog"]
   end
+  Agent --> Condition["Own Node storage condition"]
+  Condition --> NHC
+  Agent --> Evidence["CR boot evidence"]
+  Evidence --> Controller
+  Controller --> Cleanup["OutOfService taint and Pod cleanup"]
 ```
 
-### The shared file is what keeps the two operators from fighting
+The current agent manager does not enable controller-runtime leader election in `initializeControllerManager()`. Its `Reconcile()` also skips its own node. These behaviors cannot serve as the new ownership model without changes. See [agent setup](../../cmd/sbr-agent/main.go) and [remediation reconciliation](../../internal/controller/storagebasedremediation_controller.go).
 
-Both operators can reboot this node, and both decide locally. The failure that follows is not hypothetical: SNR performs the software reboot for CR `X`, the node comes back, `sbr-agent` starts fresh with an empty memory, sees storage still broken and a CR it has never seen before, and fences the node again for the same remediation. Or the reverse — the watchdog resets the node while SNR is mid-`reboot()`, and the controller's safety timer is measuring something that already happened.
+The operator registers the new lifecycle controller in [manager setup](../../cmd/main.go), which already enables leader election. Agent-side reconcilers ignore nodeLocal requests. The local supervisor handles its own bound request directly.
 
-The fix is to make "has this node already been rebooted, by whom, for which CR?" a question with an answer that **survives the reboot**. Both operators write it to the same file through the same function, keyed by the remediation CR's `UID` and `generation`:
+All reconcilers resolve the target's configuration before acting on an unbound CR. They must not treat missing mode status as authorization for standard fencing. Ambiguous resolution blocks action. After binding, reconcilers use the recorded mode and identities. Mode dispatch precedes the existing own-node exclusion, success return, stop handling, and shared-storage checks.
 
-- Before self-fencing, `sbr-agent` checks whether a reboot for this CR `UID`/`generation` is already recorded. If SNR's software reboot has done the job, there is nothing left to escalate.
-- Before counting a reboot against the budget ([§9.3](#93-reboot-pacing-and-loop-protection)), each operator checks whether the other already counted it. One remediation is one reboot, however it was carried out.
-- After a reboot, the record explains *which* CR caused it — the detail an administrator cannot otherwise recover once the pod and its logs are gone.
+All writers use conflict-aware patches. The operator owns binding, cleanup state, and lifecycle conditions. The target agent reports its saved commitment and API boot observations. The controller checks the Node's API boot information before accepting that evidence. Each writer preserves the other writer's fields.
 
-> ### 🚫 Rejected — a generalised "rebooter" interface
->
-> An obvious generalisation suggests itself: SBR owns the watchdog, so let it fence on *any* unhealthy condition and let other remediators plug in. It was discussed and rejected. The customers driving this work care about storage health specifically and explicitly do not want `NotReady` to cost them a VM, and a plug-in fencing interface would have to answer, for every combination of conditions, which signals may release the watchdog — an arbitration problem considerably larger than the one being solved.
->
-> SBR stays a **storage** arbitrator. If another remediator later needs the watchdog, the shared host-path file is the natural coordination point, and that is the point at which the question deserves a fresh design rather than a pre-built abstraction.
+#### Exclusive request ownership
 
----
+Configuration selection and leader election do not select between remediation CRs. SBR requests in different namespaces can target the same Node UID. SBR must serialize their complete lifecycles, including retained cleanup obligations.
 
-## 7. Per-node volume mechanism
+This protocol assumes one agent process per node and available local identity records. A request token selects a CR, not a unique agent process. Sections 5.5 and 6 describe the limits after history loss or overlapping agent processes.
 
-*Implementation decision. Recorded here because it constrains two scenarios in [§1](#1-complete-17-scenario-verification-matrix).*
+Store the current request owner in the Node annotation `sbr.medik8s.io/remediation-owner`. Its JSON value contains the Node UID, configuration UID, CR namespace, CR name, CR UID, ownership token, and phase. The annotation does not expire. NHC lease expiry, request timeout, stop, deletion, or a changed boot ID cannot transfer ownership.
 
-### 7.1 The constraint
+Example annotation value:
 
-Every node needs its **own** canary volume. Kubernetes offers no way for a single DaemonSet to name a
-different PVC per node:
-
-- `PersistentVolumeClaimVolumeSource` is `{claimName, readOnly}` — there is no templating, so a pod
-  spec cannot say *"the PVC belonging to whichever node I land on"*.
-- `DaemonSetSpec` has no `volumeClaimTemplates` field; only `StatefulSetSpec` does.
-
-Note this is a problem of **per-node identity**, not of StorageClass count. It exists even with a
-single `StorageClass`.
-
-### 7.2 Decision — generic ephemeral volumes
-
-The agent DaemonSet declares one `ephemeral.volumeClaimTemplate` per configured backend. Kubernetes
-creates a PVC per pod, binds it, and deletes it with the pod.
-
-```yaml
-volumes:
-  - name: canary-backend-0
-    ephemeral:
-      volumeClaimTemplate:
-        spec:
-          accessModes: ["ReadWriteOnce"]
-          volumeMode: Block
-          storageClassName: <backend>
-          resources: { requests: { storage: 10Mi } }
-```
-
-Chosen because it keeps the DaemonSet — node add/remove, rolling upgrades and pinning all stay the
-platform's job rather than ours — and because disposable volumes make later storage-topology changes
-cheap. The alternatives considered were a pinned single-replica StatefulSet per node (stable volumes,
-but *N* workloads to reconcile and immutable `volumeClaimTemplates`) and a mutating pod webhook that
-rewrites `claimName` per node (rejected: it places a webhook in the critical path of fencing-agent
-startup).
-
-### 7.3 Mount definition — one path, one mode, no special cases
-
-The agent today carries two parallel notions of "where the storage is": a filesystem path for filesystem
-mode and a device path for block mode, each with its own plumbing. With per-node canary volumes the
-distinction gets a third consumer (the host path of [§8](#8-node-local-state-the-host-path-status-file),
-which is *always* a filesystem), and three ad-hoc paths is one too many.
-
-The storage targets are therefore described uniformly — **a path plus a volume mode** — and the mode
-alone decides how the path is realised in the pod spec:
-
-| Target | Mode | Realised as | Lives in |
-|---|---|---|---|
-| Canary volume (`Block`) | `Block` | `volumeDevices[].devicePath` | ephemeral PVC, per pod |
-| Canary volume (`Filesystem`) | `Filesystem` | `volumeMounts[].mountPath` | ephemeral PVC, per pod |
-| Node status file | `Filesystem` | `volumeMounts[].mountPath` | `hostPath`, per node |
-| Watchdog device | *(device)* | `hostPath` directory mount | per node |
-
-Two consequences worth stating, because both are current sources of bugs: the block device path must
-never fall under a `hostPath` mount — a bind mount at `/dev` makes the runtime skip the CSI-mapped
-device node, which is why block mode mounts the watchdog's *parent* directory at `/host-dev` rather
-than all of `/dev` — and the host status path must be a real, persistent filesystem, never `tmpfs`
-([§8.2](#82-where-the-file-lives)). Validating "is this path usable, in this mode?" becomes one code
-path instead of one per mode.
-
-### 7.4 What this costs
-
-**Peer inspection is not possible (scenario 7).** An ephemeral PVC is owned by its pod and is garbage
-collected with it. When a node dies and its pod is removed, the volume is deleted, so there is nothing
-for a surviving node to attach and inspect. This is a property of the volume type, not a gap to be
-closed later; the post-5.9.0 half of scenario 7 is **dropped**, not deferred. Detection of a dead node
-is unaffected — the hardware watchdog still resets it, and NHC still acts on the node's last reported
-condition.
-
-**All multi-backend work is deferred past 5.9.0 (scenarios 13 and 14).** 5.9.0 ships a **single
-`StorageClass`**, selected by a new mode field on the config CR, so each node keeps exactly one canary
-volume. `NodeStorageClasses` and `HealthPolicy` are not part of 5.9.0 — they only earn their keep once a
-node can have more than one backend. The two scenarios are deferred for different reasons:
-
-- **Scenario 14** (several backends on one node) is purely a scope decision. Ephemeral volumes support
-  it directly — one `ephemeral` entry per backend, each with its own `storageClassName`, with
-  `HealthPolicy` combining the per-device results. Adding it later is an extra volume entry and an
-  extra flag, with no architectural change.
-- **Scenario 13** (different backends on different nodes) is additionally constrained by the DaemonSet:
-  one pod template means every node is offered the same storage. The route, when needed, is one
-  DaemonSet per StorageClass-group, derived by the controller — typically a handful, not one per node.
-
-Neither needs this volume decision revisited, and neither involves migrating a volume, because the
-canaries are disposable.
-
-**Volumes are reprovisioned on pod recreation (scenario 8).** A new PVC is created per *pod*, not per
-container start: a crash-looping agent keeps its volume, but a rollout, eviction or node reboot
-provisions a fresh one. The agent must therefore **fail open on start-up** — it does not arm or pet
-`/dev/watchdog` until every canary device opens successfully, so that attach latency is never mistaken
-for a storage failure. Attach latency should be measured on each target backend, since it sets the
-blind window during an upgrade.
-
-**Volume names are pod-derived.** The PVC is named `<pod-name>-<volume-name>`, and DaemonSet pod names
-carry a random suffix, so there is no stable `sbr-node-<name>` identifier. The operator exposes a
-node → PVC mapping in status so an operator can still answer *"which volume belongs to this node?"*.
-Diagram 3's volume labels are illustrative rather than literal.
-
-### 7.5 What this does not cost
-
-**Multi-backend support is not foreclosed.** Deferring scenarios 13 and 14 is a scope decision for
-5.9.0, not a consequence of choosing ephemeral volumes — see §7.4 for how each is added later.
-
-**Access modes are unchanged.** `ReadWriteOnce` remains sufficient because the volume is never shared;
-a `ReadWriteMany` block backend works equally well.
-
-### 7.6 Revisiting
-
-The decision turns on a single question: whether a surviving node must be able to inspect a dead
-node's volume. If that requirement returns, the volume model has to move to stable per-node PVCs
-(pinned StatefulSets), which is a migration of a fencing component's workload model and would need a
-planned transition rather than an in-place upgrade. Multi-StorageClass support, in either form, does
-**not** require revisiting this decision.
-
----
-
-## 8. Node-local State: the Host-Path Status File
-
-*Implementation decision. It closes workflow 3C in [§3](#3-why-the-earlier-proposals-needed-adjustment) and is what scenarios 16 and 17 are built on.*
-
-### 8.1 Why a file on the host at all
-
-A fencing agent is at its most interesting precisely when nothing is watching. Three concrete gaps follow from that, and one mechanism closes all three:
-
-1. **The API is unreachable exactly when the decision is made.** Node conditions and CR status cannot be written during an outage, so the one decision an administrator most wants explained — *why did this node reset itself at 03:14?* — is the one the cluster has no record of.
-2. **The pod does not survive the reboot it causes.** Container logs die with the pod. The agent that comes back has no memory of the agent that went away, which is how reboot loops are born: without node-local history, "is this my third reset in ten minutes?" is unanswerable, and the API cannot be trusted to answer it either, since the API may be the thing that is down.
-3. **Configuration has to be readable with the API down.** An agent that must decide whether to release the watchdog after *N* seconds cannot fetch *N* from a CR it cannot reach.
-
-So `sbr-agent` keeps a small JSON file on a host path, written on the same cadence as the canary I/O, and reads it back at start-up. The agent already has a storage write loop; the host path becomes its second target rather than a second process.
-
-**Diagram 7 — The agent's two write paths: shared canary device and node-local status file**
-
-```mermaid
-flowchart LR
-  P["sbr-agent I/O loop<br/>every tick:<br/>read + write both targets<br/>under their own timeouts"]
-  HP[/"Host path (node-local, persistent)<br/>/var/lib/medik8s/node-state.json<br/>timestamp · readOK? · writeOK? · count: N<br/>conditions · events · reboot history · config"/]
-  BS[("Canary block device<br/>(per-node PVC, §7)<br/>the storage health signal")]
-
-  P <-->|"status, history, effective config<br/>survives the pod and the reboot"| HP
-  P <-->|"heartbeat — is the backend alive?"| BS
-
-  HP -.->|"read at start-up:<br/>clean shutdown? reboot count?<br/>undelivered events?"| P
-```
-
-The two targets answer different questions and must not be confused. **The canary device answers "is the storage backend alive?"** and a failure there is a cluster-relevant fact that can justify fencing. **The host path answers "what has this node been doing?"** and a failure there is a local fault that justifies nothing — see [§8.5](#85-host-path-faults-never-reboot-the-node).
-
-### 8.2 Where the file lives
-
-| Property | Value | Why |
-|---|---|---|
-| Path | `/var/lib/medik8s/node-state.json` | Shared across medik8s node agents, not SBR-private — SNR writes here too ([§8.6](#86-one-file-two-operators)). Configurable, but the *same* value must be configured for both operators. |
-| Mount | `hostPath` directory, `type: DirectoryOrCreate` | The agent is already privileged and already mounts host paths for `/dev`, `/proc` and `/sys`. |
-| Filesystem | Must be persistent and writable; **never `tmpfs`** | Reboot history that does not survive the reboot cannot break a reboot loop. Validated at start-up and reported, not assumed. |
-| Size ceiling | 1 MiB, enforced by rotation ([§8.4](#84-rotation--keeping-the-file-small)) | A fencing agent must never be the reason `/var` fills up. |
-| Write protocol | `flock`, write to a temporary file, `fsync`, `rename` | Two writers, and a reader that may be a human with `cat` during an outage. A half-written status file must never be observable. |
-
-### 8.3 What the file contains
-
-One document per node, versioned so the format can change without the next agent misreading the previous one's output:
-
-```jsonc
+```json
 {
-  "schemaVersion": 1,
-  "node": "worker-3",
-  "bootID": "4f2c…",                 // /proc/sys/kernel/random/boot_id — detects "we rebooted"
-  "updatedAt": "2026-10-27T03:14:07Z",
-
-  "agents": {                        // one entry per medik8s agent on this node
-    "sbr": { "version": "5.9.0", "startedAt": "…", "watchdogArmed": true, "shutdown": "unclean" },
-    "snr": { "version": "…",     "startedAt": "…", "watchdogArmed": false, "shutdown": "clean" }
-  },
-
-  "config": {                        // effective config, so the agent can act with the API down
-    "storageIOTimeout": "15s",
-    "storageUnhealthyGracePeriod": "15s",
-    "totalOutageGracePeriod": "60s",
-    "rebootBackoff": { "initial": "5m", "max": "2h", "resetAfter": "24h" },
-    "maxRebootsPerWindow": 3,
-    "detectOnlyMode": false,
-    "source": "StorageBasedRemediationConfig/cluster@generation-7"
-  },
-
-  "io": [                            // rotated ring — the "Read OK? / Write OK? / Count: N" record
-    { "ts": "…", "target": "canary",   "read": "ok",      "write": "ok",   "latencyMs": 3,     "count": 184213 },
-    { "ts": "…", "target": "canary",   "read": "timeout", "write": "eio",  "latencyMs": 15000, "count": 184214 },
-    { "ts": "…", "target": "hostpath", "read": "ok",      "write": "ok",   "latencyMs": 1,     "count": 184214 }
-  ],
-
-  "conditions": [                    // what we published, or wanted to
-    { "ts": "…", "type": "SBRStorageUnhealthy", "status": "True", "published": false, "reason": "APIUnreachable" }
-  ],
-
-  "events": [                        // replay queue — see §8.8
-    { "ts": "…", "reason": "APIOffline",     "message": "API unreachable; storage OK; still petting", "delivered": false },
-    { "ts": "…", "reason": "WatchdogReleased", "message": "totalOutageGracePeriod 60s expired",        "delivered": false }
-  ],
-
-  "reboots": [                       // the budget in §9.3 is computed from this
-    {
-      "ts": "2026-10-27T03:14:07Z",
-      "source": "sbr",               // or "snr"
-      "method": "watchdog",          // or "software"
-      "reason": "TotalOutage",       // or "RemediationCR" | "StorageUnhealthy"
-      "remediation": { "kind": "SelfNodeRemediation", "name": "worker-3", "uid": "9c1b…", "generation": 2 },
-      "nhc": { "name": "nhc-storage", "uid": "7a0e…" },
-      "completed": true
-    }
-  ]
+  "nodeUID": "node-uid",
+  "configUID": "config-uid",
+  "requestNamespace": "sbr-system",
+  "requestName": "worker-0",
+  "requestUID": "request-uid",
+  "token": "ownership-uuid",
+  "phase": "Active"
 }
 ```
 
-Three details carry weight. **`bootID`** is how the agent knows it is looking at a previous boot's record rather than its own. **`remediation.uid` and `generation`** are how a reboot is attributed to the CR that caused it — the same identity is mirrored onto the node as an annotation when the API is available, so the mapping is visible from `oc describe node` as well as from the file. **`config.source`** records which CR generation produced the values in use, so a stale cached configuration is recognisable rather than silently authoritative.
+Acquire ownership before cordoning or publishing `RemediationPrepared=True`:
 
-### 8.4 Rotation — keeping the file small
+1. Validate the live request and target identity.
+2. Install the request finalizer before attempting a claim.
+3. Read the Node and CRs that record an unreleased ownership token for its UID through the live API.
+4. If another owner exists, report `WaitingForNodeOwnership` without preparing the waiting request.
+5. If the Node is available, add the owner annotation in phase `Active` using its unchanged `resourceVersion`.
+6. On conflict, read the Node again before deciding whether to retry.
+7. Record the successful token in CR status and continue preparation.
 
-An append-only record on a 5s cadence is roughly 17,000 entries a day. Two limits are enforced together, whichever trims first:
+The first successful conditional update selects the owner. Request creation order does not guarantee priority. A successful claim followed by a controller crash remains authoritative. The replacement controller adopts that exact token, even if the CR status update failed. See [Kubernetes update concurrency](https://kubernetes.io/docs/reference/using-api/api-concepts/#updates-to-existing-resources).
 
-- **`maxEntries`** — a ring of the most recent **100** I/O entries. Bounds the file regardless of cadence or clock weirdness.
-- **`maxAge`** — **24h** by default, raisable to a week. Bounds how far back an investigation can reach.
+An absent annotation is insufficient when a CR records unreleased ownership for the Node UID. A missing owner CR or inconsistent ownership records block new claims. Report degradation instead of treating missing state as a free Node. Stopped or deleting waiters cannot acquire ownership. A request that never acquired ownership needs no target cancellation acknowledgement or cleanup.
 
-`io` entries are the high-volume ones and are the main target. `reboots` is rotated by age only, and with a longer horizon (default 7 days), because it is the input to the backoff calculation in [§9.3](#93-reboot-pacing-and-loop-protection) — trimming it by count would quietly hand a looping node a fresh budget. Undelivered `events` are never dropped by rotation; they are dropped once delivered, with a separate hard cap to bound a long outage.
+Only the owner can prepare requested execution, capture cleanup targets, or change its Node's scheduling restrictions. Requested commitment requires Node phase `Active`, CR ownership phase `Owned`, and a matching local token. A different request cannot replace a retained local owner. Reboot evidence and cancellation must identify the same token.
 
-> **ℹ️ Note** — The file is a **diagnostic and decision record, not a log sink.** Anything worth keeping beyond a day belongs in the cluster's logging stack. The file exists to answer questions during an outage and immediately after one.
+Every cordon or taint update must check the Node UID, ownership token, and permitted ownership phase in the same optimistic update. Repeat these checks after a conflict. Preparation and taint addition require phase `Active`. An earlier ownership read followed by an unconditional update is insufficient. A delayed reconciler must not remove a later owner's restrictions. Pod deletion retains the captured UID preconditions.
 
-### 8.5 Host-path faults never reboot the node
+The following rules determine when request release is permitted:
 
-This is the sharpest rule in this section, and the reason to state it as a rule rather than as error handling.
+| Request state | Release rule |
+|---|---|
+| Stopped or deleting before commitment | Release after durable cancellation. |
+| Stopped after commitment | Release after cleanup completes, even if NHC retains the CR for escalation history. |
+| Deleting after commitment | Release after cleanup completes. |
+| Successful, neither stopped nor deleting | Retain ownership and restrictions until NHC requests deletion under its retention policy. |
 
-If a write to `/var/lib/medik8s/node-state.json` fails — a full root filesystem, a read-only remount, a failing local disk — the agent **must not** treat it as a storage failure and **must not** let the watchdog expire. It retries the open and the write with bounded backoff, and if the path stays unusable it:
+Ownership release uses this sequence:
 
-1. emits an event and logs the error with the underlying `errno`,
-2. reports itself degraded on the `StorageBasedRemediationConfig` status,
-3. writes `'V'` to `/dev/watchdog` to **disarm** it, and
-4. exits, leaving the DaemonSet restart loop and the pod's `Ready` state to make the problem visible.
+1. Complete cleanup, or receive durable cancellation before commitment.
+2. When request release is permitted, persist `ownershipPhase: ReleaseRequested` on the CR.
+3. Atomically change the Node owner phase to `Releasing` and restore only this token's scheduling restrictions.
+4. After verifying that transition, have the agent durably retire the token through the process-local journal update described in Section 5.5.
+5. Have the agent publish that token in `ownershipReleaseAck`.
+6. Clear only the matching token in phase `Releasing` through a conditional Node update.
+7. Record `ownershipPhase: Released` and remove the request finalizer when deletion is pending.
 
-The asymmetry is deliberate. A canary-device failure is evidence about the *cluster's* storage and can justify taking a node out. A host-path failure is evidence about *this agent's own bookkeeping* — rebooting a node full of healthy VMs because the agent could not write its diary would be the stack causing exactly the outage it exists to prevent. The honest failure mode is "fencing coverage for this node is off until someone fixes the disk", loudly, and the second-honest thing is to make sure the watchdog is disarmed on the way out rather than leaving a timer running behind a dead agent.
+`ReleaseRequested` and `Released` requests cannot acquire ownership again. With retained local records and one agent process, the local acknowledgement prevents execution from resuming for this token. Cancellation acknowledgement alone does not release ownership. A controller resolves an uncertain annotation-clear result through a live read. It must never clear a different token that another request acquired.
 
-> ### ⚠️ One exception — the fence latch outranks everything
->
-> If the node has **already** been fenced — the latch is set, because a remediation CR targeted this node or a total outage ran past its grace period — a host-path fault does **not** disarm the watchdog and does **not** stop the reset. The point-of-no-return latch of scenario 12 is absolute: once fencing has begun, the cluster may already be force-deleting this node's pods and starting its VMs elsewhere, and a node that quietly cancelled its own reset at that moment is precisely the split-brain the whole design exists to prevent.
->
-> The agent records what it can, logs what it cannot, and lets the watchdog expire. **Disarm-and-exit is the behaviour of an agent that has not yet committed to anything.**
+The Node phase transition prevents a delayed reconciler from restoring old restrictions during release. Such writes must reject phase `Releasing`, even when the token still matches. Agent retirement requires the same token in the CR release intent and Node release phase.
 
-### 8.6 One file, two operators
+Reconciliation resumes release after crashes at any step. It must not repeat Node changes after another token acquires ownership. Keep the request finalizer until release completes. A stopped request can finish release without CR deletion or node recovery. Its retained CR remains terminal and cannot block a later owner after release.
 
-SNR writes to the same file, through a **common function in `medik8s/common`** rather than its own implementation — one locking and rotation implementation, one schema, one place to fix a bug in either. The reasoning, and the deduplication it enables, is in [§6](#6-reboot-orchestration-and-pod-cleanup); what matters here is the contract:
+The agent can miss the final API updates after durably retiring its token. A live Node read showing that token is absent completes local release. Preserve the retired token record before clearing `ownedRequest` or accepting a new valid token. Observing the old CR's `Released` status is not required. Without durable token retirement, a missing or different Node token indicates inconsistent state and blocks adoption.
 
-- **Namespaced by writer.** Each agent owns its own entry under `agents`, and every `reboots` entry names its `source`. Neither operator rewrites the other's records.
-- **One lock, short critical sections.** Read-modify-write under `flock`, with a timeout — a lock held by a process stuck in `D-state` must not take the watchdog loop down with it. A lock acquisition that times out is a host-path fault and follows [§8.5](#85-host-path-faults-never-reboot-the-node).
-- **Forward compatible.** Unknown fields are preserved on write, so a newer SNR and an older SBR can share the file during a staggered upgrade.
+An unavailable agent or incomplete cleanup can retain ownership indefinitely. Later CRs wait, including CRs from another NHC or namespace. This is serialization of outstanding work, not a reboot budget. Recovery from missing or inconsistent records remains an operational question in Section 6.
 
-> **⚠️ Cross-repository dependency** — this requires agreement from the SNR maintainers, who have not yet had this proposal put to them. SBR works without it; what degrades is reboot deduplication (both operators may count the same remediation separately) and attribution (a software reboot performed by SNR leaves no node-local trace). Those are the stakes, and they should be stated plainly when the change is proposed upstream.
+### 5.2. Configuration API
 
-### 8.7 Start-up: what the previous boot left behind
+Add these optional fields to `StorageBasedRemediationConfig.spec`:
 
-Before arming anything, the agent reads the file and classifies the previous shutdown. The check runs in an **init container** so that an unreadable or corrupt file is surfaced before the fencing agent starts, and so the result is available to the agent as plain, already-validated state.
+| Field | Effective default | Validation | Meaning |
+|---|---|---|---|
+| `operatingMode` | `standard` | `standard` or `nodeLocal` | Selects the existing shared-storage model or the private Block probe model. |
+| `storageUnhealthyGracePeriod` | `15s` in `nodeLocal` | Duration from `0s` through `300s`. Valid only in `nodeLocal`. | Continuous probe failure required before storage becomes unhealthy. |
+| `totalOutageGracePeriod` | `60s` in `nodeLocal` | Duration from `0s` through `1h`. Valid only in `nodeLocal`. | Continuous API unavailability required while storage is already unhealthy before autonomous commitment. |
 
-**Diagram 8 — Start-up classification**
+The duration defaults are proposed values for the new mode. They do not replace the existing standard detection threshold. A missing mode has the same meaning as explicit `standard` for existing and new configurations.
+
+Use effective getters for defaults. Do not materialize duration defaults on standard configurations. An explicit `0s` disables that grace only. It does not disable detection or autonomous remediation.
+
+Proposed additions in [configuration types](../../api/v1alpha1/storagebasedremediationconfig_types.go):
+
+```go
+package v1alpha1
+
+// Existing imports and fields are omitted.
+type OperatingModeType string
+
+const (
+	OperatingModeStandard  OperatingModeType = "standard"
+	OperatingModeNodeLocal OperatingModeType = "nodeLocal"
+)
+
+type StorageBasedRemediationConfigSpec struct {
+	// +kubebuilder:validation:Enum=standard;nodeLocal
+	// +optional
+	OperatingMode *OperatingModeType `json:"operatingMode,omitempty"`
+
+	// +optional
+	StorageUnhealthyGracePeriod *metav1.Duration `json:"storageUnhealthyGracePeriod,omitempty"`
+
+	// +optional
+	TotalOutageGracePeriod *metav1.Duration `json:"totalOutageGracePeriod,omitempty"`
+}
+```
+
+Update the CRD, generated code, webhook, samples, and agent argument construction together. The current `rebootMethod` and `ioTimeout` values are internal constants, not configuration fields. This proposal does not add those API fields. See [agent constants](../../internal/agent/constants.go).
+
+#### Field interactions
+
+| Configuration | `standard` outcome | `nodeLocal` outcome |
+|---|---|---|
+| Mode omitted | Existing behavior. | Not selected. |
+| `sharedStorageVolumeMode` omitted or `Filesystem` | Existing Filesystem behavior. | Admission rejects the configuration. Explicit `Block` is required. |
+| `sharedStorageVolumeMode: Block` | Existing shared RWX Block behavior. | One private RWO Block claim per agent Pod. |
+| `sharedStorageClass` | Existing shared-storage validation and provisioning. | Required. Selects the single StorageClass for private probes. It must support dynamic RWO Block provisioning. |
+| `watchdogPath` | Existing behavior. | Same device path. One local supervisor owns the watchdog. |
+| `nodeSelector` omitted or empty | Existing worker-node selection. | Same worker-node selection. The effective selector includes Linux nodes only. |
+| `sbrTimeoutSeconds` | Existing timeout and derived intervals. | Reuse `GetSBRUpdateInterval()` as probe cadence. It divides the duration by six, with a one-second minimum. Do not use shared heartbeat expiry. |
+| `maxConsecutiveFailures` | Existing counter semantics. | Does not decide probe health or replace the storage grace. Retain schema validation for compatibility. |
+| `detectOnlyMode: Enabled` | Existing detection-only behavior. | Block new remediation actions. Continue evidence reporting and cleanup for an already committed request. |
+| `detectOnlyMode` omitted or `Disabled` | Existing behavior. | Enable requested and autonomous actions under the policy below. |
+| Either new grace field is present | Admission rejects the inapplicable field. | Apply the effective duration. |
+
+The existing timeout defaults remain `30` seconds and seven consecutive failures. Their schema ranges remain unchanged. The current internal I/O timeout is two seconds. NodeLocal does not multiply that timeout by `maxConsecutiveFailures` to calculate storage health.
+
+#### Validation and immutability
+
+Extend `ValidateCreate()` and `ValidateUpdate()` in the [configuration webhook](../../api/v1alpha1/storagebasedremediationconfig_webhook.go).
+
+1. Validate the mode, duration syntax, and duration bounds.
+2. Require effective `Block` and a StorageClass for `nodeLocal`.
+3. Reject nodeLocal grace fields in standard configurations.
+4. Reject changes to the effective values of all three new fields.
+5. Reject configurations that overlap a nodeLocal configuration on selected nodes.
+6. Reject different StorageClasses across nodeLocal configurations in this release.
+
+Compare durations as values, not strings. Omitted mode and explicit `standard` are equivalent. Omitted nodeLocal grace and an explicit default are equivalent. Removing a nondefault value changes its effective value and must fail.
+
+The existing volume-mode immutability rule remains. Existing field update rules remain unchanged. Mutable fields can still require an agent rollout. For nodeLocal, retire affected supervisors only after commitment ambiguity and required cleanup are resolved.
+
+Apply this retirement rule to selector, StorageClass, watchdog path, and detect-only changes. A selector update must protect removed nodes as well as newly selected nodes. Check ownership before starting replacement agents. Retain the effective configuration until its owned requests complete release, including cancellation of prepared requests.
+
+Current production code does not enforce configuration overlap consistently. The webhook and controller each refer that check to the other component. The new checks must cover namespaces, effective worker selectors, and the Linux restriction. Admission alone cannot prevent concurrent creates or later node-label changes.
+
+Use the common library's model of one writer per file, without a host file lock. Set DaemonSet `maxSurge` to `0` to prevent planned overlap during rolling updates. Configuration reconciliation must reject conflicting assignments before starting another supervisor. An API Lease expiry does not authorize a replacement watchdog owner.
+
+These deployment checks do not exclude every overlapping process. A force-deleted Pod can leave its agent running on an unreachable node. Common can report a foreign writer but does not prevent its writes. This condition is unsupported and can cause lost updates or repeated actions. Section 6 states this limit.
+
+#### Configuration replacement
+
+To change an immutable value, the administrator removes the old configuration and creates a new configuration after agent cleanup completes. An in-place DaemonSet rollout cannot change these immutable values. Mutable field updates follow the safe rollout rules above.
+
+The nodeLocal deletion path must complete these steps:
+
+1. Stop authorization of new requests for the old configuration.
+2. Retain the configuration until all owned requests complete cancellation or cleanup and ownership release.
+3. Stop uncommitted supervisors with a verified watchdog disarm.
+4. Wait for the old agents to terminate before releasing configuration ownership.
+5. Remove configuration-owned resources and permit a replacement configuration.
+
+An unreachable node can delay replacement. Do not start a second watchdog owner to avoid that delay. Preserve the host journal across replacement. Configuration deletion must not erase completed request identities.
+
+The current configuration deletion handler removes RBAC and relies on garbage collection for the DaemonSet. It does not establish this shutdown order. Add a separate nodeLocal deletion path in [the configuration controller](../../internal/controller/storagebasedremediationconfig_controller.go). Do not apply shared-PV cleanup to private probe claims.
+
+### 5.3. Private probe volume
+
+Each selected node runs one SBR agent with one generic ephemeral Block volume. The Pod owns its PVC. The proposed request size is `10Mi`. Driver allocation granularity can produce a larger volume.
+
+The StorageClass must support raw Block, dynamic provisioning, and the probe's direct I/O operations. The claim requests `ReadWriteOnce`. SBR does not require concurrent writes from other nodes.
+
+Add a nodeLocal branch before `validateStorageClass()`, `ensurePVC()`, and `ensureSBRDevice()` in [the configuration controller](../../internal/controller/storagebasedremediationconfig_controller.go). Their current shared-volume path rejects some RWO provisioners and creates an RWX PVC. Selecting `Block` alone does not change that behavior.
+
+The proposed DaemonSet fragment is:
+
+```yaml
+spec:
+  template:
+    spec:
+      containers:
+        - name: sbr-agent
+          # Existing image, arguments, and host mounts are omitted.
+          volumeDevices:
+            - name: storage-probe
+              devicePath: /dev/sbr-probe
+      volumes:
+        - name: storage-probe
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                volumeMode: Block
+                storageClassName: example-block
+                resources:
+                  requests:
+                    storage: 10Mi
+```
+
+Keep the watchdog device mount separate from `/dev/sbr-probe`. Mounting the entire host `/dev` over that path can hide the CSI device.
+
+A container restart reuses the Pod's PVC. A node reboot can also retain the same Pod and PVC. A replacement Pod receives its own PVC. Kubernetes deletes the old PVC with its owning Pod. The PV reclaim policy controls the underlying volume's disposition. See [generic ephemeral volume lifecycle](https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/#lifecycle-and-persistentvolumeclaim).
+
+The probe contains disposable test data. It contains no authoritative reboot evidence, shared NodeMap, peer heartbeat, or fence message. SBR does not mount another node's probe.
+
+The agent must select the private prober before shared-storage initialization in `NewSBRAgentWithWatchdog()`. Disable shared heartbeat writes, peer checks, and fence-slot reads only in nodeLocal. Keep the standard initialization and runtime paths intact. See [the agent constructor and loops](../../cmd/sbr-agent/main.go).
+
+The initial implementation keeps one StorageClass across nodeLocal configurations. Admission rejects different selections, and the controller checks concurrent creations before starting agents. Section 6 describes the deferred extension.
+
+### 5.4. Storage and API decision policy
+
+The local supervisor evaluates storage health and live API reachability independently. Probe I/O, API calls, journal writes, and watchdog feeding must not share a blocking execution path.
+
+The probe performs a write and read check with bounded completion time. A failed operation or I/O deadline starts the storage grace. Storage becomes unhealthy only after continuous failure reaches `storageUnhealthyGracePeriod`. A successful fresh probe clears the failure interval.
+
+For hung I/O, the deadline marks failure even if the kernel operation continues. A Go timeout does not cancel an operation blocked in the kernel. Bound outstanding operations to one probe operation per device. Do not launch another operation on each tick while the previous operation remains blocked.
+
+Only a fresh result can restore health. A late result from an expired probe must not overwrite a newer failure decision. Use a monotonic clock within a boot. Scheduling and probe cadence can add detection delay beyond the configured grace.
+
+For nodeLocal, each agent writes `SBRStorageUnhealthy` only on its own Node. It does not infer another node's storage health from a missing heartbeat. NHC's condition duration adds a separate delay after this condition becomes True.
+
+| Storage state | Live API result | Local action before any commitment |
+|---|---|---|
+| Healthy | Available or unavailable | Feed the watchdog. Do not reboot solely because API access failed. |
+| Failure within storage grace | Any result | Continue observation and feed the watchdog. |
+| Unhealthy | Reachable, no authorized request | Publish True when possible. Feed the watchdog while NHC decides. |
+| Unhealthy | Reachable, authorized request | Persist commitment and execute the requested reset. |
+| Unhealthy | Unavailable within total-outage grace | Feed the watchdog while the grace runs. |
+| Unhealthy | Unavailable through total-outage grace | Persist an autonomous attempt and execute one local reset operation. Skip cleanup. |
+| Any state | Detect-only enabled, no prior commitment | Report observations. Do not perform remediation actions. |
+
+A request permits commitment only while local storage remains unhealthy and its ownership token matches the live Node and local journal. The Node owner must be `Active`, and the CR ownership phase must be `Owned`. If storage recovers before commitment, the agent keeps feeding and waits for NHC to release the request. A fresh stop or deletion before commitment also prevents the requested action. The controller must avoid authorizing stale or already completed requests.
+
+API reachability requires a bounded, live request. A cached informer result is insufficient. A successful empty result or `NotFound` means the API is reachable. An authorization failure also proves reachability, but prevents request authorization. It must not become a combined-outage trigger.
+
+Connection failures and network deadlines contribute to API unavailability. For this policy, a received `429` or `5xx` means the configured endpoint is reachable. It cannot authorize a request. Keep feeding and reset the API-unavailability interval for those responses. Credential, certificate-validation, and client-configuration errors report degradation instead of triggering autonomous remediation. Neither a failed Node status write nor a missing CR alone establishes API unavailability.
+
+Start `totalOutageGracePeriod` when storage is unhealthy and API access is unavailable together. Reset that interval if storage recovers or the API becomes reachable. Its duration follows the storage grace rather than replacing it.
 
 ```mermaid
 flowchart TD
-  S["Agent start-up<br/>(init container reads the status file)"] --> E{"File present<br/>and parseable?"}
-  E -- "NO, absent" --> F["First boot on this node<br/>Create the file, empty history"]
-  E -- "NO, corrupt" --> G["Quarantine as .corrupt, start fresh<br/>Emit an event — history is lost,<br/>so the reboot budget starts over"]
-  E -- "YES" --> H{"Same bootID<br/>as now?"}
-  H -- "YES" --> I["Agent restart, node did not reboot<br/>(upgrade, crash, eviction — scenario 8)<br/>Resume: keep history and timers"]
-  H -- "NO" --> J{"shutdown == clean?"}
-  J -- "YES" --> K["Orderly reboot<br/>Record it, carry the history forward"]
-  J -- "NO" --> L["Unclean: watchdog reset, panic or power loss<br/>Attribute it to the last recorded remediation CR if any<br/>Count it against the reboot budget — §9.3"]
-
-  F --> M["Fail-open warm-up (§7.4):<br/>do not arm /dev/watchdog until every<br/>canary device opens successfully"]
-  G --> M
-  I --> M
-  K --> M
-  L --> N{"Budget exhausted?"}
-  N -- "NO" --> M
-  N -- "YES" --> O["Start in detect-only behaviour:<br/>monitor and report, do not self-fence<br/>Emit an event naming the exhausted budget"]
+  Tick["Independent observations"] --> Committed{"Already committed in this boot?"}
+  Committed -->|Yes| Finish["Keep watchdog feeding stopped"]
+  Committed -->|No| Detect{"Detect-only enabled?"}
+  Detect -->|Yes| Observe["Report only"]
+  Detect -->|No| Storage{"Storage grace expired?"}
+  Storage -->|No| Feed["Feed watchdog"]
+  Storage -->|Yes| API{"Live API reachable?"}
+  API -->|Yes| Request{"Fresh prepared request with matching active ownership?"}
+  Request -->|Yes| Commit["Persist commitment before reset"]
+  Request -->|No| Wait["Report storage failure and await NHC"]
+  Wait --> Feed
+  API -->|No| Grace{"Total-outage grace expired?"}
+  Grace -->|No| Feed
+  Grace -->|Yes| Commit
+  Commit --> Reset["Software reboot with watchdog fallback"]
 ```
 
-The `bootID` comparison is what separates scenario 8 (agent restarted, node did not) from scenario 7 (node reset underneath the agent). Without it, every rolling upgrade would look like a reboot and would eat the budget.
+NHC's health thresholds can prevent new requests during a broad storage outage. This is not an unconditional zero-reboot guarantee. Reports can arrive at different times, and an earlier committed reset continues.
 
-### 8.8 Events — telling the story once the API returns
+### 5.5. Host journal and repeated-request checks
 
-Node conditions cannot be written during an API outage, and a condition only carries the *current* state in any case. The agent therefore records what happened as **Kubernetes events, queued locally and delivered when the API returns**, with the original timestamp preserved in the message so a reader can reconstruct the sequence. An administrator then sees the outage in `oc describe node` / `oc describe sbrconfig` — the place they already look — instead of having to find a pod that no longer exists.
+Use `github.com/medik8s/common/pkg/nodestate` with `ComponentSBR` and its default directory. SBR writes `/var/lib/medik8s/state/sbr.json` on the host. Mount the host directory at `/var/lib/medik8s/state` inside the agent container. The path is independent of the probe volume and Pod identity. Other components can read this file, but only SBR writes it.
 
-| Event | Emitted when | Delivery |
+The journal uses common's `Document` format. This mapping uses the existing fields in common's `pkg/nodestate/types.go`:
+
+| SBR data | Common field | JSON location |
 |---|---|---|
-| `APIOffline` / `APIRestored` | The per-tick API probe starts failing, and when it recovers | Queued, replayed |
-| `StorageUnhealthy` / `StorageRestored` | `storageUnhealthyGracePeriod` expires, and on recovery | Live if the API is up; queued otherwise |
-| `WatchdogReleased` | The agent stops petting, with the reason and the triggering CR | Queued — by definition the API is unreachable or the node is going down |
-| `RebootBudgetExhausted` | Self-fencing suppressed by the budget ([§9.3](#93-reboot-pacing-and-loop-protection)) | Queued, replayed |
-| `HostPathDegraded` | Status file unwritable after retries ([§8.5](#85-host-path-faults-never-reboot-the-node)) | Live — by definition the API is reachable in this scenario |
+| Format version | `Document.SchemaVersion` | `schemaVersion` |
+| Node name and immutable Kubernetes Node UID | `Document.Node`, `Document.NodeUID` | `node`, `nodeUID` |
+| Current local kernel boot ID | `Document.BootID` | `bootID` |
+| Effective configuration | `Document.Config` | `config`, with string values |
+| Current reset commitment | `Agent.FenceLatched` | `agent.fenceLatched` |
+| Agent shutdown state | `Agent.Shutdown` | `agent.shutdown` |
+| SBR request and ownership state | `Agent.Extra` | `agent.extra`, with string values |
+| Reboot records | `Document.Reboots` | `reboots` |
+| Diagnostic samples and events | `Document.IO`, `Document.Conditions`, `Document.Events` | `io`, `conditions`, `events` |
 
-Replay is best-effort and bounded: events older than the queue's retention are summarised into one aggregate event rather than replayed individually, so a node returning from a long outage does not flood the API.
+Use these proposed SBR keys inside `agent.extra`: `sbrStateVersion`, `ownedRequest`, `activeAttempt`, `completedRequests`, and `retiredOwnershipTokens`. Set `sbrStateVersion` to the string `"1"`. Encode each object or array as a JSON string because `Agent.Extra` has type `map[string]string`. SBR validates the decoded values and performs their state changes. Common does not interpret these SBR keys.
 
-### 8.9 Platform requirement — host paths must not be blocked
+This representation uses common's existing extension field. It adds no top-level fields to the shared format. Required SBR records use `agent.extra`, not `reboots` or the fields that common preserves as `Unknown`. Keep common's existing retention settings unchanged. The required-record retention rules below remain SBR's responsibility.
 
-**The design depends on `hostPath` volumes, and that dependency must be documented as a prerequisite rather than discovered during an incident.**
+The requested action identity is `(StorageBasedRemediation UID, Node UID)`. Here, Node UID means the immutable Kubernetes object identifier, not SBR's numeric shared-storage slot. The agreed common change must use this pair in its request key and lookup behavior. Record the generation for evidence freshness, but do not use it to grant another reboot. A new CR UID permits a separate NHC request, which must acquire ownership before preparation or reset. A configuration replacement does not reset the identity history.
 
-The agent is already a privileged DaemonSet: it holds `hostPID`, owns `/dev/watchdog` and mounts host directories. The namespace therefore already carries the `privileged` Pod Security Standard label, and a privileged pod may use `hostPath` volumes. The status file adds no new class of permission — it is the same mechanism, pointed at `/var/lib/medik8s` instead of `/dev`.
+Keep `ownedRequest` separate from `activeAttempt`. It retains the request identity, ownership token, requested reboot evidence, and cancellation or release state. Preserve the original attempt generation, initial boot IDs, and commitment time. Section 5.6 defines when the observed API boot ID becomes accepted evidence. Observing a reboot must not clear this record. Retain it until the release handshake completes.
 
-What it does add is one more thing a cluster policy can switch off. `hostPath` can be denied independently of privilege — by a Pod Security Admission profile on the namespace, or by an admission policy (Gatekeeper, Kyverno, OpenShift SCC) that forbids `hostPath` cluster-wide. Where such a policy exists, SBR cannot run as designed:
+For autonomous remediation, generate a local attempt ID before commitment. Do not fabricate a CR identity. A later NHC CR cannot claim that this earlier autonomous reset fulfilled its request. An autonomous attempt must not overwrite the retained owner's requested evidence or release its ownership.
 
-- **Prerequisite, to be documented in the install guide:** the SBR namespace must permit privileged pods, `hostPID`, and `hostPath` volumes for the configured status-path directory.
-- **Fail loudly, not silently.** The operator validates the host path at start-up and reports a clear condition on `StorageBasedRemediationConfig` when it is unusable, rather than degrading into a fencing agent with no memory.
-- **No fallback is offered.** An `emptyDir` or `ConfigMap` substitute would satisfy the scheduler and defeat the purpose: neither survives the reboot, which is the single property the file exists for.
+Example journal fragment using common's current format follows. Common also writes its timestamps, revision, and writer metadata.
 
----
+```json
+{
+  "schemaVersion": 1,
+  "node": "worker-0",
+  "nodeUID": "node-uid",
+  "bootID": "11111111-1111-4111-8111-111111111111",
+  "config": {
+    "uid": "config-uid",
+    "operatingMode": "nodeLocal",
+    "storageUnhealthyGracePeriod": "15s",
+    "totalOutageGracePeriod": "60s"
+  },
+  "agent": {
+    "component": "sbr",
+    "shutdown": "running",
+    "fenceLatched": true,
+    "extra": {
+      "sbrStateVersion": "1",
+      "ownedRequest": "{\"requestNamespace\":\"sbr-system\",\"requestName\":\"worker-0\",\"requestUID\":\"request-uid\",\"ownershipToken\":\"ownership-uuid\",\"phase\":\"Owned\",\"reboot\":{\"attemptID\":\"attempt-uuid\",\"requestGeneration\":1,\"beforeBootID\":\"11111111-1111-4111-8111-111111111111\",\"phase\":\"Committed\"}}",
+      "activeAttempt": "{\"id\":\"attempt-uuid\",\"source\":\"NHC\",\"requestUID\":\"request-uid\",\"ownershipToken\":\"ownership-uuid\",\"requestGeneration\":1,\"localBeforeBootID\":\"11111111-1111-4111-8111-111111111111\",\"beforeBootID\":\"11111111-1111-4111-8111-111111111111\",\"phase\":\"Committed\"}",
+      "completedRequests": "[]",
+      "retiredOwnershipTokens": "[]"
+    }
+  },
+  "reboots": []
+}
+```
 
-## 9. Grace Periods, Timeouts and Reboot Pacing
+The example uses the same UUID for the local boot ID and the API baseline. Section 5.6 requires this agreement before requested commitment.
 
-Every point in the design where the agent waits, gives up, or decides *"enough"* is an administrator-visible knob. This section collects them, because they were previously implicit in the code and in constants quoted inside diagrams.
+Use one `Store` and one local supervisor per agent process. Use `Store.Update` to read, check, change, and write request state as one serialized operation within that process. Apply commitment, cancellation, and token retirement through this operation. There is no separate lock file.
 
-### 9.1 The timers
+Common writes a temporary file, synchronizes its contents, renames it, and synchronizes the directory. This keeps readers from seeing a partial replacement. It does not prevent another process from replacing the same file.
 
-| Knob | Default | Bounds | What it controls |
+Bound host I/O waits and retries independently of watchdog feeding. Before commitment, a persistent journal failure prevents a new action. Report degradation when possible, disarm the watchdog, and stop the supervisor. A failed disarm must remain an explicit error. Do not claim a guaranteed reboot-free exit on hardware that cannot disarm.
+
+An expired wait does not prove that a write stopped. Permit only one outstanding journal operation. Do not permit another transition while its result remains unresolved. Keep any earlier commitment unchanged.
+
+`ErrDurabilityUnconfirmed` means replacement is visible, but survival across a crash is uncertain. It does not authorize a new reset. The F08 library dependency below must provide a tested contract for resolving these outcomes.
+
+After commitment, journal or API failures must not restore watchdog feeding. A normal shutdown handler must not disarm a committed watchdog. The durable record and the in-memory commitment have precedence over late health recovery.
+
+On startup, load the journal before normal monitoring. Restore any retained owner before accepting another request. Read the local host boot ID through common's `ReadBootID`. Compare it with the saved local boot ID.
+
+This comparison classifies local restart state. It does not authorize workload cleanup. Section 5.6 defines the required API evidence.
+
+| Record and boot comparison | Action |
+|---|---|
+| Committed attempt, same boot ID | Resume the committed watchdog state. Do not issue another software reboot command. |
+| Committed attempt, different local boot ID | Record the local observation and suppress another reset for the retained request. Report the saved commitment. Require API evidence before cleanup. |
+| Retained owner with pending cleanup or release | Preserve that owner and its evidence. Do not accept a different requested owner. |
+| Retired ownership token awaiting API completion | Retry acknowledgement while the Node retains that token. If a live read shows it absent, finish local release. Never resume its execution. |
+| Retained completed request identity | Do not execute that request again, including after a Pod or configuration replacement. |
+| Clean shutdown marker, same boot ID | Treat this as an agent restart. The marker alone does not prove a host reboot. |
+| Local boot-ID read fails or returns invalid data | Block new attempts and report degradation. Do not classify the boot from an empty value. Preserve any existing commitment. |
+| `StatusAbsent` | Use the fresh document returned by common. Absence does not distinguish first installation from lost history. |
+| `StatusRecovered` or `StatusIncompatible` | Report common's recovery result and use its fresh document. Do not invent reboot evidence from the missing records. |
+| File operation returns an error | Apply the journal-failure rule above. A failed read or write is not successful recovery. |
+
+SBR accepts common's existing recovery behavior. `Load` can quarantine corrupt or unsupported data and return a fresh document. Report `HistoryLost()` and any quarantine failure when the result exposes them. A later process can receive `StatusAbsent`, without a persistent indication that history was lost. This proposal adds no separate history-loss marker or strict recovery API. Recovery must not clear an existing in-memory commitment.
+
+Initialize and save the returned document before accepting a request. Continue to check the live request, Node UID, and ownership token. Fresh local state does not clear the Node owner annotation or a CR's terminal release state. It also does not prove that an existing request never executed. Lost history can permit another reset for that request. Missing commitment records cannot supply reboot evidence or authorize cleanup.
+
+Prune diagnostic samples separately from request identities and retired ownership tokens. Keep identities while their CRs exist or while cleanup or release remains incomplete. During API loss, retain them rather than assuming their CRs disappeared. If the journal cannot retain required identities, block new actions and report degradation.
+
+Software reboot and watchdog expiry are two mechanisms for one reset operation. Reuse `executeSelfFencing()` in [the agent](../../cmd/sbr-agent/main.go). Persist commitment before invoking the software command or stopping watchdog feeding. An attempted command, successful command return, or elapsed timer is not proof of a reset.
+
+No local count, time window, or exponential delay limits autonomous resets. A persistent combined outage can trigger a new autonomous attempt after a later boot. It can use `activeAttempt` while `ownedRequest` retains an earlier request's evidence and cleanup obligation. An existing commitment in the current boot takes precedence over any additional attempt. Deduplicating one attempt does not prevent later autonomous resets.
+
+### 5.6. CR status and reboot evidence
+
+Add optional binding and boot fields to [remediation status](../../api/v1alpha1/storagebasedremediation_types.go). Existing conditions remain available. Standard mode does not require the new fields.
+
+The following example shows only proposed additions:
+
+```go
+package v1alpha1
+
+// Existing imports and Conditions are omitted.
+type StorageBasedRemediationStatus struct {
+	ExecutionMode          OperatingModeType `json:"executionMode,omitempty"`
+	ConfigUID              types.UID         `json:"configUID,omitempty"`
+	NodeUID                types.UID         `json:"nodeUID,omitempty"`
+	OwnershipToken         string            `json:"ownershipToken,omitempty"`
+	OwnershipPhase         string            `json:"ownershipPhase,omitempty"`
+	OwnershipReleaseAck    string            `json:"ownershipReleaseAck,omitempty"`
+	Reboot                 *RebootStatus     `json:"reboot,omitempty"`
+	CleanupPhase           string            `json:"cleanupPhase,omitempty"`
+	CleanupTargetsRecorded bool              `json:"cleanupTargetsRecorded,omitempty"`
+	CleanupTargets         []CleanupTarget   `json:"cleanupTargets,omitempty"`
+}
+
+type RebootStatus struct {
+	RequestUID         types.UID    `json:"requestUID"`
+	OwnershipToken     string       `json:"ownershipToken"`
+	ObservedGeneration int64        `json:"observedGeneration"`
+	AttemptID          string       `json:"attemptID"`
+	Phase              string       `json:"phase"`
+	BeforeBootID       string       `json:"beforeBootID"`
+	ObservedBootID     string       `json:"observedBootID,omitempty"`
+	AttemptedAt        *metav1.Time `json:"attemptedAt,omitempty"`
+	ObservedAt         *metav1.Time `json:"observedAt,omitempty"`
+}
+
+type CleanupTarget struct {
+	Namespace         string               `json:"namespace"`
+	PodName           string               `json:"podName"`
+	PodUID            types.UID            `json:"podUID"`
+	VolumeAttachments []AttachmentIdentity `json:"volumeAttachments,omitempty"`
+}
+
+type AttachmentIdentity struct {
+	Name         string    `json:"name"`
+	UID          types.UID `json:"uid"`
+	NodeName     string    `json:"nodeName"`
+	PVName       string    `json:"pvName"`
+	PVUID        types.UID `json:"pvUID"`
+	PVCName      string    `json:"pvcName"`
+	PVCNamespace string    `json:"pvcNamespace"`
+	PVCUID       types.UID `json:"pvcUID"`
+}
+```
+
+Define reboot phases as `Prepared`, `Committed`, `Observed`, and `Cancelled`. Define cleanup phases as `Pending`, `InProgress`, and `Completed`. Validate the enums in the generated schema. Add status columns or events that expose waiting for evidence and incomplete cleanup.
+
+Define ownership phases as `Waiting`, `Owned`, `ReleaseRequested`, and `Released`. The controller owns `ownershipToken` and `ownershipPhase`. The agent owns `ownershipReleaseAck`, which contains the exact durably retired token. The Node annotation remains the authority for selecting the owner. Status records the lifecycle and permits recovery across controller restarts.
+
+Before requested commitment, the controller binds the CR, installs its finalizer, and acquires request ownership. It cordons the target through an owner-checked update. Only after that update succeeds does it set the proposed `RemediationPrepared=True` condition. The agent obtains a fresh prepared request. It checks the request UID, Node UID, configuration, ownership token, stop annotations, and deletion state.
+
+Follow common's documented evidence rule in `pkg/nodestate/doc.go`: a local state file must not be the sole authority for destructive actions. `RebootStatus.BeforeBootID` and `ObservedBootID` contain values read from Kubernetes `Node.Status.NodeInfo.BootID`. They do not contain a container start time or a generated writer ID.
+
+Before requested commitment, read the bound Node through the live API. Require its UID to match and its BootID to be nonempty. Require that API value to match the local host value from `ReadBootID`. A live API read can still contain an old kubelet report. This consistency check prevents an older API value from becoming the baseline for a new attempt. If the values disagree, wait for consistent observations before requested commitment.
+
+Save this API baseline with the request's commitment. Save the local value separately as `activeAttempt.localBeforeBootID`. Use local comparisons for restart tracking, including during API loss. They cannot authorize requested cleanup. An autonomous attempt needs no API baseline and creates no requested cleanup evidence.
+
+After a local boot change, the agent preserves the saved commitment and reads the Node's boot ID through the API. It reports the API observation when it agrees with the current local host value. The controller independently reads the live Node before accepting evidence. It requires the bound Node UID and a nonempty API boot ID different from the saved API baseline.
+
+The commitment record must match the bound request, target identity, and ownership token. Both reported API boot IDs must be nonempty and different. Before first acceptance, the reported observed ID must equal the controller's current API value. Evidence from another request, node, owner, or uncommitted attempt must fail validation. Missing local history cannot supply a missing commitment or baseline.
+
+An observed boot change establishes that the host restarted after the recorded attempt. It does not identify the reset mechanism with certainty. It also does not establish that workloads remain stopped after startup.
+
+The agent must report retained committed attempts even when NHC has stopped or deleted the CR. A deletion timestamp does not discard evidence required by the finalizer. Compare evidence with the generation recorded for that attempt. Generation changes do not grant another reboot. They must not discard valid evidence for an already committed attempt.
+
+Persist evidence acceptance through `FencingSucceeded=True` before cleanup. If another boot occurs before acceptance, refresh the agent's observed API value without changing the initial baseline or commitment. The controller then repeats the API evidence checks.
+
+After acceptance, retain the accepted IDs and attempt generation. The agent must preserve them in each conflict-aware status update. A later autonomous reset does not erase accepted evidence or replace the initial baseline.
+
+Status can lag the journal if API access fails immediately before reset. The controller can accept a retained commitment reported after reboot when the API evidence checks succeed. It must not require the pre-reset status patch to have succeeded. If the API is unavailable or still reports the baseline value, cleanup waits.
+
+The agent Pod still depends on its probe volume during startup. If CSI cannot attach that volume, the agent may not report the new boot ID. Cleanup then waits for evidence. This is an accepted limitation for this proposal, as described in Section 6.
+
+### 5.7. Requested remediation, escalation, and cleanup
+
+NodeLocal separates reboot confirmation from cleanup completion. Current `handleFencingSuccess()` sets both fencing success and overall success. That result is insufficient for the proposed cleanup lifecycle.
+
+Use this order for an authorized request:
+
+1. Bind the request and establish its finalizer, exclusive ownership, and cordon.
+2. Persist local commitment and execute one reset operation.
+3. Accept matching commitment records and independently checked API boot evidence.
+4. Set `FencingSucceeded=True` without setting overall success.
+5. Persist the cleanup target set.
+6. Apply the existing out-of-service taint.
+7. Delete captured workload Pods with zero grace.
+8. Check cleanup completion.
+9. Set `Succeeded=True` and `Processing=False` for a request that NHC has not stopped.
+10. Restore owned scheduling restrictions when request release is permitted and cleanup is complete.
+11. Complete the ownership release handshake before permitting another requested owner.
+
+Record which scheduling restrictions SBR added. Preserve a pre-existing cordon and unrelated taints. Do not restore scheduling merely because the Node becomes Ready.
+
+Retain `node.kubernetes.io/out-of-service=nodeshutdown:NoExecute` and `ensureOutOfServiceTaint()` from [the current controller](../../internal/controller/storagebasedremediation_controller.go). Kubernetes uses this taint for Pod removal and volume detachment after non-graceful shutdown. Its safety guidance requires the node to be shut down. The deferred workload-restart risk means this proposal does not guarantee that condition throughout cleanup. See [Kubernetes shutdown guidance](https://kubernetes.io/docs/concepts/cluster-administration/node-shutdown/#non-graceful-node-shutdown-handling).
+
+Bring SNR's direct deletion semantics into an SBR helper. The reference helper selects Pods by `spec.nodeName`, uses zero grace, and requests background deletion. It does not wait for disappearance or remove Pod finalizers. See [SNR's vendored cleanup helper](https://github.com/medik8s/self-node-remediation/blob/95ccdacc16ea1297294f7623ab08a16aad3a626d/vendor/github.com/medik8s/common/pkg/resources/resources.go).
+
+Do not call that helper unchanged. It deletes the SBR agent and can cause deletion of its Pod-owned probe PVC. The SBR helper must exclude only verified SBR agent Pods. Verify their node, namespace, DaemonSet owner UID, and configuration owner. A label alone is insufficient.
+
+Before applying OutOfService, atomically persist the cleanup target set and `cleanupTargetsRecorded=true` in CR status. The taint itself can cause Pod deletion. Record workload Pod names, namespaces, UIDs, and associated target-node attachment identities. Preserve the PVC and PV identities used to resolve those attachments. Exclude the verified SBR agent and probe. Retry against that same set rather than repeatedly adding replacement DaemonSet Pods.
+
+Delete target Pods with UID preconditions. This prevents a stale deletion from targeting a replacement Pod with the same name. A replacement UID is not the old cleanup target. An agent exclusion must not exclude ordinary workload Pods or unrelated DaemonSets from the initial set.
+
+Define cleanup completion as the absence of the recorded workload Pod UIDs and their recorded target-node attachments. Record attachment identities before deleting Pods so their volume references remain available. Validate the Pod, PVC, PV, node, and ownership chain for the probe exception. This check does not prove that replacement workloads remain stopped.
+
+The attachment snapshot covers only objects present when SBR records its targets. Later attachments can exist for the same PV. Completion therefore means that the captured API objects are gone. It does not guarantee that all application volumes remain detached.
+
+Keep the out-of-service taint while cleanup remains incomplete. Retry failed operations and expose the blocking Pods or attachments. Do not strip workload finalizers, delete PVCs or PVs, or delete VolumeAttachments directly. Pod finalizers or unavailable CSI controllers can therefore delay completion.
+
+Proposed lifecycle logic in [the remediation controller](../../internal/controller/storagebasedremediation_controller.go):
+
+```go
+func (r *NodeLocalRemediationReconciler) reconcileCommitted(
+	ctx context.Context,
+	remediation *medik8sv1alpha1.StorageBasedRemediation,
+) (ctrl.Result, error) {
+	// Binding and stop handling are omitted.
+	if err := r.requireRequestOwnership(ctx, remediation); err != nil {
+		return ctrl.Result{}, err
+	}
+	node, err := r.getLiveBoundNode(ctx, remediation)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !acceptedRebootEvidence(remediation, node) {
+		return r.waitForRebootEvidence(ctx, remediation)
+	}
+	if err := r.recordRebootAcceptance(ctx, remediation, node); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.ensureCleanupTargets(ctx, remediation); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.ensureOwnedOutOfServiceTaint(ctx, remediation); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.deleteCapturedPods(ctx, remediation); err != nil {
+		return ctrl.Result{}, err
+	}
+	if !r.cleanupComplete(ctx, remediation) {
+		return ctrl.Result{RequeueAfter: cleanupCheckInterval}, nil
+	}
+	return r.finishCleanup(ctx, remediation)
+}
+```
+
+The helper names in this example are proposed. `getLiveBoundNode()` bypasses the informer cache and checks the bound Node UID. `acceptedRebootEvidence()` applies Section 5.6, including retained acceptance from an earlier cleanup attempt. `recordRebootAcceptance()` persists `FencingSucceeded=True` before cleanup and preserves any earlier acceptance. After a status conflict, it repeats the evidence checks before retrying.
+
+`ensureOwnedOutOfServiceTaint()` checks ownership within its Node update, even after the earlier ownership check succeeds. Reuse existing taint values and preparation behavior with those ownership preconditions. Do not import SNR's strategy API or its complete controller.
+
+#### NHC stop and deletion
+
+An NHC stop annotation prevents a new reboot commitment. Before commitment, SBR cancels the action and releases its preparation safely. After commitment, it continues evidence reporting and cleanup. API recovery, annotation changes, or CR deletion cannot cancel a committed watchdog reset.
+
+The local supervisor and controller must distinguish an uncommitted cancellation from an unreported commitment. Do not remove the finalizer solely because the API lacks a pre-reset commitment status. Require agent acknowledgement or accepted boot evidence when that distinction remains unresolved.
+
+Persist cancellation through the same process-local `Store.Update` operation that serializes commitment. Then publish `reboot.phase: Cancelled` for the bound CR UID, Node UID, and ownership token. With retained records and one agent process, this acknowledgement prevents later commitment. It never satisfies reboot evidence or releases ownership by itself. A statement that the agent has not committed yet is insufficient. Retain the cancelled identity until the request is gone.
+
+For a stopped request, retain NHC's failure outcome. Report later cleanup through `cleanupPhase` and a cleanup condition. Cleanup completion must not rewrite a timed-out request as successful remediation. The finalizer also protects the complete ownership release sequence. Neither a new CR nor NHC lease expiry bypasses a retained cleanup obligation.
+
+Current `handleDeletion()` uncordons the node and removes its out-of-service taint without this cleanup check. Current success and stop returns also bypass later cleanup. The nodeLocal path must replace those transitions while leaving standard behavior unchanged.
+
+#### API-unavailable behavior
+
+An autonomous combined-outage remediation performs only the local reset and journal update. It does not create a CR, apply a taint, delete Pods, or queue later cleanup. API recovery can publish diagnostics, but it does not create a deferred deletion job for that autonomous attempt.
+
+Autonomous policy remains independent of requested ownership. Preserve any existing `ownedRequest` and its evidence during the autonomous reset. Skipping autonomous cleanup must not discard an earlier request's cleanup or release obligation.
+
+An existing CR cleanup remains incomplete when its API operations fail. Its controller retries after API access returns. It must not mark cleanup complete or remove a finalizer because an API request failed.
+
+A target-node API partition does not establish a cluster-wide API outage. A surviving controller can continue an existing request if it has API access and accepted evidence. Local autonomous reset must never wait for those API operations.
+
+```mermaid
+sequenceDiagram
+  participant NHC
+  participant CR as SBR CR
+  participant C as SBR operator
+  participant A as Target SBR agent
+  participant J as Host journal
+  participant K as Kubernetes API
+  NHC->>CR: Create request after health-policy checks
+  C->>CR: Bind identity and retain finalizer
+  C->>K: Acquire exclusive Node owner by conditional update
+  Note over C,K: Competing requests wait through cleanup and release
+  C->>K: Cordon with owner-token check
+  A->>CR: Read prepared request and token
+  A->>K: Check live Node owner and API boot ID
+  A->>A: Require API baseline to match local boot ID
+  A->>J: Persist owner, API baseline, and local boot ID
+  A->>A: Commit software reboot and watchdog fallback
+  Note over A,J: Host reboots. Probe startup can delay reporting.
+  A->>J: Restore commitment and compare local boot IDs
+  A->>K: Read API boot observation
+  A->>CR: Report retained commitment and API boot IDs
+  C->>K: Independently check Node UID and API boot evidence
+  C->>CR: Persist accepted reboot evidence
+  C->>K: Apply OutOfService and delete workload Pods
+  C->>K: Check remaining Pods and attachments
+  C->>CR: Record completed cleanup
+  Note over NHC,CR: A stop after commitment does not discard cleanup
+  C->>CR: Persist ReleaseRequested
+  C->>K: Atomically mark Releasing and restore owned restrictions
+  A->>J: Durably retire ownership token
+  A->>CR: Acknowledge token retirement
+  C->>K: Clear only the matching Node owner
+  C->>CR: Record Released and finish finalizer handling
+```
+
+### 5.8. NHC policy and reboot limits
+
+Configure NHC with the storage condition and one SBR template. Adding `Ready=False` as another trigger would change the intended behavior during isolated network or kubelet failures.
+
+NHC controls request admission through its configured condition duration, health thresholds, pause settings, and storm cooldown. NHC also controls request timeout and retention after recovery. SBR does not duplicate those controls locally.
+
+Current NHC does not implement a historical per-node reboot count or reboot window. Its `minHealthy` and `maxUnhealthy` fields measure selected node health. They are not reboot counters. See [the reviewed NHC API](https://github.com/medik8s/node-healthcheck-operator/blob/dc02045b23a8a0d091116a4f4d679d26e9ef3004/api/v1alpha1/nodehealthcheck_types.go).
+
+Any future count-based reboot limit belongs in NHC. This design does not add it there. With available identity history and one agent process, SBR suppresses duplicate execution for each request and Node UID pair. A new CR can proceed only after the previous owner completes release. This ownership rule does not expire with NHC's coordination lease. NHC cannot constrain a CR-less autonomous reset while the API is unavailable.
+
+### 5.9. Startup, shutdown, and observability
+
+Start normal watchdog monitoring only after the agent can initialize its probe and journal. Initialization can use a fresh document returned by common's recovery rules. It does not prove that no earlier history existed. Do not treat initial provisioning delay as a new storage failure. This also leaves the accepted coverage gap when the probe prevents startup.
+
+After a committed reboot, preserve the request history before starting another decision cycle. For a planned stop without commitment, record the shutdown and verify watchdog disarm. A clean shutdown marker is diagnostic information, not reboot evidence.
+
+NodeLocal configuration status must report agent readiness and private probe readiness separately from shared write capability. Do not reuse `ConcurrentWriteable` as proof that independent probes are healthy. The current calculation in `updateStorageValidation()` evaluates shared-storage readiness.
+
+Expose the selected mode, probe identity, and degradation reason through status or events. Identify local boot observations separately from API boot evidence. Useful reasons include `StorageUnhealthy`, `APIUnavailable`, `RebootCommitted`, `WaitingForBootEvidence`, `CleanupPending`, and `HostStateUnavailable`. Also expose `WaitingForNodeOwnership`, the blocking request identity, and `WaitingForOwnershipRelease`.
+
+Report history recovery and foreign-writer observations when common returns them. Retain diagnostic timestamps during API loss. Publish current conditions after recovery rather than replaying stale conditions.
+
+The operator needs RBAC for request status, Node updates, Pod deletion, and attachment inspection. Its existing role covers request and Node updates. Add Pod deletion and VolumeAttachment reads for the new controller. Agents need their existing Node reporting access and permission to patch reboot evidence.
+
+Update manifests and OpenShift SCC bindings for the `/var/lib/medik8s/state` host mount. Use common's default directory mode `0700` and file mode `0600`. These modes permit access by the owner only. Avoid storing credentials.
+
+### 5.10. Use-case matrix
+
+These rows describe the proposed nodeLocal behavior. They distinguish supported decisions from deferred guarantees. They do not claim that every failure leads to automatic workload recovery.
+
+| # | Scenario | Proposed behavior | Limit or dependency |
 |---|---|---|---|
-| `storageIOTimeout` | `15s` | 1s–120s | A **single** canary read or write. The I/O runs in its own goroutine; expiry counts as a failed I/O and never blocks the watchdog loop (scenario 10). |
-| `storageUnhealthyGracePeriod` | `15s` | 0s–300s | How long canary I/O must fail **continuously** before the agent sets `SBRStorageUnhealthy=True`. A transient blip costs nothing. |
-| `totalOutageGracePeriod` | `60s` | 0s–1h | How long **both** planes must be unreachable before the agent releases the watchdog (scenario 4). `0s` reproduces today's immediate behaviour. |
-| `hostPathIOTimeout` | `5s` | 1s–60s | A single status-file operation, including lock acquisition. Expiry feeds the retry logic in [§8.5](#85-host-path-faults-never-reboot-the-node). |
-| `hostPathMaxRetries` | `3` | 1–10 | Consecutive status-file failures before the agent declares itself degraded and exits. |
-| `rebootBackoff.initial` | `5m` | — | Delay before a **second** self-fence in the same window. |
-| `rebootBackoff.max` | `2h` | — | Ceiling on the doubling. |
-| `rebootBackoff.resetAfter` | `24h` | — | Healthy uptime after which the history no longer counts against the node. |
-| `maxRebootsPerWindow` | `3` | 1–10 | Self-fences allowed inside `resetAfter` before the agent stops self-fencing (scenario 17). |
+| 1 | Healthy storage and API | Probe storage, feed the watchdog, and report storage healthy. | Probe results describe the selected backend, not every workload volume. |
+| 2 | Cluster-wide API outage with healthy storage | Continue watchdog feeding. Do not reboot for API loss alone. | Other Kubernetes and workload controllers have independent behavior. |
+| 3 | Broad storage outage with reachable API | Report unhealthy after storage grace. Await an authorized NHC request. | NHC health thresholds can block new requests. Delayed reports and prior commitments prevent a zero-reboot guarantee. |
+| 4 | Storage and API unavailable | After both grace periods, perform an autonomous local reset. Ignore cleanup for that attempt. Preserve any retained requested owner. | No local reboot budget applies. Recovery of Pods elsewhere is not guaranteed. |
+| 5 | One node loses API or cluster-network access | Keep feeding while its storage remains healthy. | Configure NHC for the storage condition only. |
+| 6 | One node loses storage with API available | NHC creates an SBR CR. After acquiring ownership, SBR records and executes the reset. Cleanup requires API boot evidence. | Available history and one agent process prevent repeated execution. An earlier owner, delayed evidence, or probe startup can block progress. |
+| 7 | Kernel panic, host freeze, or power loss | An armed watchdog can reset a powered host that stops feeding it. | It cannot restore power. A dead node cannot publish a fresh storage condition or boot evidence. |
+| 8 | Planned agent restart or upgrade | Disarm before an uncommitted stop. Preserve the owned request and identity history. Compare boot IDs after startup. | Verify hardware disarm support. An unexpected process failure can still trigger the watchdog. |
+| 9 | Kubelet failure with healthy storage | Continue feeding while the agent remains functional. | This storage policy does not remediate every kubelet failure. |
+| 10 | Slow or hung storage I/O | Bound observation time. Apply storage grace without blocking watchdog decisions. | A deadline cannot cancel blocked kernel I/O. Bound outstanding operations. |
+| 11 | Network partition with healthy storage | Do not reset solely for the partition. This NHC policy does not request relocation solely for it. | This is not a guarantee against concurrent workloads created by other controllers. |
+| 12 | API or storage recovers after commitment | Complete the committed reset. Do not resume watchdog feeding or release the owner prematurely. | Stop and deletion can prevent only an uncommitted action. |
+| 13 | Different nodes require different StorageClasses | Deferred. Add explicit node-group to StorageClass mapping. | See Section 6. |
+| 14 | One node uses several storage backends | Deferred. Add multiple probes and a health aggregation policy. | See Section 6. |
+| 15 | Stuck or terminating workload Pod | Apply OutOfService and request zero-grace deletion after accepted boot evidence. Retain ownership while cleanup remains incomplete. | Finalizers can block later requests indefinitely. The design does not hold workloads stopped until cleanup ends. |
+| 16 | Host journal unavailable or recovered | A file-operation error blocks new actions before commitment. Common's successful recovery permits initialization with fresh state. Preserve any in-memory commitment. | Missing history cannot provide reboot evidence. It can permit another requested reset. Disarm failure can still cause a reset. |
+| 17 | Repeated remediation on persistent failure | With retained history and one agent process, suppress another reset for the same CR UID and Node UID. Later CRs wait for ownership release. | History loss or overlapping processes can permit repeated execution. A new owner or autonomous attempt can also cause another reset. |
 
-**Relationship to the existing configuration.** `StorageBasedRemediationConfig` expresses detection timing today as `sbrTimeoutSeconds` (base cadence — the heartbeat runs every `sbrTimeoutSeconds/2`) and `maxConsecutiveFailures` (a count of missed heartbeats), so the effective grace period is a product of the two: `7 × 15s ≈ 105s` at the defaults. The knobs above state the same intent **in time units**, which is what an administrator actually reasons about and what the meeting asked for. The cadence stays derived from `sbrTimeoutSeconds`; the thresholds become durations. Defaults are chosen to be no more aggressive than today's behaviour, and the migration — whether the counted form is retained as an alias or deprecated — belongs in the implementation plan.
+## 6. Open Questions
 
-> **ℹ️ Note on the 5s tick** — the matrix and diagrams say "every 5s" as an illustration. The real cadence is derived from `sbrTimeoutSeconds`; nothing in this design depends on the specific number, only on the tick being short relative to the grace periods and to the watchdog timeout.
+### 6.1. Accepted limitation: probe unavailable after reboot
 
-### 9.2 Why these are three separate knobs and not one
+The agent Pod can remain pending while CSI attaches its probe volume. In that state, it cannot read the host journal or report its saved commitment. A changed API BootID does not replace that missing request record. The controller must wait rather than infer success from a timer or missing heartbeat.
 
-They answer different questions and have different consequences for getting them wrong:
+A reporter that starts independently of the probe could address this failure. This proposal defers that change. The unresolved operational question is how administrators should recover a request when the probe never becomes available.
 
-- **`storageIOTimeout` is about the kernel.** It distinguishes "slow" from "hung" and keeps a `D-state` I/O from starving the watchdog loop. Too high and detection is late; too low and a busy array looks dead.
-- **`storageUnhealthyGracePeriod` is about the cluster.** It decides when the rest of the cluster is told. Too low and a storage hiccup becomes a remediation; too high and a genuinely isolated node keeps its VMs for longer than it should. This is the knob behind the "15 seconds of hanging before `SBRStorageUnhealthy=True`" discussed in review.
-- **`totalOutageGracePeriod` is about this node alone.** When both planes are gone, nothing central can decide, and the node's only tool is a blunt one. Waiting is cheap here in a way it is not elsewhere: with the API down **no failover is happening anyway** — NHC cannot create a CR, and nothing is being started elsewhere that this node could conflict with. The reset buys safety only for what comes *after* recovery. A short, non-zero default is the honest trade-off, and a datacentre whose power and network return together should not find every node already reset.
+Missing evidence or release acknowledgement can retain ownership indefinitely. Creating another CR cannot bypass this retained owner.
 
-Read and write operations both use these timeouts. A read that hangs is exactly as informative as a write that hangs, and a backend that accepts writes but cannot serve reads is broken in a way that matters to a VM.
+### 6.2. Accepted limitation: workloads restart before cleanup
 
-### 9.3 Reboot pacing and loop protection
+The kubelet or runtime can restart workloads before SBR accepts the API boot evidence. This proposal adds no startup hold. A changed API boot ID supports the restart observation, but does not prove that the old workload remains stopped.
 
-A node whose storage is permanently broken will be marked unhealthy, remediated, rebooted, come back, find its storage still broken, and start again. The API cannot be relied on to stop this: the loop's worst form is precisely the one where the API is unreachable, and a `Succeeded` remediation CR says the node rebooted, not that rebooting helped.
+Direct Pod deletion and out-of-service volume detachment can therefore race with restarted workloads. This design does not resolve that risk or guarantee exclusive workload execution. A future design would need a startup hold and an explicit release after cleanup.
 
-So the brake is **node-local**, computed from the `reboots` history in the status file:
+### 6.3. Accepted limitation: cleanup during API loss
 
-- **Exponential backoff.** The first self-fence is immediate. Each subsequent one inside the window waits `initial × 2^(n-1)`, capped at `max`. A node that reboots usefully pays nothing; a node that does not slows down fast.
-- **A budget.** After `maxRebootsPerWindow` self-fences inside `resetAfter`, the agent stops self-fencing altogether. It keeps petting the watchdog, keeps reporting `SBRStorageUnhealthy=True`, and emits `RebootBudgetExhausted`. The cluster still knows the node is sick; the node simply stops pretending that another reset will fix it.
-- **Healthy uptime clears it.** `resetAfter` of healthy operation empties the history.
-- **One remediation, one reboot.** Entries are keyed by remediation CR `UID` and `generation`, so a software reboot by SNR and a watchdog release by SBR for the same CR count once ([§8.6](#86-one-file-two-operators)).
+Autonomous remediation ignores workload cleanup. It does not schedule cleanup after connectivity returns. This retains the existing limitation that local reboot alone does not guarantee removal of stale API objects or workload relocation.
 
-Exhausting the budget is a deliberate choice of failure mode: a node that cannot be repaired by rebooting is more useful running and visibly unhealthy than stuck in a reset loop, and in that state an administrator can reach it — the condition is set, the events are there, and the status file explains the sequence over SSH.
+### 6.4. Accepted limitation: repeated autonomous reboots
 
-### 9.4 Open question — skipping the reboot on a total outage
+This proposal deliberately omits autonomous reboot limits. A persistent combined outage can cause another reset after a later boot. NHC cannot prevent those resets without API access. A future NHC reboot counter would govern only NHC-managed requests.
 
-**Status: not decided. Out of scope for 5.9.0; recorded so the next discussion starts where the last one ended.**
+### 6.5. Deferred multiple StorageClasses
 
-When both the API and storage are gone, should the node reset itself at all?
+Scenario 13 needs an explicit mapping between node groups and StorageClasses. The configuration controller would create the corresponding probe templates and report their identities. Validation must reject overlapping node groups and conflicting watchdog ownership. NHC health thresholds may also need separate failure domains for each backend.
 
-- **The case for resetting (default, and what 5.9.0 ships).** A node nobody can observe is a node nobody can make safe. When the cluster comes back, a node that reset itself is in a known state; a node that kept running has been executing workloads unobserved for the whole outage, and may still hold storage leases or serve clients on a network the cluster cannot see.
-- **The case for an opt-out.** In a total datacentre outage every node is in this state, so the default resets the entire cluster at once — including nodes running VMs on secondary networks that were serving traffic fine. Some administrators would rather keep those workloads and accept the uncertainty. That judgement belongs to whoever owns the workloads, not to the remediator.
-- **What exists today.** `detectOnlyMode: Enabled` already turns off remediation entirely — the agent disarms the watchdog and only reports. That is an all-or-nothing switch: it also gives up fencing in the single-node storage failure case, which is the case customers most want handled.
-- **What is missing.** A narrower control — *"self-fence on remediation CRs, but never on a total outage"* — with an honest statement of what it costs. `totalOutageGracePeriod` already blunts the edge by making the wait configurable, and a very large value approximates the opt-out without a new field, which is a reasonable place to stand until there is a concrete customer requirement.
+Scenario 14 needs multiple probes on each selected node. It also needs a policy that converts per-probe health into one storage condition. Candidate policies include failure of any required backend or failure of every backend. The policy must identify which workload storage each probe represents.
 
-The decision needs a real deployment to argue about. Until then the default is to reset, the grace period is configurable, and the trade-off is documented here rather than settled by omission.
+Both extensions need probe-specific status, cleanup exclusions, attachment handling, and tests. This proposal adds neither their API fields nor their controller behavior.
+
+### 6.6. Accepted limitation: lost local history
+
+SBR accepts the fresh state returned by common after file absence, corruption, or an unsupported common schema. It does not maintain a separate persistent history-loss marker. After quarantine and restart, the library can report absence without reporting the earlier loss.
+
+Repeated-request checks depend on retained identity records. Loss of those records can permit another reset for an existing request. Live Node ownership and CR release checks still apply. Missing local history must not create reboot evidence, clear another owner's token, or authorize cleanup.
+
+### 6.7. Accepted limitation: overlapping agent processes
+
+The deployment is intended to run one agent process per node. Common serializes updates only within each process. No host file lock excludes a second process, including a process left running after forced Pod deletion.
+
+Both processes can read the same valid owner token. A later write can replace the other process's state. The design does not guarantee one reset command, consistent cancellation, or exclusive watchdog access in this unsupported condition. Common's foreign-writer report detects some overlap but does not prevent it.
+
+### 6.8. Remaining validation questions
+
+- Which supported CSI drivers accept the proposed `10Mi` Block request and direct I/O pattern?
+- Are the proposed 15-second storage grace and 60-second total-outage grace appropriate under measured latency?
+- Which watchdog drivers permit verified disarm during configuration replacement and planned upgrades?
+- What operator recovery procedure should resolve lost journal history, permanently blocked cleanup, or inconsistent ownership records?
+- Should a future configuration permit autonomous combined-outage reboot to be disabled while requested remediation remains enabled?
+
+The existing `detectOnlyMode` disables all remediation actions. It is not a selective autonomous-reboot switch.
+
+Ownership recovery must cover a missing owner CR, a removed annotation, and disagreement with the host journal. Common does not guarantee persistent detection of earlier history loss. Forced finalizer removal does not prove completion. Do not reclaim ownership through a timeout. If the Node UID changes, old requests must not change the replacement Node's scheduling restrictions.
+
+## 7. Upgrade / Downgrade Concerns
+
+An upgrade must preserve configurations that omit all new fields. Their effective mode remains standard. They retain the shared-volume layout, existing failure counters, and existing remediation behavior. New configurations also default to standard.
+
+Install compatible CRDs, webhooks, operator code, and agent images before creating nodeLocal configurations. Use a common version that includes the dependencies in Section 5.5. NodeLocal components must support request tokens and the release handshake. Use ordered replacement and `maxSurge: 0`, without relying on a host lock. The operator must not send nodeLocal arguments to an older agent image. Schema support alone does not establish agent support.
+
+Migration requires configuration replacement because the effective mode is immutable. Pause new NHC requests during the replacement. Complete all owned requests through cancellation or cleanup and release. Remove the old configuration and wait for agent shutdown. Then create the Block nodeLocal configuration and check its readiness before resuming NHC.
+
+Do not delete `/var/lib/medik8s/state/sbr.json` during agent upgrades or configuration replacement. Use common's shared schema and SBR's versioned `agent.extra` values. Common can quarantine an unsupported shared schema and return `StatusIncompatible` with fresh state. Report that result and apply the accepted history-loss rules. A later process can see ordinary absence instead.
+
+SBR must validate its own `sbrStateVersion` before interpreting its extension values. Common does not validate those values. If SBR cannot decode an otherwise valid extension, report the unsupported SBR state and block new actions. This differs from accepting a fresh document explicitly returned by common's recovery path.
+
+Before downgrade, pause NHC and complete nodeLocal ownership release. Remove nodeLocal configurations through their cleanup path. Confirm that their agents have stopped before installing an older operator or CRD. Older schemas can discard new fields and misinterpret a configuration as standard.
+
+Standard and nodeLocal configurations may coexist only on disjoint node sets. The replacement path must not rely solely on admission to enforce that rule. Wait for planned agent shutdown before starting a replacement. This deployment sequence does not guarantee process exclusion after forced deletion or a partition.
+
+## 8. Test Plan
+
+Add tests to existing API, controller, agent, and end-to-end suites. The implementation must test behavior, including absent fields and failure recovery. A fake-client test alone does not establish that the validating webhook works.
+
+### 8.1. API and compatibility
+
+- Test omitted mode and explicit standard with existing configurations and both existing volume modes.
+- Test nodeLocal rejection for omitted volume mode, Filesystem, missing StorageClass, invalid mode, and invalid durations.
+- Test grace defaults, explicit zero, bounds, and rejection of grace fields in standard mode.
+- Test immutable effective values, equivalent durations, omitted/default equivalence, and removal of nondefault values.
+- Test the field interaction table, including detect-only and `maxConsecutiveFailures` independence.
+- Test live admission, concurrent configuration creation, cross-namespace overlap, node-label changes, and different nodeLocal StorageClasses.
+- Test standard/nodeLocal coexistence on disjoint nodes, configuration conflict checks, and planned replacement without overlap.
+- Check `maxSurge: 0`. Do not treat that setting as proof that a force-deleted Pod's process has stopped.
+
+### 8.2. Probe and local decisions
+
+- Test transient failures shorter than grace, sustained failures, recovery, and repeated intermittent failures.
+- Test probe deadlines, late results, and bounded outstanding operations under hung I/O.
+- Test API-only loss, storage-only loss, and combined loss with independent clocks.
+- Test live `NotFound`, authorization failures, transport failures, deadlines, and server-error classification.
+- Test recovery before commitment and irreversible commitment afterward.
+- Test detect-only mode with a request present and during combined outage.
+- Check that standard peer heartbeat and shared fence behavior remain unchanged.
+
+### 8.3. Identity, reboot evidence, and journal
+
+- Test the same CR across reconciliation retries, agent restarts, Pod replacements, and configuration replacements while required history remains available.
+- Test changed generation with the same UID and a new CR with a different UID.
+- Test a replacement Node with the same name and a different UID.
+- Test crashes before commitment, after durable commitment, and before a status patch succeeds.
+- Test same-boot restart, changed local boot, empty API boot IDs, stale evidence, and mismatched identities.
+- Test an old API baseline, local/API disagreement, delayed kubelet status, and API loss after commitment.
+- Require independent API evidence before cleanup. Check that local observations or generated writer IDs cannot supply that evidence.
+- Retain accepted evidence through later autonomous resets. Preserve the original requested baseline and generation.
+- Test corrupt history, lost history, and unsupported common schemas through `Load` and a later process restart.
+- Accept common's fresh document and document possible repeated execution after history loss. Never infer reboot completion from that fresh state.
+- Test invalid or unsupported SBR extension values separately from common's recovery results.
+- Test full disk, read-only filesystems, write deadlines, late completion, and `ErrDurabilityUnconfirmed` without starting another unresolved operation.
+- Decode the journal example with common's `Document` type. Check string-valued `config` and `agent.extra` fields.
+- Check the exact host mount and file path across Pod replacement. A container-local or `emptyDir` file must not satisfy that requirement.
+- Test completed-identity retention separately from diagnostic pruning.
+- Keep default common retention in these tests. Check that pruning `reboots` does not remove required SBR records from `agent.extra`.
+- Test retained ownership and requested evidence across an autonomous reset during API loss.
+- Test that a different CR cannot replace `ownedRequest` before token retirement.
+- Test software reboot failure with hardware fallback and verified disarm during planned shutdown.
+- Test commitment, cancellation, and token retirement through one process's serialized updates.
+- Demonstrate possible lost updates with two processes. Do not assert that common provides process exclusion.
+- Require common regression tests for Node UID keys, durable directory creation, read security checks, quarantine age, and uncertain write outcomes.
+- Confirm that autonomous attempts have no local count or rate limit. Use controlled test termination for persistent failures.
+
+### 8.4. Controller and cleanup
+
+- Test controller ownership, leader replacement, and concurrent agent evidence patches.
+- Test concurrent requests in different namespaces for the same Node UID and require exactly one successful claim.
+- Test new requests during preparation, reboot, cleanup, cancellation, and ownership release.
+- Test claim success before a controller crash or lost status update and adopt the existing token.
+- Test that NHC lease expiry, timeout, deletion, and delayed cleanup cannot transfer ownership.
+- Test ownership checks within Node updates and reject delayed writes from a previous owner.
+- Test cleanup completion without restriction removal and restriction removal without local release acknowledgement.
+- Test API loss and process crashes at every release step, including annotation removal before the final status update.
+- Test that a terminal release record prevents the old CR from acquiring ownership again.
+- Test completed cleanup for a stopped but retained CR and permit the next owner without waiting for node recovery.
+- Test local recovery when the agent misses release completion and the old CR no longer exists.
+- Test that an unretired local token blocks adoption when the Node annotation disappears or changes.
+- Test missing owner CRs, forced finalizer removal, altered annotations, and disagreement with the host journal.
+- Test that confirmed reboot does not immediately set overall success.
+- Test zero-grace Pod deletion with UID preconditions and retained workload finalizers.
+- Test verified agent and probe exclusions, including forged labels and replacement owners.
+- Test target capture before OutOfService, leader replacement, empty target sets, and replacement DaemonSet Pods.
+- Test replacement VolumeAttachments and confirm that a captured UID cannot identify a replacement object.
+- Test remaining Pods and attachments, API errors, cleanup retries, and incomplete finalizers.
+- Test NHC stop before commitment, stop after commitment, deletion before evidence, and delayed commitment reporting.
+- Test cancellation racing with commitment within one agent process. Require durable cancellation before the status acknowledgement.
+- Test that stopped requests retain their failure outcome after cleanup completes.
+- Test that autonomous API-unavailable remediation creates no cleanup job or deferred deletion work.
+- Test that target-only API loss does not stop an accessible controller from completing an existing request.
+
+### 8.5. End-to-end coverage
+
+Extend [the existing end-to-end suite](../../test/e2e) with the use-case matrix in Section 5.10. Run private Block tests on representative RWO-capable CSI drivers. Retain the existing standard Filesystem and shared Block coverage.
+
+Verify Pod, PVC, and boot identities across container restart, node reboot, and Pod replacement. Test configuration deletion and recreation with an active watchdog. Test request cleanup after NHC timeout and operator restart.
+
+Create a second CR in another namespace while the first request retains cleanup. Verify that it cannot prepare or reboot the node until the first owner completes release. Test ownership retention across configuration replacement and attempted downgrade.
+
+Reproduce both accepted recovery limits. Keep the probe unavailable after reboot and check that cleanup waits for evidence. Permit workloads to restart before cleanup and document the resulting risk. Do not convert these limits into unsupported safety assertions.
+
+Scenarios 13 and 14 remain deferred tests for later API work. Scenario 17 checks repeated-request suppression with retained history and one agent process. It does not test autonomous reboot suppression. Test the accepted history-loss and overlapping-process limits separately. A real power-loss test must not expect the watchdog to restore power.
