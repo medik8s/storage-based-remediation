@@ -8,7 +8,7 @@ import (
 // Build information that will be set via ldflags during build
 var (
 	// Version is the operator release version, independent of image tags.
-	Version = "5.8.0"
+	Version = "99.9.9"
 	// GitCommit is the git commit SHA
 	GitCommit = "unknown"
 	// GitDescribe is the output of git describe --tags --dirty
