@@ -20,6 +20,11 @@ spec:
   # Watchdog configuration
   watchdogPath: "/dev/watchdog"
 
+  # Delay another unhealthy report after SBRStorageUnhealthy becomes Unknown.
+  # The default is 180 seconds. The permitted range is 1 to 300 seconds.
+  # Increase this delay if agents need more time to restore heartbeats.
+  # remediationGracePeriodSeconds: 300
+
   # Node selection - run on worker nodes only
   nodeSelector:
     node-role.kubernetes.io/worker: ""

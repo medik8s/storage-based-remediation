@@ -102,6 +102,7 @@ spec:
 | `sharedStorageVolumeMode` | `Filesystem` | `Filesystem` or `Block`; immutable after creation; see §2.6 |
 | `sbrTimeoutSeconds` | `30` | 10–300s allowed; heartbeat interval = this / 2 |
 | `maxConsecutiveFailures` | `7` | 2–32 allowed; threshold for local self-fence and peer-unhealthy detection |
+| `remediationGracePeriodSeconds` | `180` | 1–300 seconds after `Unknown` before another unhealthy report |
 | `sbrUpdateInterval`, `peerCheckInterval` | derived: `sbrTimeoutSeconds / 6` | Not separately configurable |
 | `nodeSelector` | `node-role.kubernetes.io/worker: ""` + `kubernetes.io/os=linux` | |
 
@@ -215,7 +216,19 @@ kubectl logs -n <ns> <sbr-agent-pod-name> -c sbr-agent
 kubectl get node <name> -o jsonpath='{range .status.conditions[*]}{.type}{"\t"}{.status}{"\t"}{.reason}{"\n"}{end}' | grep SBRStorageUnhealthy
 ```
 
-Condition lifecycle: `False` → `True` (peer unhealthy) → `Unknown` (stale, ~125s) → grace period (3 min) → `True` again if still unhealthy.
+Condition lifecycle: `False` → `True` (peer unhealthy) → `Unknown` (stale, ~125s) → configured grace period → `True` if still unhealthy.
+
+`spec.remediationGracePeriodSeconds` controls this delay. The default is 180 seconds.
+The timer starts at `SBRStorageUnhealthy.LastTransitionTime` when the condition becomes `Unknown`.
+A fresh heartbeat can clear the condition before expiry.
+For slow recovery, a value such as `300` gives agents more time to restore heartbeats.
+It also delays another report if the peer remains unhealthy.
+A smaller value can cause repeated remediation.
+
+A Config update changes the DaemonSet arguments and replaces agent Pods.
+The timer keeps the stored condition timestamp.
+The setting does not block manual remediation or another NHC unhealthy condition.
+It does not discard an existing fence message.
 
 ### 5.4 Prometheus metrics
 

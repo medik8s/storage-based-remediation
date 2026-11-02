@@ -37,6 +37,9 @@ const (
 	DefaultSBRTimeoutSeconds = 30
 	// DefaultMaxConsecutiveFailures is the runtime default when maxConsecutiveFailures is unset on the CR (no OpenAPI default).
 	DefaultMaxConsecutiveFailures = 7
+
+	DefaultRemediationGracePeriodSeconds = agent.DefaultRemediationGracePeriodSeconds
+
 	// RelatedImageAgent when this env is set it contains the image of SBR agent
 	RelatedImageAgent = "RELATED_IMAGE_AGENT"
 )
@@ -131,6 +134,13 @@ type StorageBasedRemediationConfigSpec struct {
 	// +optional
 	MaxConsecutiveFailures *int32 `json:"maxConsecutiveFailures,omitempty"`
 
+	// RemediationGracePeriodSeconds delays another unhealthy report after an Unknown transition.
+	// The delay starts at SBRStorageUnhealthy.LastTransitionTime. The default is 180 seconds.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=300
+	// +optional
+	RemediationGracePeriodSeconds *int32 `json:"remediationGracePeriodSeconds,omitempty"`
+
 	// DetectOnlyMode when set to Enabled disables all remediation: the agent disarms the watchdog (no reboot)
 	// and the controller does not write fence messages. SBR still sets node conditions (e.g. SBRStorageUnhealthy)
 	// so NHC or other remediators can observe unhealthy nodes without SBR triggering a reboot.
@@ -199,6 +209,13 @@ func (s *StorageBasedRemediationConfigSpec) GetMaxConsecutiveFailures() int32 {
 		return *s.MaxConsecutiveFailures
 	}
 	return int32(DefaultMaxConsecutiveFailures)
+}
+
+func (s *StorageBasedRemediationConfigSpec) GetRemediationGracePeriodSeconds() int32 {
+	if s.RemediationGracePeriodSeconds != nil {
+		return *s.RemediationGracePeriodSeconds
+	}
+	return DefaultRemediationGracePeriodSeconds
 }
 
 // GetSharedStoragePVCName returns the generated PVC name for shared storage

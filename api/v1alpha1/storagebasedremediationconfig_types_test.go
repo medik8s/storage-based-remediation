@@ -26,6 +26,30 @@ import (
 	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
 )
 
+func TestGetRemediationGracePeriodSeconds(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value *int32
+		want  int32
+	}{
+		{"absent", nil, 180},
+		{"default", new(int32(180)), 180},
+		{"custom", new(int32(240)), 240},
+		{"minimum", new(int32(1)), 1},
+		{"maximum", new(int32(300)), 300},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := StorageBasedRemediationConfigSpec{RemediationGracePeriodSeconds: tc.value}
+			if got := spec.GetRemediationGracePeriodSeconds(); got != tc.want {
+				t.Errorf("got %d, want %d", got, tc.want)
+			}
+			if spec.RemediationGracePeriodSeconds != tc.value {
+				t.Error("getter changed the stored field")
+			}
+		})
+	}
+}
+
 // testCase represents a generic test case for validation functions
 type testCase struct {
 	name      string

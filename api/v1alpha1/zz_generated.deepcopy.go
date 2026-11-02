@@ -136,6 +136,11 @@ func (in *StorageBasedRemediationConfigSpec) DeepCopyInto(out *StorageBasedRemed
 		*out = new(int32)
 		**out = **in
 	}
+	if in.RemediationGracePeriodSeconds != nil {
+		in, out := &in.RemediationGracePeriodSeconds, &out.RemediationGracePeriodSeconds
+		*out = new(int32)
+		**out = **in
+	}
 	if in.DetectOnlyMode != nil {
 		in, out := &in.DetectOnlyMode, &out.DetectOnlyMode
 		*out = new(DetectOnlyModeType)

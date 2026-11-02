@@ -157,6 +157,7 @@ spec:
 | `sharedStorageClass` | None | StorageClass for shared storage coordination (RWX required); mounted at `/dev/sbr` |
 | `nodeSelector` | Worker nodes | Label selector restricting which nodes run the agent |
 | `sbrTimeoutSeconds` | `30` | SBR detection timeout in seconds (10–300) |
+| `remediationGracePeriodSeconds` | `180` | Seconds after `SBRStorageUnhealthy=Unknown` before another unhealthy report (1–300) |
 | `maxConsecutiveFailures` | `7` | Consecutive watchdog, SBR-device, local-heartbeat, or peer-heartbeat failures before declaring a node unhealthy (2–32) |
 | `detectOnlyMode` | `Disabled` | When `Enabled`, detects failures without performing remediation |
 
@@ -220,9 +221,22 @@ Exposed on port **8082**:
 
 ### Tuning Issues
 
+- [ ] Increase `remediationGracePeriodSeconds` if agents need more time to restore heartbeats after remediation.
 - [ ] Adjust `sbrTimeoutSeconds` if detection is too fast/slow
 - [ ] Adjust `maxConsecutiveFailures` if getting spurious fencing events
 - [ ] Use `detectOnlyMode: Enabled` to observe without fencing during rollout
+
+The grace timer starts at the condition's `LastTransitionTime` when it becomes `Unknown`.
+For example, `remediationGracePeriodSeconds: 300` allows five minutes before another unhealthy report.
+A fresh heartbeat can clear the condition before expiry.
+If recovery fails, a larger value delays another report.
+A smaller value can cause repeated remediation.
+
+A Config update replaces agent Pods through the DaemonSet.
+The timer keeps the existing timestamp, so a shorter delay can expire immediately.
+The setting also applies in detect-only mode.
+It does not block manual remediation or another NHC unhealthy condition.
+It does not discard an existing fence message.
 
 ---
 
