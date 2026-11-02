@@ -92,6 +92,8 @@ var (
 	peerCheckInterval          = flag.Duration(agent.FlagPeerCheckInterval, 5*time.Second, "Interval for checking peer heartbeats")
 	maxConsecutiveFailuresFlag = flag.Int(agent.FlagMaxConsecutiveFailures, agent.DefaultMaxConsecutiveFailures,
 		"Max consecutive SBR/watchdog failures before self-fence; peer will place SBRStorageUnhealthy condition on the node after that many missed heartbeat")
+	remediationGracePeriodSeconds = flag.Int(agent.FlagRemediationGracePeriodSeconds, agent.DefaultRemediationGracePeriodSeconds,
+		"Delay in seconds before reporting an unhealthy peer again after SBRStorageUnhealthy becomes Unknown (1-300)")
 	logLevel     = flag.String(agent.FlagLogLevel, agent.DefaultLogLevel, "Log level (debug, info, warn, error)")
 	rebootMethod = flag.String(agent.FlagRebootMethod, agent.DefaultRebootMethod,
 		"Method to use for self-fencing (panic, systemctl-reboot, none)")
@@ -150,8 +152,6 @@ const (
 	// SBRAgentRemediationGraceAnnotationKey is written on the Node right before deleting
 	// an SBR-agent remediation to provide a grace period for sbr-agent to start running on the node and report health, before re-creating a new remediation.
 	SBRAgentRemediationGraceAnnotationKey = "medik8s.io/sbr-remediation-grace-at"
-	// SBRAgentRemediationGracePeriod is the minimum time to wait between deletion and re-creation.
-	SBRAgentRemediationGracePeriod = 3 * time.Minute
 
 	// RemediationCheckTimeout is the timeout for checking if a StorageBasedRemediation CR exists
 	// when SBR is unhealthy; used to avoid blocking the watchdog loop.
@@ -502,6 +502,8 @@ type SBRAgent struct {
 	metricsPort         int
 	metricsServer       *http.Server
 
+	remediationGracePeriod time.Duration
+
 	// Node mapping for hash-based slot assignment (always enabled)
 	nodeManager      *sbdprotocol.NodeManager // Shared node manager for both devices
 	nodeManagerStop  chan struct{}
@@ -691,6 +693,8 @@ func NewSBRAgentWithWatchdog(
 		controllerNamespace: controllerNamespace,
 		recorder:            nil,
 		recorderObject:      nil,
+
+		remediationGracePeriod: time.Duration(agent.DefaultRemediationGracePeriodSeconds) * time.Second,
 	}
 
 	// Initialize heartbeat and fence devices
@@ -1794,7 +1798,7 @@ func (s *SBRAgent) peerMonitorLoop() {
 
 				// Condition is Unknown: after grace period set True again if still unhealthy
 				if currentStatus == corev1.ConditionUnknown {
-					if now.Sub(lastTransition) > SBRAgentRemediationGracePeriod {
+					if now.Sub(lastTransition) > s.remediationGracePeriod {
 						if err := s.setNodeConditionSBRStorageUnhealthyStatus(peerNodeName, corev1.ConditionTrue, v1alpha1.SBRStorageUnhealthyReasonHeartbeatTimeout, "SBR peer heartbeat timeout"); err != nil {
 							logger.Error(err, "Failed to set SBRStorageUnhealthy condition after grace period", "peerNodeID", peer.NodeID, "peerNodeName", peerNodeName)
 						} else {
@@ -2732,12 +2736,19 @@ func main() {
 		os.Exit(0)
 	}
 
+	if *remediationGracePeriodSeconds < 1 || *remediationGracePeriodSeconds > 300 {
+		logger.Error(nil, fmt.Sprintf("--%s must be between 1 and %d", agent.FlagRemediationGracePeriodSeconds, 300),
+			"value", *remediationGracePeriodSeconds)
+		os.Exit(1)
+	}
+	remediationGracePeriod := time.Duration(*remediationGracePeriodSeconds) * time.Second
+
 	if err := resetPreflightSentinelAt(agent.PreflightSentinelPath); err != nil {
 		logger.Error(err, "Failed to clear pre-flight sentinel")
 		os.Exit(1)
 	}
 
-	logger.Info("SBR Agent starting", "version", "development")
+	logger.Info("SBR Agent starting", "version", "development", "remediationGracePeriod", remediationGracePeriod)
 
 	// Log build information at startup
 	logger.Info("SBR Agent build information", "buildInfo", version.GetFormattedBuildInfo())
@@ -2926,6 +2937,8 @@ func main() {
 			"nodeID", nodeIDValue)
 		os.Exit(1)
 	}
+
+	sbrAgent.remediationGracePeriod = remediationGracePeriod
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
