@@ -45,6 +45,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/v5/api/v1alpha1"
+	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
 	"github.com/medik8s/storage-based-remediation/v5/test/utils"
 )
 
@@ -1198,10 +1199,6 @@ func testNodeRemediation(cluster ClusterInfo) {
 }
 
 func testSBRInspection() {
-	if os.Getenv("LABEL_FILTER") == "block" {
-		Skip("SBR device and node map inspection is currently unsupported in block mode")
-	}
-
 	By("Setting up SBR configuration for inspection test")
 	testBasicStorageBasedRemediationConfiguration()
 
@@ -1217,6 +1214,31 @@ func testSBRInspection() {
 
 	podName := pods.Items[0].Name
 	By(fmt.Sprintf("Using SBR agent pod %s for inspection", podName))
+
+	By("Checking the inspection command reports the deployed storage mode and active slots")
+	report, err := testNamespace.Clients.InspectFromPod(podName, testNamespace.Name)
+	Expect(err).NotTo(HaveOccurred())
+	expectedMode := "fs"
+	for _, container := range pods.Items[0].Spec.Containers {
+		for _, device := range container.VolumeDevices {
+			if device.DevicePath == agent.SharedStorageBlockDevicePath {
+				expectedMode = "block"
+			}
+		}
+	}
+	Expect(report.Mode).To(Equal(expectedMode))
+	Expect(report.NodeMapStatus).To(Equal("valid"))
+	Expect(report.NodeMap).NotTo(BeNil())
+	Expect(report.NodeMap.Entries).NotTo(BeEmpty())
+	Expect(report.Heartbeats).NotTo(BeEmpty(), "Empty storage must not pass the inspection test")
+	Expect(report.Fences).NotTo(BeNil())
+	if expectedMode == "block" {
+		Expect(report.Superblock).NotTo(BeNil())
+	}
+	for _, slot := range report.Heartbeats {
+		Expect(slot.SenderNodeID).To(Equal(slot.NodeID))
+		Expect(slot.Type).To(Equal("HEARTBEAT"))
+	}
 
 	By("Inspecting node mapping from SBR agent")
 	err = testNamespace.Clients.NodeMapSummary(podName, testNamespace.Name, "")

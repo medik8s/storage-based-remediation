@@ -2710,7 +2710,21 @@ func runBlockInit(devicePath string, ioTimeout time.Duration, log logr.Logger) e
 }
 
 func main() {
+	// Dispatch before flag parsing, logging, preflight, Kubernetes or watchdog setup.
+	if len(os.Args) > 1 && os.Args[1] == "inspect" {
+		if err := runInspect(os.Args[2:], os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintf(os.Stderr, "inspect: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	flag.Parse()
+	// flag.Parse stops at positional arguments. Never silently start the agent
+	// when a subcommand is misspelled or placed after normal agent flags.
+	if flag.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "unexpected arguments; use sbr-agent inspect [flags]")
+		os.Exit(2)
+	}
 	MaxConsecutiveFailures = *maxConsecutiveFailuresFlag
 
 	// Initialize structured logger first
