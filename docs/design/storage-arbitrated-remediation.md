@@ -51,7 +51,7 @@ A storage-focused policy should preserve running virtual machines during API or 
 
 - Preserve existing `Filesystem` and shared `Block` behavior. Keep `Filesystem` as the effective default when the volume mode is absent.
 - Introduce new mode `BlockPerNode` that will use private probe volumes per node instead of a shared volume.
-- Distinguish temporary input/output (I/O) errors from sustained failure through a storage grace period.
+- Distinguish temporary input/output (I/O) errors from sustained failure through a configurable probe deadline and consecutive failed health evaluations.
 - Keep the watchdog active during isolated API loss when storage remains healthy.
 - Reboot autonomously after sustained combined storage and API loss.
 - Enforce one local agent per host to control the watchdog and write the journal.
@@ -81,14 +81,14 @@ Each requested remediation below requires a peer that meets the requirements in 
 |---|---|---|---|
 | 1 | Healthy storage and API | The local agent probes storage, feeds the watchdog, and reports storage as healthy. | Probe results describe the selected backend, not every workload volume. |
 | 2 | Cluster-wide API outage with healthy storage | The local agent continues feeding the watchdog. It does not reboot its host for API loss alone. | Other Kubernetes and workload controllers have independent behavior. |
-| 3 | Broad storage outage with reachable API | The local agent reports unhealthy storage after the storage grace period. It waits for a valid request from NHC. Running peers reconcile through the API despite their own probe failures. | NHC thresholds can block new requests. Reports can arrive late, and agents can already have decided to reboot. Therefore, these thresholds cannot guarantee that no node reboots. Peer startup can remain blocked by CSI. |
-| 4 | Storage and API unavailable | After both grace periods, the local agent performs at most one autonomous reboot during the unresolved outage period. SBR skips workload cleanup for this attempt and preserves any existing requested-remediation record. | The agent cannot reboot autonomously again if it has used its one attempt for the outage or cannot establish its history. Recovery of Pods elsewhere is not guaranteed. |
+| 3 | Broad storage outage with reachable API | The local agent reports unhealthy storage after `maxConsecutiveFailures` consecutive failed health evaluations. It waits for a valid request from NHC. Running peers reconcile through the API despite their own probe failures. | NHC thresholds can block new requests. Reports can arrive late, and agents can already have decided to reboot. Therefore, these thresholds cannot guarantee that no node reboots. Peer startup can remain blocked by CSI. |
+| 4 | Storage and API unavailable | After storage becomes unhealthy and the total-outage grace expires, the local agent performs at most one autonomous reboot during the unresolved outage period. SBR skips workload cleanup for this attempt and preserves any existing requested-remediation record. | The agent cannot reboot autonomously again if it has used its one attempt for the outage or cannot establish its history. Recovery of Pods elsewhere is not guaranteed. |
 | 5 | One node loses API or cluster-network access | The local agent keeps feeding the watchdog while its storage remains healthy. | Configure NHC for the storage condition only. |
 | 6 | One node loses storage with API available | NHC creates a request. A peer records it as Offered on the Node. The target agent accepts the request and reboots. After the request reaches `BootEnded`, a peer applies OutOfService and checks cleanup until completion or the deadline. | Processing can stop while an accepted request has not reached BootEnded or the required boot information is unavailable. Continuing isolation is not guaranteed. |
 | 7 | Kernel panic, host freeze, or power loss | A qualified armed watchdog can reboot a powered host that stops feeding it. | It cannot restore power. A dead node cannot publish the storage condition. Hard-dead failover is outside the base policy. |
 | 8 | Planned agent restart or upgrade | Before a planned agent stop, the local agent disarms its watchdog if it has not recorded a reboot decision. It preserves request history. Another peer that meets Section 5.2 requirements resumes the same API lifecycle state. After startup, the local agent compares the current host boot ID with the saved beforeBootID. | Preserve peer coverage during rollout. Check that the hardware supports watchdog disarm. A replacement local agent must acquire the host lock before controlling the watchdog. |
 | 9 | Kubelet failure with healthy storage | The local agent continues feeding the watchdog while it remains functional. | This storage policy does not remediate every kubelet failure. |
-| 10 | Slow or hung storage I/O | Limit how long the agent waits for an I/O result. Apply the storage grace period without blocking watchdog decisions or peer processing of remediation CRs. | A deadline cannot cancel blocked kernel I/O. Limit the number of unfinished operations. Do not share locks that can block these independent tasks. |
+| 10 | Slow or hung storage I/O | Bound each complete probe with `ioTimeout`. Count failed health evaluations without blocking watchdog decisions or peer processing of remediation CRs. | A deadline cannot cancel blocked kernel I/O. Limit unfinished probe operations within each process. Do not share locks that can block these independent tasks. |
 | 11 | Network partition with healthy storage | Do not reboot solely for the partition. This NHC policy does not request relocation solely for it. | This is not a guarantee against concurrent workloads created by other controllers. |
 | 12 | API or storage recovers after acceptance | The local agent completes the accepted reboot. It preserves the request’s initial boot ID and attempt history. If the local boot ID changes, the local agent clears only the FenceLatched flag for the previous boot. The local agent or reporter publishes boot information as Section 5.7 requires. A peer validates it before recording BootEnded. | When NHC stops a request or someone deletes its remediation CR, a peer can cancel the request only in Offered. Cleanup checks remain optional and have a fixed deadline. |
 | 13 | Different nodes require different StorageClasses | Deferred. Add explicit node-group to StorageClass mapping. | See Section 6. |
@@ -268,18 +268,20 @@ Permanent loss of both required local history and API history cannot resolve aut
 
 ### 5.3. Configuration API
 
-Extend the existing optional `StorageBasedRemediationConfig.spec.sharedStorageVolumeMode` field with `BlockPerNode`. Add two optional grace fields and an optional autonomous recovery period for that value:
+Extend `StorageBasedRemediationConfig.spec.sharedStorageVolumeMode` with `BlockPerNode`. Expose `spec.ioTimeout` as an optional duration in all modes. Reuse the existing `spec.sbrTimeoutSeconds` and `spec.maxConsecutiveFailures` fields. Add a total-outage grace and an autonomous recovery period for BlockPerNode. Storage detection uses the existing failure threshold.
 
 | Field | Effective default | Validation | Meaning |
 |---|---|---|---|
 | `sharedStorageVolumeMode` | `Filesystem` | `Filesystem`, `Block`, or `BlockPerNode` | Existing shared Filesystem, existing shared Block, or one private Block probe per selected node. |
-| `storageUnhealthyGracePeriod` | `15s` in `BlockPerNode` | Duration from `0s` through `300s`. Valid only in `BlockPerNode`. | Continuous probe failure required before storage becomes unhealthy. |
+| `ioTimeout` | `15s` in `BlockPerNode`, `2s` in existing modes | Duration from `1s` through `10m`. Valid in all modes. | Complete probe deadline in BlockPerNode. Existing per-operation timeout behavior in shared modes. |
+| `sbrTimeoutSeconds` | Existing `30` | Existing integer range `10–300` | Supplies the BlockPerNode evaluation and probe interval through `GetSBRUpdateInterval()`. |
+| `maxConsecutiveFailures` | Existing `7` | Existing integer range `2–32` | Consecutive failed health evaluations required before BlockPerNode reports unhealthy storage. |
 | `totalOutageGracePeriod` | `60s` in `BlockPerNode` | Duration from `0s` through `1h`. Valid only in `BlockPerNode`. | The API must remain unavailable for this period while storage is unhealthy before the agent records an autonomous reboot decision. |
 | `autonomousRebootRecoveryPeriod` | `5m` in `BlockPerNode` | Positive duration. Valid only in `BlockPerNode`. | Storage must remain healthy and the API reachable for this period before another autonomous reboot is permitted. |
 
-The duration defaults are proposed values for `BlockPerNode`. They do not replace the existing shared-storage detection threshold. An omitted volume mode remains equivalent to explicit `Filesystem`. Explicit `Block` continues to select shared storage.
+The BlockPerNode defaults do not replace existing shared-storage thresholds. Omitted `ioTimeout` preserves the existing two-second timeout in Filesystem and Block. An omitted volume mode remains equivalent to explicit `Filesystem`. Explicit `Block` continues to select shared storage.
 
-Use effective getters for defaults. Do not write duration defaults into `Filesystem` or `Block` configurations. An explicit `0s` disables the selected grace only. It does not disable detection or autonomous remediation. The autonomous recovery period must be greater than zero.
+Use effective getters for defaults. Do not assign an unconditional CRD default to `ioTimeout`, because its effective default depends on the mode. Reject `ioTimeout: 0s`. Explicit `totalOutageGracePeriod: 0s` removes only the additional combined-outage delay. It does not disable detection or autonomous remediation. The autonomous recovery period must be greater than zero.
 
 Proposed additions in [configuration types](../../api/v1alpha1/storagebasedremediationconfig_types.go):
 
@@ -287,7 +289,11 @@ Proposed additions in [configuration types](../../api/v1alpha1/storagebasedremed
 package v1alpha1
 
 // Existing imports, type, constants, and other fields are omitted.
-const SharedStorageVolumeModeBlockPerNode SharedStorageVolumeModeType = "BlockPerNode"
+const (
+	SharedStorageVolumeModeBlockPerNode SharedStorageVolumeModeType = "BlockPerNode"
+	DefaultIOTimeout                                                = 2 * time.Second
+	DefaultBlockPerNodeIOTimeout                                    = 15 * time.Second
+)
 
 type StorageBasedRemediationConfigSpec struct {
 	// +kubebuilder:validation:Enum=Filesystem;Block;BlockPerNode
@@ -295,7 +301,7 @@ type StorageBasedRemediationConfigSpec struct {
 	SharedStorageVolumeMode *SharedStorageVolumeModeType `json:"sharedStorageVolumeMode,omitempty"`
 
 	// +optional
-	StorageUnhealthyGracePeriod *metav1.Duration `json:"storageUnhealthyGracePeriod,omitempty"`
+	IOTimeout *metav1.Duration `json:"ioTimeout,omitempty"`
 
 	// +optional
 	TotalOutageGracePeriod *metav1.Duration `json:"totalOutageGracePeriod,omitempty"`
@@ -307,6 +313,16 @@ type StorageBasedRemediationConfigSpec struct {
 func (s *StorageBasedRemediationConfigSpec) IsBlockPerNodeMode() bool {
 	return s.GetSharedStorageVolumeMode() == SharedStorageVolumeModeBlockPerNode
 }
+
+func (s *StorageBasedRemediationConfigSpec) GetIOTimeout() time.Duration {
+	if s.IOTimeout != nil {
+		return s.IOTimeout.Duration
+	}
+	if s.IsBlockPerNodeMode() {
+		return DefaultBlockPerNodeIOTimeout
+	}
+	return DefaultIOTimeout
+}
 ```
 
 Keep `GetSharedStorageVolumeMode()` and its `Filesystem` fallback. Keep `IsBlockMode()` specific to shared `Block` behavior. Its existing callers select shared devices, RWX claims, and shared-volume cleanup. Use `IsBlockPerNodeMode()` before those paths instead of treating both values as shared Block.
@@ -315,7 +331,15 @@ Keep `GetSharedStorageVolumeMode()` and its `Filesystem` fallback. Keep `IsBlock
 
 Update the `sharedStorageClass` description and validation for both Block values. Preserve the existing StorageClass requirement for shared `Block`. `BlockPerNode` requires a class that supports the private RWO Block claims described in Section 5.4.
 
-Update the custom resource definition (CRD), generated code, webhook, samples, and agent argument construction together. `rebootMethod` and `ioTimeout` are agent command-line flags that the configuration controller currently pins to package constants. For the initial BlockPerNode implementation, the controller selects a provisional ten-second I/O deadline and the `10Mi` probe size. These values remain qualification gates rather than new API fields. See [agent constants](../../internal/agent/constants.go).
+Update the custom resource definition (CRD), generated code, webhook, samples, and agent arguments together. The controller currently pins `--io-timeout` to the two-second [agent constant](../../internal/agent/constants.go). Pass `GetIOTimeout()` through `buildSBRAgentArgs()` and the existing `buildBlockInitJob()` in [the configuration controller](../../internal/controller/storagebasedremediationconfig_controller.go).
+
+The [preflight checks](../../cmd/sbr-agent/preflight.go) also use a separate fixed two-second timeout. Pass the effective value into applicable initialization and preflight operations. A configured runtime timeout must not leave startup checks using the previous constant. Keep the BlockPerNode peer-manager startup independent of these storage checks.
+
+Existing modes retain per-operation timeout and retry behavior. Their complete operations can therefore exceed `ioTimeout`. The Filesystem `ReopenDevice()` fallback does not currently enforce a timeout. Exposing the field does not add a deadline guarantee to that fallback. See [device operations](../../internal/blockdevice/blockdevice.go) and [device selection](../../cmd/sbr-agent/main.go).
+
+For BlockPerNode, use one deadline for the complete verification probe, including required flush operations and retries. A nested timeout must not shorten this configured deadline unintentionally. An actual I/O error can still finish the probe early. Keep retries internal and within the original deadline. Section 5.5 defines the health result.
+
+The configured storage timeout does not set API, journal, cleanup, or hardware watchdog timeouts. Keep `rebootMethod` internal. Keep the `10Mi` probe size as a qualified internal value.
 
 #### Field interactions
 
@@ -327,15 +351,34 @@ Update the custom resource definition (CRD), generated code, webhook, samples, a
 | `sharedStorageClass` | Existing shared-storage validation and provisioning. | Required. Selects the single StorageClass for private probes. It must support dynamic RWO Block provisioning. |
 | `watchdogPath` | Existing behavior. | Same device path. One local monitoring loop owns the watchdog. |
 | `nodeSelector` omitted or empty | Existing worker-node selection. | Same worker-node selection. The effective selector includes Linux nodes only. |
-| `sbrTimeoutSeconds` | Existing timeout and derived intervals. | Reuse `GetSBRUpdateInterval()` as probe interval. It divides the duration by six, with a one-second minimum. Do not use shared heartbeat expiry. |
-| `maxConsecutiveFailures` | Existing counter behavior. | Does not decide probe health or replace the storage grace. Retain schema validation for compatibility. |
+| `sbrTimeoutSeconds` | Existing timeout and derived intervals. | Reuse `GetSBRUpdateInterval()` for probe scheduling and failed-state evaluation. It divides the duration by six, with a one-second minimum. |
+| `maxConsecutiveFailures` | Existing counter behavior. | Report unhealthy at this many consecutive failed health evaluations. Count evaluations, not individual read, write, or retry errors. |
+| `ioTimeout` | Existing per-operation behavior with a configurable value. Omission retains `2s`. | Complete probe deadline. Omission selects `15s`. Expiry starts a failed interval and does not bypass the failure threshold. |
 | `detectOnlyMode: Enabled` | Existing detection-only behavior. | Block new remediation actions. Continue reporting boot information and checking cleanup for a request with an already recorded reboot decision. |
 | `detectOnlyMode` omitted or `Disabled` | Existing behavior. | Enable requested and autonomous actions under the policy below. |
-| A new grace or autonomous recovery field is present | Admission rejects the inapplicable field. | Apply the effective duration. |
+| `totalOutageGracePeriod` or `autonomousRebootRecoveryPeriod` is present | Admission rejects the inapplicable field. | Apply the effective duration. |
 
-The existing timeout defaults remain `30` seconds and seven consecutive failures. Their schema ranges remain unchanged. The current internal I/O timeout is two seconds. BlockPerNode does not multiply that timeout by `maxConsecutiveFailures` to calculate storage health.
+The existing timeout defaults remain `30` seconds and seven consecutive failures. Their schema ranges remain unchanged. BlockPerNode does not use shared-heartbeat expiry or the existing mixed operation counters. Multiplying `ioTimeout` by `maxConsecutiveFailures` does not define its detection duration.
 
-The provisional ten-second BlockPerNode deadline is valid only after tests on CSI storage that represents supported workloads. The I/O deadline limits how long the agent waits before treating an unfinished probe as failed. The storage grace period starts after a failure or that deadline. Warn when the storage grace is shorter than the selected deadline. Do not reject it. Explicit `0s` remains valid.
+Qualify the fifteen-second BlockPerNode default and supported overrides on CSI storage that represents supported workloads. The `1s–10m` range matches current device validation. It does not establish suitable latency for every backend. Do not require `ioTimeout` to be shorter than the probe interval or hardware watchdog timeout. Independent observations and watchdog feeding must continue while a probe runs.
+
+An example BlockPerNode configuration is:
+
+```yaml
+apiVersion: storage-based-remediation.medik8s.io/v1alpha1
+kind: StorageBasedRemediationConfig
+metadata:
+  name: sbr-block-per-node
+  namespace: sbr-system
+spec:
+  sharedStorageVolumeMode: BlockPerNode
+  sharedStorageClass: example-block
+  ioTimeout: 15s
+  sbrTimeoutSeconds: 30
+  maxConsecutiveFailures: 7
+  totalOutageGracePeriod: 60s
+  autonomousRebootRecoveryPeriod: 5m
+```
 
 #### Validation and immutability
 
@@ -343,16 +386,18 @@ Extend `ValidateCreate()` and `ValidateUpdate()` in the [configuration webhook](
 
 1. Accept `Filesystem`, `Block`, and `BlockPerNode` in the existing volume-mode validation.
 2. Validate duration syntax and bounds, including a positive autonomous recovery period. Require a StorageClass for `BlockPerNode`.
-3. Reject the new duration fields when the effective volume mode is `Filesystem` or `Block`.
-4. Reject changes to the effective volume mode and the three new duration fields.
+3. Accept `ioTimeout` in all modes. Reject total-outage and autonomous recovery fields outside BlockPerNode.
+4. Reject changes to the effective volume mode, total-outage grace, and autonomous recovery period.
 5. Reject configurations that overlap a BlockPerNode configuration on selected nodes.
 6. Reject different StorageClasses across BlockPerNode configurations in this release.
 
-Compare durations as values, not strings. Omitted volume mode and explicit `Filesystem` are equivalent. Omitted BlockPerNode durations and their explicit defaults are equivalent. The configuration webhook must reject removal of a nondefault value because this changes the field’s effective value.
+Compare durations as values, not strings. Omitted volume mode and explicit `Filesystem` are equivalent. Omitted durations and explicit effective defaults are equivalent. Reject removal of a nondefault immutable duration. Permit valid `ioTimeout` updates through the controlled replacement rules below.
 
 The existing volume-mode immutability rule covers transitions to and from `BlockPerNode`. Switching between any two distinct effective volume modes requires configuration replacement. Existing field update rules remain unchanged. Mutable fields can still require an agent rollout. For BlockPerNode, the configuration controller waits until accepted requests reach BootEnded and peers remove the required CR entries and restrictions. Only then does the controller replace affected local monitoring loops. Incomplete workload cleanup is not a replacement gate.
 
-Apply this replacement rule to selector, StorageClass, watchdog path, and detect-only changes. A selector update must protect removed nodes as well as newly selected nodes. The configuration controller retains the effective configuration until its requests are resolved and peers remove its CRs from the restrictions list. Peers cancel requests still in Offered through the Node record.
+Apply this replacement rule to selector, StorageClass, watchdog path, detect-only, `ioTimeout`, `sbrTimeoutSeconds`, and `maxConsecutiveFailures` changes. A selector update must protect removed nodes as well as newly selected nodes. The configuration controller retains the effective configuration until its requests are resolved and peers remove its CRs from the restrictions list. Peers cancel requests still in Offered through the Node record.
+
+Each started probe retains its original deadline. Timing changes take effect in the replacement monitor. The replacement restarts transient detection as Section 5.10 describes.
 
 Current production code does not enforce configuration overlap consistently. The webhook and controller each refer that check to the other component. The new checks must cover namespaces, effective worker selectors, and the Linux restriction. Admission alone cannot prevent concurrent creates or later node-label changes.
 
@@ -442,13 +487,35 @@ The initial implementation keeps one StorageClass across BlockPerNode configurat
 
 The local agent’s monitoring loop evaluates storage health and live API reachability independently. The local agent performs the probe, health-reporting, and watchdog actions in this section. Probe I/O, API calls, journal writes, and watchdog feeding must not share a blocking execution path.
 
-The local agent writes data to the probe volume and reads it to check storage access. The agent limits how long it waits for the result. A failed operation or an expired I/O deadline starts the storage grace period. The agent cannot report storage as unhealthy before another `storageUnhealthyGracePeriod` has elapsed. Admission does not require this grace period to exceed the I/O deadline. Explicit `0s` remains valid.
+The local agent writes data to the probe volume and reads it to check storage access. Use one deadline for the complete probe, including required flush operations and retries. Define these values:
 
-The agent treats storage as unhealthy only when failure continues for the full grace period. A successful fresh probe clears the failure interval.
+- `I` is the effective `ioTimeout`, defaulting to fifteen seconds.
+- `P` is `GetSBRUpdateInterval()`, defaulting to five seconds.
+- `M` is `maxConsecutiveFailures`, defaulting to seven.
 
-For hung I/O, the deadline marks failure even if the kernel operation continues. A Go timeout does not cancel an operation blocked in the kernel. Bound outstanding operations to one probe operation per device. Do not launch another operation on each tick while the previous operation remains blocked.
+The local agent applies this failure-count policy:
 
-Only a fresh result can restore health. A late result from an expired probe must not overwrite a newer failure decision. Use a monotonic clock within a boot. Scheduling and probe interval can add detection delay beyond the configured grace.
+1. On each scheduled tick, check for unfinished probes or probe I/O in the current process. Start a probe only if none remain.
+2. A completed probe error or expiry of `I` starts a failed interval with count one.
+3. Schedule the next failed-state evaluation no earlier than `P` after that first failure.
+4. While the failed state remains, increment the count once per evaluation, with at least `P` between increments.
+5. Additional probe errors during that interval do not increment the count between evaluations or restart its schedule.
+6. When the count reaches `M`, treat storage as unhealthy and publish `SBRStorageUnhealthy=True` when API access permits.
+7. A fresh complete success clears the failed state and resets the count to zero, before any recorded reboot decision.
+
+These are failed health evaluations, not separate failed I/O attempts. Timeout expiry contributes to the threshold. It does not make storage unhealthy immediately. Pending I/O before its deadline is not a new failure. During an existing failed interval, pending I/O does not establish recovery.
+
+Do not reset the count merely because time elapsed. Do not apply the existing ten-minute reset of mixed operation counters. Use a monotonic clock within a boot. Do not manufacture missed evaluations after scheduling delays.
+
+For hung I/O, the deadline marks failure even if the kernel operation continues. A Go timeout does not cancel an operation blocked in the kernel. Bound outstanding operations to one probe operation per device within the current process. Continue failed-state evaluation while that operation remains blocked. Do not launch another operation on each tick or retry while it remains outstanding.
+
+When an expired operation eventually finishes, its late result cannot clear the failed state. Only a subsequent fresh complete probe can restore health. Process a fresh successful result before a simultaneous failed-state evaluation. After recording a reboot decision, preserve the current boot's decision and condition as Section 5.9 requires.
+
+This timing example starts with healthy storage and a zero failure count. With default values, continuous failure needs six further evaluations after the first failure. This takes at least thirty seconds after that first failure. For the blocked-probe example, its deadline produces the first failure. That probe first consumes its fifteen-second deadline. It therefore takes at least forty-five seconds from probe submission to unhealthy storage.
+
+Scheduling and status publication can add delay. An immediate error starts counting earlier.
+
+If API access remains unavailable, the additional default total-outage grace is sixty seconds. In the same initially healthy example, an autonomous decision is permitted no earlier than 105 seconds after probe submission. This is not a reboot-completion deadline. Request acceptance and autonomous history checks remain separate.
 
 For BlockPerNode, each agent writes `SBRStorageUnhealthy` only on its own Node. It does not infer another node's storage health from a missing heartbeat. It never writes `Unknown`. The existing `Unknown` value is a shared-storage peer-monitor signal and is not part of BlockPerNode.
 
@@ -457,7 +524,7 @@ The local agent updates its Node’s storage condition through a strategic merge
 | Storage state | Live API result | Local action before any recorded reboot decision |
 |---|---|---|
 | Healthy | No valid offered request | Feed the watchdog. Do not reboot solely because API access failed. |
-| Failure within storage grace | No valid offered request | Continue observation and feed the watchdog. |
+| Failed evaluations below threshold | No valid offered request | Continue observation and feed the watchdog. |
 | Unhealthy | Reachable, no authorized request | Publish True when possible. Feed the watchdog while NHC decides. |
 | Any state | Reachable, valid offered request | Persist the request reservation, conditionally accept, persist the reboot decision, and execute the requested reboot without a budget check. |
 | Unhealthy | Unavailable within total-outage grace | Feed the watchdog while the grace runs. |
@@ -477,7 +544,7 @@ A successful empty result or `NotFound` means the endpoint is reachable. However
 
 Connection failures and network deadlines contribute to API unavailability. For this policy, a received `429` or `5xx` means the configured endpoint is reachable. It cannot authorize a request. Keep feeding and reset the API-unavailability interval for those responses. Credential, certificate-validation, and client-configuration errors report degradation instead of triggering autonomous remediation. Neither a failed Node status write nor a missing remediation CR alone establishes API unavailability.
 
-The local agent starts `totalOutageGracePeriod` when storage is unhealthy and API access is unavailable together. It clears this interval if storage recovers or the API becomes reachable. Its duration follows the storage grace rather than replacing it.
+The local agent starts `totalOutageGracePeriod` when storage is unhealthy and API access is unavailable together. It clears this interval if storage recovers or the API becomes reachable. Its duration starts after the failed-evaluation threshold is reached, rather than at the first probe error. It does not replace storage detection.
 
 ```mermaid
 flowchart TD
@@ -488,7 +555,7 @@ flowchart TD
   Detect -->|No| Request{"Valid live offer for this Node and boot?"}
   Request -->|Yes| Accept["Persist request reservation and confirm API acceptance"]
   Accept --> Commit["Persist local commitment before reset"]
-  Request -->|No| Storage{"Storage grace expired?"}
+  Request -->|No| Storage{"Failed evaluation count reached threshold?"}
   Storage -->|No| Feed["Feed watchdog"]
   Storage -->|Yes| API{"Live API reachable?"}
   API -->|Yes| Wait["Report storage failure and await NHC"]
@@ -629,7 +696,9 @@ The peer does not require a separate acknowledgement from the local agent that i
 
 Keep a durable record of requested reservations and every requested or autonomous attempt whose reboot decision the agent recorded. Use stable attempt IDs. Assign an outage period ID, called an epoch ID, only to autonomous attempts. Before recording an autonomous reboot decision, use the existing outage period if its recovery requirements are not yet met. If no such period exists, save the proposed outage period before acting. Requested attempts retain their history but do not change whether another autonomous reboot is permitted.
 
-Before rebooting autonomously, the local agent records the attempt in its journal and marks the outage period as unresolved. The outage period ends only after storage remains healthy and the API remains reachable for `autonomousRebootRecoveryPeriod`. This period defaults to five minutes. Failure of either restarts this recovery interval. A brief recovery, new CR, requested reboot, agent restart, or configuration replacement does not permit another autonomous reboot.
+Before rebooting autonomously, the local agent records the attempt in its journal and marks the outage period as unresolved. The outage period ends only after storage remains healthy and the API remains reachable for `autonomousRebootRecoveryPeriod`. This period defaults to five minutes.
+
+The first failed probe, including deadline expiry, restarts this recovery interval. Do not wait for the unhealthy threshold. API failure also restarts it. Start measuring storage recovery again only after a fresh complete probe succeeds. A brief recovery, new CR, requested reboot, agent restart, or configuration replacement does not permit another autonomous reboot.
 
 The local agent preserves the used autonomous attempt across agent restarts, host reboots, and configuration replacement. It restarts recovery measurement when it cannot establish continuous storage and API health.
 
@@ -978,6 +1047,12 @@ Keep local execution safety separate from the requirements for processing anothe
 
 The local agent starts normal watchdog monitoring only after acquiring the host lock, validating its watchdog, and initializing its probe and journal. A fresh journal requires proved first installation and checked API and local history. When history is unknown, the local agent enters `HistoryReconciliationRequired`. Unknown autonomous reboot history blocks autonomous attempts, but does not impose a budget check on requested execution. Missing execution or watchdog history still requires reconciliation before new actions. Do not treat initial provisioning delay as a new storage failure.
 
+On process restart or controlled replacement, restart the transient failed-evaluation count at zero. Discard prior process timers and results. This can postpone initial detection. Resetting the count does not establish healthy storage. Do not publish False without a fresh complete probe. Preserve an existing True condition until such a probe succeeds, subject to recorded reboot decisions. Do not treat absent probes or provisioning delay as successful observations.
+
+A new process starts a fresh probe after completing the startup checks above. It does not track or wait for probe operations submitted by the previous process. The limit of one outstanding probe per device applies within each process.
+
+Restart recovery measurement when continuity cannot be established. Preserve accepted requests, durable reboot decisions, and autonomous attempts. Restarting the transient count cannot grant another autonomous reboot.
+
 After a reboot whose decision the agent recorded, the local agent preserves request history before starting another decision cycle. Before a planned agent stop without a recorded reboot decision, the local agent records its shutdown and verifies watchdog disarm. A clean shutdown marker is diagnostic information, not reboot evidence.
 
 Report desired nodes, ready peer controllers, ready local agents, ready reporters, ready probes, and armed watchdogs through metrics. Configuration status uses concise coverage conditions instead of duplicating these counts. Report controller readiness independently of probe and watchdog readiness. Do not require the whole Pod to report Ready before its peer controller can process another node’s requests. A peer-ready count includes the target itself. It does not prove that another peer that meets Section 5.2 requirements exists for that target.
@@ -1100,7 +1175,8 @@ Without a peer, SBR must wait to record Offered, Cancelled, or BootEnded, or to 
 ### 6.9. Remaining qualification questions
 
 - Which supported CSI drivers accept the `10Mi` Block request and direct I/O pattern?
-- Are the I/O deadline, grace periods, five-minute autonomous recovery default, and five-minute observation limit appropriate under measured failures and latency?
+- Are the fifteen-second probe deadline, failed-evaluation threshold, and derived interval appropriate under measured storage latency?
+- Are the total-outage grace, five-minute autonomous recovery default, and five-minute observation limit appropriate under measured failures?
 - Which watchdog and RHCOS versions satisfy the nowayout, process-exit, and verified-disarm contract?
 - Which KubeVirt and CSI versions exhibit the expected OutOfService behavior?
 - Can complete API scans finish within the supported node density and request deadlines?
@@ -1112,7 +1188,7 @@ The design does not guarantee that a replacement VM or Pod starts successfully. 
 
 ## 7. Upgrade / Downgrade Concerns
 
-An upgrade preserves omitted volume mode as `Filesystem`. Explicit `Filesystem` and `Block` retain their existing behavior. Only `BlockPerNode` selects the new lifecycle. Its grace fields and autonomous recovery period remain optional.
+An upgrade preserves omitted volume mode as `Filesystem`. Omitted `ioTimeout` retains two seconds in existing modes and selects fifteen seconds in BlockPerNode. Existing modes retain their counter and retry behavior. Explicit timeout overrides change their per-operation wait value. Only BlockPerNode selects failed-state evaluations and a complete probe deadline. Total-outage grace and autonomous recovery remain optional BlockPerNode fields.
 
 Install compatible CRDs, webhooks, operator, agent, and reporter images before enabling BlockPerNode. Pin a common release that implements the nodestate contract. The feature is unavailable with common v1.17.0.
 
@@ -1142,18 +1218,29 @@ Extend the existing API, controller, agent, and end-to-end suites. Instructions 
 
 - Test omitted volume mode, explicit `Filesystem`, and explicit `Block`. Preserve their existing defaults and shared-storage behavior.
 - Accept explicit `BlockPerNode`. Reject unknown values, a missing required StorageClass, and invalid durations.
-- Test duration defaults, grace bounds, positive autonomous recovery periods, and rejection of the new fields in existing modes. Accept zero only for grace fields.
+- Test mode-dependent `ioTimeout` defaults, explicit overrides, and the `1s–10m` bounds in every mode. Reject zero.
+- Test total-outage grace bounds and positive autonomous recovery periods. Reject those fields in existing modes. Accept zero only for total-outage grace.
+- Check the effective timeout in agent arguments, initialization, and preflight. Preserve omission behavior in existing modes.
 - Test immutable effective values, omitted/default equivalence, and equivalent duration strings. Reject transitions between distinct effective volume modes.
+- Test controlled timing updates. Keep the original deadline on an active probe and apply new values only in the replacement monitor.
 - Require private PVCs to use Kubernetes `volumeMode: Block` and RWO access. Never copy `BlockPerNode` into a Kubernetes volume-mode field.
 - Test configuration overlap across namespaces, concurrent creation, node-label changes, and conflicting StorageClasses. Permit coexistence on disjoint node sets.
-- Test `detectOnlyMode` and `maxConsecutiveFailures` independently of the storage grace policy.
+- Test `detectOnlyMode` independently of detection. Vary `maxConsecutiveFailures` and `sbrTimeoutSeconds` to check the BlockPerNode failure threshold and cadence.
 - Validate the execution states and observation identities. Reject unknown states and invalid transitions.
 
 ### 8.2. Probe, local decisions, and watchdog
 
-- Test transient storage failure, sustained failure, recovery, and repeated intermittent failure against the configured grace.
-- Test I/O time limits, late results, explicit zero grace, and hung kernel I/O. Permit only the specified number of unfinished operations.
-- Test API-only loss, storage-only loss, and combined loss with independent clocks.
+- Test transient failure, sustained failure, recovery, and intermittent failure against the failed-evaluation threshold.
+- Require count one at the first error or deadline. Prevent extra increments from intervening errors, retries, or simultaneous callbacks.
+- Require at least one evaluation interval between increments. Do not manufacture counts after delayed scheduling or reset them after elapsed time.
+- Test complete-probe deadlines, including write, flush, read, and retries. Prevent nested timeouts from shortening the configured deadline unintentionally.
+- Test the fifteen-second timeout default and configured overrides. A timeout contributes to the failure threshold without bypassing it.
+- Prevent overlapping logical probes during retry waits and between their I/O operations.
+- Keep one probe blocked after its deadline. Require evaluations to reach the threshold without another outstanding operation in that process.
+- Reject its late success as recovery. Require a subsequent fresh complete success to reset the failed state.
+- Test process restart during detection. Reset transient counts without publishing healthy or discarding known unhealthy status.
+- Restart the process. Check that it starts a fresh probe without tracking or waiting for probe operations from the previous process.
+- Test API-only loss, storage-only loss, and combined loss with independent observations. Start total-outage grace only after storage reaches the unhealthy threshold.
 - Test live `NotFound`, authentication failures, authorization failures, 429, 5xx, certificate errors, transport failures, DNS failures, and deadlines.
 - Test recovery before execution acceptance and after acceptance. Storage recovery alone must not block a valid requested reboot or permit another reboot for the same CR.
 - Test detect-only behavior for requested and autonomous reboots.
@@ -1183,7 +1270,7 @@ Extend the existing API, controller, agent, and end-to-end suites. Instructions 
 - Preserve autonomous journal state across process, Pod, and host restart. Test full disks, read-only filesystems, late writes, and uncertain write durability.
 - Test lost, corrupt, and unsupported journal history. Unknown history must not reset the autonomous counter or permit an automatic fresh start.
 - Keep storage and API unavailable across boots. Require at most one autonomous reboot per unresolved outage period.
-- Test the five-minute recovery default, configured durations, interrupted recovery, restarts, and wall-clock changes. Restore permission for one autonomous reboot only after continuous healthy storage and reachable API for the configured interval and completed history reconciliation. Diagnostic pruning must preserve required budget history.
+- Test the five-minute recovery default, configured durations, interrupted recovery, restarts, and wall-clock changes. Interrupt recovery on the first failed probe or timeout, before the unhealthy threshold. Restore permission for one autonomous reboot only after continuous healthy storage and reachable API for the configured interval and completed history reconciliation. Diagnostic pruning must preserve required budget history.
 - Keep requested execution records unchanged during an autonomous reboot. Do not assign an earlier autonomous reboot to a later remediation CR.
 
 ### 8.4. Restrictions, observation within a fixed period, and request completion
