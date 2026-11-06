@@ -8,3 +8,22 @@ metadata:
   name: worker-1
   namespace: default
 spec: {}
+
+# Illustrative status only. The operator does not implement BlockPerNode operation.
+# Status reports the authoritative Node record. It does not authorize execution.
+# status:
+#   nodeUID: "node-uid"
+#   configUID: "config-uid"
+#   volumeMode: BlockPerNode
+#   beforeBootID: "previous-boot-id"
+#   executionPhase: BootEnded
+#   observedBootID: "current-boot-id"
+#   cleanup:
+#     phase: Completed
+#     startedAt: "2026-11-06T12:00:00Z"
+#     deadline: "2026-11-06T12:05:00Z"
+#     outOfServiceApplied: true
+#     reason: "CleanupConfirmed"
+#   restrictionsReleased: true
+# restrictionsReleased describes this CR's restrictions, not Node schedulability.
+# outOfServiceApplied requires confirmed application. Elapsed time is insufficient.

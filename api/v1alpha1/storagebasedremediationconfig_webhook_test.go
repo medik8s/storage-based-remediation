@@ -17,8 +17,85 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func TestConfigUpdateEffectiveModes(t *testing.T) {
+	filesystem := SharedStorageVolumeModeFilesystem
+	block := SharedStorageVolumeModeBlock
+	perNode := SharedStorageVolumeModeBlockPerNode
+	validator := &StorageBasedRemediationConfigValidator{}
+	for _, oldMode := range []*SharedStorageVolumeModeType{nil, &filesystem, &block, &perNode} {
+		for _, newMode := range []*SharedStorageVolumeModeType{nil, &filesystem, &block, &perNode} {
+			oldObj := &StorageBasedRemediationConfig{Spec: StorageBasedRemediationConfigSpec{
+				SharedStorageVolumeMode: oldMode, SharedStorageClass: testStorageClass,
+			}}
+			newObj := &StorageBasedRemediationConfig{Spec: StorageBasedRemediationConfigSpec{
+				SharedStorageVolumeMode: newMode, SharedStorageClass: testStorageClass,
+			}}
+			_, err := validator.ValidateUpdate(t.Context(), oldObj, newObj)
+			wantErr := oldObj.Spec.GetSharedStorageVolumeMode() != newObj.Spec.GetSharedStorageVolumeMode()
+			if (err != nil) != wantErr {
+				t.Errorf("mode update %v to %v: %v", oldMode, newMode, err)
+			}
+		}
+	}
+}
+
+func TestConfigDurationAdmission(t *testing.T) {
+	validator := &StorageBasedRemediationConfigValidator{}
+	perNode := SharedStorageVolumeModeBlockPerNode
+	defaults := map[string]string{
+		ioTimeoutField: "15s", outageGraceField: "60s", recoveryPeriodField: "5m",
+	}
+	for _, field := range []string{ioTimeoutField, outageGraceField, recoveryPeriodField} {
+		for _, tc := range []struct {
+			old, new string
+			wantErr  bool
+		}{
+			{"", "", false},
+			{"", defaults[field], false},
+			{defaults[field], "", false},
+			{"60s", "1m", false},
+			{"30s", "31s", field != ioTimeoutField},
+			{"30s", "", field != ioTimeoutField},
+			{"", "0s", true},
+		} {
+			t.Run(field+"/"+tc.old+"-to-"+tc.new, func(t *testing.T) {
+				objects := make([]*StorageBasedRemediationConfig, 0, 2)
+				for _, value := range []string{tc.old, tc.new} {
+					obj := &StorageBasedRemediationConfig{Spec: StorageBasedRemediationConfigSpec{
+						SharedStorageVolumeMode: &perNode, SharedStorageClass: testStorageClass,
+					}}
+					if value != "" {
+						if err := json.Unmarshal([]byte(`{"`+field+`":"`+value+`"}`), &obj.Spec); err != nil {
+							t.Fatal(err)
+						}
+					}
+					objects = append(objects, obj)
+				}
+				_, err := validator.ValidateUpdate(t.Context(), objects[0], objects[1])
+				if (err != nil) != tc.wantErr || (err != nil && !strings.Contains(err.Error(), field)) {
+					t.Errorf("ValidateUpdate() = %v, want error %v", err, tc.wantErr)
+				}
+			})
+		}
+	}
+	invalid := &StorageBasedRemediationConfig{Spec: StorageBasedRemediationConfigSpec{
+		IOTimeout: &metav1.Duration{Duration: -time.Second},
+	}}
+	if _, err := validator.ValidateCreate(t.Context(), invalid); err == nil {
+		t.Fatal("create accepted invalid duration")
+	}
+	if _, err := validator.ValidateUpdate(t.Context(), invalid, invalid); err == nil {
+		t.Fatal("update accepted invalid duration")
+	}
+}
 
 // nodeSelectorOverlaps checks if two node selectors could select overlapping sets of nodes
 func nodeSelectorOverlaps(selector1, selector2 map[string]string) bool {

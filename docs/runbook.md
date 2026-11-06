@@ -99,13 +99,22 @@ spec:
 | Field | Default | Note |
 |---|---|---|
 | `watchdogPath` | `/dev/watchdog` | |
-| `sharedStorageVolumeMode` | `Filesystem` | `Filesystem` or `Block`; immutable after creation; see §2.6 |
+| `sharedStorageVolumeMode` | `Filesystem` | `Filesystem`, `Block`, or `BlockPerNode`. The effective mode is immutable. BlockPerNode defines the API only. |
+| `ioTimeout` | `2s`, or `15s` for BlockPerNode | API definition only. The running agent continues to use `2s`. |
+| `totalOutageGracePeriod` | `60s` for BlockPerNode | Optional, `0s` through `1h`. BlockPerNode only. The effective value is immutable. |
+| `autonomousRebootRecoveryPeriod` | `5m` for BlockPerNode | Optional, positive. BlockPerNode only. The effective value is immutable. |
 | `sbrTimeoutSeconds` | `30` | 10–300s allowed; heartbeat interval = this / 2 |
 | `maxConsecutiveFailures` | `7` | 2–32 allowed; threshold for local self-fence and peer-unhealthy detection |
 | `sbrUpdateInterval`, `peerCheckInterval` | derived: `sbrTimeoutSeconds / 6` | Not separately configurable |
 | `nodeSelector` | `node-role.kubernetes.io/worker: ""` + `kubernetes.io/os=linux` | |
 
-**Not configurable via the CR** (fixed constants in `internal/agent/constants.go`, passed as agent CLI args by the controller): `rebootMethod` (`systemctl-reboot`), `logLevel` (`debug`), `staleNodeTimeout` (`1h`), `iotimeout` (`2s`). Agent image comes from the operator's `RELATED_IMAGE_AGENT` env var, not a spec field. `watchdogTimeout` and `petIntervalMultiple` no longer exist as agent settings.
+The controller continues to pass fixed agent settings from `internal/agent/constants.go`.
+These settings include `rebootMethod` (`systemctl-reboot`), `logLevel` (`debug`), `staleNodeTimeout` (`1h`), and `iotimeout` (`2s`).
+The new `ioTimeout` API field does not change the running agent setting.
+The operator obtains the agent image from `RELATED_IMAGE_AGENT`.
+`watchdogTimeout` and `petIntervalMultiple` no longer exist as agent settings.
+
+See the [storage mode and duration API](sbr-config-user-guide.md#storage-mode-and-duration-api) for bounds and update rules.
 
 ### 3.2 `detectOnlyMode`
 

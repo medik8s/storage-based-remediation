@@ -41,6 +41,11 @@ spec:
             description: StorageBasedRemediationConfigSpec defines the desired state
               of StorageBasedRemediationConfig.
             properties:
+              autonomousRebootRecoveryPeriod:
+                description: |-
+                  AutonomousRebootRecoveryPeriod defines the BlockPerNode recovery period, with an effective default of 5m.
+                  The duration must be positive. The effective value is immutable after creation.
+                type: string
               detectOnlyMode:
                 description: |-
                   DetectOnlyMode when set to Enabled disables all remediation: the agent disarms the watchdog (no reboot)
@@ -49,6 +54,11 @@ spec:
                 enum:
                 - Disabled
                 - Enabled
+                type: string
+              ioTimeout:
+                description: |-
+                  IOTimeout limits a storage I/O operation. The API default is 15s for BlockPerNode and 2s for existing modes.
+                  This API field does not change the running agent timeout.
                 type: string
               maxConsecutiveFailures:
                 description: |-
@@ -87,21 +97,27 @@ spec:
                 type: integer
               sharedStorageClass:
                 description: |-
-                  SharedStorageClass is the name of a StorageClass to use for creating shared storage.
-                  When specified, the controller will create a PVC using this StorageClass and mount it
-                  in the agent DaemonSet for cross-node coordination, slot assignment, and shared configuration data.
-                  The StorageClass must support ReadWriteMany (RWX) access mode.
+                  SharedStorageClass names the StorageClass for SBR storage.
+                  Filesystem and Block require ReadWriteMany (RWX) storage.
+                  BlockPerNode requires private ReadWriteOnce (RWO) Block storage for each node.
+                  BlockPerNode currently defines the API only. The operator does not implement this storage mode.
                 type: string
               sharedStorageVolumeMode:
                 description: |-
-                  SharedStorageVolumeMode selects the PVC volume mode for shared storage.
-                  "Filesystem" (default) mounts a filesystem-backed RWX volume.
-                  "Block" uses a raw block device RWX volume.
-                  Requires SharedStorageClass to be set when "Block" is specified.
+                  SharedStorageVolumeMode selects the SBR storage mode.
+                  Filesystem (default) uses an RWX filesystem. Block uses an RWX raw block device.
+                  BlockPerNode defines private RWO Block storage. It is not a Kubernetes volumeMode value.
+                  Block and BlockPerNode require sharedStorageClass.
                   This field is immutable after creation.
                 enum:
                 - Filesystem
                 - Block
+                - BlockPerNode
+                type: string
+              totalOutageGracePeriod:
+                description: |-
+                  TotalOutageGracePeriod defines the BlockPerNode outage grace period, with an effective default of 60s.
+                  Zero disables the grace period. The effective value is immutable after creation.
                 type: string
               watchdogPath:
                 default: /dev/watchdog
@@ -110,6 +126,26 @@ spec:
                   If not specified, defaults to "/dev/watchdog"
                 type: string
             type: object
+            x-kubernetes-validations:
+            - message: sharedStorageClass is required for Block and BlockPerNode
+              rule: '!has(self.sharedStorageVolumeMode) || !(self.sharedStorageVolumeMode
+                in [''Block'', ''BlockPerNode'']) || (has(self.sharedStorageClass)
+                && size(self.sharedStorageClass) > 0)'
+            - message: totalOutageGracePeriod requires BlockPerNode
+              rule: '!has(self.totalOutageGracePeriod) || (has(self.sharedStorageVolumeMode)
+                && self.sharedStorageVolumeMode == ''BlockPerNode'')'
+            - message: autonomousRebootRecoveryPeriod requires BlockPerNode
+              rule: '!has(self.autonomousRebootRecoveryPeriod) || (has(self.sharedStorageVolumeMode)
+                && self.sharedStorageVolumeMode == ''BlockPerNode'')'
+            - message: ioTimeout must be between 1s and 10m
+              rule: '!has(self.ioTimeout) || (duration(self.ioTimeout) >= duration(''1s'')
+                && duration(self.ioTimeout) <= duration(''10m''))'
+            - message: totalOutageGracePeriod must be between 0s and 1h
+              rule: '!has(self.totalOutageGracePeriod) || (duration(self.totalOutageGracePeriod)
+                >= duration(''0s'') && duration(self.totalOutageGracePeriod) <= duration(''1h''))'
+            - message: autonomousRebootRecoveryPeriod must be positive
+              rule: '!has(self.autonomousRebootRecoveryPeriod) || duration(self.autonomousRebootRecoveryPeriod)
+                > duration(''0s'')'
           status:
             description: StorageBasedRemediationConfigStatus defines the observed
               state of StorageBasedRemediationConfig.

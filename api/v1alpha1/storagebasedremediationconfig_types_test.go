@@ -17,6 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +27,162 @@ import (
 
 	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
 )
+
+const (
+	testStorageClass    = "test-sc"
+	ioTimeoutField      = "ioTimeout"
+	outageGraceField    = "totalOutageGracePeriod"
+	recoveryPeriodField = "autonomousRebootRecoveryPeriod"
+)
+
+func TestStorageModes(t *testing.T) {
+	filesystem := SharedStorageVolumeModeFilesystem
+	block := SharedStorageVolumeModeBlock
+	perNode := SharedStorageVolumeModeBlockPerNode
+	unknown := SharedStorageVolumeModeType("unknown")
+	for _, mode := range []*SharedStorageVolumeModeType{nil, &filesystem, &block, &perNode, &unknown} {
+		for _, class := range []string{"", testStorageClass} {
+			spec := StorageBasedRemediationConfigSpec{SharedStorageVolumeMode: mode, SharedStorageClass: class}
+			effective := filesystem
+			if mode != nil {
+				effective = *mode
+			}
+			t.Run(string(effective)+"/"+class, func(t *testing.T) {
+				if spec.GetSharedStorageVolumeMode() != effective ||
+					spec.IsBlockMode() != (effective == block) || spec.IsBlockPerNodeMode() != (effective == perNode) {
+					t.Fatalf("incorrect helpers for mode %v", mode)
+				}
+				wantErr := effective == unknown || (class == "" && (effective == block || effective == perNode))
+				if err := spec.ValidateAll(); (err != nil) != wantErr {
+					t.Errorf("ValidateAll() = %v, want error %v", err, wantErr)
+				}
+			})
+		}
+	}
+}
+
+func TestDurationGetters(t *testing.T) {
+	filesystem := SharedStorageVolumeModeFilesystem
+	block := SharedStorageVolumeModeBlock
+	perNode := SharedStorageVolumeModeBlockPerNode
+	for _, mode := range []*SharedStorageVolumeModeType{nil, &filesystem, &block, &perNode} {
+		for _, explicit := range []*metav1.Duration{nil, {Duration: 0}, {Duration: 23 * time.Second}} {
+			spec := StorageBasedRemediationConfigSpec{
+				SharedStorageVolumeMode: mode, IOTimeout: explicit,
+				TotalOutageGracePeriod: explicit, AutonomousRebootRecoveryPeriod: explicit,
+			}
+			before := spec.DeepCopy()
+			wantIO, wantOutage, wantRecovery := 2*time.Second, time.Duration(0), time.Duration(0)
+			if mode != nil && *mode == perNode {
+				wantIO, wantOutage, wantRecovery = 15*time.Second, 60*time.Second, 5*time.Minute
+			}
+			if explicit != nil {
+				wantIO, wantOutage, wantRecovery = explicit.Duration, explicit.Duration, explicit.Duration
+			}
+			if spec.GetIOTimeout() != wantIO || spec.GetTotalOutageGracePeriod() != wantOutage ||
+				spec.GetAutonomousRebootRecoveryPeriod() != wantRecovery {
+				t.Errorf("incorrect durations for mode %v, explicit %v", mode, explicit)
+			}
+			if !reflect.DeepEqual(&spec, before) || spec.IOTimeout != explicit ||
+				spec.TotalOutageGracePeriod != explicit || spec.AutonomousRebootRecoveryPeriod != explicit {
+				t.Error("getters changed the receiver")
+			}
+		}
+	}
+}
+
+func TestDurationValidation(t *testing.T) {
+	perNode := SharedStorageVolumeModeBlockPerNode
+	for _, tc := range []struct {
+		field  string
+		values []time.Duration
+		valid  func(time.Duration) bool
+	}{
+		{
+			ioTimeoutField,
+			[]time.Duration{-time.Nanosecond, 0, time.Second - time.Nanosecond,
+				time.Second, 10 * time.Minute, 10*time.Minute + time.Nanosecond},
+			func(d time.Duration) bool { return d >= time.Second && d <= 10*time.Minute },
+		},
+		{
+			outageGraceField,
+			[]time.Duration{-time.Nanosecond, 0, time.Nanosecond, time.Hour, time.Hour + time.Nanosecond},
+			func(d time.Duration) bool { return d >= 0 && d <= time.Hour },
+		},
+		{
+			recoveryPeriodField,
+			[]time.Duration{-time.Nanosecond, 0, time.Nanosecond, time.Hour},
+			func(d time.Duration) bool { return d > 0 },
+		},
+	} {
+		for _, value := range tc.values {
+			t.Run(tc.field+"/"+value.String(), func(t *testing.T) {
+				spec := StorageBasedRemediationConfigSpec{SharedStorageVolumeMode: &perNode, SharedStorageClass: testStorageClass}
+				setDurationField(&spec, tc.field, &metav1.Duration{Duration: value})
+				err := spec.ValidateAll()
+				if (err == nil) != tc.valid(value) || (err != nil && !strings.Contains(err.Error(), tc.field)) {
+					t.Errorf("ValidateAll() = %v", err)
+				}
+			})
+		}
+	}
+	filesystem, block := SharedStorageVolumeModeFilesystem, SharedStorageVolumeModeBlock
+	for _, mode := range []*SharedStorageVolumeModeType{nil, &filesystem, &block} {
+		for _, field := range []string{outageGraceField, recoveryPeriodField} {
+			spec := StorageBasedRemediationConfigSpec{SharedStorageVolumeMode: mode, SharedStorageClass: testStorageClass}
+			setDurationField(&spec, field, &metav1.Duration{Duration: time.Minute})
+			if err := spec.ValidateAll(); err == nil || !strings.Contains(err.Error(), field) {
+				t.Errorf("expected applicability error for %s, got %v", field, err)
+			}
+		}
+	}
+}
+
+func setDurationField(spec *StorageBasedRemediationConfigSpec, field string, value *metav1.Duration) {
+	switch field {
+	case ioTimeoutField:
+		spec.IOTimeout = value
+	case outageGraceField:
+		spec.TotalOutageGracePeriod = value
+	case recoveryPeriodField:
+		spec.AutonomousRebootRecoveryPeriod = value
+	}
+}
+
+func TestConfigDurationJSONAndDeepCopy(t *testing.T) {
+	for _, field := range []string{ioTimeoutField, outageGraceField, recoveryPeriodField} {
+		var spec StorageBasedRemediationConfigSpec
+		if err := json.Unmarshal([]byte(`{"`+field+`":"invalid"}`), &spec); err == nil {
+			t.Errorf("decoded malformed %s", field)
+		}
+		setDurationField(&spec, field, &metav1.Duration{})
+		data, err := json.Marshal(spec)
+		if err != nil || !strings.Contains(string(data), `"`+field+`":"0s"`) {
+			t.Fatalf("explicit zero lost for %s: %s, %v", field, data, err)
+		}
+		var decoded StorageBasedRemediationConfigSpec
+		if err := json.Unmarshal(data, &decoded); err != nil || !reflect.DeepEqual(spec, decoded) {
+			t.Fatalf("round trip failed: %v", err)
+		}
+	}
+	data, err := json.Marshal(StorageBasedRemediationConfigSpec{})
+	if err != nil || string(data) != "{}" {
+		t.Fatalf("omitted fields changed: %s, %v", data, err)
+	}
+	original := &StorageBasedRemediationConfigSpec{
+		IOTimeout:                      &metav1.Duration{Duration: time.Second},
+		TotalOutageGracePeriod:         &metav1.Duration{Duration: time.Minute},
+		AutonomousRebootRecoveryPeriod: &metav1.Duration{Duration: 5 * time.Minute},
+	}
+	copy := original.DeepCopy()
+	copy.IOTimeout.Duration++
+	copy.TotalOutageGracePeriod.Duration++
+	copy.AutonomousRebootRecoveryPeriod.Duration++
+	if original.IOTimeout.Duration != time.Second || original.TotalOutageGracePeriod.Duration != time.Minute ||
+		original.AutonomousRebootRecoveryPeriod.Duration != 5*time.Minute {
+		t.Fatal("deepcopy shares duration pointers")
+	}
+}
 
 // testCase represents a generic test case for validation functions
 type testCase struct {

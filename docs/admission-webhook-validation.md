@@ -64,10 +64,26 @@ nodeSelector:
 
 ### Spec Validation
 
-The webhook also validates the StorageBasedRemediationConfig spec fields, ensuring:
-- Required fields are present (e.g., `watchdogPath`)
-- Field values are within valid ranges
-- Configuration consistency
+The CRD accepts Filesystem, Block, and BlockPerNode modes.
+Block and BlockPerNode require a nonempty `sharedStorageClass`.
+The CRD checks duration bounds and limits outage and recovery fields to BlockPerNode.
+The config webhook applies matching typed checks and preserves StorageClass name checks.
+
+The webhook compares effective modes and duration values on updates.
+It permits omission and explicit Filesystem to replace each other.
+It rejects changes between distinct effective modes.
+It permits valid `ioTimeout` changes.
+It rejects changes to effective outage and recovery durations.
+Omission and an explicit effective default can replace each other.
+Equivalent duration strings, such as `60s` and `1m`, are equal.
+
+The duration getters do not persist defaults or change the object.
+BlockPerNode defines the API only. The operator does not implement this mode or apply `ioTimeout` to running agents.
+See the [API contract](sbr-config-user-guide.md#storage-mode-and-duration-api) for defaults and bounds.
+
+The remediation CRD uses root CEL rules to protect assigned status identities and the cleanup deadline.
+The rules reject removal of these fields or their parent objects.
+The remediation resource does not use a webhook for these checks.
 
 ## Benefits of Admission-Time Validation
 

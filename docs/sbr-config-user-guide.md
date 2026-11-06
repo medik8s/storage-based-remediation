@@ -149,10 +149,42 @@ oc get pods -n openshift-operators | grep -E 'storage-based-remediation|sbr'
 - **Default**: None (shared storage disabled)
 - **Description**: StorageClass name for automatic shared storage provisioning
 - **Requirements**:
-  - StorageClass must support ReadWriteMany (RWX) access mode
+  - Filesystem and Block require ReadWriteMany (RWX) access mode.
+  - BlockPerNode defines private ReadWriteOnce (RWO) Block storage for each node.
   - Storage backend must support POSIX file locking for coordination
 - **Examples**: `"efs-sc"`, `"nfs-client"`, `"cephfs"`, `"glusterfs"`
 - **Behavior**: When specified, the controller automatically creates a PVC using this StorageClass and mounts it at `/dev/sbr` in each agent pod
+
+#### Storage mode and duration API
+
+`sharedStorageVolumeMode` accepts `Filesystem`, `Block`, and `BlockPerNode`.
+Omission selects Filesystem. Block and BlockPerNode require a nonempty `sharedStorageClass`.
+BlockPerNode is an SBR mode. It is not a Kubernetes `volumeMode` value.
+
+BlockPerNode currently defines the API only. This change does not implement controllers, agents, or cleanup for that mode.
+The `ioTimeout` field does not change the timeout of running agents.
+
+| JSON field | Effective default | Valid values | Applicable modes |
+| --- | --- | --- | --- |
+| `ioTimeout` | BlockPerNode: `15s`. Existing modes: `2s`. | `1s` through `10m`, inclusive | All |
+| `totalOutageGracePeriod` | `60s` | `0s` through `1h`, inclusive | BlockPerNode |
+| `autonomousRebootRecoveryPeriod` | `5m` | Greater than zero, including `1ns` | BlockPerNode |
+
+All three fields are optional duration strings. The API server does not store defaults for these fields.
+The getters return explicit values without changing the object.
+Omitted BlockPerNode-only fields return zero in existing modes. Explicit values remain invalid in those modes.
+Explicit `totalOutageGracePeriod: 0s` differs from omission and disables the grace period in the API contract.
+
+The config webhook compares effective modes and durations on updates.
+It permits omission or explicit Filesystem to replace each other.
+It rejects changes between distinct effective modes.
+It permits valid changes to `ioTimeout`.
+The effective outage and recovery durations are immutable.
+Omission and an explicit effective default can replace each other.
+Equivalent strings, such as `60s` and `1m`, have the same duration.
+Removal of a nondefault immutable duration is invalid.
+
+The existing `sbrTimeoutSeconds` and `maxConsecutiveFailures` fields retain their defaults and behavior.
 
 #### `nodeSelector` (map[string]string, optional)
 - **Default**: Worker nodes only (`node-role.kubernetes.io/worker: ""`)
@@ -743,6 +775,40 @@ processes it.
 ---
 
 ## API Reference
+
+### Remediation status API
+
+`StorageBasedRemediation.spec` remains empty. Existing conditions and `LeadershipAcquired` remain unchanged.
+The new status fields are optional. Legacy remediation objects do not require them.
+Status reports the authoritative Node record. It does not authorize execution.
+
+| JSON field | Type | Meaning |
+| --- | --- | --- |
+| `nodeUID` | string | UID of the Node record. Immutable after assignment. |
+| `configUID` | string | UID of the configuration record. Immutable after assignment. |
+| `volumeMode` | string | SBR mode in the record. Immutable after assignment. No enum applies. |
+| `beforeBootID` | string | Boot ID before execution. Immutable after assignment. |
+| `executionPhase` | string | `Offered`, `Accepted`, `Cancelled`, or `BootEnded`. |
+| `observedBootID` | string | Boot ID observed after execution. |
+| `cleanup` | object | Optional cleanup report, described below. |
+| `restrictionsReleased` | boolean | Reports this CR's restrictions. It does not establish Node schedulability. |
+
+The four immutable identity fields reject explicit empty strings.
+They have no UUID format requirement. Their removal is invalid after assignment.
+
+| Cleanup JSON field | Type | Meaning |
+| --- | --- | --- |
+| `phase` | string | `Pending`, `Observing`, `Completed`, `Incomplete`, `Unknown`, or `Skipped`. |
+| `startedAt` | timestamp | Time when cleanup started. |
+| `deadline` | timestamp | Fixed deadline. Immutable after assignment. |
+| `outOfServiceApplied` | boolean | Records confirmed application. Elapsed time does not establish application. |
+| `reason` | string | Reason for the reported result. |
+
+Root CEL rules prevent changes and removal of assigned identities and `cleanup.deadline`.
+These rules also reject removal of parent objects, including the complete status object.
+The CRD enforces these rules without a remediation webhook.
+The phase enums do not require intermediate status updates.
+This change adds definitions and validation only. It does not implement the Node execution protocol.
 
 For complete API documentation, see:
 - [StorageBasedRemediationConfig API Types](../api/v1alpha1/storagebasedremediationconfig_types.go)

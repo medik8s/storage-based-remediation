@@ -37,6 +37,11 @@ const (
 	DefaultSBRTimeoutSeconds = 30
 	// DefaultMaxConsecutiveFailures is the runtime default when maxConsecutiveFailures is unset on the CR (no OpenAPI default).
 	DefaultMaxConsecutiveFailures = 7
+
+	DefaultIOTimeout                      time.Duration = 2 * time.Second
+	DefaultBlockPerNodeIOTimeout          time.Duration = 15 * time.Second
+	DefaultTotalOutageGracePeriod         time.Duration = 60 * time.Second
+	DefaultAutonomousRebootRecoveryPeriod time.Duration = 5 * time.Minute
 	// RelatedImageAgent when this env is set it contains the image of SBR agent
 	RelatedImageAgent = "RELATED_IMAGE_AGENT"
 )
@@ -51,7 +56,7 @@ const (
 	DetectOnlyModeEnabled DetectOnlyModeType = "Enabled"
 )
 
-// SharedStorageVolumeModeType specifies the volume mode for shared storage PVCs.
+// SharedStorageVolumeModeType selects the SBR storage mode, not the Kubernetes PVC volumeMode.
 type SharedStorageVolumeModeType string
 
 const (
@@ -59,6 +64,8 @@ const (
 	SharedStorageVolumeModeFilesystem SharedStorageVolumeModeType = "Filesystem"
 	// SharedStorageVolumeModeBlock uses a raw block device RWX PVC.
 	SharedStorageVolumeModeBlock SharedStorageVolumeModeType = "Block"
+	// SharedStorageVolumeModeBlockPerNode uses a private RWO Block PVC for each node.
+	SharedStorageVolumeModeBlockPerNode SharedStorageVolumeModeType = "BlockPerNode"
 )
 
 // SBRConfigConditionType represents the type of condition for StorageBasedRemediationConfig
@@ -74,6 +81,12 @@ const (
 )
 
 // StorageBasedRemediationConfigSpec defines the desired state of StorageBasedRemediationConfig.
+// +kubebuilder:validation:XValidation:rule="!has(self.sharedStorageVolumeMode) || !(self.sharedStorageVolumeMode in ['Block', 'BlockPerNode']) || (has(self.sharedStorageClass) && size(self.sharedStorageClass) > 0)",message="sharedStorageClass is required for Block and BlockPerNode"
+// +kubebuilder:validation:XValidation:rule="!has(self.totalOutageGracePeriod) || (has(self.sharedStorageVolumeMode) && self.sharedStorageVolumeMode == 'BlockPerNode')",message="totalOutageGracePeriod requires BlockPerNode"
+// +kubebuilder:validation:XValidation:rule="!has(self.autonomousRebootRecoveryPeriod) || (has(self.sharedStorageVolumeMode) && self.sharedStorageVolumeMode == 'BlockPerNode')",message="autonomousRebootRecoveryPeriod requires BlockPerNode"
+// +kubebuilder:validation:XValidation:rule="!has(self.ioTimeout) || (duration(self.ioTimeout) >= duration('1s') && duration(self.ioTimeout) <= duration('10m'))",message="ioTimeout must be between 1s and 10m"
+// +kubebuilder:validation:XValidation:rule="!has(self.totalOutageGracePeriod) || (duration(self.totalOutageGracePeriod) >= duration('0s') && duration(self.totalOutageGracePeriod) <= duration('1h'))",message="totalOutageGracePeriod must be between 0s and 1h"
+// +kubebuilder:validation:XValidation:rule="!has(self.autonomousRebootRecoveryPeriod) || duration(self.autonomousRebootRecoveryPeriod) > duration('0s')",message="autonomousRebootRecoveryPeriod must be positive"
 type StorageBasedRemediationConfigSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
@@ -84,21 +97,36 @@ type StorageBasedRemediationConfigSpec struct {
 	// +optional
 	WatchdogPath string `json:"watchdogPath,omitempty"`
 
-	// SharedStorageClass is the name of a StorageClass to use for creating shared storage.
-	// When specified, the controller will create a PVC using this StorageClass and mount it
-	// in the agent DaemonSet for cross-node coordination, slot assignment, and shared configuration data.
-	// The StorageClass must support ReadWriteMany (RWX) access mode.
+	// SharedStorageClass names the StorageClass for SBR storage.
+	// Filesystem and Block require ReadWriteMany (RWX) storage.
+	// BlockPerNode requires private ReadWriteOnce (RWO) Block storage for each node.
+	// BlockPerNode currently defines the API only. The operator does not implement this storage mode.
 	// +optional
 	SharedStorageClass string `json:"sharedStorageClass,omitempty"`
 
-	// SharedStorageVolumeMode selects the PVC volume mode for shared storage.
-	// "Filesystem" (default) mounts a filesystem-backed RWX volume.
-	// "Block" uses a raw block device RWX volume.
-	// Requires SharedStorageClass to be set when "Block" is specified.
+	// SharedStorageVolumeMode selects the SBR storage mode.
+	// Filesystem (default) uses an RWX filesystem. Block uses an RWX raw block device.
+	// BlockPerNode defines private RWO Block storage. It is not a Kubernetes volumeMode value.
+	// Block and BlockPerNode require sharedStorageClass.
 	// This field is immutable after creation.
-	// +kubebuilder:validation:Enum=Filesystem;Block
+	// +kubebuilder:validation:Enum=Filesystem;Block;BlockPerNode
 	// +optional
 	SharedStorageVolumeMode *SharedStorageVolumeModeType `json:"sharedStorageVolumeMode,omitempty"`
+
+	// IOTimeout limits a storage I/O operation. The API default is 15s for BlockPerNode and 2s for existing modes.
+	// This API field does not change the running agent timeout.
+	// +optional
+	IOTimeout *metav1.Duration `json:"ioTimeout,omitempty"`
+
+	// TotalOutageGracePeriod defines the BlockPerNode outage grace period, with an effective default of 60s.
+	// Zero disables the grace period. The effective value is immutable after creation.
+	// +optional
+	TotalOutageGracePeriod *metav1.Duration `json:"totalOutageGracePeriod,omitempty"`
+
+	// AutonomousRebootRecoveryPeriod defines the BlockPerNode recovery period, with an effective default of 5m.
+	// The duration must be positive. The effective value is immutable after creation.
+	// +optional
+	AutonomousRebootRecoveryPeriod *metav1.Duration `json:"autonomousRebootRecoveryPeriod,omitempty"`
 
 	// NodeSelector is a selector which must be true for the SBR agent pod to fit on a node.
 	// This allows users to control which nodes the SBR agent runs on by specifying node labels.
@@ -254,6 +282,40 @@ func (s *StorageBasedRemediationConfigSpec) IsBlockMode() bool {
 	return s.GetSharedStorageVolumeMode() == SharedStorageVolumeModeBlock
 }
 
+func (s *StorageBasedRemediationConfigSpec) IsBlockPerNodeMode() bool {
+	return s.GetSharedStorageVolumeMode() == SharedStorageVolumeModeBlockPerNode
+}
+
+func (s *StorageBasedRemediationConfigSpec) GetIOTimeout() time.Duration {
+	if s.IOTimeout != nil {
+		return s.IOTimeout.Duration
+	}
+	if s.IsBlockPerNodeMode() {
+		return DefaultBlockPerNodeIOTimeout
+	}
+	return DefaultIOTimeout
+}
+
+func (s *StorageBasedRemediationConfigSpec) GetTotalOutageGracePeriod() time.Duration {
+	if s.TotalOutageGracePeriod != nil {
+		return s.TotalOutageGracePeriod.Duration
+	}
+	if s.IsBlockPerNodeMode() {
+		return DefaultTotalOutageGracePeriod
+	}
+	return 0
+}
+
+func (s *StorageBasedRemediationConfigSpec) GetAutonomousRebootRecoveryPeriod() time.Duration {
+	if s.AutonomousRebootRecoveryPeriod != nil {
+		return s.AutonomousRebootRecoveryPeriod.Duration
+	}
+	if s.IsBlockPerNodeMode() {
+		return DefaultAutonomousRebootRecoveryPeriod
+	}
+	return 0
+}
+
 // GetNodeSelector returns the node selector with default fallback to worker nodes only
 func (s *StorageBasedRemediationConfigSpec) GetNodeSelector() map[string]string {
 	if len(s.NodeSelector) > 0 {
@@ -305,11 +367,33 @@ func (s *StorageBasedRemediationConfigSpec) ValidateAll() error {
 		return fmt.Errorf("shared storage PVC validation failed: %w", err)
 	}
 
-	// Block mode requires a StorageClass to be specified
-	if s.SharedStorageVolumeMode != nil &&
-		*s.SharedStorageVolumeMode == SharedStorageVolumeModeBlock &&
-		s.SharedStorageClass == "" {
-		return fmt.Errorf("sharedStorageClass is required when sharedStorageVolumeMode is Block")
+	switch mode := s.GetSharedStorageVolumeMode(); mode {
+	case SharedStorageVolumeModeFilesystem:
+	case SharedStorageVolumeModeBlock, SharedStorageVolumeModeBlockPerNode:
+		if s.SharedStorageClass == "" {
+			return fmt.Errorf("sharedStorageClass is required when sharedStorageVolumeMode is %s", mode)
+		}
+	default:
+		return fmt.Errorf("sharedStorageVolumeMode %q is invalid", mode)
+	}
+	if s.IOTimeout != nil && (s.IOTimeout.Duration < time.Second || s.IOTimeout.Duration > 10*time.Minute) {
+		return fmt.Errorf("ioTimeout must be between 1s and 10m")
+	}
+	if s.TotalOutageGracePeriod != nil {
+		if !s.IsBlockPerNodeMode() {
+			return fmt.Errorf("totalOutageGracePeriod requires BlockPerNode")
+		}
+		if s.TotalOutageGracePeriod.Duration < 0 || s.TotalOutageGracePeriod.Duration > time.Hour {
+			return fmt.Errorf("totalOutageGracePeriod must be between 0s and 1h")
+		}
+	}
+	if s.AutonomousRebootRecoveryPeriod != nil {
+		if !s.IsBlockPerNodeMode() {
+			return fmt.Errorf("autonomousRebootRecoveryPeriod requires BlockPerNode")
+		}
+		if s.AutonomousRebootRecoveryPeriod.Duration <= 0 {
+			return fmt.Errorf("autonomousRebootRecoveryPeriod must be positive")
+		}
 	}
 
 	return nil
