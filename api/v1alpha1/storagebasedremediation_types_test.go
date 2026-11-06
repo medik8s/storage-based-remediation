@@ -17,11 +17,75 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func TestRemediationStatusJSONAndDeepCopy(t *testing.T) {
+	var legacy StorageBasedRemediation
+	if err := json.Unmarshal([]byte(`{"spec":{},"status":{"conditions":[]}}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(StorageBasedRemediationStatus{})
+	if err != nil || string(data) != "{}" {
+		t.Fatalf("omitted status fields changed: %s, %v", data, err)
+	}
+	now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+	deadline := metav1.NewTime(now.Add(time.Minute))
+	original := &StorageBasedRemediation{Status: StorageBasedRemediationStatus{
+		NodeUID: "node", ConfigUID: "config", VolumeMode: "BlockPerNode", BeforeBootID: "before",
+		ExecutionPhase: "Accepted", ObservedBootID: "after", RestrictionsReleased: true,
+		Cleanup: &CleanupStatus{
+			Phase: "Observing", StartedAt: &now, Deadline: &deadline, OutOfServiceApplied: true, Reason: "Confirmed",
+		},
+	}}
+	data, err = json.Marshal(original.Status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"nodeUID", "configUID", "volumeMode", "beforeBootID",
+		"executionPhase", "observedBootID", "cleanup", "restrictionsReleased",
+	} {
+		if _, ok := fields[name]; !ok {
+			t.Errorf("missing JSON field %s", name)
+		}
+	}
+	var cleanup map[string]json.RawMessage
+	if err := json.Unmarshal(fields["cleanup"], &cleanup); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"phase", "startedAt", "deadline", "outOfServiceApplied", "reason"} {
+		if _, ok := cleanup[name]; !ok {
+			t.Errorf("missing cleanup JSON field %s", name)
+		}
+	}
+	var decoded StorageBasedRemediationStatus
+	if err := json.Unmarshal(data, &decoded); err != nil || !equality.Semantic.DeepEqual(original.Status, decoded) {
+		t.Fatalf("status round trip failed: %v", err)
+	}
+	copy := original.DeepCopy()
+	if copy.Status.Cleanup == original.Status.Cleanup ||
+		copy.Status.Cleanup.StartedAt == original.Status.Cleanup.StartedAt ||
+		copy.Status.Cleanup.Deadline == original.Status.Cleanup.Deadline {
+		t.Fatal("deepcopy shares cleanup or timestamp pointers")
+	}
+	copy.Status.Cleanup.Phase = "Completed"
+	copy.Status.Cleanup.StartedAt.Time = now.Add(time.Second)
+	copy.Status.Cleanup.Deadline.Time = deadline.Add(time.Second)
+	if original.Status.Cleanup.Phase != "Observing" || !original.Status.Cleanup.StartedAt.Equal(&now) ||
+		!original.Status.Cleanup.Deadline.Equal(&deadline) {
+		t.Fatal("deepcopy shares cleanup or timestamp pointers")
+	}
+}
 
 // createTestSBRRemediation creates a StorageBasedRemediation with standard test conditions
 func createTestSBRRemediation() *StorageBasedRemediation {

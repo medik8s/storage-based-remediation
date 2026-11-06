@@ -68,6 +68,12 @@ func (v *StorageBasedRemediationConfigValidator) ValidateUpdate(
 	if oldMode != newMode {
 		return nil, fmt.Errorf("sharedStorageVolumeMode is immutable: cannot change from %q to %q", oldMode, newMode)
 	}
+	if oldSbrConfig.Spec.GetTotalOutageGracePeriod() != sbrConfig.Spec.GetTotalOutageGracePeriod() {
+		return nil, fmt.Errorf("totalOutageGracePeriod is immutable")
+	}
+	if oldSbrConfig.Spec.GetAutonomousRebootRecoveryPeriod() != sbrConfig.Spec.GetAutonomousRebootRecoveryPeriod() {
+		return nil, fmt.Errorf("autonomousRebootRecoveryPeriod is immutable")
+	}
 
 	// TODO: Add node selector overlap validation once we can access the client
 	// For now, the validation logic is in the controller

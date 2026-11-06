@@ -154,7 +154,11 @@ spec:
 | Field | Default | Description |
 | ----- | ------- | ----------- |
 | `watchdogPath` | `/dev/watchdog` | Watchdog device path on nodes |
-| `sharedStorageClass` | None | StorageClass for shared storage coordination (RWX required); mounted at `/dev/sbr` |
+| `sharedStorageClass` | None | StorageClass for SBR storage. Block and BlockPerNode require a nonempty name. |
+| `sharedStorageVolumeMode` | `Filesystem` | SBR mode: Filesystem, Block, or BlockPerNode. The effective mode is immutable. |
+| `ioTimeout` | `2s`, or `15s` for BlockPerNode | Optional duration from `1s` through `10m`. API definition only. |
+| `totalOutageGracePeriod` | `60s` for BlockPerNode | Optional duration from `0s` through `1h`. BlockPerNode only. The effective value is immutable. |
+| `autonomousRebootRecoveryPeriod` | `5m` for BlockPerNode | Optional positive duration. BlockPerNode only. The effective value is immutable. |
 | `nodeSelector` | Worker nodes | Label selector restricting which nodes run the agent |
 | `sbrTimeoutSeconds` | `30` | SBR detection timeout in seconds (10–300) |
 | `maxConsecutiveFailures` | `7` | Consecutive watchdog, SBR-device, local-heartbeat, or peer-heartbeat failures before declaring a node unhealthy (2–32) |
@@ -162,6 +166,13 @@ spec:
 
 **Note**: The namespace is set via `metadata.namespace`. The agent image is managed automatically
 by the operator — do not set `spec.image` (the field does not exist in the CRD).
+
+BlockPerNode defines private RWO Block storage for each node. It is an SBR mode, not a Kubernetes `volumeMode` value.
+Filesystem and shared Block continue to require RWX storage.
+This change adds API definitions only. It does not implement BlockPerNode operation or apply `ioTimeout` to running agents.
+The API server does not store defaults for the new duration fields.
+Omitted BlockPerNode-only durations return zero in existing modes. Explicit values remain invalid in those modes.
+See the [API contract](sbr-config-user-guide.md#storage-mode-and-duration-api) for update rules and remediation status fields.
 
 ---
 
