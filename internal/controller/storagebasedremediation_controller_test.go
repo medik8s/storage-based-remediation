@@ -392,6 +392,7 @@ var _ = Describe("StorageBasedRemediation Controller", func() {
 					},
 					Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
 						SharedStorageVolumeMode: &blockMode,
+						SharedStorageClass:      "block-storage-class",
 					},
 				}
 				Expect(k8sClient.Create(ctx, blockConfig)).To(Succeed())

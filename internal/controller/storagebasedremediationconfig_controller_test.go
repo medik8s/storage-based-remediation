@@ -1140,14 +1140,14 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 		})
 
 		It("should emit a ValidationError warning event when the spec fails validation", func() {
-			By("creating an StorageBasedRemediationConfig with an invalid spec " +
-				"(Block mode requires a SharedStorageClass)")
+			By("creating an StorageBasedRemediationConfig with an invalid StorageClass name")
 			blockMode := medik8sv1alpha1.SharedStorageVolumeModeBlock
 			resource := &medik8sv1alpha1.StorageBasedRemediationConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: namespace},
 				Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
 					WatchdogPath:            "/dev/watchdog",
 					SharedStorageVolumeMode: &blockMode,
+					SharedStorageClass:      "-invalid-storage-class",
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())

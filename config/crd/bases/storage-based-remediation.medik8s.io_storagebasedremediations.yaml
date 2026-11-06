@@ -67,9 +67,38 @@ spec:
               and is not re-read from the Node when the operator writes the fence message.
             type: object
           status:
-            description: StorageBasedRemediationStatus defines the observed state
-              of StorageBasedRemediation.
+            description: |-
+              StorageBasedRemediationStatus defines the observed state of StorageBasedRemediation.
+              Status reports the authoritative Node record. Status does not authorize execution.
             properties:
+              beforeBootID:
+                minLength: 1
+                type: string
+              cleanup:
+                properties:
+                  deadline:
+                    description: Deadline cannot change after its initial assignment.
+                    format: date-time
+                    type: string
+                  outOfServiceApplied:
+                    description: OutOfServiceApplied records confirmed application.
+                      Elapsed time does not establish application.
+                    type: boolean
+                  phase:
+                    enum:
+                    - Pending
+                    - Observing
+                    - Completed
+                    - Incomplete
+                    - Unknown
+                    - Skipped
+                    type: string
+                  reason:
+                    type: string
+                  startedAt:
+                    format: date-time
+                    type: string
+                type: object
               conditions:
                 description: |-
                   Conditions represent the latest available observations of the remediation's current state.
@@ -134,8 +163,55 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              configUID:
+                description: |-
+                  UID is a type that holds unique ID values, including UUIDs.  Because we
+                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                  intent and helps make sure that UIDs and names do not get conflated.
+                minLength: 1
+                type: string
+              executionPhase:
+                enum:
+                - Offered
+                - Accepted
+                - Cancelled
+                - BootEnded
+                type: string
+              nodeUID:
+                description: |-
+                  UID is a type that holds unique ID values, including UUIDs.  Because we
+                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                  intent and helps make sure that UIDs and names do not get conflated.
+                minLength: 1
+                type: string
+              observedBootID:
+                type: string
+              restrictionsReleased:
+                description: RestrictionsReleased describes this CR's restrictions.
+                  It does not establish Node schedulability.
+                type: boolean
+              volumeMode:
+                minLength: 1
+                type: string
             type: object
         type: object
+        x-kubernetes-validations:
+        - message: nodeUID cannot change or be removed
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.nodeUID) || (has(self.status)
+            && has(self.status.nodeUID) && self.status.nodeUID == oldSelf.status.nodeUID)'
+        - message: configUID cannot change or be removed
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.configUID) || (has(self.status)
+            && has(self.status.configUID) && self.status.configUID == oldSelf.status.configUID)'
+        - message: volumeMode cannot change or be removed
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.volumeMode) || (has(self.status)
+            && has(self.status.volumeMode) && self.status.volumeMode == oldSelf.status.volumeMode)'
+        - message: beforeBootID cannot change or be removed
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.beforeBootID) || (has(self.status)
+            && has(self.status.beforeBootID) && self.status.beforeBootID == oldSelf.status.beforeBootID)'
+        - message: cleanup.deadline cannot change or be removed
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.cleanup) || !has(oldSelf.status.cleanup.deadline)
+            || (has(self.status) && has(self.status.cleanup) && has(self.status.cleanup.deadline)
+            && self.status.cleanup.deadline == oldSelf.status.cleanup.deadline)'
     served: true
     storage: true
     subresources:

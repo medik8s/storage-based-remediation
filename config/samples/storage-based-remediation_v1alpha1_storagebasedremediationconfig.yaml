@@ -24,6 +24,15 @@ spec:
   nodeSelector:
     node-role.kubernetes.io/worker: ""
 
+  # API example only. BlockPerNode operation is not implemented.
+  # These fields do not provide a working BlockPerNode deployment.
+  # ioTimeout does not change the running agent timeout.
+  # sharedStorageClass: "private-rwo-block-class"
+  # sharedStorageVolumeMode: BlockPerNode
+  # ioTimeout: 15s
+  # totalOutageGracePeriod: 60s
+  # autonomousRebootRecoveryPeriod: 5m
+
 
   # ========================================================================
   # MULTIPLE STORAGEBASEDREMEDIATIONCONFIG SUPPORT (NEW in v1.1+)
