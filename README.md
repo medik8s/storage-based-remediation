@@ -136,6 +136,7 @@ Files under `docs/archive/` are historical: they use older resource names
 - [Blueprint](docs/archive/blueprint.md) - Detailed implementation blueprint
   (archive)
 - [User Guide](docs/sbr-config-user-guide.md) - Configuration and usage
+- [Shared storage inspection](docs/sbr-inspect.md) - Read-only `sbr-agent inspect` diagnostics for filesystem and block modes
 - [Webhook Requirements](docs/admission-webhook-validation.md) - Admission
   webhook setup
 
