@@ -885,6 +885,7 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 				{"GCP Filestore", "filestore.csi.storage.gke.io", true},
 				{"NFS CSI", "nfs.csi.k8s.io", true},
 				{"CephFS", "cephfs.csi.ceph.com", true},
+				{"NetApp Trident (NFS)", "csi.trident.netapp.io", true},
 				{"AWS EBS", "ebs.csi.aws.com", false},
 				{"Azure Disk", "disk.csi.azure.com", false},
 				{"GCP Persistent Disk", "pd.csi.storage.gke.io", false},
