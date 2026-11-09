@@ -33,6 +33,7 @@ This document describes failure scenarios, how they are detected, what the syste
 - **Detection:** `heartbeatLoop` → `incrementFailureCount("heartbeat")`; `sbr_device_io_errors_total` metric increments.
 - **Response:** Counter increases; on success counter resets. After **7 consecutive failures** → `setSBRHealthy(false)`, devices closed.
 - **Outcome:** Agent marked unhealthy in metrics; next watchdog tick enters the SBR-unhealthy path (see 1.4).
+- **Stalled I/O:** A write or storage lock that never returns cannot increment the error counter. The watchdog loop independently checks the time since the last completed heartbeat. After `maxConsecutiveFailures × heartbeatInterval` without progress, it uses the self-fence path in 1.6 even if the cached health flag is still true. Startup allows the same interval window for the first heartbeat, and a completed heartbeat resets the deadline. The remediation-CR gate and detect-only suppression still apply.
 
 ### 1.2 Watchdog pet fails after retries
 
@@ -59,7 +60,7 @@ This document describes failure scenarios, how they are detected, what the syste
 
 ### 1.5 Self-fence aborted — no remediation CR
 
-- **Trigger:** All failure thresholds met, but `remediationExistsForThisNode()` returns `(false, nil)`.
+- **Trigger:** A failure threshold or the heartbeat progress deadline is met, but `remediationExistsForThisNode()` returns `(false, nil)`.
 - **Response:** Self-fence suppressed. Event: `SelfFenceAbortedNoRemediation`.
 - **Outcome:** No immediate reboot; NHC may still create the CR later.
 
