@@ -1,0 +1,75 @@
+# SBR Debug Pod - simulate block device storage failures
+#
+# Usage:
+#   1. Set spec.nodeName below to the target node
+#   2. oc create -f tools/sbr-debug-pod.yaml
+#   3. oc logs sbr-debug -n openshift-workload-availability    # see blockdev commands
+#   4. oc exec -it sbr-debug -n openshift-workload-availability -- bash
+#   5. oc delete pod sbr-debug -n openshift-workload-availability   # cleanup
+#
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sbr-debug
+  namespace: openshift-workload-availability
+spec:
+  nodeName: ip-10-0-30-33.us-west-2.compute.internal
+  hostPID: true
+  restartPolicy: Never
+  containers:
+  - name: debug
+    image: registry.redhat.io/rhel9/support-tools
+    command:
+    - bash
+    - -c
+    - |
+      RBD_DEV=$(lsblk -o NAME,TYPE -nr | awk '$2=="disk" && $1~/^rbd/{print "/dev/"$1}' | head -1)
+
+      if [ -z "$RBD_DEV" ]; then
+        echo "ERROR: No RBD device found on this node" | tee /etc/motd
+        lsblk >> /etc/motd
+        sleep infinity
+      fi
+
+      cat > /etc/motd <<MOTD
+      ============================================
+       SBR Debug Pod
+       Node: $(hostname)
+       RBD device: $RBD_DEV
+      ============================================
+
+       Simulate storage failure (read-only):
+         blockdev --setro $RBD_DEV && echo 'READ-ONLY' && blockdev --getro $RBD_DEV
+
+       Restore (read-write):
+         blockdev --setrw $RBD_DEV && echo 'READ-WRITE' && blockdev --getro $RBD_DEV
+
+       Inspect SBR superblock:
+         hexdump -C -n 80 $RBD_DEV
+
+       Reset the SBR Node Condition:
+         NODE=ip-10-0-30-33.us-west-2.compute.internal
+         IDX=\$(oc get node \$NODE -o json | \\
+           jq '[.status.conditions[].type] | index("SBRStorageUnhealthy")')
+         oc patch node \$NODE --type=json --subresource=status \\
+           -p="[{\"op\":\"remove\",\"path\":\"/status/conditions/\$IDX\"}]"
+
+      ============================================
+      MOTD
+
+      echo '[ -f /etc/motd ] && cat /etc/motd' >> /root/.bashrc
+      sleep infinity
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: host
+      mountPath: /host
+    - name: dev
+      mountPath: /dev
+  volumes:
+  - name: host
+    hostPath:
+      path: /
+  - name: dev
+    hostPath:
+      path: /dev
