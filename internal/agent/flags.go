@@ -51,6 +51,8 @@ const (
 	// FlagMaxConsecutiveFailures caps consecutive failures before self-fence and peer timing.
 	FlagMaxConsecutiveFailures = "max-consecutive-failures"
 
+	FlagRemediationGracePeriodSeconds = "remediation-grace-period-seconds"
+
 	// FlagLogLevel specifies the log level (debug, info, warn, error)
 	FlagLogLevel = "log-level"
 
@@ -107,6 +109,8 @@ const (
 
 	// DefaultMaxConsecutiveFailures is the default max consecutive failures when the flag is omitted.
 	DefaultMaxConsecutiveFailures = 7
+
+	DefaultRemediationGracePeriodSeconds = 180
 
 	// DefaultLogLevel is the default log level
 	DefaultLogLevel = "info"

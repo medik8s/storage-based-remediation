@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -534,6 +535,9 @@ func TestSBRAgent_PeerMonitorLoop_Integration(t *testing.T) {
 func TestSBRAgent_NewSBRAgent(t *testing.T) {
 	agent, _, _, cleanup := createTestSBRAgent(t, 8081)
 	defer cleanup()
+	if agent.remediationGracePeriod != 180*time.Second {
+		t.Errorf("Expected remediation grace period 180s, got %v", agent.remediationGracePeriod)
+	}
 
 	// Verify configuration
 	if agent.nodeName != "test-node" {
@@ -554,6 +558,16 @@ func TestSBRAgent_NewSBRAgent(t *testing.T) {
 		&rest.Config{}, createManagerPrefix(), false)
 	if err == nil {
 		t.Error("Expected error for invalid configuration")
+	}
+}
+
+func TestRemediationGracePeriodFlagDefault(t *testing.T) {
+	registered := flag.Lookup(agent.FlagRemediationGracePeriodSeconds)
+	if registered == nil || registered.DefValue != "180" {
+		t.Fatalf("Expected remediation grace flag default 180, got %v", registered)
+	}
+	if *remediationGracePeriodSeconds != agent.DefaultRemediationGracePeriodSeconds {
+		t.Errorf("Expected parsed default 180, got %d", *remediationGracePeriodSeconds)
 	}
 }
 
@@ -1078,6 +1092,102 @@ var _ = Describe("Fence flow with real SBR agent", func() {
 		waitUnknownMax = staleAgeForTest + 5*peerCheckInterval + 10*time.Second
 		return notTrueMinDuration, waitConditionTrueMax, waitUnknownMax
 	}
+
+	Context("remediation grace period", func() {
+		DescribeTable("uses each agent's delay for peer conditions",
+			func(grace, age time.Duration, initial, expected corev1.ConditionStatus, recoverPeer, detectOnly, secondAgent bool) {
+				deferFenceFlowPeerTestGlobals(agent.DefaultMaxConsecutiveFailures)
+				tmpDir, sbrPath, _, worker1ID, worker2ID := setupFenceFlowBase()
+				ts := uint64(time.Now().Add(-time.Hour).UnixNano())
+
+				node := &corev1.Node{}
+				key := types.NamespacedName{Name: fenceFlowTargetNode}
+				Expect(k8sClient.Get(ctx, key, node)).To(Succeed())
+				transition := metav1.NewTime(time.Now().Add(-age).Truncate(time.Second))
+				node.Status.Conditions = []corev1.NodeCondition{{
+					Type: medik8sv1alpha1.NodeConditionSBRStorageUnhealthy, Status: initial,
+					LastTransitionTime: transition,
+				}}
+				Expect(k8sClient.Status().Update(ctx, node)).To(Succeed())
+
+				startPeerAgent := func(duration time.Duration, metricsPort int) (*SBRAgent, *mocks.MockBlockDevice) {
+					mockHeartbeat := mocks.NewMockBlockDevice("/tmp/grace-heartbeat", 1024*1024)
+					mockFence := mocks.NewMockBlockDevice("/tmp/grace-fence", 1024*1024)
+					Expect(mockHeartbeat.WritePeerHeartbeat(worker2ID, ts, 1)).To(Succeed())
+					wd := mocks.NewMockWatchdog(filepath.Join(tmpDir, "watchdog"))
+					sbrAgent, err := NewSBRAgentWithWatchdog(wd, sbrPath, "worker-1", "test-cluster", worker1ID,
+						time.Second, time.Second, time.Second, 50*time.Millisecond, fenceFlowSBRTimeout,
+						RebootMethodNone, metricsPort, 10*time.Minute, true, 2*time.Second,
+						k8sClient, cfg, createManagerPrefix(), detectOnly)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(sbrAgent.remediationGracePeriod).To(Equal(180 * time.Second))
+					if duration != 0 {
+						sbrAgent.remediationGracePeriod = duration
+						Expect(sbrAgent.remediationGracePeriod).To(Equal(duration))
+					}
+					sbrAgent.setSBRDevices(mockHeartbeat, mockFence)
+					sbrAgent.peerMonitor.peers[worker2ID] = &peerStatus{
+						NodeID: worker2ID, LastTimestamp: ts, LastSequence: 1,
+						LastSeen: time.Now().Add(-time.Hour), IsHealthy: false,
+					}
+					done := make(chan struct{})
+					go func() {
+						defer close(done)
+						sbrAgent.peerMonitorLoop()
+					}()
+					DeferCleanup(func() {
+						sbrAgent.cancel()
+						Eventually(done, 5*time.Second).Should(BeClosed())
+						Expect(sbrAgent.Stop()).To(Succeed())
+					})
+					return sbrAgent, mockHeartbeat
+				}
+				sbrAgent, mockHeartbeat := startPeerAgent(grace, 9658)
+				condition := func(g Gomega) corev1.ConditionStatus {
+					g.Expect(k8sClient.Get(ctx, key, node)).To(Succeed())
+					for _, cond := range node.Status.Conditions {
+						if cond.Type == medik8sv1alpha1.NodeConditionSBRStorageUnhealthy {
+							return cond.Status
+						}
+					}
+					return ""
+				}
+				Eventually(condition, 5*time.Second, 50*time.Millisecond).Should(Equal(expected))
+				Consistently(condition, time.Second, 50*time.Millisecond).Should(Equal(expected))
+				if initial == corev1.ConditionUnknown && expected == corev1.ConditionUnknown {
+					_, lastTransition, _ := sbrAgent.getSBRStorageUnhealthyCondition(fenceFlowTargetNode)
+					Expect(lastTransition.Equal(transition.Time)).To(BeTrue())
+				}
+				if recoverPeer {
+					Expect(mockHeartbeat.WritePeerHeartbeat(worker2ID, uint64(time.Now().UnixNano()), 2)).To(Succeed())
+					Eventually(condition, 5*time.Second, 50*time.Millisecond).Should(Equal(corev1.ConditionFalse))
+				}
+				if secondAgent {
+					shortAgent, _ := startPeerAgent(0, 9659)
+					Expect(shortAgent.remediationGracePeriod).To(Equal(180 * time.Second))
+					Expect(sbrAgent.remediationGracePeriod).To(Equal(300 * time.Second))
+					Eventually(condition, 5*time.Second, 50*time.Millisecond).Should(Equal(corev1.ConditionTrue))
+				}
+				Expect(sbrAgent.isSelfFenceDetected()).To(BeFalse())
+			},
+			Entry("recovery after 180 seconds within a longer delay", 300*time.Second, 240*time.Second,
+				corev1.ConditionUnknown, corev1.ConditionUnknown, true, false, false),
+			Entry("longer delay expired", 300*time.Second, 360*time.Second,
+				corev1.ConditionUnknown, corev1.ConditionTrue, false, false, false),
+			Entry("default delay expired", time.Duration(0), 240*time.Second,
+				corev1.ConditionUnknown, corev1.ConditionTrue, false, false, false),
+			Entry("shorter delay expired", 60*time.Second, 120*time.Second,
+				corev1.ConditionUnknown, corev1.ConditionTrue, false, false, false),
+			Entry("detect-only recovery within a longer delay", 300*time.Second, 240*time.Second,
+				corev1.ConditionUnknown, corev1.ConditionUnknown, true, true, false),
+			Entry("detect-only delay expired", 300*time.Second, 360*time.Second,
+				corev1.ConditionUnknown, corev1.ConditionTrue, false, true, false),
+			Entry("stale True still becomes Unknown", 300*time.Second, time.Hour,
+				corev1.ConditionTrue, corev1.ConditionUnknown, false, false, false),
+			Entry("two agents use separate delays", 300*time.Second, 240*time.Second,
+				corev1.ConditionUnknown, corev1.ConditionUnknown, false, false, true),
+		)
+	})
 
 	Context("when agent sets SBRStorageUnhealthy and controller reconciles", func() {
 		DescribeTable("peer heartbeat loss leads to HEARTBEAT_TIMEOUT fence on shared device",

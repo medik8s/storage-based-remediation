@@ -15,7 +15,7 @@ This document describes failure scenarios, how they are detected, what the syste
 | Peer liveness timeout | `heartbeatInterval × MaxConsecutiveFailures` | `peerMonitor.checkPeerLiveness` |
 | `sbrUnhealthyConditionStaleAge` | `(MaxConsecutiveFailures+1) × heartbeatInterval + 5s` ≈ **125s** at defaults | `cmd/sbr-agent/main.go` |
 | `RemediationCheckTimeout` | `5s` — timeout for CR existence check | `cmd/sbr-agent/main.go` |
-| `SBRAgentRemediationGracePeriod` | `3 min` — after `SBRStorageUnhealthy=Unknown`, wait before setting `True` again | `cmd/sbr-agent/main.go` |
+| `spec.remediationGracePeriodSeconds` | `180s` default, range `1–300s`. Delay after `SBRStorageUnhealthy=Unknown` before another `True` report | `api/v1alpha1/storagebasedremediationconfig_types.go`, `cmd/sbr-agent/main.go` |
 | Block device I/O timeout | `--io-timeout` default **2s**; min 1s, max 10m | `cmd/sbr-agent/main.go`, `internal/blockdevice` |
 | Block device retries | 3 | `internal/blockdevice/blockdevice.go` |
 | Watchdog pet retries | 2 | `internal/watchdog/watchdog.go` |
@@ -105,7 +105,15 @@ This document describes failure scenarios, how they are detected, what the syste
 
 - **Failure:** Condition has been `True` longer than ~125s (default).
 - **Response:** Set to `Unknown` (reason: `GivingAgentChance`) so NHC can remove remediation and give the node's own agent a chance to report healthy.
-- **Outcome:** After `SBRAgentRemediationGracePeriod` (3 min), if still unhealthy: set back to `True`.
+- **Outcome:** If the peer remains unhealthy beyond `spec.remediationGracePeriodSeconds` (default 180 seconds), set the condition to `True` again.
+
+The grace timer starts at the condition's `LastTransitionTime` when it becomes `Unknown`.
+A fresh heartbeat can clear the condition before expiry.
+A larger delay gives agents more time to restore heartbeats, but delays another unhealthy report if recovery fails.
+A smaller delay can cause repeated remediation.
+Config updates replace agent Pods without resetting the stored timestamp.
+This setting does not block manual remediation or another NHC unhealthy condition.
+It does not discard an existing fence message.
 
 ### 2.6 Peer recovers
 

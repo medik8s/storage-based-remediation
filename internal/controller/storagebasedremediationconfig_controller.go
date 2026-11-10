@@ -1713,6 +1713,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *m
 		fmt.Sprintf("--%s=%s", agent.FlagRebootMethod, agent.RebootMethod),
 		fmt.Sprintf("--%s=%d", agent.FlagSBRTimeoutSeconds, sbrTimeoutSeconds),
 		fmt.Sprintf("--%s=%d", agent.FlagMaxConsecutiveFailures, maxConsecutiveFailures),
+		fmt.Sprintf("--%s=%d", agent.FlagRemediationGracePeriodSeconds, sbrConfig.Spec.GetRemediationGracePeriodSeconds()),
 		fmt.Sprintf("--%s=%s", agent.FlagSBRUpdateInterval, sbrUpdateInterval.String()),
 		fmt.Sprintf("--%s=%s", agent.FlagPeerCheckInterval, peerCheckInterval.String()),
 	}

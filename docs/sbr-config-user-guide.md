@@ -179,6 +179,50 @@ oc get pods -n openshift-operators | grep -E 'storage-based-remediation|sbr'
   Time-to-detection scales with `maxConsecutiveFailures × heartbeatInterval` for both local
   and peer failures.
 
+#### `remediationGracePeriodSeconds` (integer, optional)
+
+- **Default**: `180` seconds
+- **Range**: `1` to `300` seconds
+- **Timer origin**: `SBRStorageUnhealthy.LastTransitionTime` when the condition becomes `Unknown`.
+
+Peers wait for this delay before they report `True` again if the node remains unhealthy.
+A fresh heartbeat can change the condition to `False` before the delay expires.
+This setting applies to Filesystem, Block, and detect-only modes.
+It does not change the first unhealthy report, heartbeat intervals, failure thresholds, or stale-condition age.
+
+A larger value gives the agent more time to restore heartbeats.
+It also delays another unhealthy report if recovery fails.
+A smaller value can cause repeated remediation.
+The delay does not block manual remediation or another NHC unhealthy condition.
+It does not discard an existing fence message.
+
+The operator changes the DaemonSet arguments when you change this field.
+The DaemonSet then replaces the agent Pods.
+Each restarted agent uses the existing condition timestamp with the new delay.
+The change does not restart the timer.
+A shorter delay can expire immediately for an existing `Unknown` condition.
+During Pod replacement, older agents can still use the shorter delay.
+
+For slow recovery, select a delay that includes time for agents to restore heartbeats and peers to read them.
+This example uses 300 seconds. Check that this delay is sufficient for your cluster.
+The delay cannot guarantee that another fence message will not occur.
+
+```yaml
+apiVersion: storage-based-remediation.medik8s.io/v1alpha1
+kind: StorageBasedRemediationConfig
+metadata:
+  name: slow-recovery-sbr
+  namespace: sbr-operator-system
+spec:
+  sharedStorageClass: "shared-storage-class"
+  remediationGracePeriodSeconds: 300
+```
+
+Replace `shared-storage-class` with a compatible RWX StorageClass.
+If you omit the field, the stored CR keeps it absent.
+The operator passes `--remediation-grace-period-seconds=180` to the agents.
+A direct agent start without this flag also uses 180 seconds.
+
 #### `detectOnlyMode` (string, optional)
 - **Default**: `Disabled`
 - **Valid values**: `Disabled`, `Enabled`

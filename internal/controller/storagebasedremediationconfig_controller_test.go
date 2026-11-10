@@ -35,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -463,9 +464,124 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 			expectedTimeout := fmt.Sprintf("--%s=%d", agent.FlagSBRTimeoutSeconds, medik8sv1alpha1.DefaultSBRTimeoutSeconds)
 			Expect(args).To(ContainElement(expectedTimeout))
 
+			Expect(args).To(ContainElement("--remediation-grace-period-seconds=180"))
+
 			expectedUpdateInterval := fmt.Sprintf("--%s=%s", agent.FlagSBRUpdateInterval, resource.Spec.GetSBRUpdateInterval().String())
 			Expect(args).To(ContainElement(expectedUpdateInterval))
 		})
+
+		DescribeTable("remediation grace arguments",
+			func(mode medik8sv1alpha1.SharedStorageVolumeModeType, detectOnly bool) {
+				resource := defaultStorageBasedRemediationConfig(resourceName, namespace)
+				resource.Spec.SharedStorageVolumeMode = &mode
+				if detectOnly {
+					resource.Spec.DetectOnlyMode = new(medik8sv1alpha1.DetectOnlyModeEnabled)
+				}
+				for _, value := range []*int32{nil, new(int32(240))} {
+					resource.Spec.RemediationGracePeriodSeconds = value
+					args := controllerReconciler.buildSBRAgentArgs(resource)
+					var graceArgs []string
+					for _, arg := range args {
+						if strings.HasPrefix(arg, "--remediation-grace-period-seconds=") {
+							graceArgs = append(graceArgs, arg)
+						}
+					}
+					Expect(graceArgs).To(Equal([]string{fmt.Sprintf("--remediation-grace-period-seconds=%d", resource.Spec.GetRemediationGracePeriodSeconds())}))
+					if mode == medik8sv1alpha1.SharedStorageVolumeModeBlock {
+						Expect(args).To(ContainElement("--sbr-device=/sbr-block"))
+						Expect(args).To(ContainElement("--sbr-file-locking=false"))
+					} else {
+						Expect(args).To(ContainElement("--sbr-device=/dev/sbr/sbr-device"))
+						Expect(args).To(ContainElement("--sbr-file-locking=true"))
+					}
+					if detectOnly {
+						Expect(args).To(ContainElement("--detect-only-mode=true"))
+					} else {
+						Expect(args).NotTo(ContainElement("--detect-only-mode=true"))
+					}
+				}
+			},
+			Entry("filesystem", medik8sv1alpha1.SharedStorageVolumeModeFilesystem, false),
+			Entry("block", medik8sv1alpha1.SharedStorageVolumeModeBlock, false),
+			Entry("detect-only filesystem", medik8sv1alpha1.SharedStorageVolumeModeFilesystem, true),
+			Entry("detect-only block", medik8sv1alpha1.SharedStorageVolumeModeBlock, true),
+		)
+
+		It("should update the stored DaemonSet when remediation grace changes", func() {
+			resource := defaultStorageBasedRemediationConfig(resourceName, namespace)
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+			for _, value := range []*int32{nil, new(int32(240)), nil} {
+				Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+				resource.Spec.RemediationGracePeriodSeconds = value
+				Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+				_, _, err := reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
+				Expect(err).NotTo(HaveOccurred())
+				dsKey := types.NamespacedName{Name: fmt.Sprintf("sbr-agent-%s", resourceName), Namespace: namespace}
+				ds := &appsv1.DaemonSet{}
+				Expect(k8sClient.Get(ctx, dsKey, ds)).To(Succeed())
+				Expect(ds.Spec.Template.Spec.Containers[0].Args).To(ContainElement(
+					fmt.Sprintf("--remediation-grace-period-seconds=%d", resource.Spec.GetRemediationGracePeriodSeconds())))
+
+				_, _, err = reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
+				Expect(err).NotTo(HaveOccurred())
+				stable := &appsv1.DaemonSet{}
+				Expect(k8sClient.Get(ctx, dsKey, stable)).To(Succeed())
+				_, _, err = reconcileWithJob(ctx, controllerReconciler, typeNamespacedName)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(k8sClient.Get(ctx, dsKey, ds)).To(Succeed())
+				Expect(ds.Spec.Template).To(Equal(stable.Spec.Template))
+			}
+		})
+
+		DescribeTable("remediation grace schema accepts valid values",
+			func(value *int32) {
+				resource := defaultStorageBasedRemediationConfig(resourceName, namespace)
+				resource.Spec.RemediationGracePeriodSeconds = value
+				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+				Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+				Expect(resource.Spec.RemediationGracePeriodSeconds).To(Equal(value))
+				copy := resource.DeepCopy()
+				if value != nil {
+					*copy.Spec.RemediationGracePeriodSeconds = 2
+					Expect(*resource.Spec.RemediationGracePeriodSeconds).To(Equal(*value))
+				}
+			},
+			Entry("absent", (*int32)(nil)),
+			Entry("default", new(int32(180))),
+			Entry("custom", new(int32(240))),
+			Entry("minimum", new(int32(1))),
+			Entry("maximum", new(int32(300))),
+		)
+
+		DescribeTable("remediation grace schema rejects invalid values on create and update",
+			func(value interface{}) {
+				resource := &unstructured.Unstructured{Object: map[string]interface{}{
+					"apiVersion": medik8sv1alpha1.GroupVersion.String(),
+					"kind":       "StorageBasedRemediationConfig",
+					"metadata":   map[string]interface{}{"name": resourceName, "namespace": namespace},
+					"spec":       map[string]interface{}{"remediationGracePeriodSeconds": value},
+				}}
+				err := k8sClient.Create(ctx, resource)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("remediationGracePeriodSeconds"))
+
+				valid := defaultStorageBasedRemediationConfig(resourceName, namespace)
+				valid.Spec.RemediationGracePeriodSeconds = new(int32(240))
+				Expect(k8sClient.Create(ctx, valid)).To(Succeed())
+				Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+				Expect(unstructured.SetNestedField(resource.Object, value, "spec", "remediationGracePeriodSeconds")).To(Succeed())
+				err = k8sClient.Update(ctx, resource)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("remediationGracePeriodSeconds"))
+				Expect(k8sClient.Get(ctx, typeNamespacedName, valid)).To(Succeed())
+				Expect(*valid.Spec.RemediationGracePeriodSeconds).To(Equal(int32(240)))
+			},
+			Entry("zero", int64(0)),
+			Entry("negative", int64(-1)),
+			Entry("above maximum", int64(301)),
+			Entry("string", "240"),
+			Entry("fraction", 1.5),
+		)
 
 		It("should successfully reconcile after resource deletion", func() {
 			By("creating the custom resource for the Kind StorageBasedRemediationConfig")
