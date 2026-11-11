@@ -1110,6 +1110,129 @@ A non-watchdog path is permitted only behind an explicit test-only flag. The loc
 
 Runbooks cover unavailable peers, missing reporter or probe, unknown history, inconsistent ownership, and stuck cleanup or CSI detach. They also cover local agent lock or watchdog failure, Node UID replacement, CRs retained in the restrictions list, configuration deletion, and downgrade. Forced finalizer removal, API-object absence, and Node deletion are never fencing evidence.
 
+### 5.11. Pre-kubelet self-cordon and announce
+
+This section adds a small host-side service that protects the node after scenario 4's reboot, and more generally after any reboot committed at a moment when no peer could place restrictions. It has two parts that can ship separately:
+
+- **The self-cordon** — the node takes itself out of scheduling and announces its return before kubelet starts.
+- **The boot gate** — the node keeps kubelet from starting until the cluster has finished evacuating it.
+
+The self-cordon makes the rejoin visible and harmless to the scheduler. The boot gate is what closes the two-writer risk; it is a configuration on top of the same state. Everything below was measured on live clusters (OCP 4.22, Kubernetes 1.35), not taken from documentation.
+
+```mermaid
+flowchart TD
+  A["The agent on the node<br/>storage and API both down past the grace period"] --> B["One durable journal write<br/>reboot decision plus arming state<br/>then stop feeding the watchdog"]
+  B --> R["The node resets"]
+  R --> U["The boot unit runs before kubelet<br/>and reads the journal"]
+  U --> D{"What does the journal say"}
+  D -- "decision recorded,<br/>or unclean shutdown while storage was unhealthy" --> H["Cordon the node<br/>publish SBRRejoinPending<br/>and with the gate enabled hold kubelet"]
+  D -- "clean shutdown, storage was healthy" --> N["Normal boot"]
+  D -- "journal missing or corrupt" --> C["Cordon only<br/>kubelet starts normally"]
+  H --> P["Peers and the operator evacuate<br/>through OutOfService<br/>nothing is running, force-detach is safe"]
+  P --> REL["The operator releases the node<br/>uncordon plus clearing SBRRejoinPending<br/>after evacuation is validated"]
+  REL --> K["kubelet starts<br/>only the pods that survived the evacuation restart"]
+```
+
+#### The problem after the reboot
+
+A node that resets itself during a combined API and storage outage returns to a cluster that could not prepare for it. NHC cannot create a remediation request, peers cannot write the Node record, and the node cannot taint itself — Kubernetes refuses taint writes from a node's own certificate (measured, see below).
+
+When the API returns, two things race:
+
+- **Kubelet**, within seconds, restarts every pod still bound to the node. Nothing evicted them, and a reboot alone never moves a stateful workload: the pod stays bound, later deletions hang in Terminating, and the RWO volume stays attached until something force-moves it — which is what OutOfService exists to do.
+- **The taint-and-evict chain** needs minutes, and its controllers are recovering from the same outage.
+
+Two endings, both bad. If kubelet wins, the node quietly returns to service with its old workloads, possibly on unhealthy storage, and the fence never happened. If the fence wins late, OutOfService force-deletes pods and force-detaches volumes on the assumption that the node is dead — but it is alive and writing, and the replacement workload starts elsewhere on the same disk. The self-cordon closes the first ending and narrows the second. The boot gate closes both.
+
+#### What the node may do to itself — measured
+
+The design rests on one measured fact: of everything a node might want to do to itself, exactly one scheduling write is allowed — the cordon flag, `spec.unschedulable`.
+
+| Request with the kubelet's client certificate | Result |
+|---|---|
+| GET its own Node | 200 |
+| PATCH `spec.unschedulable` — cordon and uncordon | 200, both directions. The node controller adds and removes the `node.kubernetes.io/unschedulable` taint accordingly |
+| PATCH taints, any key — including the `node-restriction.kubernetes.io/` prefix | 403 — `not allowed to modify taints` |
+| PATCH its own status conditions (`nodes/status`) | 200 |
+| GET another node's object | 200 — reads are allowed, writes are not |
+| Reach the API from the host before kubelet starts | Works — the kubeconfig endpoint is host-routable and verifies with the kubelet CA, no CNI or kubelet needed |
+
+Two rows deserve a second look. The `node-restriction.kubernetes.io/` prefix, which the documentation presents as a way for a node to taint itself, is refused on Kubernetes 1.35. The cordon flag, which the documentation does not advertise, works — in both directions. This matrix is the only external fact the design depends on, so qualification must re-measure it on every supported OpenShift version. If a future version withdraws the cordon permission, the design degrades to announce-only and must say so loudly.
+
+The security story is short. Any root process on the host can already read the kubelet's certificate. The boot unit uses a capability the node already has, and NodeRestriction limits that certificate to near-harmless changes to its own object: one scheduling flag and status conditions. No service account, no RBAC grant, no copied credentials.
+
+#### The self-cordon at boot
+
+`sbr-self-cordon.service` is a oneshot unit ordered `After=network-online.target` and `Before=kubelet.service`. It runs on every boot; the check is local and cheap. It is a small Go binary that reads the journal through the shared node-local journal library (`pkg/nodestate` in `medik8s/common`) as a read-only consumer — not a shell script parsing JSON — so it gets the library's hardened reads and honest snapshots. The arming state it looks for is a field of the journal document, not a separate file, so the library's one-file-per-writer model covers it.
+
+When the journal says this boot needs protection, the unit makes two API calls with the kubelet's certificate:
+
+1. **Cordon** — `PATCH spec.unschedulable=true`, with retries, because the API may still be down.
+2. **Announce** — an `SBRRejoinPending=True` condition via `nodes/status`, carrying the reason. Visible in `oc describe node`, readable by NHC and by administrators.
+
+The unit always uses the host-routable endpoint named in the node's kubeconfig, never a local proxy — the proxy's own pod is not running at this point in the boot.
+
+The unit does not block kubelet on the API. If the API is down, the retries run out, kubelet starts, and the agent re-applies the cordon and the condition once it is running. A late cordon costs scheduling isolation, not correctness. The boot gate below is the deliberate exception, and it blocks only while it is already holding kubelet.
+
+Measured on a live cluster, unit armed, real reboot: the cordon landed **8.8 seconds before kubelet started** — host journal, same clock: the unit finished at 17:35:58, kubelet started at 17:36:06. A pod pinned to the node stayed `Pending` with `FailedScheduling`. The pods already bound to the node restarted and ran — a cordon moves nothing, that is the known limit. Uncordon through the same certificate was verified too.
+
+One forensic note: use the host journal for boot ordering. The API-side taint timestamp was minutes off — measured clock skew.
+
+#### Who installs it, and why not MachineConfig
+
+The obvious way to deliver a systemd unit on OpenShift is the Machine Config Operator. Hosted control planes break that: we measured a managed hosted cluster whose customer-visible side contains worker nodes only — no `machineconfigs` resource, no MachineConfigPools. MCO runs in the provider's management cluster, out of reach. Any design that needs a MachineConfig excludes those clusters.
+
+So the agent installs and owns the wiring itself:
+
+- The unit goes under `/etc/systemd/system`, the binary under the state root. On RHCOS `/usr` is read-only, but `/etc` and `/var` survive reboots — which is all the unit needs.
+- At every start the agent reconciles the wiring: unit present and enabled, binary hash correct, state root writable. It repairs what it can and reports what it cannot. Degraded rejoin protection is loud, and never silently disables fencing.
+- MCO on standalone clusters does not purge unknown local units, so the two coexist.
+- Uninstall removes the unit, the binary, and the enablement together.
+
+#### Arming and recovery
+
+The journal is the source of truth; the arming state in it is the actuator; the cordon is the effect. When the agent commits to a reboot it writes the decision and the arming state in **one durable journal write**, then reboots. Every crash in between is safe: there is never an arming state without a decision, and never a reboot before the write is durable. If the agent dies between the write and the reboot, the boot ID has not changed, so the next agent start clears the arming state.
+
+Recovery needs no host access. Once storage is healthy and the API reachable for a configured period — one healthy observation is not enough — the agent clears the arming state, uncordons, and clears the announcement. An administrator can always uncordon directly.
+
+#### The boot gate: hold kubelet until the cluster is done
+
+The cordon cannot stop kubelet from restarting bound pods — that is where the two-writer risk lives. The boot gate closes it. When armed, the unit does not exit after cordoning: it keeps kubelet from starting for as long as the node is cordoned.
+
+1. The node boots held. Nothing runs.
+2. Peers evacuate it through OutOfService. Force-detach is safe — there is no writer.
+3. The operator releases the node: uncordon **and** clearing the SBR-managed announcement. Only the operator clears that field, and only after validated evacuation.
+4. The unit sees the release and exits. Kubelet starts, and restarts only the pods that survived the evacuation — the evicted ones are gone from the API, and kubelet keeps no local memory of them.
+
+Three rules keep it safe:
+
+- **Holding costs nothing without the API.** The unit keeps kubelet stopped by simply not starting it. A boot with the API down stays held and loses nothing — a kubelet without the API runs no workloads anyway. An expired node certificate has the same effect: the node stays held until the credential is repaired.
+- **The release is two-field.** The cordon flag is shared infrastructure — MCO, autoscalers, runbooks, and a routine `kubectl uncordon` can all flip it. A plain uncordon alone must not release the gate; that is why the announcement must be cleared too, by the operator, after evacuation. And the gate may only release on that signal observed *after* it cordoned the node itself — a boot that never cordoned stays held. A naive implementation that just polls the cordon state would release on the first poll; it must not ship.
+- **Only armed boots are held.** A maintenance reboot of an ordinarily cordoned node behaves exactly as today.
+
+#### Arming without a decision: the journal covers unplanned deaths
+
+The watchdog fires when feeding stops — and feeding stops for two very different reasons. The agent released it after recording a decision. Or the agent died: a crash, a panic, a host freeze, a power loss. The first case is covered above. The second writes no decision at all — the feeder's death is the one failure that records nothing — and the node would come back unprotected.
+
+The journal closes most of that gap. It is written every tick and survives the reboot, so the last entry is at most one tick before the node died: the node's state right before death is readable at boot with no API, no certificate, and no kubelet. The block-device heartbeat cannot help here — the probe volume is attached to the agent pod through CSI, and no attachment exists before kubelet.
+
+The unit arms by tiers, with the cost of the action matched to the strength of the evidence:
+
+| The journal at boot | What the unit does |
+|---|---|
+| A reboot decision is recorded | Cordon and hold |
+| Unclean shutdown, storage unhealthy at the last write | Cordon and hold |
+| Unclean shutdown, storage healthy at the last write | Normal boot |
+| Journal missing or corrupt | Cordon only, no hold |
+
+The asymmetry is deliberate. A cordon is cheap and self-reversing — the agent uncordons once it sees healthy storage — while a hold needs a release. So: over-cordon on weak evidence, never under-cordon; hold only on strong evidence.
+
+Two cautions. Do not judge freshness by timestamps — node-to-API clock skew was measured in minutes — use the clean-shutdown marker and the order of entries. And the journal is a snapshot from before death, not the current state: a node whose incident resolved while it was down still boots cordoned. That is acceptable because recovery is cheap, not because the data is fresh.
+
+#### Where this sits among the alternatives
+
+Two companion proposals close the same race more strongly. The **durable boot hold** (#6) stops kubelet and recovers with a command on the host. **Controlled rejoin** (#5) adds release under policy, a rejoin controller, and a cryptographically boot-bound release authorization enforced by admission policy. All three consume the same journal decision and arming state, so they are stages of one architecture rather than rivals: the self-cordon ships first, the boot gate extends it, controlled rejoin extends the gate. The boot gate is deliberately the middle point — the hold of #6 with the release moved into the API, trading #5's strong release binding for the simpler two-field rule.
+
 ## 6. Open Questions
 
 ### 6.1. Residual limitation: every evidence path unavailable
@@ -1120,9 +1243,11 @@ A healthy peer cannot manufacture target boot evidence. The accepted request can
 
 ### 6.2. Accepted risks: OutOfService and scheduling restoration
 
-The design retains current SBR's OutOfService and rejoin risks. Current SBR uses shared-heartbeat cessation for fencing completion. BlockPerNode requires `BootEnded`, but still does not prove continuing isolation. A rebooted host can restart workloads before the taint arrives. Kubernetes force deletion or detach can then overlap workload writes and cause duplicate writers or data corruption.
+In its base configuration the design retains current SBR's OutOfService and rejoin risks. Current SBR uses shared-heartbeat cessation for fencing completion. BlockPerNode requires `BootEnded`, but still does not prove continuing isolation. A rebooted host can restart workloads before the taint arrives. Kubernetes force deletion or detach can then overlap workload writes and cause duplicate writers or data corruption.
 
-Neither a changed boot ID nor the five-minute observation limit proves continuing isolation. The design deliberately adds no external fence or early-boot workload hold. `FencingSucceeded=True` is the provider's terminal policy result, not a guarantee of continuing isolation.
+Section 5.11 changes this in two steps. The self-cordon alone makes the rejoin visible and keeps new workloads off the node, but bound workloads still restart and the force-detach overlap remains. With the boot gate enabled, kubelet does not start until the node is released, so force-detach never overlaps a writer and nothing restarts before the evacuation — what remains moves to the release path (Section 6.10). The gate is a configuration choice; a deployment that leaves it off keeps the risks of this section unchanged.
+
+Neither a changed boot ID nor the five-minute observation limit proves continuing isolation in the base configuration. `FencingSucceeded=True` is the provider's terminal policy result, not a guarantee of continuing isolation.
 
 During remediation CR deletion, the peer removes SBR’s restrictions when the restrictions list becomes empty, even if cleanup is incomplete or unknown. Pending controller actions can continue after taint removal. The design accepts this rejoin risk and does not require a separate safety approval.
 
@@ -1185,6 +1310,16 @@ Without a peer, SBR must wait to record Offered, Cancelled, or BootEnded, or to 
 - How many CRs should the supported policy allow in the restrictions list?
 
 The design does not guarantee that a replacement VM or Pod starts successfully. Cleanup observations and replacement workload availability remain different results.
+
+### 6.10. Accepted limitations of the self-cordon
+
+Without the boot gate, bound workloads restart on the rebooted node. The cordon blocks new scheduling only; kubelet restarts everything already bound. The OutOfService force-detach window during a late evacuation is narrower — the node is cordoned and announced by then — but not closed.
+
+With the gate enabled both are closed. The residual moves to the release path: a premature two-field release, or a compromised releaser, can restart the race.
+
+Unclean boots arm on evidence. A crash while storage was healthy boots normally. A crash during a storage incident boots held. The remaining gap is the unclean boot with a missing or corrupt journal: such a node cordons but does not hold, so its bound workloads can still restart while the cluster treats it as dead.
+
+Pods that tolerate every taint also ignore the cordon's taint. These are mostly daemon sets, which should keep running on an unhealthy node anyway.
 
 ## 7. Upgrade / Downgrade Concerns
 
@@ -1347,6 +1482,18 @@ The current reboot watcher waits for `FencingSucceeded` before restarting a Kind
 
 Kind shares the host kernel. Its null watchdog cannot qualify hardware watchdog behavior. Keep production checks enabled. Run real-host, CSI, and KubeVirt qualification separately from these simulations.
 
+### 8.7. Self-cordon qualification
+
+envtest covers the recovery and re-assert logic; systemd boot ordering needs one real-host test per supported platform, because Kind cannot provide it.
+
+- **Permission matrix, per OpenShift version:** re-measure with the kubelet certificate — cordon, uncordon, taint refusal, condition write. If the cordon permission is withdrawn, the design must degrade to announce-only, loudly.
+- **Boot ordering:** the host journal must show the unit finished before kubelet started. The criterion is the order, not the margin.
+- **Scheduling:** a pod pinned to the cordoned node stays Pending; pods bound before the reboot restart and run.
+- **Wiring lifecycle:** agent install, reconcile at start, persistence across reboots, coexistence with MCO rollouts, uninstall removes everything.
+- **TLS:** a CA mismatch, or a kubeconfig CA referenced by path, fails as a silent connection error rather than a permission denial — measured in the field. The unit must tell a transport failure and a 403 apart, and must never disable certificate verification.
+- **Boot gate:** kubelet stays off while the node is cordoned; a plain uncordon alone does not release; the two-field release does; an MCO or autoscaler cordon flip does not; an expired certificate keeps the node held; after release, only the surviving pods restart.
+- **Journal arming:** all four tiers of the table, and freshness from the shutdown marker and entry order — never from timestamps.
+
 ## Alternatives considered
 
 - Run the BlockPerNode lifecycle controller in the elected operator manager or a separate Pod without a probe volume. This removes the probe-volume startup dependency from lifecycle reconciliation. The selected design reuses the existing agent controller and accepts the peer availability requirement in Section 6.8.
@@ -1354,6 +1501,9 @@ Kind shares the host kernel. Its null watchdog cannot qualify hardware watchdog 
 - Keep the existing shared-storage SBR design. This preserves the current implementation, but it does not support the CSI drivers targeted by this proposal. These drivers cannot provide the required shared Block volume with concurrent writes.
 - Chain NHC, SNR, and SBR. This reuses SNR reboot and cleanup behavior, but divides one remediation across two providers. The providers must also coordinate watchdog control, boot information, and responsibility for cleanup.
 - Trigger remediation from the Node `Ready` condition or make out-of-band fencing the primary path. `Ready` would allow an API or network failure with healthy storage to disrupt a VM. Out-of-band fencing is useful where available, but is not present in every target environment and remains a separately qualified isolation mechanism.
+- Accept the rejoin risk and simply reboot — do nothing after scenario 4. This costs nothing to build and is today's behavior, but the race is structural rather than unlucky: whenever the outage happens, kubelet restarts the old workloads before any fence can land, and a late OutOfService force-detach can put two writers on one volume. Nothing fails at the moment it happens, so the corruption is found late and unattributably.
+- Hold the node with a durable boot mask and recover with a command on the host (the durable boot hold proposal). This closes the race unconditionally, but every remediation then ends with an administrator reaching the machine or reprovisioning it, and its mask and reporter are delivered through MachineConfig, which hosted control planes do not expose to the customer. The boot gate in Section 5.11 keeps the hold and moves the release into the API instead.
+- Add controlled rejoin with automatic release (the controlled-rejoin proposal). This is the strongest option — it also covers unclean boots and recovers without a human — but it needs a rejoin controller, a release protocol enforced by admission policy, and per-platform qualification: more machinery than the near-term requirement justifies. The self-cordon and the boot gate are designed as its first two stages, so choosing them first does not block it.
 
 This design was selected because it keeps one remediation provider and one component permitted to perform local actions. It replaces the shared probe with a private per-node Block volume. It is the smallest extension that preserves existing shared-storage behavior and keeps storage health separate from API or network health.
 
@@ -1367,7 +1517,7 @@ A **remediation CR** is a `StorageBasedRemediation` resource. An **SBR config CR
 | Peer controller | The API controller in an agent that processes requests for other nodes. |
 | Reporter | This separate component reads host boot information in the order required by Section 5.7. It publishes observations without using the probe. |
 | Probe | This private Block volume contains disposable test data. |
-| Journal | This durable host file records attempts and autonomous reboot counts. |
+| Journal | This durable host file records attempts, autonomous reboot counts, the shutdown state, the storage I/O ring, and the arming state (Section 5.11). |
 | Request identity | The CR UID identifies a request. Its Node UID and initial boot ID cannot change. |
 | Offered | A peer recorded a request that the target may accept. The target cannot reboot for the request yet. |
 | Accepted | The target successfully changed Offered to Accepted through a conditional Node update, without a reboot-count check. This decision cannot be cancelled. |
@@ -1383,5 +1533,13 @@ A **remediation CR** is a `StorageBasedRemediation` resource. An **SBR config CR
 | Autonomous reboot count and limit | SBR records autonomous attempts and their limit per node. A new CR, process, or configuration cannot reset these records. Requested reboots have no such limit. |
 | Outage period | After an autonomous attempt, no further autonomous attempt is permitted until storage and API health satisfy the configured recovery period. |
 | Rearm | SBR permits another autonomous reboot after the configured recovery period and required history checks. The recovery period defaults to five minutes. |
+| Boot unit | The host-side service (`sbr-self-cordon.service`) that runs before kubelet at every boot, reads the journal, and applies Section 5.11. |
+| Self-cordon | The node sets `spec.unschedulable` on itself through the node identity. It blocks new scheduling only; it moves nothing already bound. |
+| Arming state | The journal field that tells the boot unit a boot needs protection. Written together with the reboot decision in one durable write. |
+| Boot gate | The configuration in which the boot unit holds kubelet from starting until the node is released. |
+| Held | A node whose boot unit is holding kubelet. Nothing runs on it, and it never becomes Ready. |
+| Two-field release | The gate releases only when the node is uncordoned and the SBR-managed announcement is cleared. Only the operator clears the announcement, after validated evacuation. |
+| SBRRejoinPending | The Node condition the boot unit publishes to announce an armed rejoin. It is evidence, not authority. |
+| Clean and unclean shutdown | Whether the agent stopped in an orderly way before the reboot. An unclean shutdown with storage unhealthy at the last journal write arms the boot unit. |
 
 Recording Offered, accepting the request, recording the local reboot decision, establishing BootEnded, and checking cleanup are separate steps. The policy can finish while cleanup remains incomplete. Neither success conditions nor elapsed time prove that workloads remain isolated.
