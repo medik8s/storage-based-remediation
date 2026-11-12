@@ -1,0 +1,19 @@
+[Unit]
+Description=SBR pre-kubelet self-cordon
+# Run before kubelet so the cordon is in place before any workload can start.
+Before=kubelet.service
+# Only run when the agent has armed the boot (recorded a reboot decision).
+ConditionPathExists=/var/lib/medik8s/state/sbr-armed
+# Don't run in containers or on control-plane nodes.
+ConditionPathExists=!/.dockerenv
+ConditionPathExists=/var/lib/medik8s/state
+
+[Service]
+Type=oneshot
+ExecStart=/var/lib/medik8s/state/sbr-self-cordon
+RemainAfterExit=yes
+# The cordon is best-effort in base mode; don't block the node forever.
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
