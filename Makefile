@@ -14,7 +14,7 @@ QUAY_AGENT_IMG ?= $(IMAGE_REGISTRY)/$(AGENT_NAME)
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=5.8.1)
 # - use environment variables to overwrite this value (e.g export VERSION=5.8.1)
-DEFAULT_VERSION := 5.8.0
+DEFAULT_VERSION := 5.9.0
 VERSION ?= $(DEFAULT_VERSION)
 # The version this build replaces in the upgrade graph. Defaults to the last GA release
 # so the generated catalog always has a valid upgrade edge (override for point releases).
