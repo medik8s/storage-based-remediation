@@ -130,4 +130,4 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
 )
 
-replace github.com/medik8s/common => github.com/mpryc/common v1.17.1-0.20261112215933-5104f7fd2625
+replace github.com/medik8s/common => github.com/medik8s/common v1.17.1-0.20261113092850-161ffbecb413

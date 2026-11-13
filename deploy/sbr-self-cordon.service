@@ -2,7 +2,14 @@
 Description=SBR pre-kubelet self-cordon
 # Run before kubelet so the cordon is in place before any workload can start.
 Before=kubelet.service
-# Only run when the agent has armed the boot (recorded a reboot decision).
+# The cordon talks to the API server over the network, so wait for it rather
+# than burning the bounded retry window on an interface that is still down.
+Wants=network-online.target
+After=network-online.target
+# Run when the agent had the watchdog armed (created after the first durable
+# journal write, removed at agent startup). The journal tiers decide whether
+# the boot actually needs protection; an ordinary reboot costs one process
+# that exits immediately.
 ConditionPathExists=/var/lib/medik8s/state/sbr-armed
 # Don't run in containers or on control-plane nodes.
 ConditionPathExists=!/.dockerenv
@@ -10,9 +17,17 @@ ConditionPathExists=/var/lib/medik8s/state
 
 [Service]
 Type=oneshot
-ExecStart=/var/lib/medik8s/state/sbr-self-cordon
+# The node identity descriptor the agent persists at enrollment. The file is
+# required (no "-" prefix): if the agent never provisioned it, the unit fails
+# to start rather than invoking the armed path with empty identity fields.
+EnvironmentFile=/var/lib/medik8s/state/sbr-identity.env
+ExecStart=/usr/local/bin/sbr-self-cordon -node-name=${NODE_NAME} -uid=${NODE_UID} -api-server=${API_SERVER}
 RemainAfterExit=yes
-# The cordon is best-effort in base mode; don't block the node forever.
+# The cordon is best-effort in base mode; don't block the node forever. This
+# must exceed the command's total retry budget (CordonTotalBudget: 12 retries
+# x 5s delay + one 30s call in flight = 90s), or systemd kills the unit
+# mid-retry and a cordon still being attempted reads as a failure. Keep the
+# two values in step when either changes.
 TimeoutStartSec=120
 
 [Install]

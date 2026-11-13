@@ -26,11 +26,13 @@ type fakeJournal struct {
 	hasArmingState   bool
 	uncleanShutdown  bool
 	storageUnhealthy bool
+	journalUnusable  bool
 }
 
 func (f *fakeJournal) HasArmingState() bool                 { return f.hasArmingState }
 func (f *fakeJournal) IsUncleanShutdown() bool              { return f.uncleanShutdown }
 func (f *fakeJournal) StorageWasUnhealthyAtLastWrite() bool { return f.storageUnhealthy }
+func (f *fakeJournal) JournalUnusable() bool                { return f.journalUnusable }
 
 func TestEvaluateArming(t *testing.T) {
 	tests := []struct {
@@ -39,6 +41,12 @@ func TestEvaluateArming(t *testing.T) {
 		wantArmed bool
 		wantIn    string // substring of the reason
 	}{
+		{
+			name:      "unusable journal fails closed",
+			journal:   &fakeJournal{journalUnusable: true},
+			wantArmed: true,
+			wantIn:    "failing closed",
+		},
 		{
 			name:      "recorded decision arms the boot",
 			journal:   &fakeJournal{hasArmingState: true},

@@ -16,10 +16,7 @@ limitations under the License.
 
 package bootunit
 
-import (
-	"fmt"
-	"path/filepath"
-)
+import "fmt"
 
 // ArmingDecision is the boot unit's judgment about whether the current boot
 // needs protection. The tiers are ordered by evidence strength: a recorded
@@ -48,6 +45,10 @@ type ArmingJournal interface {
 	// StorageWasUnhealthyAtLastWrite reports whether the last journal
 	// entry recorded a sustained unhealthy storage verdict.
 	StorageWasUnhealthyAtLastWrite() bool
+
+	// JournalUnusable reports whether the journal could not be read or
+	// trusted at all: missing, unreadable, or corrupt.
+	JournalUnusable() bool
 }
 
 // EvaluateArming applies the arming tiers from the design: the cost of the
@@ -55,18 +56,26 @@ type ArmingJournal interface {
 // evidence, never under-cordon; hold only on strong evidence.
 //
 // Tiers:
+//   - The journal is unusable: cordon. The unit only runs when the agent's
+//     arming flag exists, so a missing or corrupt journal next to a present
+//     flag means the flag outlived or outpaced the journal — fail closed,
+//     because a cordon is reversible and a missed one is not.
 //   - A reboot decision is recorded: cordon (strongest evidence)
 //   - Unclean shutdown and storage was unhealthy at the last write: cordon
 //     (covers crashes nobody planned: the watchdog fires when feeding stops,
 //     which also means an agent that died recording nothing)
 //   - Unclean shutdown and storage was healthy: normal boot
-//   - Journal missing or unreadable: the caller decides (cordon-only in the
-//     full design; the boot unit's ConditionPathExists arming flag means we
-//     never reach EvaluateArming without the flag file, but the journal
-//     itself may be corrupt)
+//   - Clean shutdown, no arming state: normal boot
 func EvaluateArming(journal ArmingJournal) ArmingDecision {
 	if journal == nil {
 		return ArmingDecision{Armed: false, Reason: "no journal provided"}
+	}
+
+	if journal.JournalUnusable() {
+		return ArmingDecision{
+			Armed:  true,
+			Reason: "journal missing or unreadable while the arming flag exists; failing closed",
+		}
 	}
 
 	if journal.HasArmingState() {
@@ -93,57 +102,6 @@ func EvaluateArming(journal ArmingJournal) ArmingDecision {
 		Armed:  false,
 		Reason: "clean shutdown, no arming state; normal boot",
 	}
-}
-
-// HostJournal implements ArmingJournal by reading the SBR journal on the
-// host filesystem via the shared pkg/nodestate library.
-type HostJournal struct {
-	stateRoot string
-}
-
-// NewHostJournal creates a journal reader rooted at the given state directory.
-// The default root is HostStateRoot.
-func NewHostJournal(stateRoot string) *HostJournal {
-	if stateRoot == "" {
-		stateRoot = HostStateRoot
-	}
-	return &HostJournal{stateRoot: stateRoot}
-}
-
-// JournalPath returns the full path of the SBR journal file.
-func (j *HostJournal) JournalPath() string {
-	return filepath.Join(j.stateRoot, "sbr.json")
-}
-
-// HasArmingState reads the journal and checks for a recorded arming state.
-func (j *HostJournal) HasArmingState() bool {
-	return readJournalField(j.JournalPath(), "armingState")
-}
-
-// IsUncleanShutdown reads the journal's shutdown state.
-func (j *HostJournal) IsUncleanShutdown() bool {
-	return !readJournalField(j.JournalPath(), "cleanShutdown")
-}
-
-// StorageWasUnhealthyAtLastWrite reads the last I/O verdict from the journal.
-func (j *HostJournal) StorageWasUnhealthyAtLastWrite() bool {
-	return readJournalField(j.JournalPath(), "storageUnhealthy")
-}
-
-// readJournalField reads a boolean field from the journal JSON. It returns
-// false on any error (missing file, corrupt JSON, field absent) — the boot
-// unit errs on the side of not-armed, because a missing journal is the
-// weakest evidence tier (the arming flag file still gates the unit).
-func readJournalField(path, field string) bool {
-	// The actual journal reading uses the shared pkg/nodestate library.
-	// This is a thin wrapper that returns false on any error — the boot
-	// unit's ConditionPathExists arming flag is the primary gate; the
-	// journal tiers refine the decision.
-	//
-	// TODO: implement using pkg/nodestate once the arming-state schema
-	// is defined in the agent's journal integration (AGT-06). For now,
-	// the arming flag file alone drives the decision.
-	return false
 }
 
 // String returns a human-readable representation for logging.

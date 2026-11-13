@@ -22,26 +22,65 @@ package bootunit
 
 import "time"
 
-// Paths on the host filesystem. The agent installs the binary under the
-// state root and the unit file under the systemd directory.
+// Paths on the host filesystem. The agent installs the binary and the unit
+// file under /usr/local and /etc/systemd/system; the journal, arming flag and
+// identity descriptor live under the state root.
 const (
 	// UnitName is the systemd service name. It must sort Before=kubelet.service.
 	UnitName = "sbr-self-cordon.service"
 
 	// HostStateRoot is the single root for medik8s host state, shared with
-	// the agent and the journal.
+	// the agent and the journal: the journal, the arming flag and the
+	// identity descriptor. It is 0700 and never holds executables.
 	HostStateRoot = "/var/lib/medik8s/state"
 
-	// HostBinaryPath is where the agent installs the boot unit binary.
-	HostBinaryPath = HostStateRoot + "/sbr-self-cordon"
+	// HostBinaryPath is the boot unit binary's path on the HOST, as the
+	// systemd unit's ExecStart references it.
+	//
+	// It must be a path whose SELinux label systemd (init_t) may execute.
+	// /var/lib/medik8s/state is NOT one: on enforcing RHCOS, exec of a
+	// var_lib_t file by init_t is denied (verified empirically: AVC
+	// "denied { execute } ... scontext=init_t tcontext=var_lib_t",
+	// unit fails 203/EXEC). /usr/local/bin is the sanctioned writable
+	// executable path on OSTree systems — a bind mount of /var/usrlocal/bin
+	// labeled bin_t — and the unit starts cleanly from there (verified the
+	// same way).
+	HostBinaryPath = "/usr/local/bin/sbr-self-cordon"
+
+	// ContainerHostBinPath is where the agent CONTAINER sees HostBinaryPath.
+	// The DaemonSet mounts the host's /usr/local at /host/usr/local rather
+	// than at /usr/local, because a same-path mount would shadow the
+	// image's own /usr/local/bin that holds the source binary — the copy
+	// would become a no-op onto itself. This follows the existing
+	// convention of prefixed host mounts (as with /host-dev for the
+	// watchdog directory). On OSTree, a hostPath mount of /usr/local
+	// resolves through the /var/usrlocal bind mount, so it works on both
+	// OSTree and conventional hosts.
+	ContainerHostBinPath = "/host/usr/local/bin/sbr-self-cordon"
 
 	// HostUnitPath is where the agent installs the systemd unit file.
 	HostUnitPath = "/etc/systemd/system/" + UnitName
 
-	// ArmingFlagPath is the ConditionPathExists gate for the unit: the agent
-	// creates this file only when it commits a reboot decision, so ordinary
-	// reboots never trigger the unit at all.
+	// ArmingFlagPath is the ConditionPathExists gate for the unit. The agent
+	// creates it when it ARMS THE WATCHDOG — not only when it commits a
+	// reboot decision — because the weaker journal tiers exist precisely for
+	// resets nobody planned: an agent that dies mid-storage-outage records
+	// no reboot decision, and a reboot-commit-only flag would gate the unit
+	// off in exactly that scenario, leaving Tier 2 unreachable. The flag is
+	// created after the first durable journal write, so its presence implies
+	// a journal existed (keeping the fail-closed tier sound), and the agent
+	// removes it at startup once it has taken over protection duties for
+	// the boot. While the flag exists the unit runs on every boot; the
+	// journal tiers carry the decision, and an ordinary reboot costs one
+	// process that exits immediately.
 	ArmingFlagPath = HostStateRoot + "/sbr-armed"
+
+	// HostIdentityEnvPath is the systemd EnvironmentFile the unit loads its
+	// node identity from. The agent persists the descriptor with
+	// WriteIdentityEnv at enrollment; the unit declares the file required,
+	// so a node without a provisioned identity refuses to run the armed
+	// path instead of running it with empty fields.
+	HostIdentityEnvPath = HostStateRoot + "/sbr-identity.env"
 
 	// ContainerBinaryPath is the location of the binary inside the agent
 	// container image; the agent copies it to HostBinaryPath.
@@ -71,7 +110,15 @@ const (
 
 	// CordonRetryAttempts bounds how long the unit retries before giving up
 	// on cordoning (the base-mode unit then exits and kubelet starts).
-	CordonRetryAttempts = 12 // 60 seconds total
+	CordonRetryAttempts = 12 // 60 seconds of delays
+
+	// CordonTotalBudget bounds the whole cordon-and-announce operation: every
+	// retry delay plus one in-flight call at APITimeout. It must stay below
+	// the unit's TimeoutStartSec (120s in deploy/sbr-self-cordon.service):
+	// a budget above it means systemd kills the unit mid-retry, and a cordon
+	// that was still being attempted reads as a cordon failure. Keep the two
+	// values in step when either changes.
+	CordonTotalBudget = CordonRetryDelay*CordonRetryAttempts + APITimeout
 )
 
 // BootState describes what the boot unit decided to do.
