@@ -54,14 +54,14 @@ metadata:
     createdAt: ""
     description: Storage-Based Remediation Operator for remediating nodes using storage-based
       fencing (SBD/STONITH).
-    olm.skipRange: '>=0.3.0 <5.8.0'
+    olm.skipRange: '>=0.3.0 <5.9.0'
     operatorframework.io/suggested-namespace: openshift-workload-availability
     operatorframework.io/suggested-namespace-template: '{"kind":"Namespace","apiVersion":"v1","metadata":{"name":"openshift-workload-availability","annotations":{"openshift.io/node-selector":""}}}'
     operators.operatorframework.io/builder: operator-sdk-v1.42.2
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/medik8s/storage-based-remediation
     support: Medik8s
-  name: storage-based-remediation.v5.8.0
+  name: storage-based-remediation.v5.9.0
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -344,8 +344,8 @@ spec:
                     fieldRef:
                       fieldPath: metadata.namespace
                 - name: RELATED_IMAGE_AGENT
-                  value: quay.io/medik8s/storage-based-remediation-agent:v5.8.0
-                image: quay.io/medik8s/storage-based-remediation-operator:v5.8.0
+                  value: quay.io/medik8s/storage-based-remediation-agent:v5.9.0
+                image: quay.io/medik8s/storage-based-remediation-operator:v5.9.0
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -450,7 +450,7 @@ spec:
     name: medik8s
     url: https://github.com/medik8s
   relatedImages:
-  - image: quay.io/medik8s/storage-based-remediation-agent:v5.8.0
+  - image: quay.io/medik8s/storage-based-remediation-agent:v5.9.0
     name: agent
-  version: 5.8.0
+  version: 5.9.0
   replaces: storage-based-remediation.v0.3.1

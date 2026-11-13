@@ -20,6 +20,7 @@ import (
 	commonConditions "github.com/medik8s/common/pkg/conditions"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // SBRRemediationConditionType represents the type of condition for StorageBasedRemediation
@@ -66,7 +67,33 @@ type StorageBasedRemediationSpec struct {
 }
 
 // StorageBasedRemediationStatus defines the observed state of StorageBasedRemediation.
+// Status reports the authoritative Node record. Status does not authorize execution.
 type StorageBasedRemediationStatus struct {
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:MinLength=1
+	// +optional
+	NodeUID types.UID `json:"nodeUID,omitempty"`
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:MinLength=1
+	// +optional
+	ConfigUID types.UID `json:"configUID,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	// +optional
+	VolumeMode string `json:"volumeMode,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	// +optional
+	BeforeBootID string `json:"beforeBootID,omitempty"`
+	// +kubebuilder:validation:Enum=Offered;Accepted;Cancelled;BootEnded
+	// +optional
+	ExecutionPhase string `json:"executionPhase,omitempty"`
+	// +optional
+	ObservedBootID string `json:"observedBootID,omitempty"`
+	// +optional
+	Cleanup *CleanupStatus `json:"cleanup,omitempty"`
+	// RestrictionsReleased describes this CR's restrictions. It does not establish Node schedulability.
+	// +optional
+	RestrictionsReleased bool `json:"restrictionsReleased,omitempty"`
+
 	// Conditions represent the latest available observations of the remediation's current state.
 	// Known types include LeadershipAcquired, FencingInProgress, FencingSucceeded, Ready,
 	// Processing, and Succeeded. Processing and Succeeded are the standard medik8s conditions
@@ -78,8 +105,29 @@ type StorageBasedRemediationStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 }
 
+type CleanupStatus struct {
+	// +kubebuilder:validation:Enum=Pending;Observing;Completed;Incomplete;Unknown;Skipped
+	// +optional
+	Phase string `json:"phase,omitempty"`
+	// +optional
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+	// Deadline cannot change after its initial assignment.
+	// +optional
+	Deadline *metav1.Time `json:"deadline,omitempty"`
+	// OutOfServiceApplied records confirmed application. Elapsed time does not establish application.
+	// +optional
+	OutOfServiceApplied bool `json:"outOfServiceApplied,omitempty"`
+	// +optional
+	Reason string `json:"reason,omitempty"`
+}
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.nodeUID) || (has(self.status) && has(self.status.nodeUID) && self.status.nodeUID == oldSelf.status.nodeUID)",message="nodeUID cannot change or be removed"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.configUID) || (has(self.status) && has(self.status.configUID) && self.status.configUID == oldSelf.status.configUID)",message="configUID cannot change or be removed"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.volumeMode) || (has(self.status) && has(self.status.volumeMode) && self.status.volumeMode == oldSelf.status.volumeMode)",message="volumeMode cannot change or be removed"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.beforeBootID) || (has(self.status) && has(self.status.beforeBootID) && self.status.beforeBootID == oldSelf.status.beforeBootID)",message="beforeBootID cannot change or be removed"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.cleanup) || !has(oldSelf.status.cleanup.deadline) || (has(self.status) && has(self.status.cleanup) && has(self.status.cleanup.deadline) && self.status.cleanup.deadline == oldSelf.status.cleanup.deadline)",message="cleanup.deadline cannot change or be removed"
 // +kubebuilder:printcolumn:name="Node",type="string",JSONPath=".metadata.name"
 // +kubebuilder:printcolumn:name="Processing",type="string",JSONPath=".status.conditions[?(@.type=='Processing')].status"
 // +kubebuilder:printcolumn:name="Succeeded",type="string",JSONPath=".status.conditions[?(@.type=='Succeeded')].status"

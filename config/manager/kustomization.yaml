@@ -5,7 +5,7 @@ kind: Kustomization
 images:
 - name: controller
   newName: quay.io/medik8s/storage-based-remediation-operator
-  newTag: v5.8.0
+  newTag: v5.9.0
 patches:
 - patch: |
     - op: add
