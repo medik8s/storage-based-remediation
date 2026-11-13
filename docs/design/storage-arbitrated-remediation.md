@@ -137,6 +137,8 @@ The agent process starts the BlockPerNode peer manager before probe initializati
 
 Peer reconciliation uses API objects only. It does not read host journals, inspect probe devices, resolve shared NodeMap entries, or wait for storage locks. Limit the duration of API calls and the delay before retrying reconciliation. Keep probe I/O, journal I/O, watchdog feeding, and reconciliation on separate execution paths.
 
+The boundary is enforced in code, not only in behavior: the BlockPerNode reconciliation package depends only on Kubernetes API clients (cached or uncached), imports none of the probe, watchdog, or journal packages, and assumes nothing about running on the target node. This is what keeps a future relocation of peer reconciliation out of the probe Pod a move of a process rather than a redesign of a protocol — all coordination is conditional updates on the Node record, and the journal is strictly node-local — and it must hold even though the reconciler initially ships inside the agent.
+
 The peer determines the target’s configuration before selecting the shared-storage or BlockPerNode path. If configuration is missing or conflicting, peers cannot record a new request as Offered. Record the Node UID, configuration UID, volume mode, and initial boot ID permanently for each request. Never interpret missing status as permission for shared-storage fencing.
 
 All state writers use conditional updates with `resourceVersion`. After a conflict, read current objects and check identities and permitted transitions again. Preserve unrelated conditions and fields assigned to other writers. Node conditions require strategic merge or an optimistic read-modify-write update.
@@ -1163,7 +1165,7 @@ The security story is short. Any root process on the host can already read the k
 
 #### The self-cordon at boot
 
-`sbr-self-cordon.service` is a oneshot unit ordered `After=network-online.target` and `Before=kubelet.service`. It runs on every boot; the check is local and cheap. It is a small Go binary that reads the journal through the shared node-local journal library (`pkg/nodestate` in `medik8s/common`) as a read-only consumer — not a shell script parsing JSON — so it gets the library's hardened reads and honest snapshots. The arming state it looks for is a field of the journal document, not a separate file, so the library's one-file-per-writer model covers it.
+`sbr-self-cordon.service` is a oneshot unit ordered `After=network-online.target` and `Before=kubelet.service`. It is gated by a `ConditionPathExists` arming flag the agent creates when it arms the watchdog — after the first durable journal write, so the flag's presence implies a journal existed — and removes at startup once it has taken over protection duties for the boot. While the flag exists the unit runs on every boot; the check is local and cheap. The flag must not be tied to reboot-commit alone: the weaker tiers below exist for resets nobody planned, and an agent that dies mid-incident records no decision — a reboot-commit-only flag would gate the unit off in exactly that scenario. It is a small Go binary that reads the journal through the shared node-local journal library (`pkg/nodestate` in `medik8s/common`) as a read-only consumer — not a shell script parsing JSON — so it gets the library's hardened reads and honest snapshots. The arming state it looks for is a field of the journal document, not a separate file, so the library's one-file-per-writer model covers it.
 
 When the journal says this boot needs protection, the unit makes two API calls with the kubelet's certificate:
 
@@ -1184,7 +1186,7 @@ The obvious way to deliver a systemd unit on OpenShift is the Machine Config Ope
 
 So the agent installs and owns the wiring itself:
 
-- The unit goes under `/etc/systemd/system`, the binary under the state root. On RHCOS `/usr` is read-only, but `/etc` and `/var` survive reboots — which is all the unit needs.
+- The unit goes under `/etc/systemd/system`, the binary under `/usr/local/bin`. On RHCOS `/usr` is read-only except `/usr/local`, which is a bind mount of `/var/usrlocal` — the sanctioned writable, persistent and executable location, labeled `bin_t`. The state root is **not** a valid location for the binary: measured on an enforcing RHCOS worker, systemd (`init_t`) is denied `execute` on a `var_lib_t` file under `/var/lib` (`avc: denied { execute } ... scontext=system_u:system_r:init_t:s0 tcontext=system_u:object_r:var_lib_t:s0`), and the unit fails with `203/EXEC` before kubelet starts. The same unit, the same node, executed from `/usr/local/bin`: starts cleanly, `0/SUCCESS`. The agent container reaches the host path through a `/host/usr/local` mount — a same-path mount would shadow the image's own `/usr/local/bin` that holds the source binary.
 - At every start the agent reconciles the wiring: unit present and enabled, binary hash correct, state root writable. It repairs what it can and reports what it cannot. Degraded rejoin protection is loud, and never silently disables fencing.
 - MCO on standalone clusters does not purge unknown local units, so the two coexist.
 - Uninstall removes the unit, the binary, and the enablement together.
@@ -1293,7 +1295,7 @@ Keep the UID of each CR that still requires scheduling restrictions. Qualify a r
 
 At least one peer that meets Section 5.2 requirements must remain running with API access for each target. Its probe can be unhealthy. Independent execution paths prevent storage I/O from blocking a running peer.
 
-CSI attachment failure can prevent replacement peer Pods from starting. A shared outage or rollout can therefore remove every controller that meets Section 5.2 requirements. A single selected node has no peer for its own request.
+CSI attachment failure can prevent replacement peer Pods from starting. A shared outage or rollout can therefore remove every controller that meets Section 5.2 requirements. A single selected node has no peer for its own request. The code boundary required by Section 5.2 keeps open the option of relocating peer reconciliation out of the probe Pod in a later release, which would remove this limitation; until then it is accepted as written.
 
 Without a peer, SBR must wait to record Offered, Cancelled, or BootEnded, or to remove the remediation CR’s finalizer. The target and reporter retain their limited roles. On return, a peer resumes the same execution record and cleanup deadline.
 
