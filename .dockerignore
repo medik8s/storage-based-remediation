@@ -62,6 +62,9 @@ docker-compose.*
 config/
 manifests/
 deploy/
+# The agent image ships the boot unit's systemd unit file (see
+# cmd/sbr-agent/Dockerfile).
+!deploy/sbr-self-cordon.service
 k8s/
 
 # Test files and test data
