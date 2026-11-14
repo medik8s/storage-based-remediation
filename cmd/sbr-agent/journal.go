@@ -21,6 +21,10 @@ import (
 	"time"
 
 	"github.com/medik8s/common/pkg/nodestate"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/medik8s/storage-based-remediation/v5/internal/bootunit"
 )
 
 // journalWriteTimeout bounds a single journal write.
@@ -30,6 +34,10 @@ import (
 // write still must never be able to stall a loop: a fence that is late is a
 // fence that did not happen, so every write here is bounded and best effort.
 const journalWriteTimeout = 5 * time.Second
+
+// createArmingFlag opens the boot unit's gate. It is a package variable so a
+// test can observe the ordering without writing to the host's state root.
+var createArmingFlag = bootunit.CreateArmingFlag
 
 // recordRunning records that this agent is alive in this boot, so a boot that
 // starts with the journal still saying "running" is recognised as a reset,
@@ -115,4 +123,103 @@ func (s *SBRAgent) recordHeartbeatWrite(latency time.Duration, writeErr error) {
 	s.journalIOMutex.Lock()
 	s.journalLastIOOK = &ok
 	s.journalIOMutex.Unlock()
+}
+
+// currentHostBootID returns the boot ID of the running host kernel. In the
+// agent container /proc is the host's, so this is the host's boot ID — the
+// value the boot unit will compare against.
+func currentHostBootID() string {
+	id, err := nodestate.ReadBootID()
+	if err != nil {
+		logger.V(1).Info("Cannot read the host boot ID", "error", err.Error())
+		return ""
+	}
+	return id
+}
+
+// clearStaleArmingState drops an arming decision that belongs to the boot this
+// process is still running in: the agent died between recording the decision
+// and rebooting, so no protected boot happened. Leaving it would cordon the
+// next unrelated reboot and announce an incident that never existed.
+func (s *SBRAgent) clearStaleArmingState() {
+	if s.journal == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), journalWriteTimeout)
+	defer cancel()
+
+	cleared, err := s.journal.ClearStaleArmingState(ctx, currentHostBootID())
+	if err != nil {
+		logger.Error(err, "Failed to check the journal for a stale arming decision",
+			"path", s.journal.Path())
+		return
+	}
+	if cleared {
+		logger.Info("Cleared a stale arming decision: this boot never took place, so nothing needs protecting",
+			"path", s.journal.Path())
+	}
+}
+
+// recordFenceDecision writes the reboot decision and the arming state to the
+// journal in one durable write, and then opens the boot unit's gate.
+//
+// The order is the design's: the decision is durable before the reboot, so
+// there is never an arming state without a decision and never a reboot before
+// the write. It runs immediately before the agent reboots, so the pair is as
+// close to atomic as a host process can make it, and the boot-ID rule in
+// clearStaleArmingState catches the window where they come apart.
+//
+// A failure here is logged and not propagated: the reboot is the fence and it
+// must proceed. The weaker journal tiers exist for exactly this case — an
+// agent that dies without recording a decision still leaves the shutdown state
+// and the storage verdict behind.
+func (s *SBRAgent) recordFenceDecision(source, reason string) {
+	if s.journal == nil {
+		logger.V(1).Info("No journal available; not recording the reboot decision", "reason", reason)
+		return
+	}
+
+	incidentID, err := bootunit.NewIncidentID()
+	if err != nil {
+		logger.Error(err, "Cannot generate an incident ID; not recording the reboot decision")
+		return
+	}
+
+	arming := &bootunit.ArmingState{
+		Version:      1,
+		Phase:        bootunit.PhaseArmed,
+		NodeUID:      s.nodeUID,
+		ConfigUID:    s.configUID(),
+		IncidentID:   incidentID,
+		BeforeBootID: currentHostBootID(),
+		Source:       source,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), journalWriteTimeout)
+	defer cancel()
+	if err := s.journal.WriteArmingState(ctx, arming); err != nil {
+		logger.Error(err, "Failed to record the reboot decision in the journal",
+			"incidentID", incidentID, "path", s.journal.Path())
+		return
+	}
+	logger.Info("Recorded the reboot decision in the journal",
+		"incidentID", incidentID, "source", source, "beforeBootID", arming.BeforeBootID,
+		"path", s.journal.Path())
+
+	// Open the gate only after the decision it relies on is durable: the unit
+	// must never run with a flag and no journal behind it.
+	if err := createArmingFlag(); err != nil {
+		logger.Error(err, "Failed to open the boot unit gate after recording the decision",
+			"incidentID", incidentID)
+	}
+}
+
+// configUID identifies the configuration this agent is operating under, so a
+// decision cannot outlive a replaced config.
+func (s *SBRAgent) configUID() string {
+	obj, ok := s.recorderObject.(metav1.Object)
+	if !ok || obj == nil {
+		return ""
+	}
+	return string(obj.GetUID())
 }

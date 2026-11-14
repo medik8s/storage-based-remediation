@@ -81,6 +81,17 @@ const (
 	PhaseCleared ArmingPhase = "Cleared"
 )
 
+// Sources recorded in ArmingState.Source. They say who decided the reboot, not
+// why: the agent's own failure handling, or a remediation an operator or NHC
+// requested.
+const (
+	// SourceAutonomous is a reboot the agent decided on its own evidence.
+	SourceAutonomous = "Autonomous"
+
+	// SourceRequested is a reboot requested through a remediation resource.
+	SourceRequested = "Requested"
+)
+
 // String returns the JSON encoding of the arming state, suitable for
 // storage in journal key "armingState".
 func (a *ArmingState) String() string {
@@ -276,6 +287,41 @@ func (j *Journal) ClearArmingState(ctx context.Context) error {
 		return nil
 	})
 	return err
+}
+
+// ClearStaleArmingState clears an armed decision that was recorded in the boot
+// the caller is still running in, and reports whether it did.
+//
+// A decision is written immediately before the agent reboots this host, so
+// seeing the same boot ID that the decision recorded means the reboot never
+// took place: the agent died between the write and the reboot, or the reboot
+// failed. That decision describes a boot that will not happen, and if it were
+// left in place the next ordinary reboot — a maintenance restart, a kernel
+// update — would be cordoned and announced as an SBR rejoin, which nothing
+// would then release.
+//
+// A decision recorded in a DIFFERENT boot is left alone: it is the normal,
+// healthy case of a node that really was rebooted under an arming state, and
+// clearing it here would erase the evidence before the boot unit reads it.
+// currentBootID is required; a caller that cannot say which boot it is in
+// cannot judge a decision.
+func (j *Journal) ClearStaleArmingState(ctx context.Context, currentBootID string) (bool, error) {
+	if currentBootID == "" {
+		return false, fmt.Errorf("current boot ID is required to judge an arming state")
+	}
+
+	arming, err := j.ReadArmingState(ctx)
+	if err != nil {
+		return false, err
+	}
+	if arming == nil || arming.Phase != PhaseArmed || arming.BeforeBootID != currentBootID {
+		return false, nil
+	}
+
+	if err := j.ClearArmingState(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Path returns the journal file path.

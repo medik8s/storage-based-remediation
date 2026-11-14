@@ -553,9 +553,9 @@ type SBRAgent struct {
 	detectOnlyMode bool
 
 	// journal is the node-local state file the pre-kubelet boot unit reads.
-	// It is nil when main could not open the state root; every write through
-	// the helpers below is then a no-op, because the journal is diagnostic
-	// and best effort and must never keep this agent from fencing.
+	// It is nil when main could not open the state root; the record* helpers
+	// are then no-ops, because the journal is diagnostic and best effort and
+	// must never keep this agent from fencing.
 	journal *bootunit.Journal
 
 	// journalIOMutex guards journalLastIOOK, the most recent storage outcome
@@ -565,6 +565,19 @@ type SBRAgent struct {
 	// been recorded yet in this process.
 	journalIOMutex  sync.Mutex
 	journalLastIOOK *bool
+
+	// nodeUID is this Node object's UID, read once at start-up. A reboot
+	// decision is bound to it so a replaced Node — whose workloads the cluster
+	// has already forgotten — cannot be cordoned on the strength of a decision
+	// made for its predecessor. It is cached rather than fetched when needed:
+	// the moment the decision is written is the moment the API may be
+	// unreachable.
+	nodeUID string
+
+	// fenceDecisionRecorded latches the journal write in the self-fence path.
+	// The path is entered once, but the latch makes that a property of the code
+	// rather than of the call graph.
+	fenceDecisionRecorded bool
 
 	// blockMode is true when the device has a valid superblock (RWX block volume).
 	// In block mode, heartbeat/fence I/O goes through OffsetDevice adapters and
@@ -1494,6 +1507,10 @@ func (s *SBRAgent) StartWithContext(ctx context.Context) error {
 	// unclean shutdown.
 	s.recordRunning()
 
+	// A decision recorded in the boot we are still in never became a reboot:
+	// the agent died first. Drop it before it can cordon an unrelated reboot.
+	s.clearStaleArmingState()
+
 	// Start node manager periodic sync if using hash mapping
 	if s.nodeManager != nil {
 		s.nodeManagerStop = s.nodeManager.StartPeriodicSync()
@@ -2323,6 +2340,18 @@ func (s *SBRAgent) executeSelfFencing(reason string) {
 	// Mark self-fence as detected to stop watchdog petting
 	s.setSelfFenceDetected(true)
 
+	// Record the reboot decision and the arming state durably before asking
+	// the host to reboot. From here the boot unit protects the returning node
+	// even if everything this process does next fails.
+	//
+	// With reboot method "none" nothing reboots, so there is no boot to
+	// protect and no decision to record: writing one would leave an armed
+	// state behind for the next unrelated restart, which nothing would release.
+	if s.rebootMethod != RebootMethodNone && !s.fenceDecisionRecorded {
+		s.fenceDecisionRecorded = true
+		s.recordFenceDecision(bootunit.SourceAutonomous, reason)
+	}
+
 	// Give some time for the log message to be written
 	time.Sleep(100 * time.Millisecond)
 
@@ -2913,6 +2942,10 @@ func main() {
 		journal = nil
 	}
 
+	// nodeUID binds a future reboot decision to this Node object. It is filled
+	// in by setupBootUnit as soon as it has read the object.
+	var nodeUID string
+
 	// Reconcile the pre-kubelet self-cordon unit before the agent takes over.
 	// It is best effort: a failure degrades rejoin protection and is reported,
 	// but it must never keep this agent from fencing. The boot files come from
@@ -2920,7 +2953,7 @@ func main() {
 	// result is a wiring fault worth surfacing, not a transient startup race.
 	{
 		bootUnitCtx, cancel := context.WithTimeout(context.Background(), bootUnitSetupTimeout)
-		err := setupBootUnit(bootUnitCtx, k8sClient, nodeNameValue, journal, *detectOnlyMode)
+		nodeUID, err = setupBootUnit(bootUnitCtx, k8sClient, nodeNameValue, journal, *detectOnlyMode)
 		cancel()
 		if err != nil {
 			logger.Error(err, "Boot unit wiring degraded: this node would boot without pre-kubelet self-cordon",
@@ -3011,6 +3044,7 @@ func main() {
 	// Hand the agent the journal opened above. A nil journal stays nil: every
 	// write through it is a no-op by design.
 	sbrAgent.journal = journal
+	sbrAgent.nodeUID = nodeUID
 
 	if err := sbrAgent.RunUntilShutdown(sigChan); err != nil {
 		logger.Error(err, "Failed to run SBR agent or error during shutdown")

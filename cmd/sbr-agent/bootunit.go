@@ -54,19 +54,25 @@ import (
 // clears the flag instead of creating it.
 //
 // Returning an error means the wiring is degraded, not that the node is unsafe.
+//
+// It also returns this Node object's UID as soon as it has been read, even when
+// a later step fails. The agent caches that value to bind a future reboot
+// decision to this Node object; an empty result only costs that binding, which
+// the journal reader tolerates, and never the decision itself.
 func setupBootUnit(
 	ctx context.Context,
 	k8sClient client.Client,
 	nodeName string,
 	journal *bootunit.Journal,
 	detectOnly bool,
-) error {
+) (string, error) {
 	node := &corev1.Node{}
 	if err := k8sClient.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
-		return fmt.Errorf("read node %s for its identity: %w", nodeName, err)
+		return "", fmt.Errorf("read node %s for its identity: %w", nodeName, err)
 	}
+	nodeUID := string(node.UID)
 	if node.UID == "" {
-		return fmt.Errorf("node %s has no UID", nodeName)
+		return "", fmt.Errorf("node %s has no UID", nodeName)
 	}
 
 	// The boot unit runs before kubelet, so the in-cluster service address is
@@ -74,45 +80,45 @@ func setupBootUnit(
 	// kubelet uses, which is reachable from the node by definition.
 	apiServer, err := bootunit.ResolveAPIServerFromKubeconfig(bootunit.ContainerKubeletConf)
 	if err != nil {
-		return fmt.Errorf("resolve the API server for the boot unit: %w", err)
+		return nodeUID, fmt.Errorf("resolve the API server for the boot unit: %w", err)
 	}
 
-	if err := bootunit.WriteIdentityEnv(nodeName, string(node.UID), apiServer); err != nil {
-		return fmt.Errorf("write the boot unit identity descriptor: %w", err)
+	if err := bootunit.WriteIdentityEnv(nodeName, nodeUID, apiServer); err != nil {
+		return nodeUID, fmt.Errorf("write the boot unit identity descriptor: %w", err)
 	}
 
 	if err := bootunit.Install(bootunit.ContainerSystemdDir); err != nil {
-		return fmt.Errorf("install the boot unit: %w", err)
+		return nodeUID, fmt.Errorf("install the boot unit: %w", err)
 	}
 
 	if err := bootunit.Verify(bootunit.ContainerSystemdDir); err != nil {
-		return fmt.Errorf("verify the boot unit wiring: %w", err)
+		return nodeUID, fmt.Errorf("verify the boot unit wiring: %w", err)
 	}
 
 	if detectOnly {
 		// Detect-only mode remediates nothing, so a boot unit that cordons
 		// would be acting on behalf of a decision this agent never makes.
 		if err := bootunit.ClearArmingFlag(); err != nil {
-			return fmt.Errorf("clear the boot unit gate in detect-only mode: %w", err)
+			return nodeUID, fmt.Errorf("clear the boot unit gate in detect-only mode: %w", err)
 		}
 		logger.Info("Detect-only mode: boot unit installed but not gated on", "nodeName", nodeName)
-		return nil
+		return nodeUID, nil
 	}
 
 	if journal == nil {
-		return fmt.Errorf("no journal available under %s; not opening the boot unit gate",
+		return nodeUID, fmt.Errorf("no journal available under %s; not opening the boot unit gate",
 			bootunit.HostStateRoot)
 	}
 	if err := journal.RecordRunning(ctx); err != nil {
 		// Without a durable journal the gate must stay shut: a flag next to a
 		// journal nobody can write would make the next boot fail closed on
 		// evidence this agent never produced.
-		return fmt.Errorf("record this agent as running before opening the boot unit gate: %w", err)
+		return nodeUID, fmt.Errorf("record this agent as running before opening the boot unit gate: %w", err)
 	}
 
 	if err := bootunit.CreateArmingFlag(); err != nil {
-		return fmt.Errorf("open the boot unit gate: %w", err)
+		return nodeUID, fmt.Errorf("open the boot unit gate: %w", err)
 	}
 
-	return nil
+	return nodeUID, nil
 }

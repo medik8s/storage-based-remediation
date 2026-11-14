@@ -18,6 +18,7 @@ package bootunit
 
 import (
 	"context"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -198,5 +199,98 @@ func TestRecordIORefusesCorruptJournal(t *testing.T) {
 	}
 	if err := j.RecordIO(ctx, nodestate.IOEntry{Op: "write", OK: true}); err == nil {
 		t.Fatal("recording I/O on corrupt history must be refused")
+	}
+}
+
+func TestClearStaleArmingState(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("same boot is cleared", func(t *testing.T) {
+		j := newTestJournal(t)
+		st := armedState()
+		st.BeforeBootID = "boot-now"
+		if err := j.WriteArmingState(ctx, st); err != nil {
+			t.Fatal(err)
+		}
+		cleared, err := j.ClearStaleArmingState(ctx, "boot-now")
+		if err != nil {
+			t.Fatalf("ClearStaleArmingState: %v", err)
+		}
+		if !cleared {
+			t.Fatal("a decision for the current boot must be reported as cleared")
+		}
+		if got, err := j.ReadArmingState(ctx); err != nil || got != nil {
+			t.Fatalf("decision survived: %+v, %v", got, err)
+		}
+	})
+
+	t.Run("another boot is kept", func(t *testing.T) {
+		j := newTestJournal(t)
+		st := armedState()
+		st.BeforeBootID = "boot-before"
+		if err := j.WriteArmingState(ctx, st); err != nil {
+			t.Fatal(err)
+		}
+		cleared, err := j.ClearStaleArmingState(ctx, "boot-now")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cleared {
+			t.Fatal("a decision recorded before a real reboot must not be cleared")
+		}
+		if got, err := j.ReadArmingState(ctx); err != nil || got == nil {
+			t.Fatalf("decision was erased: %+v, %v", got, err)
+		}
+	})
+
+	t.Run("no decision is a no-op", func(t *testing.T) {
+		j := newTestJournal(t)
+		cleared, err := j.ClearStaleArmingState(ctx, "boot-now")
+		if err != nil {
+			t.Fatalf("ClearStaleArmingState on an absent journal: %v", err)
+		}
+		if cleared {
+			t.Fatal("nothing to clear must report false")
+		}
+	})
+
+	t.Run("an unknown boot is refused", func(t *testing.T) {
+		j := newTestJournal(t)
+		if _, err := j.ClearStaleArmingState(ctx, ""); err == nil {
+			t.Fatal("an empty boot ID cannot judge a decision and must be refused")
+		}
+	})
+
+	t.Run("corrupt history is refused", func(t *testing.T) {
+		j := newTestJournal(t)
+		if err := os.MkdirAll(filepath.Dir(j.Path()), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(j.Path(), []byte("{corrupt"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := j.ClearStaleArmingState(ctx, "boot-now"); err == nil {
+			t.Fatal("clearing on corrupt history must be refused")
+		}
+	})
+}
+
+func TestNewIncidentID(t *testing.T) {
+	seen := make(map[string]struct{})
+	for i := 0; i < 100; i++ {
+		id, err := NewIncidentID()
+		if err != nil {
+			t.Fatalf("NewIncidentID: %v", err)
+		}
+		if len(id) != 2*IncidentIDBytes {
+			t.Fatalf("id %q is %d characters, want %d", id, len(id), 2*IncidentIDBytes)
+		}
+		if _, err := hex.DecodeString(id); err != nil {
+			t.Fatalf("id %q is not hex: %v", id, err)
+		}
+		if _, dup := seen[id]; dup {
+			t.Fatalf("duplicate incident ID %q in 100 draws", id)
+		}
+		seen[id] = struct{}{}
 	}
 }
