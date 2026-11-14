@@ -10,7 +10,7 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the See the License for the specific language governing permissions and
+See the License for the specific language governing permissions and
 limitations under the License.
 */
 
@@ -89,7 +89,30 @@ const (
 	// ContainerUnitPath is the location of the unit template inside the
 	// agent container image.
 	ContainerUnitPath = "/usr/local/share/sbr-agent/" + UnitName
+
+	// ContainerSystemdDir is where the agent container sees the host's
+	// /etc/systemd/system. The DaemonSet mounts the host directory here so the
+	// installer can write the unit file; activation separately runs systemctl
+	// inside the host mount namespace, where the same file is at its real path.
+	ContainerSystemdDir = "/host/etc/systemd/system"
+
+	// ContainerHostUsrLocal is where the agent container sees the host's
+	// /usr/local. It must not be mounted at /usr/local itself: that would
+	// shadow the image's own /usr/local/bin, which holds the source binary.
+	ContainerHostUsrLocal = "/host/usr/local"
+
+	// ContainerKubeletConf is where the agent reads the node's kubelet
+	// kubeconfig. Its API server is the host-routable endpoint the boot unit
+	// needs — the in-cluster service address is not routable from the host
+	// before kubelet (and therefore kube-proxy) is running.
+	ContainerKubeletConf = "/host/etc/kubernetes/kubelet.conf"
 )
+
+// hostMountNamespace is the host mount namespace the agent enters to run host
+// binaries. The agent mounts the host's /proc at /proc, so PID 1 here is the
+// host's init and its mount namespace is the host's — the same mechanism the
+// reboot path relies on.
+const hostMountNamespace = "/proc/1/ns/mnt"
 
 // RejoinConditionType is the Node condition the boot unit publishes when it
 // cordons a returning node. It announces to the cluster (and to

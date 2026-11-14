@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/medik8s/common/pkg/nodestate"
 )
@@ -39,9 +40,13 @@ import (
 // The binary is embedded in the agent image and copied to /usr/local/bin —
 // the writable, SELinux-executable path on OSTree systems (see
 // HostBinaryPath); the unit file is written to the host systemd directory.
+//
+// hostSystemdDir is where THIS PROCESS sees the host's /etc/systemd/system
+// (ContainerSystemdDir in the agent). Activation is separate: systemctl runs
+// in the host namespace, where the same file appears at its real path.
 func Install(hostSystemdDir string) error {
 	if hostSystemdDir == "" {
-		hostSystemdDir = "/etc/systemd/system"
+		hostSystemdDir = ContainerSystemdDir
 	}
 
 	// 1. Ensure the state root exists, and make the creation durable: without
@@ -85,7 +90,7 @@ func Install(hostSystemdDir string) error {
 	// reconciled state, and a unit disabled out-of-band must be repaired
 	// even when the binary and unit file are already correct. Both steps
 	// are idempotent.
-	if err := reloadAndEnable(hostSystemdDir); err != nil {
+	if err := reloadAndEnable(); err != nil {
 		return fmt.Errorf("enable %s: %w", UnitName, err)
 	}
 
@@ -371,26 +376,36 @@ func syncDir(path string) error {
 	return d.Sync()
 }
 
-// reloadAndEnable runs daemon-reload and enables the unit. These commands
-// run on the host filesystem because the agent container has the host's
-// systemd directory mounted at the given path.
-func reloadAndEnable(hostSystemdDir string) error {
-	// daemon-reload
-	reload := exec.Command("systemctl", "daemon-reload")
-	reload.Env = append(os.Environ(),
-		fmt.Sprintf("SYSTEMD_UNIT_PATH=%s", hostSystemdDir),
-	)
-	if out, err := reload.CombinedOutput(); err != nil {
-		return fmt.Errorf("daemon-reload: %v: %s", err, string(out))
+// hostCommand runs one command and returns its combined output. It is a
+// package variable so tests can observe the commands without a host systemd.
+var hostCommand = func(name string, args ...string) ([]byte, error) {
+	return exec.Command(name, args...).CombinedOutput()
+}
+
+// hostSystemctl runs one systemctl command against the HOST's manager.
+//
+// The agent image is ubi-minimal: it carries no systemd, and SYSTEMD_UNIT_PATH
+// cannot help — it only redirects a container-local systemctl, and there is
+// none. The command therefore enters the host mount namespace with nsenter
+// (PID 1), which is the same mechanism the reboot path uses, so it reaches the
+// real binary and the real manager that will actually run the unit at boot.
+func hostSystemctl(args ...string) ([]byte, error) {
+	nsArgs := append([]string{"-m", hostMountNamespace, "--", "systemctl"}, args...)
+	return hostCommand("nsenter", nsArgs...)
+}
+
+// reloadAndEnable activates the unit through the host's systemd manager. Both
+// steps are idempotent. The unit file is already on the host's
+// /etc/systemd/system through the DaemonSet mount, so no unit path needs to be
+// passed on the command line.
+func reloadAndEnable() error {
+	if out, err := hostSystemctl("daemon-reload"); err != nil {
+		return fmt.Errorf("daemon-reload: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 
 	// enable (idempotent — safe to run on every agent start)
-	enable := exec.Command("systemctl", "enable", UnitName)
-	enable.Env = append(os.Environ(),
-		fmt.Sprintf("SYSTEMD_UNIT_PATH=%s", hostSystemdDir),
-	)
-	if out, err := enable.CombinedOutput(); err != nil {
-		return fmt.Errorf("enable %s: %v: %s", UnitName, err, string(out))
+	if out, err := hostSystemctl("enable", UnitName); err != nil {
+		return fmt.Errorf("enable %s: %v: %s", UnitName, err, strings.TrimSpace(string(out)))
 	}
 
 	return nil

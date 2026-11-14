@@ -586,20 +586,30 @@ var _ = Describe("StorageBasedRemediationConfig Controller", func() {
 			Expect(container.Args).To(ContainElement("--watchdog-path=/dev/watchdog"))
 
 			By("verifying the DaemonSet has correct volume mounts")
-			Expect(container.VolumeMounts).To(HaveLen(4))
+			Expect(container.VolumeMounts).To(HaveLen(8))
 			volumeMountNames := make([]string, len(container.VolumeMounts))
 			for i, vm := range container.VolumeMounts {
 				volumeMountNames[i] = vm.Name
 			}
-			Expect(volumeMountNames).To(ContainElements("dev", "sys", "proc", "shared-storage"))
+			// The first four carry the agent's storage and host access; the
+			// last four are what the boot unit installer writes through: the
+			// host systemd directory, the host's /usr/local (never mounted at
+			// /usr/local, which would shadow the source binary), the kubelet
+			// kubeconfig it resolves the API endpoint from, and the state root
+			// holding the journal and the arming flag.
+			Expect(volumeMountNames).To(ContainElements(
+				"dev", "sys", "proc", "shared-storage",
+				"host-systemd", "host-usr-local", "host-etc-kubernetes", "host-state"))
 
 			By("verifying the DaemonSet has correct volumes")
-			Expect(daemonSet.Spec.Template.Spec.Volumes).To(HaveLen(4))
+			Expect(daemonSet.Spec.Template.Spec.Volumes).To(HaveLen(8))
 			volumeNames := make([]string, len(daemonSet.Spec.Template.Spec.Volumes))
 			for i, v := range daemonSet.Spec.Template.Spec.Volumes {
 				volumeNames[i] = v.Name
 			}
-			Expect(volumeNames).To(ContainElements("dev", "sys", "proc", "shared-storage"))
+			Expect(volumeNames).To(ContainElements(
+				"dev", "sys", "proc", "shared-storage",
+				"host-systemd", "host-usr-local", "host-etc-kubernetes", "host-state"))
 
 			By("verifying the DaemonSet has correct security context")
 			Expect(*container.SecurityContext.Privileged).To(BeTrue())

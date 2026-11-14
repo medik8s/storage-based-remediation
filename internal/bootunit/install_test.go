@@ -1,7 +1,7 @@
 /*
 Copyright 2026.
 
-Licensed under the License, Version 2.0 (the "License");
+Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
@@ -351,5 +351,69 @@ func TestCreateArmingFlagConfirmsExistingEntry(t *testing.T) {
 	}
 	if synced != 1 {
 		t.Errorf("injected sync called %d times, want 1", synced)
+	}
+}
+
+// TestReloadAndEnableRunsInHostNamespace pins the mechanism: activation must
+// reach the host's systemd manager. The agent image has no systemd, and a
+// container-local systemctl would only fail — so every command enters the host
+// mount namespace with nsenter.
+func TestReloadAndEnableRunsInHostNamespace(t *testing.T) {
+	orig := hostCommand
+	t.Cleanup(func() { hostCommand = orig })
+
+	var calls [][]string
+	hostCommand = func(name string, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string{name}, args...))
+		return nil, nil
+	}
+
+	if err := reloadAndEnable(); err != nil {
+		t.Fatalf("reloadAndEnable: %v", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("got %d commands, want 2 (daemon-reload, enable): %v", len(calls), calls)
+	}
+
+	wantPrefix := []string{"nsenter", "-m", hostMountNamespace, "--", "systemctl"}
+	for i, call := range calls {
+		if len(call) < len(wantPrefix) {
+			t.Fatalf("command %d is too short: %v", i, call)
+		}
+		for j, want := range wantPrefix {
+			if call[j] != want {
+				t.Fatalf("command %d = %v, want prefix %v", i, call, wantPrefix)
+			}
+		}
+	}
+	if got := calls[0][len(wantPrefix)]; got != "daemon-reload" {
+		t.Errorf("first command = %q, want daemon-reload (reload must precede enable)", got)
+	}
+	if got := calls[1][len(wantPrefix)]; got != "enable" {
+		t.Errorf("second command = %q, want enable", got)
+	}
+	if last := calls[1][len(wantPrefix)+1]; last != UnitName {
+		t.Errorf("enable target = %q, want %q", last, UnitName)
+	}
+}
+
+// TestReloadAndEnableStopsOnReloadFailure keeps the order meaningful: if
+// daemon-reload fails, enabling a unit the manager has not loaded would hide
+// the real error.
+func TestReloadAndEnableStopsOnReloadFailure(t *testing.T) {
+	orig := hostCommand
+	t.Cleanup(func() { hostCommand = orig })
+
+	var calls int
+	hostCommand = func(string, ...string) ([]byte, error) {
+		calls++
+		return []byte("Unit file not found"), errors.New("exit status 1")
+	}
+
+	if err := reloadAndEnable(); err == nil {
+		t.Fatal("want an error when daemon-reload fails")
+	}
+	if calls != 1 {
+		t.Errorf("ran %d commands, want 1 — enable must not follow a failed reload", calls)
 	}
 }
