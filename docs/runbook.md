@@ -92,6 +92,18 @@ spec:
 
 ---
 
+## Read-only shared-storage inspection
+
+```bash
+# Use /sbr-block for block mode, or the configured path for a custom mount.
+kubectl exec -n sbr-operator-system <agent-pod> -- sbr-agent inspect --sbr-device /dev/sbr/sbr-device -o json
+```
+
+This reports node mappings, heartbeat slots and fence slots in filesystem or
+block mode without starting another agent or modifying SBR storage. See the
+[inspection guide](sbr-inspect.md) for explicit paths, JSON fields, exit status,
+corruption handling and live-read limitations.
+
 ## 3. Configuration reference
 
 ### 3.1 `StorageBasedRemediationConfig` spec — defaults
