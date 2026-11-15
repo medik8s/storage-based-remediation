@@ -157,7 +157,7 @@ spec:
 | `sharedStorageClass` | None | StorageClass for shared storage coordination (RWX required); mounted at `/dev/sbr` |
 | `nodeSelector` | Worker nodes | Label selector restricting which nodes run the agent |
 | `sbrTimeoutSeconds` | `30` | SBR detection timeout in seconds (10–300) |
-| `maxConsecutiveFailures` | `7` | Consecutive watchdog, SBR-device, local-heartbeat, or peer-heartbeat failures before declaring a node unhealthy (2–32) |
+| `maxConsecutiveFailures` | `7` | Consecutive watchdog, SBR-device, local-heartbeat, or peer-heartbeat failures (2–32); also sets the local heartbeat progress deadline to this many heartbeat intervals |
 | `detectOnlyMode` | `Disabled` | When `Enabled`, detects failures without performing remediation |
 
 **Note**: The namespace is set via `metadata.namespace`. The agent image is managed automatically

@@ -107,6 +107,11 @@ spec:
 
 **Not configurable via the CR** (fixed constants in `internal/agent/constants.go`, passed as agent CLI args by the controller): `rebootMethod` (`systemctl-reboot`), `logLevel` (`debug`), `staleNodeTimeout` (`1h`), `iotimeout` (`2s`). Agent image comes from the operator's `RELATED_IMAGE_AGENT` env var, not a spec field. `watchdogTimeout` and `petIntervalMultiple` no longer exist as agent settings.
 
+The local watchdog loop also checks elapsed time since the last completed heartbeat.
+If no heartbeat completes for `maxConsecutiveFailures × heartbeatInterval`, stalled
+storage I/O reaches the self-fence decision even when it has not returned errors.
+The existing remediation-CR check and detect-only suppression still apply.
+
 ### 3.2 `detectOnlyMode`
 
 - **Values:** `Disabled` (default) or `Enabled`.

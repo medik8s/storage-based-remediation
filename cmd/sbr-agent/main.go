@@ -494,6 +494,7 @@ type SBRAgent struct {
 	cancel              context.CancelFunc
 	sbrHealthy          bool
 	sbrHealthyMutex     sync.RWMutex
+	lastHeartbeatTime   time.Time // guarded by sbrHealthyMutex; independent of blocked storage operations
 	heartbeatSequence   uint64
 	heartbeatSeqMutex   sync.Mutex
 	peerMonitor         *peerMonitor
@@ -1128,6 +1129,23 @@ func (s *SBRAgent) isSBRHealthy() bool {
 	return s.sbrHealthy
 }
 
+func (s *SBRAgent) recordHeartbeatSuccess() {
+	s.sbrHealthyMutex.Lock()
+	defer s.sbrHealthyMutex.Unlock()
+	s.lastHeartbeatTime = time.Now()
+}
+
+// heartbeatStalled detects I/O that never returns, even when the failure counter
+// and sbrHealthy flag cannot be updated by the blocked heartbeat goroutine.
+func (s *SBRAgent) heartbeatStalled() bool {
+	s.sbrHealthyMutex.RLock()
+	defer s.sbrHealthyMutex.RUnlock()
+	if s.lastHeartbeatTime.IsZero() || s.heartbeatInterval <= 0 {
+		return false
+	}
+	return time.Since(s.lastHeartbeatTime) >= time.Duration(MaxConsecutiveFailures)*s.heartbeatInterval
+}
+
 // remediationExistsForThisNode checks if a StorageBasedRemediation CR exists for this node.
 // Uses a short timeout to avoid blocking the watchdog loop. Returns (true, nil) if the CR
 // exists, (false, nil) if it does not (IsNotFound), and (false, err) on API errors or timeout.
@@ -1259,6 +1277,13 @@ func (s *SBRAgent) shouldTriggerSelfFence() (bool, string) {
 			fmt.Sprintf("Heartbeat write failures on (%s, %d) exceeded threshold", s.nodeName, s.nodeID))
 		shouldSelfFence = true
 		msg = fmt.Sprintf("heartbeat write failures exceeded threshold (%d)", MaxConsecutiveFailures)
+	} else if s.heartbeatStalled() {
+		// A blocked filesystem call cannot increment a returned-error counter or
+		// clear sbrHealthy. Fence on missed progress as well, while retaining the
+		// remediation-CR check below so NHC still decides whether fencing is allowed.
+		shouldSelfFence = true
+		msg = fmt.Sprintf("no completed SBR heartbeat for at least %s",
+			time.Duration(MaxConsecutiveFailures)*s.heartbeatInterval)
 	}
 	if shouldSelfFence {
 		if remediationExist, err := s.remediationExistsForThisNode(); err == nil && !remediationExist {
@@ -1456,6 +1481,9 @@ func (s *SBRAgent) StartWithContext(ctx context.Context) error {
 		"sbrUpdateInterval", s.sbrUpdateInterval,
 		"heartbeatInterval", s.heartbeatInterval,
 		"peerCheckInterval", s.peerCheckInterval)
+
+	// Start the freshness deadline with one missed-heartbeat window of startup grace.
+	s.recordHeartbeatSuccess()
 
 	// Start node manager periodic sync if using hash mapping
 	if s.nodeManager != nil {
@@ -1666,6 +1694,7 @@ func (s *SBRAgent) heartbeatLoop() {
 
 			} else {
 				// Success - reset failure count and update status
+				s.recordHeartbeatSuccess()
 				s.resetFailureCount("heartbeat")
 				// Only mark as healthy if it was previously unhealthy AND no remediation CR exists
 				// The regular SBR device loop will also update this
