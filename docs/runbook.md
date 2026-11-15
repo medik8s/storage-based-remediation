@@ -116,6 +116,11 @@ The operator obtains the agent image from `RELATED_IMAGE_AGENT`.
 
 See the [storage mode and duration API](sbr-config-user-guide.md#storage-mode-and-duration-api) for bounds and update rules.
 
+The local watchdog loop also checks elapsed time since the last completed heartbeat.
+If no heartbeat completes for `maxConsecutiveFailures × heartbeatInterval`, stalled
+storage I/O reaches the self-fence decision even when it has not returned errors.
+The existing remediation-CR check and detect-only suppression still apply.
+
 ### 3.2 `detectOnlyMode`
 
 - **Values:** `Disabled` (default) or `Enabled`.

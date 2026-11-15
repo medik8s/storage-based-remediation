@@ -209,7 +209,9 @@ The existing `sbrTimeoutSeconds` and `maxConsecutiveFailures` fields retain thei
 - **Description**: Number of consecutive watchdog, SBR-device, local-heartbeat, or peer-heartbeat
   failures before a node is marked unhealthy — not limited to storage I/O.
   Time-to-detection scales with `maxConsecutiveFailures × heartbeatInterval` for both local
-  and peer failures.
+  and peer failures. The local agent also uses this window as a deadline for a completed
+  heartbeat, so a storage operation that stalls without returning an error still reaches
+  the remediation-CR check. A confirmed absent CR keeps the watchdog petted for NHC to decide.
 
 #### `detectOnlyMode` (string, optional)
 - **Default**: `Disabled`
