@@ -68,6 +68,15 @@ predefined spec.
 
 ### Installation
 
+> [!IMPORTANT]
+> Operator upgrades are no longer supported for SBR from old versions to
+> future newer versions, since we have changed the operator package name.
+> E.g., SBR v0.3.1 won't be upgradeable to the next SBR version (SBR
+> v5.8.0). This version bump itself was introduced in
+> [#95](https://github.com/medik8s/storage-based-remediation/pull/95). See
+> [docs/package-name-change.md](docs/package-name-change.md) for the reason
+> behind the change and manual migration steps.
+
 Recommended: install via OLM (OperatorHub on OpenShift, or the latest release
 manifests) rather than `make deploy` — see [SBR Config User Guide -
 Installation](docs/sbr-config-user-guide.md#installation) for OLM/OperatorHub

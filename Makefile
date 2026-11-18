@@ -9,6 +9,9 @@ AGENT_NAME ?= storage-based-remediation-agent
 QUAY_OPERATOR_NAME ?= $(IMAGE_REGISTRY)/$(OPERATOR_NAME)-operator
 QUAY_AGENT_IMG ?= $(IMAGE_REGISTRY)/$(AGENT_NAME)
 
+# PACKAGE_NAME is the OLM package name
+PACKAGE_NAME ?= medik8s-$(OPERATOR_NAME)
+
 # VERSION defines the project version for the bundle.
 # Update this value when you upgrade the version of your project.
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
@@ -21,6 +24,9 @@ VERSION ?= $(DEFAULT_VERSION)
 PREVIOUS_VERSION ?= 0.3.1
 # Lower bound for the skipRange field, should be set to the oldest supported version.
 SKIP_RANGE_LOWER ?= 0.3.0
+# NO_REPLACES omits the CSV / catalog "replaces" field for a clean-root release that has no
+# in-package predecessor.
+NO_REPLACES ?= false
 export VERSION
 
 # Use the selected version for operator and agent image tags.
@@ -731,12 +737,12 @@ endef
 ##@ OLM Bundle & Catalog
 
 # CSV path for post-generation edits if needed
-CSV ?= ./bundle/manifests/$(OPERATOR_NAME).clusterserviceversion.yaml
+CSV ?= ./bundle/manifests/$(PACKAGE_NAME).clusterserviceversion.yaml
 
 .PHONY: bundle
 bundle: manifests operator-sdk kustomize yq ## Generate OLM bundle manifests and metadata, then validate
 	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
-	$(KUSTOMIZE) build config/manifests | envsubst '$$AGENT_IMG' | $(OPERATOR_SDK) generate bundle -q --manifests --metadata --overwrite --version $(VERSION) $(BUNDLE_METADATA_OPTS)
+	$(KUSTOMIZE) build config/manifests | envsubst '$$AGENT_IMG' | $(OPERATOR_SDK) generate bundle -q --manifests --metadata --overwrite --version $(VERSION) --package $(PACKAGE_NAME) $(BUNDLE_METADATA_OPTS)
 	$(MAKE) bundle-validate
 
 .PHONY: bundle-validate
@@ -755,23 +761,23 @@ bundle-push: ## Push bundle image
 	$(CONTAINER_TOOL) push ${BUNDLE_IMG}
 
 # Add olm.channel entries for each channel in CHANNELS.
-# replaces and skipRange are emitted whenever their versions are set, so the generated catalog
-# always has a valid upgrade edge from an older installed version
+# replaces and skipRange are emitted whenever their versions are set, unless this is a clean-root
+# release that has no in-package predecessor.
 .PHONY: add_channel_entry_for_the_bundle
 add_channel_entry_for_the_bundle:
 	@for channel in $(shell echo ${CHANNELS} | tr ',' ' '); do \
 		echo "---" >> ${CATALOG_INDEX}; \
 		echo "schema: olm.channel" >> ${CATALOG_INDEX}; \
-		echo "package: ${OPERATOR_NAME}" >> ${CATALOG_INDEX}; \
+		echo "package: ${PACKAGE_NAME}" >> ${CATALOG_INDEX}; \
 		echo "name: $$channel" >> ${CATALOG_INDEX}; \
 		echo "entries:" >> ${CATALOG_INDEX}; \
-		echo "  - name: ${OPERATOR_NAME}.v${VERSION}" >> ${CATALOG_INDEX}; \
-		if [ -n "${PREVIOUS_VERSION}" ]; then \
+		echo "  - name: ${PACKAGE_NAME}.v${VERSION}" >> ${CATALOG_INDEX}; \
+		if [ "${NO_REPLACES}" != "true" ] && [ -n "${PREVIOUS_VERSION}" ]; then \
 			if [ "${PREVIOUS_VERSION}" = "${VERSION}" ]; then \
 				echo "Error: PREVIOUS_VERSION must differ from VERSION"; \
 				exit 1; \
 			fi; \
-			echo "    replaces: ${OPERATOR_NAME}.v${PREVIOUS_VERSION}" >> ${CATALOG_INDEX}; \
+			echo "    replaces: ${PACKAGE_NAME}.v${PREVIOUS_VERSION}" >> ${CATALOG_INDEX}; \
 		fi; \
 		if [ -n "${SKIP_RANGE_LOWER}" ]; then \
 			if [ "${SKIP_RANGE_LOWER}" = "${VERSION}" ] || ! printf '%s\n' "${SKIP_RANGE_LOWER}" "${VERSION}" | sort -V -C 2>/dev/null; then \
@@ -788,7 +794,7 @@ catalog-build: opm ## Build a file-based catalog image.
 	-rm -r ${CATALOG_DIR} ${CATALOG_DOCKERFILE}
 	@mkdir -p ${CATALOG_DIR}
 	$(OPM) generate dockerfile ${CATALOG_DIR}
-	$(OPM) init ${OPERATOR_NAME} \
+	$(OPM) init ${PACKAGE_NAME} \
 		--default-channel=${DEFAULT_CHANNEL} \
 		--description=./README.md \
 		--icon=${BLUE_ICON_PATH} \
@@ -807,19 +813,24 @@ catalog-push: ## Push catalog image
 
 .PHONY: add-replaces-field
 add-replaces-field: ## Add replaces to CSV for versioned builds
-	@if [ -n "$(PREVIOUS_VERSION)" ] && [ "$(PREVIOUS_VERSION)" = "$(VERSION)" ]; then \
+	sed -i.bak '/^  replaces:.*/d' ${CSV} && rm -f ${CSV}.bak
+	# NO_REPLACES=true => clean-root release (e.g. first release after the package rename)
+	@if [ "$(NO_REPLACES)" = "true" ]; then \
+		echo "NO_REPLACES=true: omitting replaces field (clean-root release)"; \
+	elif [ -z "$(PREVIOUS_VERSION)" ]; then \
+		echo "Error: PREVIOUS_VERSION must be set for versioned builds (or set NO_REPLACES=true for a clean-root release)"; \
+		exit 1; \
+	elif [ "$(PREVIOUS_VERSION)" = "$(VERSION)" ]; then \
 		echo "Error: PREVIOUS_VERSION must differ from VERSION"; \
 		exit 1; \
-	fi
-	sed -i.bak '/^  replaces:.*/d' ${CSV} && rm -f ${CSV}.bak
-	@if [ -n "$(PREVIOUS_VERSION)" ]; then \
-		sed -i.bak -e "$$(printf '/^  version: $(VERSION)$$/a\\\n  replaces: $(OPERATOR_NAME).v$(PREVIOUS_VERSION)\n')" ${CSV} && rm -f ${CSV}.bak; \
+	else \
+		sed -i.bak -e "$$(printf '/^  version: $(VERSION)$$/a\\\n  replaces: $(PACKAGE_NAME).v$(PREVIOUS_VERSION)\n')" ${CSV} && rm -f ${CSV}.bak; \
 	fi
 
 .PHONY: bundle-reset
 bundle-reset: ## Revert all version or build date related changes
 	$(MAKE) bundle VERSION=$(DEFAULT_VERSION)
-	$(MAKE) add-replaces-field VERSION=$(DEFAULT_VERSION)
+	NO_REPLACES=true $(MAKE) add-replaces-field VERSION=$(DEFAULT_VERSION)
 	sed -i.bak "s|olm.skipRange: .*|olm.skipRange: '>=${SKIP_RANGE_LOWER} <$(DEFAULT_VERSION)'|;" ${CSV} && rm -f ${CSV}.bak
 	@# empty creation date
 	sed -i.bak 's|createdAt: .*|createdAt: ""|;' ${CSV} && rm -f ${CSV}.bak
