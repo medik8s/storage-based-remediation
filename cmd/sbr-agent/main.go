@@ -58,6 +58,7 @@ import (
 	"github.com/medik8s/storage-based-remediation/v5/internal/blockformat"
 	"github.com/medik8s/storage-based-remediation/v5/internal/bootunit"
 	"github.com/medik8s/storage-based-remediation/v5/internal/controller"
+	"github.com/medik8s/storage-based-remediation/v5/internal/hostlock"
 	"github.com/medik8s/storage-based-remediation/v5/internal/mocks"
 	"github.com/medik8s/storage-based-remediation/v5/internal/retry"
 	"github.com/medik8s/storage-based-remediation/v5/internal/sbdprotocol"
@@ -102,6 +103,7 @@ var (
 		"Timeout for considering nodes stale and removing them from slot mapping")
 	detectOnlyMode = flag.Bool(agent.FlagDetectOnlyMode, false,
 		"When true, disarm watchdog and do not remediate (detect and set node conditions only)")
+
 	sbrConfigNameFlag = flag.String(agent.FlagSBRConfigName, agent.DefaultSBRConfigName,
 		"Name of the StorageBasedRemediationConfig CR that owns this agent. "+
 			"Set by the controller via the DaemonSet pod spec. If empty, the agent falls back "+
@@ -129,6 +131,8 @@ var (
 
 	// Previous fencing message flag
 	previousFenceMessage = false
+
+	localAgentConflict = false
 )
 
 const (
@@ -214,6 +218,9 @@ const (
 	EventReasonSBRWriteFailed                = "SBRWriteFailed"                // Emitted when SBR device write failures exceed threshold
 	EventReasonHeartbeatWriteFailed          = "HeartbeatWriteFailed"          // Emitted when heartbeat write failures exceed threshold
 	EventReasonFenceMessageDetected          = "FenceMessageDetected"          // Emitted when a fence message is read from the agent's own slot
+	// EventReasonLocalAgentConflict is emitted in BlockPerNode mode when this process could not
+	// take the host lock, so it controls neither the watchdog nor the journal on this node.
+	EventReasonLocalAgentConflict = hostlock.ReasonLocalAgentConflict
 )
 
 // metricsOnce ensures metrics are only registered once
@@ -655,6 +662,11 @@ type SBRAgent struct {
 	// rather than of the call graph.
 	fenceDecisionRecorded bool
 
+	// localAgentConflict is true when this process could not take the host lock, so
+	// another process on this node owns the watchdog and the journal. This process
+	// performs no watchdog or journal writes, and keeps reconciling peer requests.
+	localAgentConflict bool
+
 	// blockMode is true when the device has a valid superblock (RWX block volume).
 	// In block mode, heartbeat/fence I/O goes through OffsetDevice adapters and
 	// the node map is stored on the block device instead of a file.
@@ -891,6 +903,30 @@ func NewSBRAgentWithWatchdog(
 	}
 
 	return sbrAgent, nil
+}
+
+// setBlockPerNodeState records the BlockPerNode mode and the host-lock outcome on the
+// agent, and reports a LocalAgentConflict event when this process lost the lock.
+//
+// The event carries the node name because the config-scoped event is the only place an
+// administrator can see which node is running without watchdog and journal ownership.
+func (s *SBRAgent) setBlockPerNodeState(localAgentConflict bool) {
+	s.localAgentConflict = localAgentConflict
+
+	if !localAgentConflict {
+		return
+	}
+	if s.recorder == nil || s.recorderObject == nil {
+		return
+	}
+	s.recorder.Eventf(
+		s.recorderObject,
+		corev1.EventTypeWarning,
+		EventReasonLocalAgentConflict,
+		"Another local agent owns the host lock on node %q; this agent arms no watchdog and "+
+			"writes no journal, and only reconciles remediation requests for other nodes",
+		s.nodeName,
+	)
 }
 
 // initMetrics initializes Prometheus metrics and starts the metrics server
@@ -3111,16 +3147,38 @@ func main() {
 		}
 	}
 
+	// TODO: drop this read once the operator passes the mode as an agent argument.
+	blockPerNodeMode := false
+	{
+		cfg := &v1alpha1.StorageBasedRemediationConfig{}
+		cfgKey := client.ObjectKey{Name: *sbrConfigNameFlag, Namespace: os.Getenv("POD_NAMESPACE")}
+		if err := k8sClient.Get(context.Background(), cfgKey, cfg); err != nil {
+			logger.Error(err, "Failed to get StorageBasedRemediationConfig; assuming shared storage",
+				"key", cfgKey)
+		} else {
+			blockPerNodeMode = cfg.Spec.IsBlockPerNodeMode()
+		}
+	}
+
 	// Create SBR agent (hash mapping is always enabled)
 	var wd mocks.WatchdogInterface
-	if *detectOnlyMode {
+	if blockPerNodeMode {
+		localAgentLock, lockFileErr := hostlock.Acquire(hostlock.DefaultLockPath)
+		defer localAgentLock.Release()
+		localAgentConflict = (lockFileErr != nil)
+	}
+
+	switch {
+	case *detectOnlyMode:
 		logger.Info("Detect-only mode: using no-op watchdog (watchdog disarmed, no remediation)")
 		wd = mocks.NewMockWatchdog(*watchdogPath)
-	} else {
+	case localAgentConflict:
+		logger.Error(nil, "Failed to acquire local agent lock: using no-op watchdog (watchdog disarmed)")
+		wd = mocks.NewMockWatchdog(*watchdogPath)
+	default:
 		realWd, err := watchdog.NewWithSoftdogFallback(*watchdogPath, logger)
 		if err != nil {
-			logger.Error(err, "Failed to initialize watchdog",
-				"watchdogPath", *watchdogPath)
+			logger.Error(err, "Failed to initialize watchdog", "watchdogPath", *watchdogPath)
 			os.Exit(1)
 		}
 		wd = realWd
@@ -3183,6 +3241,7 @@ func main() {
 			"nodeID", nodeIDValue)
 		os.Exit(1)
 	}
+	sbrAgent.setBlockPerNodeState(localAgentConflict)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
