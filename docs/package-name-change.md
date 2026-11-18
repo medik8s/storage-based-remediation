@@ -2,7 +2,7 @@
 
 ## Overview
 
-Starting from v5.8.0, the package name for the Storage Based Remediation community operator has been changed from `storage-based-remediation` to `medik8s-storage-based-remediation`.
+Starting from v5.9.0, the package name for the Storage Based Remediation community operator has been changed from `storage-based-remediation` to `medik8s-storage-based-remediation`.
 
 ## Reason for Change
 

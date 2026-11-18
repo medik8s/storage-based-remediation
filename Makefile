@@ -24,6 +24,9 @@ VERSION ?= $(DEFAULT_VERSION)
 PREVIOUS_VERSION ?= 0.3.1
 # Lower bound for the skipRange field, should be set to the oldest supported version.
 SKIP_RANGE_LOWER ?= 0.3.0
+# NO_REPLACES omits the CSV / catalog "replaces" field for a clean-root release that has no
+# in-package predecessor.
+NO_REPLACES ?= false
 export VERSION
 
 # Use the selected version for operator and agent image tags.
@@ -758,8 +761,8 @@ bundle-push: ## Push bundle image
 	$(CONTAINER_TOOL) push ${BUNDLE_IMG}
 
 # Add olm.channel entries for each channel in CHANNELS.
-# replaces and skipRange are emitted whenever their versions are set, so the generated catalog
-# always has a valid upgrade edge from an older installed version
+# replaces and skipRange are emitted whenever their versions are set, unless this is a clean-root
+# release that has no in-package predecessor.
 .PHONY: add_channel_entry_for_the_bundle
 add_channel_entry_for_the_bundle:
 	@for channel in $(shell echo ${CHANNELS} | tr ',' ' '); do \
@@ -769,7 +772,7 @@ add_channel_entry_for_the_bundle:
 		echo "name: $$channel" >> ${CATALOG_INDEX}; \
 		echo "entries:" >> ${CATALOG_INDEX}; \
 		echo "  - name: ${PACKAGE_NAME}.v${VERSION}" >> ${CATALOG_INDEX}; \
-		if [ -n "${PREVIOUS_VERSION}" ]; then \
+		if [ "${NO_REPLACES}" != "true" ] && [ -n "${PREVIOUS_VERSION}" ]; then \
 			if [ "${PREVIOUS_VERSION}" = "${VERSION}" ]; then \
 				echo "Error: PREVIOUS_VERSION must differ from VERSION"; \
 				exit 1; \
@@ -810,19 +813,24 @@ catalog-push: ## Push catalog image
 
 .PHONY: add-replaces-field
 add-replaces-field: ## Add replaces to CSV for versioned builds
-	@if [ -n "$(PREVIOUS_VERSION)" ] && [ "$(PREVIOUS_VERSION)" = "$(VERSION)" ]; then \
+	sed -i.bak '/^  replaces:.*/d' ${CSV} && rm -f ${CSV}.bak
+	# NO_REPLACES=true => clean-root release (e.g. first release after the package rename)
+	@if [ "$(NO_REPLACES)" = "true" ]; then \
+		echo "NO_REPLACES=true: omitting replaces field (clean-root release)"; \
+	elif [ -z "$(PREVIOUS_VERSION)" ]; then \
+		echo "Error: PREVIOUS_VERSION must be set for versioned builds (or set NO_REPLACES=true for a clean-root release)"; \
+		exit 1; \
+	elif [ "$(PREVIOUS_VERSION)" = "$(VERSION)" ]; then \
 		echo "Error: PREVIOUS_VERSION must differ from VERSION"; \
 		exit 1; \
-	fi
-	sed -i.bak '/^  replaces:.*/d' ${CSV} && rm -f ${CSV}.bak
-	@if [ -n "$(PREVIOUS_VERSION)" ]; then \
+	else \
 		sed -i.bak -e "$$(printf '/^  version: $(VERSION)$$/a\\\n  replaces: $(PACKAGE_NAME).v$(PREVIOUS_VERSION)\n')" ${CSV} && rm -f ${CSV}.bak; \
 	fi
 
 .PHONY: bundle-reset
 bundle-reset: ## Revert all version or build date related changes
 	$(MAKE) bundle VERSION=$(DEFAULT_VERSION)
-	$(MAKE) add-replaces-field VERSION=$(DEFAULT_VERSION)
+	NO_REPLACES=true $(MAKE) add-replaces-field VERSION=$(DEFAULT_VERSION)
 	sed -i.bak "s|olm.skipRange: .*|olm.skipRange: '>=${SKIP_RANGE_LOWER} <$(DEFAULT_VERSION)'|;" ${CSV} && rm -f ${CSV}.bak
 	@# empty creation date
 	sed -i.bak 's|createdAt: .*|createdAt: ""|;' ${CSV} && rm -f ${CSV}.bak
