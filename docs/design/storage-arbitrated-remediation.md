@@ -180,12 +180,16 @@ See Section 5.6 for reboot decisions, Section 5.8 for boot ID checks, and Sectio
 | `autonomousRebootRecoveryPeriod` | `5m` in `BlockPerNode` | Positive duration. Valid only in `BlockPerNode`. | After successful probes show healthy storage for this period, an earlier autonomous attempt no longer prevents another attempt. API recovery is optional for this check. |
 | `oosTaintPolicy` | `OnTimeout` | `OnTimeout` or `OnReboot`. Valid only in `BlockPerNode`. | Under both policies, a peer can apply the OutOfService taint after it verifies that the request's original boot ended. `OnTimeout` also permits the peer to apply the taint when the reboot grace period ends. |
 | `rebootGracePeriod` | `60s` | Positive duration. Valid only in `BlockPerNode`. | For `OnTimeout`, measure from the `Offered` timestamp saved in the target Node's annotation. Acceptance does not change the deadline. An autonomous reboot starts no OOS timer. |
+| `bootUnitEnabled` | `false` | Boolean. Valid only in `BlockPerNode`. | Enable the optional host service that delays kubelet after a recognized autonomous reboot. |
+| `bootUnitTimeout` | No default | Positive duration. Required when `bootUnitEnabled` is `true`. Valid only in `BlockPerNode`. | Maximum period that the boot unit blocks kubelet. At expiry, allow kubelet to start even if the API is unavailable. |
 | `watcherGroupSize` | `16` | Positive integer. Valid only in `BlockPerNode`. | Maximum selected nodes per watcher group. Each group receives one watcher. |
 | `watcherGroupLabels` | Empty list | Distinct valid Node label keys. Valid only in `BlockPerNode`. | Put selected nodes in separate watcher groups if their region, zone, or configured label values differ. |
 
 The BlockPerNode defaults do not replace existing shared-storage thresholds. Omitted `ioTimeout` preserves the existing two-second timeout in Filesystem and Block. An omitted volume mode remains equivalent to explicit `Filesystem`. Explicit `Block` continues to select shared storage.
 
 Get each effective default from the configuration getters. In the CRD, leave `ioTimeout` without a default so the getter can select it by mode. Reject `ioTimeout: 0s`. With `totalOutageGracePeriod: 0s`, the agent still checks for unhealthy storage and API unavailability before it can reboot. It does not wait for an additional grace period. Require a positive `autonomousRebootRecoveryPeriod`.
+
+An omitted `bootUnitEnabled` means `false`. Require an explicit `bootUnitTimeout` when enabling the unit. A timeout can be set while the unit is disabled, but it has no effect. Reject an invalid, zero, or negative timeout whenever the field is present. The timeout is independent of `rebootGracePeriod` and does not change either OutOfService policy.
 
 Proposed additions in [configuration types](../../api/v1alpha1/storagebasedremediationconfig_types.go):
 
@@ -223,6 +227,12 @@ type StorageBasedRemediationConfigSpec struct {
 
 	// +optional
 	RebootGracePeriod *metav1.Duration `json:"rebootGracePeriod,omitempty"`
+
+	// +optional
+	BootUnitEnabled *bool `json:"bootUnitEnabled,omitempty"`
+
+	// +optional
+	BootUnitTimeout *metav1.Duration `json:"bootUnitTimeout,omitempty"`
 
 	// +kubebuilder:validation:Minimum=1
 	// +optional
@@ -280,6 +290,7 @@ Use separate time limits for API calls, journal writes, workload observations, a
 | `detectOnlyMode` omitted or `Disabled` | Existing behavior. | A local agent can reboot for a request or after combined storage and API loss under the rules below. |
 | `totalOutageGracePeriod` or `autonomousRebootRecoveryPeriod` is present | Admission rejects the inapplicable field. | Use the configured duration or default for the combined-outage timer or storage recovery timer. |
 | `oosTaintPolicy` or `rebootGracePeriod` is present | Admission rejects the inapplicable field. | When offering a request, the peer writes the effective OutOfService policy and fixed deadline to the Node annotation. |
+| `bootUnitEnabled` or `bootUnitTimeout` is present | Admission rejects the inapplicable field. | Configure the standalone host service. Only an enabled unit with a valid timeout delays kubelet. |
 | `watcherGroupSize` or `watcherGroupLabels` is present | Admission rejects the inapplicable field. | Partition by region, zone, and custom label values. Split each partition at the configured size. |
 
 The existing defaults remain `30` seconds and seven consecutive failures. The schema ranges stay the same. BlockPerNode uses consecutive failed evaluations at the interval in Section 5.6. The shared modes use shared-heartbeat expiry and mixed operation counters. Use the evaluation schedule in Section 5.6 to calculate detection time.
@@ -304,10 +315,21 @@ spec:
   autonomousRebootRecoveryPeriod: 5m
   oosTaintPolicy: OnTimeout
   rebootGracePeriod: 60s
+  bootUnitEnabled: false
   watcherGroupSize: 16
   watcherGroupLabels:
     - storage.example.com/failure-domain
 ```
+
+To enable the optional boot unit, set both fields in the same configuration:
+
+```yaml
+spec:
+  bootUnitEnabled: true
+  bootUnitTimeout: 2m
+```
+
+The two-minute timeout is an example, not a default. It does not change the CR's reboot deadline.
 
 #### Validation and immutability (VERY TECHNICAL, CAN BE SKIPPED)
 
@@ -320,6 +342,7 @@ Extend `ValidateCreate()` and `ValidateUpdate()` in the [configuration webhook](
 5. Reject a configuration if it selects any node that another BlockPerNode configuration selects.
 6. Reject different StorageClasses across BlockPerNode configurations in this release.
 7. Validate positive watcherGroupSize and distinct valid watcherGroupLabels keys. Reject the fields outside BlockPerNode.
+8. Validate `bootUnitEnabled` and `bootUnitTimeout`. Require a positive timeout when enabled. Reject either field outside BlockPerNode, including explicit `false`.
 
 Compare parsed duration values. Treat an omitted volume mode and explicit `Filesystem` as equal. Treat an omitted duration and its explicit effective default as equal. Reject removal of a nondefault immutable duration. Apply valid `ioTimeout` changes through the replacement procedure below.
 
@@ -330,6 +353,8 @@ Before retiring the configuration, prevent new offers and new CR-driven taint op
 A replacement configuration cannot resume an unfinished request. The target can still issue a reboot it already chose. A later boot report may be unavailable.
 
 Apply this replacement rule to selector, StorageClass, watchdog path, detect-only, and probe timing changes. An OutOfService policy or grace change applies only when peers make later offers. For group-size or group-label changes, replace watcher assignments under Section 5.5. Check both nodes that leave and nodes that enter the selection before changing their assignments. Keep the configuration until peers close the requests to new operations and release the CRs' restrictions. A replacement configuration cannot resume the old requests.
+
+Both boot-unit fields are mutable. Apply changes to the host settings for later eligible boots. A delay already in progress keeps its original deadline. Disabling the unit prevents future delays once the host receives the setting. An API update alone does not confirm that an unreachable host has received it.
 
 Keep the original deadline for every probe that started. Use the new timing values when the replacement monitor starts. Restart the failure count and elapsed-time checks as Section 5.11 specifies.
 
@@ -1091,17 +1116,23 @@ Document what to do when no peer is available, the reporter or probe is missing,
 
 #### Summary
 
-An optional host service can delay kubelet startup after a reboot. It is disabled by default. When the configured period ends, it lets kubelet start even if the API is unavailable or workload removal is incomplete. The delay is independent of when a peer applies or removes the OutOfService taint. It does not guarantee that old workloads have stopped or their volumes have detached. Separate work will define how to install and enable this service.
+An optional host service can delay kubelet startup after a recognized autonomous reboot. Set `spec.bootUnitEnabled: true` and a positive `spec.bootUnitTimeout` in the SBR config CR to enable it. The default is disabled. When the configured period ends, it lets kubelet start even if the API is unavailable or workload removal is incomplete.
+
+The delay is independent of when a peer applies or removes the OutOfService taint. It does not guarantee that old workloads have stopped or their volumes have detached. Separate work will define installation and how the operator applies these settings to each selected host.
 
 #### Technical details
 
-A standalone host service can prevent kubelet from starting for a period configured on the host. The option is disabled by default. At its local deadline, the service lets kubelet start even if the API is unavailable. It does not check the OutOfService taint, Node health, or any message from a reporter or peer.
+A standalone host service reads the effective `bootUnitEnabled` and `bootUnitTimeout` values saved on its host. Apply validated settings before a reboot. The service must not fetch the CR or wait for the API before letting kubelet start. These local settings configure only the boot unit. They do not provide offline configuration or reboot permission for the SBR agent.
+
+When enabled for a recognized autonomous reboot, the service measures the timeout from the start of its delay in that boot. Include local checks in that time limit. Use a local elapsed-time clock and retain the original deadline across service restarts within the same boot. Settings received during a delay apply to later eligible boots and cannot extend the active deadline.
+
+At its deadline, the service lets kubelet start even if the API is unavailable. It does not check the OutOfService taint, Node health, or any message from a reporter or peer. A disabled unit adds no delay. Missing or invalid local settings must not cause an indefinite wait or an invented timeout. In that case, report the local error and allow kubelet to start.
 
 The peer uses the CR's saved reboot deadline independently of the host service's deadline. Under `OnTimeout`, the peer can add the OutOfService taint before the reset, during the delay, or after the delay ends. Under `OnReboot`, the target agent or reporter normally publishes boot evidence after kubelet starts.
 
 A workload already assigned to the node can restart before the peer adds the taint or before its volumes detach. Inconsistent local state can cause the service to miss a delay. An expired delay does not show that workloads stopped or that volumes detached. The policy accepts missed delays.
 
-Separate work will define how to enable the service, which local data it uses, and which durations it supports. BlockPerNode can ship without the service.
+Separate work will define installation, host setting delivery, reboot recognition, and platform-specific tests. Disabling or removing the configuration must remove future SBR boot delays when host reconciliation succeeds. Preserve normal kubelet startup when removing the service. API validation alone does not establish that the host installed or enabled it. BlockPerNode can run with the service disabled.
 
 ## 6. Open Questions
 
@@ -1187,7 +1218,7 @@ The following work remains deferred:
 - Define which request and attempt entries to keep, when to remove them, and how to limit the Node annotation size.
 - Define how an agent starts when it cannot reach the API and has no usable local state.
 - Define the journal file format, library interface, and watchdog implementation in the separate journal work.
-- Define how to install and enable the optional host service that delays kubelet.
+- Define installation, host setting delivery, and reboot recognition for the optional service. Section 5.4 defines its configuration fields.
 - Test the supported storage drivers, platforms, performance, and cluster sizes separately.
 
 When peers check Pods, VMIs, and attachments, they report which old resources remain. A replacement VM or Pod can still fail to start after those resources disappear.
@@ -1206,7 +1237,9 @@ A replacement configuration cannot use an old request to choose a reboot or appl
 
 An upgrade still treats omitted volume mode as `Filesystem`. With `ioTimeout` omitted, use two seconds for existing modes and fifteen seconds for BlockPerNode. Existing modes keep their failure counter and retry rules.
 
-Only BlockPerNode accepts the new OutOfService, total-outage, autonomous recovery, and watcher grouping fields. If omitted, use OnTimeout and a 60-second reboot grace. The target agent makes at most two updates to accept an offer. Group targets by region and zone with at most 16 nodes per group by default. The host service delays kubelet only when an administrator enables it.
+Only BlockPerNode accepts the new OutOfService, total-outage, autonomous recovery, boot-unit, and watcher grouping fields. If omitted, use OnTimeout and a 60-second reboot grace. The target agent makes at most two updates to accept an offer. Group targets by region and zone with at most 16 nodes per group by default.
+
+Omitting `bootUnitEnabled` preserves normal kubelet startup. Enabling it requires an explicit positive `bootUnitTimeout`. Before removing support for these fields, disable the service on affected hosts and preserve normal kubelet startup. An unreachable host can retain its last applied settings until host reconciliation succeeds.
 
 Install compatible CRDs and webhooks. Deploy compatible operator, agent, reporter, and watcher images before enabling BlockPerNode. The separate journal work will specify the shared library interface and compatible versions.
 
@@ -1244,6 +1277,9 @@ Extend the existing API, controller, agent, and end-to-end test suites. These ar
 - Set total-outage grace to its permitted limits. Check that admission accepts zero grace and requires a positive autonomous recovery period. Check that it rejects both fields in existing modes.
 - Omit the OOS policy and check that the effective policy is OnTimeout. Test explicit OnTimeout and OnReboot. Omit reboot grace and check for a 60-second deadline interval.
 - Submit an invalid OOS policy or a reboot grace at or below zero. Check that admission rejects them. Check that it rejects both fields in existing shared modes.
+- Omit `bootUnitEnabled` and check that it defaults to false. Enable it with a positive timeout and check that admission accepts both fields.
+- Enable the unit without a timeout. Supply invalid, zero, or negative timeouts with either enable value. Check that admission rejects these cases.
+- Disable the unit with a valid timeout present. Check that the timeout has no effect. Reject both boot-unit fields in existing modes.
 - Omit `watcherGroupSize` and check that the limit is 16. Check that admission rejects sizes at or below zero. Submit invalid and duplicate `watcherGroupLabels` keys. Check that admission rejects each case. Check that it rejects both fields in existing modes.
 - Change the configuration after a peer writes Offered. Check that the saved policy and reboot deadline for the CR stay the same. Check that kubelet starts normally when the standalone service is disabled by default.
 - Check the timeout in the agent arguments and the value that initialization and preflight use. Leave the timeout unset in existing modes and check that their previous behavior continues.
@@ -1438,11 +1474,16 @@ Use real hosts to check that systemd starts the service before kubelet and to te
 
 - Leave the service disabled and check that kubelet starts normally.
 - Configure and enable a finite local delay. Check that kubelet can start at expiry when API access, certificates, the reporter, or the probe are unavailable.
+- Apply the CR settings to the host. Reboot autonomously with the API unavailable and check that the service uses the saved timeout.
+- Reboot without a recognized autonomous attempt. Check that enabling the unit does not add a delay to that boot.
 - Restart the service in the same boot. Check that it uses the original deadline and does not start a new delay.
+- Change the timeout or disable the unit during a delay. Check that the active deadline stays unchanged and later boots use applied settings.
+- Leave a host unreachable during a settings update. Check that the update does not claim the host received the new values.
+- Remove or corrupt local settings. Check that kubelet can start without an indefinite wait. Remove the service and check normal kubelet startup.
 - Fail local reads or supply stale journal data. Check that the service ends the failed read attempt within its allowed time. Document when the service misses a delay.
 - Apply OutOfService before reboot, during the delay, and after expiry. Check that the peer uses the reboot deadline and the service uses its local deadline.
 - Leave the journal corrupt after an autonomous reboot. Check that the service does not prevent the agent from attempting recreation or continuing with in-memory state when recreation fails.
-- In the separate boot-service work, define how to install and enable the service and test the watchdog on each supported platform.
+- In the separate boot-service work, test installation, host setting delivery, reboot recognition, and watchdog behavior on each supported platform.
 
 ## Alternatives considered
 
@@ -1489,7 +1530,7 @@ A **remediation CR** is a `StorageBasedRemediation` resource. An **SBR config CR
 | Outage period | An interval without sustained storage recovery. If history shows that the agent already chose an autonomous reboot, it cannot choose another until storage recovers for the configured period. API recovery does not end the interval. |
 | Permit another autonomous reboot | After fresh storage probes stay healthy for the configured recovery period, the agent can choose one autonomous reboot in a later outage. The default is five minutes. It measures that time even when the API is unavailable. |
 | Watcher group | Nodes with matching region, zone, and configured custom label values. The operator assigns no more than `watcherGroupSize` targets to one group and runs one watcher for it. |
-| Boot unit or gate | Optional host service that prevents kubelet from starting until a local deadline. It is disabled by default. |
+| Boot unit or gate | Optional host service controlled by `bootUnitEnabled` and `bootUnitTimeout`. It delays kubelet after a recognized autonomous reboot and defaults to disabled. |
 | Held | The host service prevents kubelet from starting. It lets kubelet start when the local deadline expires, even if the API is unavailable or workload removal is unconfirmed. |
 | Clean and unclean shutdown | The journal may show that the agent stopped normally. A missing marker provides no evidence of reboot cause or Node health. |
 
