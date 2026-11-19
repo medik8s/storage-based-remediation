@@ -33,7 +33,7 @@ package utils
 
 import (
 	"bytes"
-	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -42,7 +42,10 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 
-	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
+	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/medik8s/storage-based-remediation/v5/internal/inspection"
 	"github.com/medik8s/storage-based-remediation/v5/internal/sbdprotocol"
 )
 
@@ -60,62 +63,98 @@ type SBRNodeSummary struct {
 	HasData   bool
 }
 
-// GetNodeMapFromPod extracts the current node mapping from an SBR agent pod
+// InspectFromPod uses the same read-only diagnostic command as administrators.
+func (tc *TestClients) InspectFromPod(podName, namespace string) (*inspection.Report, error) {
+	pod := &corev1.Pod{}
+	if err := tc.Client.Get(tc.Context, client.ObjectKey{Name: podName, Namespace: namespace}, pod); err != nil {
+		return nil, fmt.Errorf("get inspection pod %s: %w", podName, err)
+	}
+	path, err := inspectionDeviceFromPod(pod)
+	if err != nil {
+		return nil, fmt.Errorf("inspect pod %s: %w", podName, err)
+	}
+	stdout, stderr, err := tc.execInPodContainer(podName, namespace, "sbr-agent",
+		[]string{"sbr-agent", "inspect", "--sbr-device", path, "-o", "json"})
+	if err != nil {
+		return nil, fmt.Errorf("inspect pod %s: %w; stderr: %s; stdout: %s", podName, err, stderr, stdout)
+	}
+	var report inspection.Report
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		return nil, fmt.Errorf("decode inspection from pod %s: %w", podName, err)
+	}
+	if report.SchemaVersion != 1 || (report.Mode != "fs" && report.Mode != "block") || len(report.Errors) != 0 {
+		return nil, fmt.Errorf("invalid or incomplete inspection from pod %s: %+v", podName, report)
+	}
+	return &report, nil
+}
+
+// Read the operator-configured path rather than host /proc/1/cmdline.
+func inspectionDeviceFromPod(pod *corev1.Pod) (string, error) {
+	for _, container := range pod.Spec.Containers {
+		if container.Name != "sbr-agent" {
+			continue
+		}
+		var path string
+		for i := 0; i < len(container.Args); i++ {
+			arg := container.Args[i]
+			if strings.HasPrefix(arg, "--sbr-device=") {
+				path = strings.TrimPrefix(arg, "--sbr-device=")
+			} else if arg == "--sbr-device" {
+				if i+1 >= len(container.Args) {
+					return "", fmt.Errorf("sbr-agent has no value for --sbr-device")
+				}
+				i++
+				path = container.Args[i]
+			}
+		}
+		if path == "" {
+			return "", fmt.Errorf("sbr-agent has no configured --sbr-device")
+		}
+		return path, nil
+	}
+	return "", fmt.Errorf("pod has no sbr-agent container")
+}
+
+// GetNodeMapFromPod extracts the current node mapping in either storage mode.
 func (tc *TestClients) GetNodeMapFromPod(podName, namespace string) (*sbdprotocol.NodeMapTable, error) {
-	// Execute command to read node mapping file
-	sbrNodeMappingPath := fmt.Sprintf("%s/%s%s",
-		agent.SharedStorageSBRDeviceDirectory, agent.SharedStorageSBRDeviceFile, agent.SharedStorageNodeMappingSuffix)
-
-	cmd := []string{"cat", sbrNodeMappingPath}
-	stdout, stderr, err := tc.execInPod(podName, namespace, cmd)
+	report, err := tc.InspectFromPod(podName, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read node mapping from pod %s: %v, stderr: %s", podName, err, stderr)
+		return nil, err
 	}
-
-	return parseNodeMapping([]byte(stdout))
+	if report.NodeMap == nil {
+		return nil, fmt.Errorf("node map is %s", report.NodeMapStatus)
+	}
+	return report.NodeMap, nil
 }
 
-// GetSBRDeviceInfoFromPod extracts SBR device information from an SBR agent pod
+func inspectionSummaries(slots []inspection.Slot) []SBRNodeSummary {
+	result := make([]SBRNodeSummary, 0, len(slots))
+	for _, slot := range slots {
+		summary := SBRNodeSummary{NodeID: slot.NodeID, Sequence: slot.Sequence, Type: slot.Type, HasData: true}
+		if slot.Timestamp != nil {
+			summary.Timestamp = *slot.Timestamp
+		}
+		result = append(result, summary)
+	}
+	return result
+}
+
+// GetSBRDeviceInfoFromPod extracts validated heartbeat slots through the CLI.
 func (tc *TestClients) GetSBRDeviceInfoFromPod(podName, namespace string) ([]SBRNodeSummary, error) {
-	// Execute command to read SBR device content
-	// Read first 255 slots (255 * 512 bytes = 130560 bytes)
-
-	sbrDevicePath := fmt.Sprintf("%s/%s", agent.SharedStorageSBRDeviceDirectory, agent.SharedStorageSBRDeviceFile)
-
-	cmd := []string{"dd", "if=" + sbrDevicePath, "bs=512", "count=255", "status=none"}
-	stdout, stderr, err := tc.execInPod(podName, namespace, cmd)
+	report, err := tc.InspectFromPod(podName, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read SBR device from pod %s: %v, stderr: %s", podName, err, stderr)
+		return nil, err
 	}
-
-	slots, err := parseSBRDevice([]byte(stdout))
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse SBR device: %w", err)
-	}
-
-	return slots, nil
+	return inspectionSummaries(report.Heartbeats), nil
 }
 
-// GetFenceDeviceInfoFromPod extracts fence device information from an SBR agent pod
+// GetFenceDeviceInfoFromPod extracts validated fence slots through the CLI.
 func (tc *TestClients) GetFenceDeviceInfoFromPod(podName, namespace string) ([]SBRNodeSummary, error) {
-	// Execute command to read fence device content
-	// Read first 255 slots (255 * 512 bytes = 130560 bytes)
-
-	fenceDevicePath := fmt.Sprintf("%s/%s%s",
-		agent.SharedStorageSBRDeviceDirectory, agent.SharedStorageSBRDeviceFile, agent.SharedStorageFenceDeviceSuffix)
-
-	cmd := []string{"dd", "if=" + fenceDevicePath, "bs=512", "count=255", "status=none"}
-	stdout, stderr, err := tc.execInPod(podName, namespace, cmd)
+	report, err := tc.InspectFromPod(podName, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read fence device from pod %s: %v, stderr: %s", podName, err, stderr)
+		return nil, err
 	}
-
-	slots, err := parseSBRDevice([]byte(stdout))
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse fence device: %w", err)
-	}
-
-	return slots, nil
+	return inspectionSummaries(report.Fences), nil
 }
 
 // PrintNodeMap prints the node mapping summary to stdout
@@ -463,8 +502,20 @@ func (tc *TestClients) testCacheCoherency(podName, namespace string) error {
 // execInPod executes a command in a pod and returns stdout, stderr, and error
 // Uses kubectl exec with system:admin privileges instead of REST API
 func (tc *TestClients) execInPod(podName, namespace string, command []string) (string, string, error) {
-	// Build kubectl exec command
-	args := []string{"exec", "-n", namespace, podName, "--"}
+	return tc.execInPodContainer(podName, namespace, "", command)
+}
+
+func (tc *TestClients) execInPodContainer(
+	podName string,
+	namespace string,
+	container string,
+	command []string,
+) (string, string, error) {
+	args := []string{"exec", "-n", namespace, podName}
+	if container != "" {
+		args = append(args, "-c", container)
+	}
+	args = append(args, "--")
 	args = append(args, command...)
 
 	cmd := exec.Command("kubectl", args...)
@@ -475,90 +526,8 @@ func (tc *TestClients) execInPod(podName, namespace string, command []string) (s
 
 	err := cmd.Run()
 	if err != nil {
-		return "", stderr.String(), fmt.Errorf("kubectl exec failed: %w", err)
+		return stdout.String(), stderr.String(), fmt.Errorf("kubectl exec failed: %w", err)
 	}
 
 	return stdout.String(), stderr.String(), nil
-}
-
-// parseNodeMapping parses binary node mapping data
-func parseNodeMapping(data []byte) (*sbdprotocol.NodeMapTable, error) {
-	// This is a simplified parser - in reality, we'd need to understand
-	// the exact binary format used by the NodeManager
-	// For now, we'll try to extract readable node names and simulate the mapping
-
-	// Unmarshal the data into a NodeMapTable
-	nodeMapTable, err := sbdprotocol.UnmarshalNodeMapTable(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal node mapping: %w", err)
-	}
-
-	return nodeMapTable, nil
-}
-
-// parseSBRDevice parses binary SBR device data
-func parseSBRDevice(data []byte) ([]SBRNodeSummary, error) {
-	const slotSize = sbdprotocol.SBD_SLOT_SIZE
-	magic := sbdprotocol.SBD_MAGIC
-
-	var slots []SBRNodeSummary
-
-	for i := 0; i < len(data)/slotSize; i++ {
-		start := i * slotSize
-		end := start + slotSize
-		if end > len(data) {
-			break
-		}
-
-		slotData := data[start:end]
-
-		// Check if slot has SBR message magic
-		if len(slotData) >= 8 && string(slotData[:8]) == magic {
-			slot, err := parseSBRSlot(uint16(i), slotData)
-			if err == nil && slot.HasData {
-				slots = append(slots, slot)
-			} else {
-				ginkgo.GinkgoWriter.Printf("Failed to parse SBR slot: %v\n", err)
-				return nil, fmt.Errorf("failed to parse SBR slot: %w", err)
-			}
-		}
-	}
-
-	return slots, nil
-}
-
-// parseSBRSlot parses a single SBR slot
-func parseSBRSlot(nodeID uint16, data []byte) (SBRNodeSummary, error) {
-	if len(data) < sbdprotocol.SBD_HEADER_SIZE {
-		return SBRNodeSummary{}, fmt.Errorf("slot data too short")
-	}
-
-	// Parse SBR header (simplified)
-	magic := string(data[:8])
-	if magic != sbdprotocol.SBD_MAGIC {
-		return SBRNodeSummary{NodeID: nodeID, HasData: false}, nil
-	}
-
-	// Read basic header fields (skip version since it's not used)
-	msgType := data[10]
-	if nodeID != binary.LittleEndian.Uint16(data[11:13]) {
-		return SBRNodeSummary{}, fmt.Errorf("nodeID mismatch: %d != %d", nodeID, binary.LittleEndian.Uint16(data[11:13]))
-	}
-
-	timestamp := binary.LittleEndian.Uint64(data[13:21])
-	sequence := binary.LittleEndian.Uint64(data[21:29])
-
-	// Use existing helper function for message type name
-	typeStr := sbdprotocol.GetMessageTypeName(msgType)
-
-	// Convert timestamp from nanoseconds to time.Time
-	ts := time.Unix(int64(timestamp)/1000000000, 0)
-
-	return SBRNodeSummary{
-		NodeID:    nodeID,
-		Timestamp: ts,
-		Sequence:  sequence,
-		Type:      typeStr,
-		HasData:   true,
-	}, nil
 }

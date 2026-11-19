@@ -44,6 +44,14 @@ storage-based-remediation/
 - Registers `StorageBasedRemediationConfigValidator` webhook when `--enable-webhooks=true`.
 - **Does not** run `SBRRemediationReconciler`.
 
+### `cmd/sbr-agent/inspect.go` and `internal/inspection/`
+
+The `inspect` subcommand dispatches before normal startup. It resolves the
+storage path, bounds inspection time and emits JSON. `internal/inspection`
+opens storage read-only, validates block layout, loads node maps using existing
+stores and decodes slots using `sbdprotocol`. E2E helpers consume its JSON in
+both modes. See [the administrator guide](sbr-inspect.md).
+
 ### `cmd/sbr-agent/preflight.go` — Startup device checks
 
 - Validates the configured SBR device is accessible before the agent starts its loops.
