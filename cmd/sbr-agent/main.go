@@ -56,6 +56,7 @@ import (
 	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
 	"github.com/medik8s/storage-based-remediation/v5/internal/blockdevice"
 	"github.com/medik8s/storage-based-remediation/v5/internal/blockformat"
+	"github.com/medik8s/storage-based-remediation/v5/internal/bootunit"
 	"github.com/medik8s/storage-based-remediation/v5/internal/controller"
 	"github.com/medik8s/storage-based-remediation/v5/internal/mocks"
 	"github.com/medik8s/storage-based-remediation/v5/internal/retry"
@@ -105,6 +106,14 @@ var (
 		"Name of the StorageBasedRemediationConfig CR that owns this agent. "+
 			"Set by the controller via the DaemonSet pod spec. If empty, the agent falls back "+
 			"to discovering it by listing config objects in its namespace.")
+	journalEnabled = flag.Bool(agent.FlagJournalEnabled, false,
+		"Enable the node-local host-state journal. Set by the controller from the "+
+			"configuration's volume mode; when false, no journal is opened and every "+
+			"journal write becomes a no-op.")
+	bootUnitEnabled = flag.Bool(agent.FlagBootUnitEnabled, false,
+		"Install and gate the pre-kubelet self-cordon boot unit. Set by the controller "+
+			"from the configuration's volume mode; when false, the agent writes nothing "+
+			"to the host's systemd or state directories for the unit.")
 
 	// I/O timeout configuration
 	ioTimeout = flag.Duration("io-timeout", 2*time.Second,
@@ -125,6 +134,12 @@ const (
 	MaxNodeNameLength = 256
 	// DefaultNodeID is the placeholder node ID used when none is specified
 	DefaultNodeID = 1
+
+	// bootUnitSetupTimeout bounds the one-time boot-unit reconciliation at
+	// agent start. It covers a local file copy, a systemctl call through the
+	// host namespace, and one Node read — a minute is generous for all three,
+	// and the work must never hold up watchdog startup for longer.
+	bootUnitSetupTimeout = 60 * time.Second
 
 	// Retry configuration constants for SBR Agent operations
 	// MaxCriticalRetries is the maximum number of retry attempts for critical operations
@@ -190,6 +205,7 @@ const (
 	EventReasonSBRUnhealthyDetectOnly        = "SBRUnhealthyDetectOnly"        // Emitted in detect-only mode when SBR becomes unhealthy (watchdog disarmed)
 	EventReasonSelfFenceAbortedNoRemediation = "SelfFenceAbortedNoRemediation" // Emitted when self-fence aborted because no StorageBasedRemediation CR exists
 	EventReasonWatchdogPetFailed             = "WatchdogPetFailed"             // Emitted when watchdog pet failures exceed threshold
+	EventReasonRebootDecisionResumed         = "RebootDecisionResumed"         // Emitted when a reboot decision from the current boot is resumed at agent start
 	EventReasonSBRWriteFailed                = "SBRWriteFailed"                // Emitted when SBR device write failures exceed threshold
 	EventReasonHeartbeatWriteFailed          = "HeartbeatWriteFailed"          // Emitted when heartbeat write failures exceed threshold
 	EventReasonFenceMessageDetected          = "FenceMessageDetected"          // Emitted when a fence message is read from the agent's own slot
@@ -264,6 +280,15 @@ var (
 		Help: "Total number of times the local kernel watchdog has been successfully petted",
 	})
 
+	// sbr_reboot_decisions_resumed_total: Total number of reboot decisions
+	// resumed at agent start because the recorded boot never changed. A rising
+	// value with no boot change means the host is not resetting: the decision
+	// is kept and watchdog petting is withheld, so the node needs attention.
+	rebootDecisionsResumedCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "sbr_reboot_decisions_resumed_total",
+		Help: "Total number of reboot decisions resumed after an agent restart in the same boot",
+	})
+
 	// sbr_peer_status: Current liveness status of each peer node
 	// This metric uses labels to track the status of each peer node in the cluster
 	peerStatusGaugeVec = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -276,6 +301,15 @@ var (
 	selfFencedCounter = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "sbr_self_fenced_total",
 		Help: "Total number of times the agent has initiated a self-fence",
+	})
+
+	// sbr_boot_unit_setup_failed_total: Times the pre-kubelet self-cordon unit
+	// could not be installed, verified or cleaned up on this node. A non-zero
+	// value means this node would boot without pre-kubelet self-cordon, which
+	// is degraded rejoin protection — the agent still fences normally.
+	bootUnitSetupFailed = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "sbr_boot_unit_setup_failed_total",
+		Help: "Total number of failed attempts to reconcile the pre-kubelet self-cordon unit on this node",
 	})
 )
 
@@ -536,6 +570,33 @@ type SBRAgent struct {
 	// detectOnlyMode when true disables remediation: watchdog is not armed, self-fence is never executed
 	detectOnlyMode bool
 
+	// journal is the node-local state file the pre-kubelet boot unit reads.
+	// It is nil when main could not open the state root; the record* helpers
+	// are then no-ops, because the journal is diagnostic and best effort and
+	// must never keep this agent from fencing.
+	journal *bootunit.Journal
+
+	// journalIOMutex guards journalLastIOOK, the most recent storage outcome
+	// this process recorded. Only changes are written: the boot unit reads
+	// the newest entry, so recording every heartbeat would add a node-local
+	// write per interval and tell it nothing new. Nil means no outcome has
+	// been recorded yet in this process.
+	journalIOMutex  sync.Mutex
+	journalLastIOOK *bool
+
+	// nodeUID is this Node object's UID, read once at start-up. A reboot
+	// decision is bound to it so a replaced Node — whose workloads the cluster
+	// has already forgotten — cannot be cordoned on the strength of a decision
+	// made for its predecessor. It is cached rather than fetched when needed:
+	// the moment the decision is written is the moment the API may be
+	// unreachable.
+	nodeUID string
+
+	// fenceDecisionRecorded latches the journal write in the self-fence path.
+	// The path is entered once, but the latch makes that a property of the code
+	// rather than of the call graph.
+	fenceDecisionRecorded bool
+
 	// blockMode is true when the device has a valid superblock (RWX block volume).
 	// In block mode, heartbeat/fence I/O goes through OffsetDevice adapters and
 	// the node map is stored on the block device instead of a file.
@@ -781,8 +842,10 @@ func (s *SBRAgent) initMetrics() {
 		prometheus.MustRegister(agentHealthyGauge)
 		prometheus.MustRegister(sbrIOErrorsCounter)
 		prometheus.MustRegister(watchdogPetsCounter)
+		prometheus.MustRegister(rebootDecisionsResumedCounter)
 		prometheus.MustRegister(peerStatusGaugeVec)
 		prometheus.MustRegister(selfFencedCounter)
+		prometheus.MustRegister(bootUnitSetupFailed)
 	})
 
 	// Initialize agent healthy status to 1 (healthy by default)
@@ -1457,6 +1520,19 @@ func (s *SBRAgent) StartWithContext(ctx context.Context) error {
 		"heartbeatInterval", s.heartbeatInterval,
 		"peerCheckInterval", s.peerCheckInterval)
 
+	// Record that an agent is alive in this boot before any loop starts. If
+	// this process dies without reaching Stop, the journal still says
+	// "running", which is what makes the next boot recognisable as an
+	// unclean shutdown.
+	s.recordRunning()
+
+	// A decision recorded in the boot we are still in never became a reboot:
+	// the agent died between the write and the reboot, or the reboot failed.
+	// Keep that decision and withhold watchdog petting so the armed watchdog
+	// completes it; dropping it would let the node keep running after peers
+	// may already have applied the OutOfService taint.
+	s.resumePendingRebootDecision()
+
 	// Start node manager periodic sync if using hash mapping
 	if s.nodeManager != nil {
 		s.nodeManagerStop = s.nodeManager.StartPeriodicSync()
@@ -1504,6 +1580,12 @@ func (s *SBRAgent) Stop() error {
 
 	// Signal all goroutines to stop
 	s.cancel()
+
+	// Record the orderly stop first, while the journal is still the agent's
+	// own business. A later failure to close a device is reported below, but
+	// it does not make the stop unplanned: this value exists to separate a
+	// shutdown the agent performed from a reset it never saw coming.
+	s.recordCleanShutdown()
 
 	// Stop node manager coordination
 	if s.nodeManagerStop != nil {
@@ -1572,7 +1654,7 @@ func (s *SBRAgent) watchdogLoop() {
 			// Check if we should trigger self-fence due to consecutive failures
 			if shouldFence, reason := s.shouldTriggerSelfFence(); shouldFence {
 				logger.Error(nil, "Triggering self-fence due to consecutive failures", "reason", reason)
-				s.executeSelfFencing(reason)
+				s.executeSelfFencing(reason, bootunit.SourceAutonomous)
 				return
 			}
 
@@ -1652,9 +1734,14 @@ func (s *SBRAgent) heartbeatLoop() {
 			return
 		case <-ticker.C:
 			// Use retry mechanism for heartbeat operations
+			heartbeatStart := time.Now()
 			err := retry.Do(s.ctx, s.retryConfig, "write heartbeat to SBR", func() error {
 				return s.writeHeartbeatToSBR()
 			})
+			// Record the verdict, not every attempt: the boot unit needs the
+			// most recent one, and a healthy node must not write its journal
+			// once per heartbeat interval.
+			s.recordHeartbeatWrite(time.Since(heartbeatStart), err)
 
 			if err != nil {
 				failureCount := s.incrementFailureCount("heartbeat")
@@ -2253,8 +2340,12 @@ func (s *SBRAgent) setSelfFenceDetected(detected bool) {
 
 // executeSelfFencing performs the self-fencing action based on the configured method
 // The systemctl-reboot method uses multiple aggressive techniques based on destructive testing
-// that showed direct reboot commands are more effective than panic() in containerized environments
-func (s *SBRAgent) executeSelfFencing(reason string) {
+// that showed direct reboot commands are more effective than panic() in containerized environments.
+// source records who decided the reboot — the agent's own failure handling
+// (bootunit.SourceAutonomous) or a remediation requested through a fence
+// message from a peer (bootunit.SourceRequested) — and is written into the
+// journal with the reboot decision.
+func (s *SBRAgent) executeSelfFencing(reason, source string) {
 	if s.detectOnlyMode {
 		logger.Info("Detect-only mode: skipping self-fence", "reason", reason, "nodeName", s.nodeName)
 		return
@@ -2274,6 +2365,18 @@ func (s *SBRAgent) executeSelfFencing(reason string) {
 
 	// Mark self-fence as detected to stop watchdog petting
 	s.setSelfFenceDetected(true)
+
+	// Record the reboot decision and the arming state durably before asking
+	// the host to reboot. From here the boot unit protects the returning node
+	// even if everything this process does next fails.
+	//
+	// With reboot method "none" nothing reboots, so there is no boot to
+	// protect and no decision to record: writing one would leave an armed
+	// state behind for the next unrelated restart, which nothing would release.
+	if s.rebootMethod != RebootMethodNone && !s.fenceDecisionRecorded {
+		s.fenceDecisionRecorded = true
+		s.recordFenceDecision(source, reason)
+	}
 
 	// Give some time for the log message to be written
 	time.Sleep(100 * time.Millisecond)
@@ -2398,8 +2501,11 @@ func (s *SBRAgent) readOwnSlotForFenceMessage() error {
 				fmt.Sprintf("Fence message detected in own slot (%s, %d) from %d, reason: %s",
 					s.nodeName, s.nodeID, fenceMsg.Header.NodeID, sbdprotocol.GetFenceReasonName(fenceMsg.Reason)))
 
-			// Execute self-fencing immediately
-			s.executeSelfFencing(reason)
+			// Execute self-fencing immediately. A fence message from a peer
+			// is a requested remediation: record the decision with the
+			// requested source so the release protocol can tell it from an
+			// autonomous one.
+			s.executeSelfFencing(reason, bootunit.SourceRequested)
 		} else if fenceMsg.TargetNodeID == s.nodeID {
 			if !previousFenceMessage {
 				previousFenceMessage = true
@@ -2854,6 +2960,52 @@ func main() {
 		logger.Info("Kubernetes clients initialized successfully for fencing operations")
 	}
 
+	// The journal is the agent's single writer over the node-local state file
+	// that the pre-kubelet boot unit reads. It is opened once here and shared
+	// with every later user: two Stores in one process would each run their
+	// own load-modify-write and silently lose each other's updates.
+	//
+	// The controller enables it per volume mode (BlockPerNode today); when the
+	// flag is absent the journal stays nil and every journal write is a no-op,
+	// so a mode without node-local state writes nothing under the state root.
+	var journal *bootunit.Journal
+	if *journalEnabled {
+		j, jerr := bootunit.NewJournal("")
+		if jerr != nil {
+			logger.Error(jerr, "Cannot open the node-local journal; shutdown state and storage health will not be recorded",
+				"path", bootunit.HostStateRoot)
+		} else {
+			journal = j
+		}
+	} else {
+		logger.Info("Node-local journal is not enabled; shutdown state, storage outcomes and reboot decisions are not recorded",
+			"path", bootunit.HostStateRoot)
+	}
+
+	// nodeUID binds a future reboot decision to this Node object. It is filled
+	// in by setupBootUnit as soon as it has read the object; an empty value
+	// only costs that binding, which the journal reader tolerates.
+	var nodeUID string
+
+	// Reconcile the pre-kubelet self-cordon unit before the agent takes over.
+	// It is best effort: a failure degrades rejoin protection and is reported,
+	// but it must never keep this agent from fencing. The boot files come from
+	// the agent image and are already available at this point, so a degraded
+	// result is a wiring fault worth surfacing, not a transient startup race.
+	// The controller enables the unit per volume mode; a disabled unit means
+	// no host writes at all for it.
+	{
+		bootUnitCtx, cancel := context.WithTimeout(context.Background(), bootUnitSetupTimeout)
+		var bootErr error
+		nodeUID, bootErr = maybeSetupBootUnit(bootUnitCtx, k8sClient, nodeNameValue, journal, *detectOnlyMode, *bootUnitEnabled)
+		cancel()
+		if bootErr != nil {
+			logger.Error(bootErr, "Boot unit wiring degraded: this node would boot without pre-kubelet self-cordon",
+				"nodeName", nodeNameValue)
+			bootUnitSetupFailed.Inc()
+		}
+	}
+
 	// Create SBR agent (hash mapping is always enabled)
 	var wd mocks.WatchdogInterface
 	if *detectOnlyMode {
@@ -2929,6 +3081,12 @@ func main() {
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Hand the agent the journal opened above. A nil journal stays nil: every
+	// write through it is a no-op by design.
+	sbrAgent.journal = journal
+	sbrAgent.nodeUID = nodeUID
+
 	if err := sbrAgent.RunUntilShutdown(sigChan); err != nil {
 		logger.Error(err, "Failed to run SBR agent or error during shutdown")
 		os.Exit(1)

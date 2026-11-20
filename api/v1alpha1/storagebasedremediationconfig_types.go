@@ -286,6 +286,24 @@ func (s *StorageBasedRemediationConfigSpec) IsBlockPerNodeMode() bool {
 	return s.GetSharedStorageVolumeMode() == SharedStorageVolumeModeBlockPerNode
 }
 
+// IsJournalEnabled reports whether the agent keeps node-local host state (the
+// /var/lib/medik8s/state journal) for this configuration. Today only
+// BlockPerNode uses it. Extending the journal to another volume mode — or
+// wiring a future CRD field — is a change to this getter alone: the controller
+// derives the agent flag and the state-directory mount from it, and the agent
+// itself holds no volume-mode logic.
+func (s *StorageBasedRemediationConfigSpec) IsJournalEnabled() bool {
+	return s.IsBlockPerNodeMode()
+}
+
+// IsBootUnitEnabled reports whether the pre-kubelet boot unit is deployed for
+// this configuration. The unit's arming tiers read the journal, so enabling it
+// implies the journal. The planned spec.bootUnitEnabled field (design §5.4)
+// plugs in here when it lands.
+func (s *StorageBasedRemediationConfigSpec) IsBootUnitEnabled() bool {
+	return s.IsJournalEnabled()
+}
+
 func (s *StorageBasedRemediationConfigSpec) GetIOTimeout() time.Duration {
 	if s.IOTimeout != nil {
 		return s.IOTimeout.Duration

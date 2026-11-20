@@ -61,6 +61,34 @@ func TestStorageModes(t *testing.T) {
 	}
 }
 
+// The journal and the boot unit are enabled per volume mode, and these getters
+// are the single place that mapping lives. The controller derives the agent
+// flags and host mounts from them, so extending either feature to another mode
+// is a change here and nowhere else.
+func TestHostStateEnablementFollowsVolumeMode(t *testing.T) {
+	filesystem := SharedStorageVolumeModeFilesystem
+	block := SharedStorageVolumeModeBlock
+	perNode := SharedStorageVolumeModeBlockPerNode
+	for _, tc := range []struct {
+		mode        *SharedStorageVolumeModeType
+		wantJournal bool
+	}{
+		{nil, false},
+		{&filesystem, false},
+		{&block, false},
+		{&perNode, true},
+	} {
+		spec := StorageBasedRemediationConfigSpec{SharedStorageVolumeMode: tc.mode}
+		if got := spec.IsJournalEnabled(); got != tc.wantJournal {
+			t.Errorf("IsJournalEnabled() for mode %v = %v, want %v", tc.mode, got, tc.wantJournal)
+		}
+		// The boot unit reads the journal, so it cannot be enabled without it.
+		if got := spec.IsBootUnitEnabled(); got != tc.wantJournal {
+			t.Errorf("IsBootUnitEnabled() for mode %v = %v, want %v", tc.mode, got, tc.wantJournal)
+		}
+	}
+}
+
 func TestDurationGetters(t *testing.T) {
 	filesystem := SharedStorageVolumeModeFilesystem
 	block := SharedStorageVolumeModeBlock
