@@ -364,7 +364,7 @@ After admission, the configuration controller checks which nodes each configurat
 
 The local agent acquires a non-blocking exclusive `flock` on `/var/lib/medik8s/state/sbr-executor.lock`. Keep the lock file separate from the journal file that the agent replaces atomically. Do not delete the lock file during operation. The agent acquires the lock before it opens or arms the watchdog, loads mutable journal fields, or attempts to accept an offer. It holds the lock until it stops.
 
-If the agent cannot acquire the lock, or the host does not support it, the agent reports `ExecutorConflict`. That process cannot write to the watchdog or journal. Its peer controller can continue to process other Nodes' remediation CRs if it meets Section 5.2. A new Pod UID, expired Lease, replacement peer, or elapsed time does not release the lock. Do not disarm a watchdog that an unknown process opened.
+If the agent cannot acquire the lock, or the host does not support it, the agent reports `LocalAgentConflict`. That process cannot write to the watchdog or journal. Its peer controller can continue to process other Nodes' remediation CRs if it meets Section 5.2. A new Pod UID, expired Lease, replacement peer, or elapsed time does not release the lock. Do not disarm a watchdog that an unknown process opened.
 
 Set DaemonSet `maxSurge: 0` and `maxUnavailable: 1` explicitly. The local agent still acquires the host lock. Check the Node assignment to select its configuration. Check the Node's remediation annotation to select the current request. Check the host lock to determine which process can control the watchdog.
 
@@ -1064,7 +1064,7 @@ Use conditions and events to report when an eligible peer is unavailable. Keep p
 
 The existing `LeadershipAcquired` condition and `HasLeadership()` helper are unused outside tests in the reviewed source and are not part of BlockPerNode.
 
-Use status or events to report mode, probe identity, and reason values from a fixed list. Include `WaitingForExecution`, `Accepted`, `Superseded`, `WaitingForBootEvidence`, `EvidenceUnavailable`, `CleanupIncomplete`, `CleanupUnknown`, `ExecutorConflict`, `HistoryUnknown`, and `BudgetExhausted`. Use metrics to report time in each phase, reboot attempts, coverage, conflicting writes, removal of CR UIDs from the restrictions list, and observation results. Never use tokens or UIDs as metric labels.
+Use status or events to report mode, probe identity, and reason values from a fixed list. Include `WaitingForExecution`, `Accepted`, `Superseded`, `WaitingForBootEvidence`, `EvidenceUnavailable`, `CleanupIncomplete`, `CleanupUnknown`, `LocalAgentConflict`, `HistoryUnknown`, and `BudgetExhausted`. Use metrics to report time in each phase, reboot attempts, coverage, conflicting writes, removal of CR UIDs from the restrictions list, and observation results. Never use tokens or UIDs as metric labels.
 
 Report reboot history and attempts by multiple writers to update the same API object, journal, or probe. Keep diagnostic timestamps while the API is unavailable. When access returns, publish current conditions. Raise an alert while a finalizer keeps a CR present and that CR reduces NHC's healthy count.
 
