@@ -71,6 +71,15 @@ const (
 	// does not have to discover it by listing config objects in its namespace.
 	FlagSBRConfigName = "sbr-config-name"
 
+	// FlagJournalEnabled enables the node-local host-state journal. The controller
+	// derives it from the configuration's IsJournalEnabled(); the agent obeys the
+	// flag and keeps no volume-mode logic of its own.
+	FlagJournalEnabled = "journal-enabled"
+
+	// FlagBootUnitEnabled enables installing and gating the pre-kubelet boot unit.
+	// It implies FlagJournalEnabled: the unit's arming tiers read the journal.
+	FlagBootUnitEnabled = "boot-unit-enabled"
+
 	// FlagInit runs block device initialization (write superblock) and exits.
 	FlagInit = "init"
 )
