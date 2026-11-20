@@ -640,7 +640,7 @@ After the local agent chooses reboot, it keeps that decision and stops feeding t
 The local agent reads the kernel boot ID and any available journal entries. It tries to read matching information through the API within a time limit. If the journal is unavailable, an entry that remains in the Node annotation can supply the original request IDs. The agent cannot infer a request or acceptance from a CR name, an absent Node entry, or a missing journal.
 
 - If the request's original boot ended, the agent must never execute it on the new boot. Ignore the saved instruction to stop feeding the watchdog on the previous boot. The agent can feed the watchdog on the current boot even if the old instruction remains in the journal.
-- If saved information shows that the agent chose reboot for this boot under the same valid configuration, keep that decision. Continue to withhold watchdog feeds. If saved information does not show whether the agent sent the software reboot command, it can send it again in the same boot. An agent with a replacement configuration cannot resume the old request or stop feeding the watchdog based on the old decision.
+- If saved information shows that the agent chose reboot for this boot under the same valid configuration, keep that decision. Continue to withhold watchdog feeds. If saved information does not show whether the agent sent the software reboot command, it can send it again in the same boot. An agent with a replacement configuration cannot resume the old request or stop feeding the watchdog based on the old decision. Report a kept decision from this boot, because the reboot did not take place: publish an event that identifies the incident and increase a counter.
 - If the target accepted the request and has not chosen reboot, follow the current request phase. The agent must stop processing it if it sees that a newer offer replaced it. If it cannot see that replacement, it can continue the otherwise permitted work. After configuration retirement, a compatible agent might no longer be available to continue an accepted request.
 - If the current boot ID is invalid, the agent cannot choose a new reboot. Keep any reboot decision that the agent can establish it already made.
 - If a replacement process cannot read the API or the journal, it cannot choose a requested reboot based on missing request IDs. It can continue checking the conditions for an autonomous reboot only with a trusted effective configuration and fresh observations. Starting the process without a trusted configuration is deferred.
@@ -1128,9 +1128,11 @@ When enabled for a recognized autonomous reboot, the service measures the timeou
 
 At its deadline, the service lets kubelet start even if the API is unavailable. It does not check the OutOfService taint, Node health, or any message from a reporter or peer. A disabled unit adds no delay. Missing or invalid local settings must not cause an indefinite wait or an invented timeout. In that case, report the local error and allow kubelet to start.
 
+The recognition rules are deferred work, but this rule is not. If the service finds a stored reboot decision and cannot establish whether this boot follows that decision, it applies the configured delay and reports the local ambiguity. The service skips the delay only when no decision is present or the decision cannot be read at all. A missing or invalid configuration still allows kubelet to start, as above.
+
 The peer uses the CR's saved reboot deadline independently of the host service's deadline. Under `OnTimeout`, the peer can add the OutOfService taint before the reset, during the delay, or after the delay ends. Under `OnReboot`, the target agent or reporter normally publishes boot evidence after kubelet starts.
 
-A workload already assigned to the node can restart before the peer adds the taint or before its volumes detach. Inconsistent local state can cause the service to miss a delay. An expired delay does not show that workloads stopped or that volumes detached. The policy accepts missed delays.
+A workload already assigned to the node can restart before the peer adds the taint or before its volumes detach. Local state that cannot be read at all can cause the service to miss a delay. An expired delay does not show that workloads stopped or that volumes detached. The policy accepts missed delays.
 
 Separate work will define installation, host setting delivery, reboot recognition, and platform-specific tests. Disabling or removing the configuration must remove future SBR boot delays when host reconciliation succeeds. Preserve normal kubelet startup when removing the service. API validation alone does not establish that the host installed or enabled it. BlockPerNode can run with the service disabled.
 
@@ -1167,6 +1169,8 @@ When the API returns, peers use the reboot deadline saved with `Offered`. Before
 The agent can choose one autonomous reboot per unresolved outage when the journal or matching API data shows a known attempt count. If those data show that it already chose an attempt, the agent waits for sustained successful storage probes before it can choose another. The default recovery period is five minutes. The agent counts storage recovery even if the API remains unavailable. If the count is Unknown, the agent can reboot again after fresh failure checks and a new total-outage grace period. Saved data for an attempt in the same outage still prevents another reboot for that outage.
 
 Distinct valid CR UIDs can each request a reboot. A requested attempt does not change the count of autonomous attempts for the outage. A later CR can request another reboot after an autonomous reboot. The design accepts that result. If the agent loses the data that show whether it sent the software reboot command, it can send that command again in the same boot. The agent cannot execute a CR after the CR's saved initial boot ends.
+
+This design sets no absolute limit on autonomous resets. A host can repeat them across boots only when no attempt information survives each boot, and the design accepts that possibility because no durable local record can be trusted after repeated loss. In that case, the agent reports `HistoryUnknown` and reports every autonomous reboot decision. Operators must alert on repeated autonomous reboots of the same Node and use platform-level boot limits where the platform provides them. NHC policies limit requested reboots, not these autonomous reboots.
 
 Each local agent decides whether its host can reboot autonomously. Multiple nodes can reboot together or reboot again when their history is unavailable. NHC applies its limits when it decides whether to create a CR. Peers add OutOfService only for current eligible NHC-created CRs. If NHC creates no CRs, peers cannot add OutOfService for the outage. The design accepts these availability risks.
 
@@ -1227,7 +1231,7 @@ When peers check Pods, VMIs, and attachments, they report which old resources re
 
 A cordon stops new scheduling on the Node. Workloads already assigned to it can start. The optional host service lets kubelet start at its local deadline even if the CR or taint remains, the Node is unhealthy, or no peer sends a message.
 
-API loss can delay the taint update. Inconsistent journal data or a short delay can let workloads restart before or after the peer adds the taint. A long delay postpones kubelet startup. At expiry, the service can let kubelet start while old workloads or attachments remain. Users accept these limits when they enable the service.
+API loss can delay the taint update. A missing or unreadable journal, or a short delay, can let workloads restart before or after the peer adds the taint. A long delay postpones kubelet startup. At expiry, the service can let kubelet start while old workloads or attachments remain. Users accept these limits when they enable the service.
 
 ### 6.11. Unsupported configuration replacement during unfinished execution
 
