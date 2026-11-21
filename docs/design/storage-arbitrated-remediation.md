@@ -1136,6 +1136,8 @@ A workload already assigned to the node can restart before the peer adds the tai
 
 Separate work will define installation, host setting delivery, reboot recognition, and platform-specific tests. Disabling or removing the configuration must remove future SBR boot delays when host reconciliation succeeds. Preserve normal kubelet startup when removing the service. API validation alone does not establish that the host installed or enabled it. BlockPerNode can run with the service disabled.
 
+The agent installs the host service on the nodes its configuration selects and refuses control-plane nodes; the service itself has no role check. Manual installation of the service on any node is unsupported, and runbooks must direct administrators to the agent-managed lifecycle rather than to installing or enabling the unit by hand.
+
 ## 6. Open Questions
 
 ### 6.1. Residual limitation: every evidence path unavailable
