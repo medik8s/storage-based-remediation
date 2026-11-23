@@ -150,16 +150,18 @@ oc get pods -n openshift-operators | grep -E 'storage-based-remediation|sbr'
 - **Description**: StorageClass name for automatic shared storage provisioning
 - **Requirements**:
   - Filesystem and Block require ReadWriteMany (RWX) access mode.
-  - BlockPerNode defines private ReadWriteOnce (RWO) Block storage for each node.
-  - Storage backend must support POSIX file locking for coordination
+  - BlockPerNode defines one ReadWriteMany (RWX) Block claim per node with read-only watchers.
+  - Filesystem storage must support POSIX file locking for coordination.
+  - Raw Block storage must support direct I/O from participating nodes.
 - **Examples**: `"efs-sc"`, `"nfs-client"`, `"cephfs"`, `"glusterfs"`
-- **Behavior**: When specified, the controller automatically creates a PVC using this StorageClass and mounts it at `/dev/sbr` in each agent pod
+- **Behavior**: Implemented shared modes create a shared PVC from this StorageClass and provide it to the agents.
+  BlockPerNode requires separate runtime work for per-node claims and read-only watcher mounts.
 
 #### Storage mode and duration API
 
 `sharedStorageVolumeMode` accepts `Filesystem`, `Block`, and `BlockPerNode`.
 Omission selects Filesystem. Block and BlockPerNode require a nonempty `sharedStorageClass`.
-BlockPerNode is an SBR mode. It is not a Kubernetes `volumeMode` value.
+BlockPerNode is an SBR mode. Its Kubernetes claims use `volumeMode: Block`.
 
 BlockPerNode currently defines the API only. This change does not implement controllers, agents, or cleanup for that mode.
 The `ioTimeout` field does not change the timeout of running agents.
@@ -169,10 +171,16 @@ The `ioTimeout` field does not change the timeout of running agents.
 | `ioTimeout` | BlockPerNode: `15s`. Existing modes: `2s`. | `1s` through `10m`, inclusive | All |
 | `totalOutageGracePeriod` | `60s` | `0s` through `1h`, inclusive | BlockPerNode |
 | `autonomousRebootRecoveryPeriod` | `5m` | Greater than zero, including `1ns` | BlockPerNode |
+| `oosTaintPolicy` | `OnTimeout` | `OnTimeout` or `OnReboot` | BlockPerNode |
+| `rebootGracePeriod` | `60s` | Positive duration | BlockPerNode |
+| `bootUnitEnabled` | `false` | Boolean | BlockPerNode |
+| `bootUnitTimeout` | None | Positive duration. Required when the boot unit is enabled. | BlockPerNode |
+| `watcherGroupSize` | `16` | Integer of at least one | BlockPerNode |
+| `watcherGroupLabels` | Empty list | Distinct valid Kubernetes label keys | BlockPerNode |
 
-All three fields are optional duration strings. The API server does not store defaults for these fields.
+All fields in this table are optional. The API server does not store their effective defaults.
 The getters return explicit values without changing the object.
-Omitted BlockPerNode-only fields return zero in existing modes. Explicit values remain invalid in those modes.
+Omitted BlockPerNode-only fields return zero values in existing modes. Explicit values remain invalid in those modes.
 Explicit `totalOutageGracePeriod: 0s` differs from omission and disables the grace period in the API contract.
 
 The config webhook compares effective modes and durations on updates.
@@ -183,6 +191,41 @@ The effective outage and recovery durations are immutable.
 Omission and an explicit effective default can replace each other.
 Equivalent strings, such as `60s` and `1m`, have the same duration.
 Removal of a nondefault immutable duration is invalid.
+
+The six policy, boot-unit, and watcher fields are mutable.
+They are valid only in BlockPerNode, including explicit `bootUnitEnabled: false` and `watcherGroupLabels: []`.
+A disabled boot unit accepts a positive timeout. The timeout has no effect while the unit is disabled.
+The API rejects invalid, zero, and negative boot timeouts with either enable value.
+Watcher groups always include region and zone separately from custom keys.
+Admission checks key syntax and duplicates. It does not require these labels on selected Nodes.
+The exact 253-character key-prefix limit requires the installed and enabled configuration webhook.
+Effective-value immutability also requires that webhook. CRD-only installations do not enforce these checks.
+Runtime assignment must handle missing labels.
+Policy and grace changes apply to later offers. Each existing request retains its saved policy and deadline.
+API acceptance does not establish that running agents applied a mutable setting.
+
+An API example with the boot unit disabled follows. The StorageClass must support RWX Block claims.
+These settings do not provide a working BlockPerNode deployment.
+
+```yaml
+spec:
+  sharedStorageClass: rwx-block-storage
+  sharedStorageVolumeMode: BlockPerNode
+  oosTaintPolicy: OnTimeout
+  rebootGracePeriod: 60s
+  bootUnitEnabled: false
+  watcherGroupSize: 16
+  watcherGroupLabels:
+    - example.com/rack
+```
+
+For a separate enabled example, replace the boot-unit settings with both values:
+
+```yaml
+spec:
+  bootUnitEnabled: true
+  bootUnitTimeout: 2m
+```
 
 The existing `sbrTimeoutSeconds` and `maxConsecutiveFailures` fields retain their defaults and behavior.
 
@@ -790,8 +833,12 @@ Status reports the authoritative Node record. It does not authorize execution.
 | `configUID` | string | UID of the configuration record. Immutable after assignment. |
 | `volumeMode` | string | SBR mode in the record. Immutable after assignment. No enum applies. |
 | `beforeBootID` | string | Boot ID before execution. Immutable after assignment. |
-| `executionPhase` | string | `Offered`, `Accepted`, `Cancelled`, or `BootEnded`. |
-| `observedBootID` | string | Boot ID observed after execution. |
+| `executionPhase` | string | `Offered`, `Accepted`, `Cancelled`, `Superseded`, or `BootEnded`. |
+| `observedBootID` | string | Boot ID read on the host. A change does not establish the reboot cause. |
+| `bootObservation` | string | `AcceptedBootEnded`, `BootObserved`, or `EvidenceUnavailable`. |
+| `policy` | string | Saved `OnTimeout` or `OnReboot` policy. Immutable after assignment. |
+| `offeredAt` | timestamp | Saved offer time. Immutable after assignment. |
+| `rebootDeadline` | timestamp | Saved reboot deadline. Immutable after assignment. |
 | `cleanup` | object | Optional cleanup report, described below. |
 | `restrictionsReleased` | boolean | Reports this CR's restrictions. It does not establish Node schedulability. |
 
@@ -806,10 +853,11 @@ They have no UUID format requirement. Their removal is invalid after assignment.
 | `outOfServiceApplied` | boolean | Records confirmed application. Elapsed time does not establish application. |
 | `reason` | string | Reason for the reported result. |
 
-Root CEL rules prevent changes and removal of assigned identities and `cleanup.deadline`.
+Root CEL rules prevent changes and removal of assigned identities, request snapshots, and `cleanup.deadline`.
 These rules also reject removal of parent objects, including the complete status object.
 The CRD enforces these rules without a remediation webhook.
 The phase enums do not require intermediate status updates.
+`BootObserved` is a separate observation, not an execution phase. A changed boot ID does not establish the reboot cause.
 This change adds definitions and validation only. It does not implement the Node execution protocol.
 
 For complete API documentation, see:

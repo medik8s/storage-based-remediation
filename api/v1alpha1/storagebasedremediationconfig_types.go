@@ -18,10 +18,12 @@ package v1alpha1
 
 import (
 	"fmt"
+	"strings"
 	"time"
 	"unicode"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
 )
@@ -37,6 +39,13 @@ const (
 	DefaultSBRTimeoutSeconds = 30
 	// DefaultMaxConsecutiveFailures is the runtime default when maxConsecutiveFailures is unset on the CR (no OpenAPI default).
 	DefaultMaxConsecutiveFailures = 7
+
+	DefaultOOSTaintPolicy                  = "OnTimeout"
+	OOSTaintPolicyOnTimeout                = "OnTimeout"
+	OOSTaintPolicyOnReboot                 = "OnReboot"
+	DefaultRebootGracePeriod time.Duration = 60 * time.Second
+	DefaultBootUnitEnabled                 = false
+	DefaultWatcherGroupSize  int32         = 16
 
 	DefaultIOTimeout                      time.Duration = 2 * time.Second
 	DefaultBlockPerNodeIOTimeout          time.Duration = 15 * time.Second
@@ -64,7 +73,7 @@ const (
 	SharedStorageVolumeModeFilesystem SharedStorageVolumeModeType = "Filesystem"
 	// SharedStorageVolumeModeBlock uses a raw block device RWX PVC.
 	SharedStorageVolumeModeBlock SharedStorageVolumeModeType = "Block"
-	// SharedStorageVolumeModeBlockPerNode uses a private RWO Block PVC for each node.
+	// SharedStorageVolumeModeBlockPerNode uses one RWX Block PVC per node with read-only watchers.
 	SharedStorageVolumeModeBlockPerNode SharedStorageVolumeModeType = "BlockPerNode"
 )
 
@@ -87,6 +96,15 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.ioTimeout) || (duration(self.ioTimeout) >= duration('1s') && duration(self.ioTimeout) <= duration('10m'))",message="ioTimeout must be between 1s and 10m"
 // +kubebuilder:validation:XValidation:rule="!has(self.totalOutageGracePeriod) || (duration(self.totalOutageGracePeriod) >= duration('0s') && duration(self.totalOutageGracePeriod) <= duration('1h'))",message="totalOutageGracePeriod must be between 0s and 1h"
 // +kubebuilder:validation:XValidation:rule="!has(self.autonomousRebootRecoveryPeriod) || duration(self.autonomousRebootRecoveryPeriod) > duration('0s')",message="autonomousRebootRecoveryPeriod must be positive"
+// +kubebuilder:validation:XValidation:rule="!has(self.oosTaintPolicy) || (has(self.sharedStorageVolumeMode) && self.sharedStorageVolumeMode == 'BlockPerNode')",message="oosTaintPolicy requires BlockPerNode"
+// +kubebuilder:validation:XValidation:rule="!has(self.rebootGracePeriod) || (has(self.sharedStorageVolumeMode) && self.sharedStorageVolumeMode == 'BlockPerNode')",message="rebootGracePeriod requires BlockPerNode"
+// +kubebuilder:validation:XValidation:rule="!has(self.bootUnitEnabled) || (has(self.sharedStorageVolumeMode) && self.sharedStorageVolumeMode == 'BlockPerNode')",message="bootUnitEnabled requires BlockPerNode"
+// +kubebuilder:validation:XValidation:rule="!has(self.bootUnitTimeout) || (has(self.sharedStorageVolumeMode) && self.sharedStorageVolumeMode == 'BlockPerNode')",message="bootUnitTimeout requires BlockPerNode"
+// +kubebuilder:validation:XValidation:rule="!has(self.watcherGroupSize) || (has(self.sharedStorageVolumeMode) && self.sharedStorageVolumeMode == 'BlockPerNode')",message="watcherGroupSize requires BlockPerNode"
+// +kubebuilder:validation:XValidation:rule="!has(self.watcherGroupLabels) || (has(self.sharedStorageVolumeMode) && self.sharedStorageVolumeMode == 'BlockPerNode')",message="watcherGroupLabels requires BlockPerNode"
+// +kubebuilder:validation:XValidation:rule="!has(self.rebootGracePeriod) || duration(self.rebootGracePeriod) > duration('0s')",message="rebootGracePeriod must be positive"
+// +kubebuilder:validation:XValidation:rule="!has(self.bootUnitTimeout) || duration(self.bootUnitTimeout) > duration('0s')",message="bootUnitTimeout must be positive"
+// +kubebuilder:validation:XValidation:rule="!has(self.bootUnitEnabled) || !self.bootUnitEnabled || has(self.bootUnitTimeout)",message="bootUnitTimeout is required when bootUnitEnabled is true"
 type StorageBasedRemediationConfigSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
@@ -99,14 +117,14 @@ type StorageBasedRemediationConfigSpec struct {
 
 	// SharedStorageClass names the StorageClass for SBR storage.
 	// Filesystem and Block require ReadWriteMany (RWX) storage.
-	// BlockPerNode requires private ReadWriteOnce (RWO) Block storage for each node.
+	// BlockPerNode requires one ReadWriteMany (RWX) Block claim per node with read-only watchers.
 	// BlockPerNode currently defines the API only. The operator does not implement this storage mode.
 	// +optional
 	SharedStorageClass string `json:"sharedStorageClass,omitempty"`
 
 	// SharedStorageVolumeMode selects the SBR storage mode.
 	// Filesystem (default) uses an RWX filesystem. Block uses an RWX raw block device.
-	// BlockPerNode defines private RWO Block storage. It is not a Kubernetes volumeMode value.
+	// BlockPerNode defines per-node RWX Block storage with read-only watchers. It is not a Kubernetes volumeMode value.
 	// Block and BlockPerNode require sharedStorageClass.
 	// This field is immutable after creation.
 	// +kubebuilder:validation:Enum=Filesystem;Block;BlockPerNode
@@ -127,6 +145,36 @@ type StorageBasedRemediationConfigSpec struct {
 	// The duration must be positive. The effective value is immutable after creation.
 	// +optional
 	AutonomousRebootRecoveryPeriod *metav1.Duration `json:"autonomousRebootRecoveryPeriod,omitempty"`
+
+	// OOSTaintPolicy controls when peers can apply OutOfService. The effective default is OnTimeout.
+	// +kubebuilder:validation:Enum=OnTimeout;OnReboot
+	// +optional
+	OOSTaintPolicy *string `json:"oosTaintPolicy,omitempty"`
+
+	// RebootGracePeriod starts at the saved offer time. Its effective default is 60s.
+	// +optional
+	RebootGracePeriod *metav1.Duration `json:"rebootGracePeriod,omitempty"`
+
+	// BootUnitEnabled enables the optional host boot service. The effective default is false.
+	// +optional
+	BootUnitEnabled *bool `json:"bootUnitEnabled,omitempty"`
+
+	// BootUnitTimeout limits the boot service delay. Enabling the service requires an explicit positive timeout.
+	// A valid timeout has no effect while the service is disabled.
+	// +optional
+	BootUnitTimeout *metav1.Duration `json:"bootUnitTimeout,omitempty"`
+
+	// WatcherGroupSize limits targets per watcher group. The effective default is 16.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	WatcherGroupSize *int32 `json:"watcherGroupSize,omitempty"`
+
+	// WatcherGroupLabels adds distinct Node label keys to the region and zone grouping keys.
+	// +listType=set
+	// +kubebuilder:validation:items:MaxLength=317
+	// +kubebuilder:validation:items:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$`
+	// +optional
+	WatcherGroupLabels []string `json:"watcherGroupLabels,omitempty"`
 
 	// NodeSelector is a selector which must be true for the SBR agent pod to fit on a node.
 	// This allows users to control which nodes the SBR agent runs on by specifying node labels.
@@ -334,6 +382,54 @@ func (s *StorageBasedRemediationConfigSpec) GetAutonomousRebootRecoveryPeriod() 
 	return 0
 }
 
+func (s *StorageBasedRemediationConfigSpec) GetOOSTaintPolicy() string {
+	if s.OOSTaintPolicy != nil {
+		return *s.OOSTaintPolicy
+	}
+	if s.IsBlockPerNodeMode() {
+		return DefaultOOSTaintPolicy
+	}
+	return ""
+}
+
+func (s *StorageBasedRemediationConfigSpec) GetRebootGracePeriod() time.Duration {
+	if s.RebootGracePeriod != nil {
+		return s.RebootGracePeriod.Duration
+	}
+	if s.IsBlockPerNodeMode() {
+		return DefaultRebootGracePeriod
+	}
+	return 0
+}
+
+func (s *StorageBasedRemediationConfigSpec) GetBootUnitEnabled() bool {
+	if s.BootUnitEnabled != nil {
+		return *s.BootUnitEnabled
+	}
+	return DefaultBootUnitEnabled
+}
+
+func (s *StorageBasedRemediationConfigSpec) GetBootUnitTimeout() time.Duration {
+	if s.BootUnitTimeout != nil {
+		return s.BootUnitTimeout.Duration
+	}
+	return 0
+}
+
+func (s *StorageBasedRemediationConfigSpec) GetWatcherGroupSize() int32 {
+	if s.WatcherGroupSize != nil {
+		return *s.WatcherGroupSize
+	}
+	if s.IsBlockPerNodeMode() {
+		return DefaultWatcherGroupSize
+	}
+	return 0
+}
+
+func (s *StorageBasedRemediationConfigSpec) GetWatcherGroupLabels() []string {
+	return s.WatcherGroupLabels
+}
+
 // GetNodeSelector returns the node selector with default fallback to worker nodes only
 func (s *StorageBasedRemediationConfigSpec) GetNodeSelector() map[string]string {
 	if len(s.NodeSelector) > 0 {
@@ -412,6 +508,52 @@ func (s *StorageBasedRemediationConfigSpec) ValidateAll() error {
 		if s.AutonomousRebootRecoveryPeriod.Duration <= 0 {
 			return fmt.Errorf("autonomousRebootRecoveryPeriod must be positive")
 		}
+	}
+
+	for _, field := range []struct {
+		name    string
+		present bool
+	}{
+		{"oosTaintPolicy", s.OOSTaintPolicy != nil},
+		{"rebootGracePeriod", s.RebootGracePeriod != nil},
+		{"bootUnitEnabled", s.BootUnitEnabled != nil},
+		{"bootUnitTimeout", s.BootUnitTimeout != nil},
+		{"watcherGroupSize", s.WatcherGroupSize != nil},
+		{"watcherGroupLabels", s.WatcherGroupLabels != nil},
+	} {
+		if field.present && !s.IsBlockPerNodeMode() {
+			return fmt.Errorf("%s requires BlockPerNode", field.name)
+		}
+	}
+	if s.OOSTaintPolicy != nil && *s.OOSTaintPolicy != OOSTaintPolicyOnTimeout && *s.OOSTaintPolicy != OOSTaintPolicyOnReboot {
+		return fmt.Errorf("oosTaintPolicy must be OnTimeout or OnReboot")
+	}
+	for _, field := range []struct {
+		name  string
+		value *metav1.Duration
+	}{
+		{"rebootGracePeriod", s.RebootGracePeriod},
+		{"bootUnitTimeout", s.BootUnitTimeout},
+	} {
+		if field.value != nil && field.value.Duration <= 0 {
+			return fmt.Errorf("%s must be positive", field.name)
+		}
+	}
+	if s.GetBootUnitEnabled() && s.BootUnitTimeout == nil {
+		return fmt.Errorf("bootUnitTimeout is required when bootUnitEnabled is true")
+	}
+	if s.WatcherGroupSize != nil && *s.WatcherGroupSize < 1 {
+		return fmt.Errorf("watcherGroupSize must be positive")
+	}
+	keys := make(map[string]struct{}, len(s.WatcherGroupLabels))
+	for _, key := range s.WatcherGroupLabels {
+		if errors := validation.IsQualifiedName(key); len(errors) > 0 {
+			return fmt.Errorf("watcherGroupLabels key %q is invalid: %s", key, strings.Join(errors, "; "))
+		}
+		if _, exists := keys[key]; exists {
+			return fmt.Errorf("watcherGroupLabels contains duplicate key %q", key)
+		}
+		keys[key] = struct{}{}
 	}
 
 	return nil

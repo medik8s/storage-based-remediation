@@ -103,6 +103,12 @@ spec:
 | `ioTimeout` | `2s`, or `15s` for BlockPerNode | API definition only. The running agent continues to use `2s`. |
 | `totalOutageGracePeriod` | `60s` for BlockPerNode | Optional, `0s` through `1h`. BlockPerNode only. The effective value is immutable. |
 | `autonomousRebootRecoveryPeriod` | `5m` for BlockPerNode | Optional, positive. BlockPerNode only. The effective value is immutable. |
+| `oosTaintPolicy` | `OnTimeout` | BlockPerNode only. `OnTimeout` or `OnReboot`. |
+| `rebootGracePeriod` | `60s` | BlockPerNode only. Positive duration, measured from the saved offer time. |
+| `bootUnitEnabled` | `false` | BlockPerNode only. Enabling requires an explicit positive timeout. |
+| `bootUnitTimeout` | None | BlockPerNode only. Positive duration. It has no effect when the unit is disabled. |
+| `watcherGroupSize` | `16` | BlockPerNode only. Integer of at least one. |
+| `watcherGroupLabels` | Empty list | BlockPerNode only. Distinct valid Node label keys, in addition to region and zone. |
 | `sbrTimeoutSeconds` | `30` | 10–300s allowed; heartbeat interval = this / 2 |
 | `maxConsecutiveFailures` | `7` | 2–32 allowed; threshold for local self-fence and peer-unhealthy detection |
 | `sbrUpdateInterval`, `peerCheckInterval` | derived: `sbrTimeoutSeconds / 6` | Not separately configurable |
@@ -111,6 +117,9 @@ spec:
 The controller continues to pass fixed agent settings from `internal/agent/constants.go`.
 These settings include `rebootMethod` (`systemctl-reboot`), `logLevel` (`debug`), `staleNodeTimeout` (`1h`), and `iotimeout` (`2s`).
 The new `ioTimeout` API field does not change the running agent setting.
+All six policy, boot-unit, and watcher fields are mutable. Existing requests retain their saved policy and deadline.
+Shared modes reject explicit values, including a false boot flag or an empty label list.
+API acceptance does not establish BlockPerNode runtime support.
 The operator obtains the agent image from `RELATED_IMAGE_AGENT`.
 `watchdogTimeout` and `petIntervalMultiple` no longer exist as agent settings.
 

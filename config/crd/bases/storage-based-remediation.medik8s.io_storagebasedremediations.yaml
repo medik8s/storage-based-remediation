@@ -74,6 +74,14 @@ spec:
               beforeBootID:
                 minLength: 1
                 type: string
+              bootObservation:
+                description: BootObservation reports a boot change separately from
+                  execution and does not establish its cause.
+                enum:
+                - AcceptedBootEnded
+                - BootObserved
+                - EvidenceUnavailable
+                type: string
               cleanup:
                 properties:
                   deadline:
@@ -175,6 +183,7 @@ spec:
                 - Offered
                 - Accepted
                 - Cancelled
+                - Superseded
                 - BootEnded
                 type: string
               nodeUID:
@@ -185,6 +194,23 @@ spec:
                 minLength: 1
                 type: string
               observedBootID:
+                type: string
+              offeredAt:
+                description: OfferedAt records the fixed offer time saved in the Node
+                  annotation.
+                format: date-time
+                type: string
+              policy:
+                description: Policy records the fixed OutOfService policy for this
+                  request.
+                enum:
+                - OnTimeout
+                - OnReboot
+                type: string
+              rebootDeadline:
+                description: RebootDeadline records the fixed deadline saved in the
+                  Node annotation.
+                format: date-time
                 type: string
               restrictionsReleased:
                 description: RestrictionsReleased describes this CR's restrictions.
@@ -212,6 +238,15 @@ spec:
           rule: '!has(oldSelf.status) || !has(oldSelf.status.cleanup) || !has(oldSelf.status.cleanup.deadline)
             || (has(self.status) && has(self.status.cleanup) && has(self.status.cleanup.deadline)
             && self.status.cleanup.deadline == oldSelf.status.cleanup.deadline)'
+        - message: policy cannot change or be removed
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.policy) || (has(self.status)
+            && has(self.status.policy) && self.status.policy == oldSelf.status.policy)'
+        - message: offeredAt cannot change or be removed
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.offeredAt) || (has(self.status)
+            && has(self.status.offeredAt) && self.status.offeredAt == oldSelf.status.offeredAt)'
+        - message: rebootDeadline cannot change or be removed
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.rebootDeadline) || (has(self.status)
+            && has(self.status.rebootDeadline) && self.status.rebootDeadline == oldSelf.status.rebootDeadline)'
     served: true
     storage: true
     subresources:

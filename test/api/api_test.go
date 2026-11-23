@@ -221,7 +221,7 @@ func rejectConfigSchema(t *testing.T, c client.Client, spec map[string]interface
 }
 
 func testDurationSchema(t *testing.T, c client.Client) {
-	for _, field := range []string{ioTimeoutField, outageGraceField, recoveryPeriodField} {
+	for _, field := range []string{ioTimeoutField, outageGraceField, recoveryPeriodField, "rebootGracePeriod", "bootUnitTimeout"} {
 		for _, value := range []string{
 			"-1ns", "0s", "1ns", "999999999ns", "1s", "15s", "10m", "600000000001ns", "1h", "3600000000001ns", "invalid",
 		} {
@@ -233,7 +233,7 @@ func testDurationSchema(t *testing.T, c client.Client) {
 					valid = valid && duration >= time.Second && duration <= 10*time.Minute
 				case outageGraceField:
 					valid = valid && duration >= 0 && duration <= time.Hour
-				case recoveryPeriodField:
+				case recoveryPeriodField, "rebootGracePeriod", "bootUnitTimeout":
 					valid = valid && duration > 0
 				}
 				if !valid {
@@ -480,7 +480,7 @@ func testCleanupDeadline(t *testing.T, c client.Client) {
 
 func testStatusPhases(t *testing.T, c client.Client) {
 	obj := newRemediation(t, c)
-	for _, phase := range []string{"BootEnded", "Offered", "Cancelled", "Accepted"} {
+	for _, phase := range []string{"BootEnded", "Offered", "Cancelled", "Superseded", "Accepted"} {
 		obj.Status.ExecutionPhase = phase
 		if err := c.Status().Update(t.Context(), obj); err != nil {
 			t.Fatal(err)
