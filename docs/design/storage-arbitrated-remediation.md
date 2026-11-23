@@ -26,7 +26,7 @@ Contributors: Daniel Froehlich ([@DanielFroehlich](https://github.com/DanielFroe
   - [5.9. Requested remediation, escalation, and cleanup](#59-requested-remediation-escalation-and-cleanup)
   - [5.10. NHC policy and reboot limits](#510-nhc-policy-and-reboot-limits)
   - [5.11. Startup, shutdown, and observability](#511-startup-shutdown-and-observability)
-  - [5.12. Optional pre-kubelet delay](#512-optional-pre-kubelet-delay)
+  - [5.12. Optional pre-kubelet self-cordon](#512-optional-pre-kubelet-self-cordon)
 - [6. Open Questions](#6-open-questions)
 - [7. Upgrade / Downgrade Concerns](#7-upgrade--downgrade-concerns)
 - [8. Test Plan](#8-test-plan)
@@ -166,7 +166,7 @@ Node 1 loses both storage and API access. Node 2 remains healthy and runs a watc
 6. When API access returns, the agent or boot reporter on Node 1 submits the current boot ID and available attempt history. The peer on Node 2 checks whether that information establishes that the original boot of an active, eligible CR ended. It can then apply the OutOfService taint to Node 1. The CR retains its original deadline. Under `OnTimeout`, the peer can apply the taint at that deadline without a boot report from Node 1.
 7. An active, eligible CR is required before the peer on Node 2 can apply the OutOfService taint. A later CR can cause another reboot if the peer writes a new offer for Node 1's new boot ID.
 
-See Section 5.6 for reboot decisions, Section 5.8 for boot ID checks, and Section 5.9 for OutOfService and CR deletion. See Section 5.12 for the optional kubelet delay.
+See Section 5.6 for reboot decisions, Section 5.8 for boot ID checks, and Section 5.9 for OutOfService and CR deletion. See Section 5.12 for the optional pre-kubelet self-cordon.
 
 ### 5.4. Configuration API
 
@@ -911,6 +911,8 @@ Keep a CR UID in the restrictions list after timeout success, ordinary success, 
 
 If the list becomes empty, remove only restrictions that SBR added. Clear the saved original values in the same update. Keep the restrictions if the list still contains a different CR UID.
 
+A cordon applied by the pre-kubelet boot unit is recorded under the `sbr.medik8s.io/rejoin-cordon` annotation. Treat that key as an SBR-owned restriction: it is not a pre-existing cordon to preserve, and the peer removes it together with the cordon, the OutOfService taint, and the `SBRRejoinPending` condition when the list becomes empty. Without the key, a peer cannot distinguish the unit's cordon from one that existed before SBR acted and must preserve it. See Section 5.12 for the agent-side release when no CR exists.
+
 Before removing the finalizer, perform these steps:
 
 1. Read the live CR whose deletion has started. Check its UID.
@@ -1066,7 +1068,7 @@ The existing `LeadershipAcquired` condition and `HasLeadership()` helper are unu
 
 Use status or events to report mode, probe identity, and reason values from a fixed list. Include `WaitingForExecution`, `Accepted`, `Superseded`, `WaitingForBootEvidence`, `EvidenceUnavailable`, `CleanupIncomplete`, `CleanupUnknown`, `LocalAgentConflict`, `HistoryUnknown`, and `BudgetExhausted`. Use metrics to report time in each phase, reboot attempts, coverage, conflicting writes, removal of CR UIDs from the restrictions list, and observation results. Never use tokens or UIDs as metric labels.
 
-Report reboot history and attempts by multiple writers to update the same API object, journal, or probe. Keep diagnostic timestamps while the API is unavailable. When access returns, publish current conditions. Raise an alert while a finalizer keeps a CR present and that CR reduces NHC's healthy count.
+Report reboot history and attempts by multiple writers to update the same API object, journal, or probe. Keep diagnostic timestamps while the API is unavailable. When access returns, publish current conditions. Raise an alert while a finalizer keeps a CR present and that CR reduces NHC's healthy count. Raise an alert while a re-joined Node still carries the `SBRRejoinPending` condition: a node held by the boot unit's cordon must not stay unnoticed. Manual release — uncordon and clear the condition together — is a break-glass operation for the runbook.
 
 Keep separate service accounts for the operator, the agent that runs both the peer controller and local monitoring, the reporter, and the watchers. The peer controller and local agent share one process identity and therefore share its API permissions. Kubernetes RBAC cannot separate those roles inside that process.
 
@@ -1112,29 +1114,36 @@ Separate watchdog work covers driver checks, shutdown code, and tests on real ho
 
 Document what to do when no peer is available, the reporter or probe is missing, or the agent cannot determine whether it attempted an autonomous reboot. Cover inconsistent CR UIDs in the restrictions list, unfinished workload checks, and pending CSI detach. Cover host lock or watchdog failure, replacement Node UIDs, CR UIDs left in the restrictions list, configuration deletion, and downgrade. Forced finalizer removal or a missing API object, including a deleted Node, cannot establish fencing.
 
-### 5.12. Optional pre-kubelet delay
+### 5.12. Optional pre-kubelet self-cordon
 
 #### Summary
 
-An optional host service can delay kubelet startup after a recognized autonomous reboot. Set `spec.bootUnitEnabled: true` and a positive `spec.bootUnitTimeout` in the SBR config CR to enable it. The default is disabled. When the configured period ends, it lets kubelet start even if the API is unavailable or workload removal is incomplete.
+An optional host service runs before kubelet after a recognized autonomous reboot. It cordons the Node and publishes the `SBRRejoinPending` condition, so no new workload is scheduled onto the node before the cluster has finished evacuating it. Set `spec.bootUnitEnabled: true` and a positive `spec.bootUnitTimeout` in the SBR config CR to enable it. The default is disabled.
 
-The delay is independent of when a peer applies or removes the OutOfService taint. It does not guarantee that old workloads have stopped or their volumes have detached. Separate work will define installation and how the operator applies these settings to each selected host.
+The unit never releases what it applied. The timeout bounds the unit's own runtime: when the period ends, the service lets kubelet start even if the cordon could not be published, the API is unavailable, or workload removal is incomplete. The cordon and the condition are released by a peer or by the local agent under Section 5.9. Separate work will define installation and how the operator applies these settings to each selected host.
 
 #### Technical details
 
-A standalone host service reads the effective `bootUnitEnabled` and `bootUnitTimeout` values saved on its host. Apply validated settings before a reboot. The service must not fetch the CR or wait for the API before letting kubelet start. These local settings configure only the boot unit. They do not provide offline configuration or reboot permission for the SBR agent.
+A standalone host service reads the effective `bootUnitEnabled` and `bootUnitTimeout` values saved on its host. Apply validated settings before a reboot. The service authenticates as the node (the kubelet certificate identity) and talks to the API only to cordon the Node and publish the condition; it must not fetch the CR. The whole sequence, cordon retries included, is bounded by the timeout. These local settings configure only the boot unit. They do not provide offline configuration or reboot permission for the SBR agent.
 
 When enabled for a recognized autonomous reboot, the service measures the timeout from the start of its delay in that boot. Include local checks in that time limit. Use a local elapsed-time clock and retain the original deadline across service restarts within the same boot. Settings received during a delay apply to later eligible boots and cannot extend the active deadline.
 
-At its deadline, the service lets kubelet start even if the API is unavailable. It does not check the OutOfService taint, Node health, or any message from a reporter or peer. A disabled unit adds no delay. Missing or invalid local settings must not cause an indefinite wait or an invented timeout. In that case, report the local error and allow kubelet to start.
+At its deadline, the service lets kubelet start even if the API is unavailable. It does not check the OutOfService taint, Node health, or any message from a reporter or peer. If the API is unreachable for the whole bounded retry window, the cordon fails and kubelet starts anyway; when a CR exists, the peer's cordon and OutOfService taint — cluster-side state that survives the node's reboot — are the durable backstop. A disabled unit adds no delay. Missing or invalid local settings must not cause an indefinite wait or an invented timeout. In that case, report the local error and allow kubelet to start.
 
-The recognition rules are deferred work, but this rule is not. If the service finds a stored reboot decision and cannot establish whether this boot follows that decision, it applies the configured delay and reports the local ambiguity. The service skips the delay only when no decision is present or the decision cannot be read at all. A missing or invalid configuration still allows kubelet to start, as above.
+The recognition rules are deferred work, but this rule is not. If the service finds a stored reboot decision and cannot establish whether this boot follows that decision, it runs its cordon sequence and reports the local ambiguity. The service skips the cordon only when no decision is present or the decision cannot be read at all. A missing or invalid configuration still allows kubelet to start, as above.
 
 The peer uses the CR's saved reboot deadline independently of the host service's deadline. Under `OnTimeout`, the peer can add the OutOfService taint before the reset, during the delay, or after the delay ends. Under `OnReboot`, the target agent or reporter normally publishes boot evidence after kubelet starts.
 
 A workload already assigned to the node can restart before the peer adds the taint or before its volumes detach. Local state that cannot be read at all can cause the service to miss a delay. An expired delay does not show that workloads stopped or that volumes detached. The policy accepts missed delays.
 
+The unit records its cordon under a dedicated ownership key, the `sbr.medik8s.io/rejoin-cordon` annotation, in the same Node update that cordons the Node, so the cordon can be told apart from one that existed before SBR acted. The unit never removes the key. Two actors can release what the unit applied:
+
+- A peer, when the CR's restrictions are released under Section 5.9. It removes the OutOfService taint, its own cordon, the unit's keyed cordon, and the `SBRRejoinPending` condition together.
+- The local agent, when no CR ever required restrictions. After sustained healthy storage for the autonomous recovery period, and after a live API check shows that no CR names the Node and no OutOfService taint is present, the agent clears the condition first, then removes the cordon and the ownership key in one Node update. If a CR claims the Node before the agent releases, ownership transfers to the peer path and the agent does nothing.
+
 Separate work will define installation, host setting delivery, reboot recognition, and platform-specific tests. Disabling or removing the configuration must remove future SBR boot delays when host reconciliation succeeds. Preserve normal kubelet startup when removing the service. API validation alone does not establish that the host installed or enabled it. BlockPerNode can run with the service disabled.
+
+The agent installs the host service on the nodes its configuration selects and refuses control-plane nodes; the service itself has no role check. Manual installation of the service on any node is unsupported, and runbooks must direct administrators to the agent-managed lifecycle rather than to installing or enabling the unit by hand.
 
 ## 6. Open Questions
 
