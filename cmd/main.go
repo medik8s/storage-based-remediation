@@ -320,7 +320,11 @@ func main() {
 
 	// Set up admission webhooks (only if enabled)
 	if enableWebhooks {
-		sbrConfigValidator := &medik8sv1alpha1.StorageBasedRemediationConfigValidator{}
+		// Use the uncached API reader: admission must see configurations created moments ago,
+		// which the manager cache may not have observed yet.
+		sbrConfigValidator := &medik8sv1alpha1.StorageBasedRemediationConfigValidator{
+			Client: mgr.GetAPIReader(),
+		}
 		if err := sbrConfigValidator.SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "StorageBasedRemediationConfig")
 			os.Exit(1)
