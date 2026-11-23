@@ -17,14 +17,21 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestConfigUpdateEffectiveModes(t *testing.T) {
@@ -498,5 +505,390 @@ func TestValidateDeleteNeedsNoClient(t *testing.T) {
 	validator := &StorageBasedRemediationConfigValidator{}
 	if _, err := validator.ValidateDelete(t.Context(), blockPerNodeConfig(nsPrimary, "going-away")); err != nil {
 		t.Errorf("ValidateDelete() = %v, want nil", err)
+	}
+}
+
+func TestIntersectSelectedNodes(t *testing.T) {
+	tests := []struct {
+		name  string
+		a, b  map[string]string
+		want  []string
+		notes string
+	}{
+		{
+			name: "identical default selectors overlap on every worker",
+			a:    nil,
+			b:    nil,
+			want: []string{nodeWorkerLinuxA, nodeWorkerLinuxB},
+		},
+		{
+			name: "contradictory values for the same key are disjoint",
+			a:    map[string]string{zoneLabel: "a"},
+			b:    map[string]string{zoneLabel: "b"},
+			want: nil,
+		},
+		{
+			name: "a superset overlaps on the narrower set",
+			a:    nil,
+			b:    map[string]string{zoneLabel: "a"},
+			want: []string{nodeWorkerLinuxA},
+		},
+		{
+			name: "two selectors that match nothing do not overlap",
+			a:    map[string]string{zoneLabel: "nowhere"},
+			b:    map[string]string{zoneLabel: "elsewhere"},
+			want: nil,
+		},
+		{
+			// The regression case. An abstract selector comparison reports
+			// "different keys => might overlap" here and rejects a legitimate
+			// configuration; no node carries both labels.
+			name:  "different keys that no single node carries are disjoint",
+			a:     map[string]string{zoneLabel: "a"},
+			b:     map[string]string{storagePoolLabel: "fast"},
+			want:  nil,
+			notes: "zone a is worker-linux-a, pool fast is worker-linux-b",
+		},
+		{
+			// Same shape as above, but a node does carry both, so it is a
+			// genuine conflict.
+			name: "different keys carried by one node do overlap",
+			a:    map[string]string{zoneLabel: "b"},
+			b:    map[string]string{storagePoolLabel: "fast"},
+			want: []string{nodeWorkerLinuxB},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			nodes := testNodes()
+			got := IntersectSelectedNodes(specWithSelector(tc.a), specWithSelector(tc.b), nodes)
+			if !equalNameSets(got, tc.want) {
+				t.Errorf("IntersectSelectedNodes() = %v, want %v (%s)", got, tc.want, tc.notes)
+			}
+
+			// Overlap is symmetric.
+			reversed := IntersectSelectedNodes(specWithSelector(tc.b), specWithSelector(tc.a), nodes)
+			if !equalNameSets(reversed, tc.want) {
+				t.Errorf("IntersectSelectedNodes() reversed = %v, want %v", reversed, tc.want)
+			}
+		})
+	}
+}
+
+// RHWA-2063 (API-04), part 1: the single conflict check shared by the admission
+// webhook and the configuration controller.
+//
+// The ticket's complaint is that today the webhook and the controller each
+// refer the check to the other (see the two TODOs in
+// storagebasedremediationconfig_webhook.go). Both call sites must therefore end
+// up in this one function; these tests pin its behaviour, and the call-site
+// tests only pin that it is reached.
+//
+// Note: a fake client does not establish admission behaviour. That the webhook
+// is registered and actually rejects the request is e2e territory.
+
+const (
+	otherStorageClass = "other-sc"
+	nsPrimary         = "sbr-system"
+	nsSecondary       = "sbr-other"
+)
+
+// overlapScheme is the scheme used by the fake clients in this file.
+func overlapScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	s := runtime.NewScheme()
+	if err := AddToScheme(s); err != nil {
+		t.Fatalf("add SBR types to scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatalf("add core types to scheme: %v", err)
+	}
+	return s
+}
+
+type configOption func(*StorageBasedRemediationConfig)
+
+func withMode(mode SharedStorageVolumeModeType) configOption {
+	return func(c *StorageBasedRemediationConfig) { c.Spec.SharedStorageVolumeMode = &mode }
+}
+
+func withSelector(selector map[string]string) configOption {
+	return func(c *StorageBasedRemediationConfig) { c.Spec.NodeSelector = selector }
+}
+
+func withStorageClass(name string) configOption {
+	return func(c *StorageBasedRemediationConfig) { c.Spec.SharedStorageClass = name }
+}
+
+func withUID(uid string) configOption {
+	return func(c *StorageBasedRemediationConfig) { c.UID = types.UID(uid) }
+}
+
+// blockPerNodeConfig builds a BlockPerNode configuration with the shared
+// StorageClass; options override the defaults.
+func blockPerNodeConfig(namespace, name string, opts ...configOption) *StorageBasedRemediationConfig {
+	cfg := &StorageBasedRemediationConfig{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Spec:       StorageBasedRemediationConfigSpec{SharedStorageClass: testStorageClass},
+	}
+	withMode(SharedStorageVolumeModeBlockPerNode)(cfg)
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	return cfg
+}
+
+// overlapClient returns a reader seeded with the shared node fixture plus the
+// given existing configurations.
+func overlapClient(t *testing.T, existing ...*StorageBasedRemediationConfig) client.Reader {
+	t.Helper()
+	objs := make([]client.Object, 0, len(existing)+len(testNodes()))
+	for i := range testNodes() {
+		node := testNodes()[i]
+		objs = append(objs, &node)
+	}
+	for _, cfg := range existing {
+		objs = append(objs, cfg)
+	}
+	return fake.NewClientBuilder().WithScheme(overlapScheme(t)).WithObjects(objs...).Build()
+}
+
+func TestOverlapDisjointCoexist(t *testing.T) {
+	existing := blockPerNodeConfig(nsPrimary, "zone-a", withSelector(map[string]string{zoneLabel: "a"}))
+	incoming := blockPerNodeConfig(nsPrimary, "zone-b", withSelector(map[string]string{zoneLabel: "b"}))
+
+	if err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t, existing), incoming); err != nil {
+		t.Errorf("disjoint configurations rejected: %v", err)
+	}
+}
+
+func TestOverlapSameNamespaceRejected(t *testing.T) {
+	existing := blockPerNodeConfig(nsPrimary, "all-workers")
+	incoming := blockPerNodeConfig(nsPrimary, "zone-a", withSelector(map[string]string{zoneLabel: "a"}))
+
+	err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t, existing), incoming)
+	if !errors.Is(err, ErrNodeSelectorOverlap) {
+		t.Fatalf("got %v, want ErrNodeSelectorOverlap", err)
+	}
+	// The reason has to be actionable: which configuration, and which nodes.
+	for _, want := range []string{"all-workers", nodeWorkerLinuxA} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestOverlapCrossNamespaceRejected(t *testing.T) {
+	existing := blockPerNodeConfig(nsSecondary, "all-workers")
+	incoming := blockPerNodeConfig(nsPrimary, "also-all-workers")
+
+	err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t, existing), incoming)
+	if !errors.Is(err, ErrNodeSelectorOverlap) {
+		t.Fatalf("got %v, want ErrNodeSelectorOverlap", err)
+	}
+	if !strings.Contains(err.Error(), nsSecondary) {
+		t.Errorf("error %q does not name the other namespace %q", err, nsSecondary)
+	}
+}
+
+func TestOverlapIgnoresSelf(t *testing.T) {
+	tests := []struct {
+		name              string
+		existing, subject *StorageBasedRemediationConfig
+	}{
+		{
+			// Update: the stored copy and the incoming object share a UID.
+			name:     "same uid",
+			existing: blockPerNodeConfig(nsPrimary, "self", withUID("uid-self")),
+			subject:  blockPerNodeConfig(nsPrimary, "self", withUID("uid-self")),
+		},
+		{
+			// Create: the incoming object has no UID yet, so identity falls back
+			// to namespace/name.
+			name:     "same namespace and name, no uid on the incoming object",
+			existing: blockPerNodeConfig(nsPrimary, "self", withUID("uid-self")),
+			subject:  blockPerNodeConfig(nsPrimary, "self"),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t, tc.existing), tc.subject)
+			if err != nil {
+				t.Errorf("configuration conflicted with itself: %v", err)
+			}
+		})
+	}
+}
+
+func TestOverlapIgnoresNonBlockPerNodeConfigs(t *testing.T) {
+	// A shared-storage existing configuration and a BlockPerNode incoming
+	// configuration on the same nodes must be rejected: every mode except
+	// detect-only opens the watchdog, so two configurations on one node means
+	// two watchdog owners.
+	for _, mode := range []SharedStorageVolumeModeType{
+		SharedStorageVolumeModeFilesystem,
+		SharedStorageVolumeModeBlock,
+	} {
+		t.Run(string(mode), func(t *testing.T) {
+			existing := blockPerNodeConfig(nsPrimary, "shared", withMode(mode))
+			incoming := blockPerNodeConfig(nsPrimary, "per-node")
+
+			err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t, existing), incoming)
+			if !errors.Is(err, ErrNodeSelectorOverlap) {
+				t.Fatalf("got %v, want ErrNodeSelectorOverlap", err)
+			}
+		})
+	}
+}
+
+func TestOverlapSubjectNotBlockPerNode(t *testing.T) {
+	// A Filesystem incoming configuration landing on the same nodes as an
+	// existing BlockPerNode one must be rejected: both modes open the watchdog.
+	existing := blockPerNodeConfig(nsPrimary, "per-node")
+	incoming := blockPerNodeConfig(nsPrimary, "filesystem", withMode(SharedStorageVolumeModeFilesystem))
+
+	err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t, existing), incoming)
+	if !errors.Is(err, ErrNodeSelectorOverlap) {
+		t.Fatalf("got %v, want ErrNodeSelectorOverlap", err)
+	}
+}
+
+func TestOverlapSharedStorageAndBlockPerNodeDisjointAccepted(t *testing.T) {
+	// A shared-storage configuration and a BlockPerNode configuration on
+	// disjoint node sets are allowed.
+	existing := blockPerNodeConfig(nsPrimary, "shared",
+		withMode(SharedStorageVolumeModeFilesystem), withSelector(map[string]string{zoneLabel: "a"}))
+	incoming := blockPerNodeConfig(nsPrimary, "per-node",
+		withSelector(map[string]string{zoneLabel: "b"}))
+
+	if err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t, existing), incoming); err != nil {
+		t.Errorf("disjoint shared-storage and BlockPerNode rejected: %v", err)
+	}
+}
+
+func TestOverlapStorageClassMismatch(t *testing.T) {
+	// One StorageClass per release (6.5 defers the extension). This is
+	// cluster-wide and independent of node overlap, so it must fire even when
+	// the node sets are disjoint.
+	existing := blockPerNodeConfig(nsSecondary, "zone-a",
+		withSelector(map[string]string{zoneLabel: "a"}), withStorageClass(testStorageClass))
+	incoming := blockPerNodeConfig(nsPrimary, "zone-b",
+		withSelector(map[string]string{zoneLabel: "b"}), withStorageClass(otherStorageClass))
+
+	err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t, existing), incoming)
+	if !errors.Is(err, ErrStorageClassConflict) {
+		t.Fatalf("got %v, want ErrStorageClassConflict", err)
+	}
+	for _, want := range []string{testStorageClass, otherStorageClass} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention StorageClass %q", err, want)
+		}
+	}
+}
+
+func TestOverlapSameStorageClassDisjointAccepted(t *testing.T) {
+	existing := blockPerNodeConfig(nsSecondary, "zone-a",
+		withSelector(map[string]string{zoneLabel: "a"}), withStorageClass(testStorageClass))
+	incoming := blockPerNodeConfig(nsPrimary, "pool-fast",
+		withSelector(map[string]string{storagePoolLabel: "fast"}), withStorageClass(testStorageClass))
+
+	if err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t, existing), incoming); err != nil {
+		t.Errorf("disjoint configurations on one StorageClass rejected: %v", err)
+	}
+}
+
+func TestOverlapStorageClassIgnoresNonBlockPerNode(t *testing.T) {
+	existing := blockPerNodeConfig(nsPrimary, "shared",
+		withMode(SharedStorageVolumeModeBlock),
+		withStorageClass(otherStorageClass),
+		withSelector(map[string]string{zoneLabel: "b"}))
+	incoming := blockPerNodeConfig(nsPrimary, "per-node",
+		withSelector(map[string]string{zoneLabel: "a"}), withStorageClass(testStorageClass))
+
+	if err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t, existing), incoming); err != nil {
+		t.Errorf("shared-storage StorageClass treated as a conflict: %v", err)
+	}
+}
+
+func TestOverlapListErrorIsNotSafe(t *testing.T) {
+	// Fail-safe. Two watchdog owners on one node is the failure mode, so an
+	// unreadable cluster must never answer "no conflict".
+	listErr := errors.New("boom")
+	tests := []struct {
+		name string
+		fail func(list client.ObjectList) bool
+	}{
+		{
+			name: "configuration list fails",
+			fail: func(list client.ObjectList) bool {
+				_, ok := list.(*StorageBasedRemediationConfigList)
+				return ok
+			},
+		},
+		{
+			name: "node list fails",
+			fail: func(list client.ObjectList) bool {
+				_, ok := list.(*corev1.NodeList)
+				return ok
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := fake.NewClientBuilder().
+				WithScheme(overlapScheme(t)).
+				WithObjects(blockPerNodeConfig(nsPrimary, "all-workers")).
+				WithInterceptorFuncs(interceptor.Funcs{
+					List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+						if tc.fail(list) {
+							return listErr
+						}
+						return c.List(ctx, list, opts...)
+					},
+				}).
+				Build()
+
+			err := CheckBlockPerNodeConflicts(context.Background(), reader, blockPerNodeConfig(nsPrimary, "incoming"))
+			if err == nil {
+				t.Fatal("unreadable cluster state reported as no conflict")
+			}
+			if !errors.Is(err, ErrConflictCheckUnavailable) {
+				t.Errorf("got %v, want ErrConflictCheckUnavailable", err)
+			}
+			if !errors.Is(err, listErr) {
+				t.Errorf("error %v does not wrap the underlying list error", err)
+			}
+		})
+	}
+}
+
+func TestOverlapNoNodesIsConflictFree(t *testing.T) {
+	// An empty Node list without an error means the cluster has no Nodes,
+	// so no configuration can overlap another.
+	reader := fake.NewClientBuilder().
+		WithScheme(overlapScheme(t)).
+		WithObjects(blockPerNodeConfig(nsPrimary, "all-workers")).
+		Build()
+
+	if err := CheckBlockPerNodeConflicts(context.Background(), reader, blockPerNodeConfig(nsPrimary, "incoming")); err != nil {
+		t.Errorf("empty cluster reported a conflict: %v", err)
+	}
+}
+func TestOverlapNoExistingConfigs(t *testing.T) {
+	// First configuration in the cluster: nodes are visible, nothing to conflict
+	// with.
+	if err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t), blockPerNodeConfig(nsPrimary, "first")); err != nil {
+		t.Errorf("first configuration rejected: %v", err)
+	}
+}
+
+func TestOverlapNilClient(t *testing.T) {
+	// A conflict check with nothing to read cannot pass.
+	err := CheckBlockPerNodeConflicts(context.Background(), nil, blockPerNodeConfig(nsPrimary, "incoming"))
+	if !errors.Is(err, ErrConflictCheckUnavailable) {
+		t.Fatalf("got %v, want ErrConflictCheckUnavailable", err)
 	}
 }
