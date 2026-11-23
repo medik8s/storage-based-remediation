@@ -18,18 +18,20 @@ package v1alpha1
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 )
 
 func TestConfigUpdateEffectiveModes(t *testing.T) {
 	filesystem := SharedStorageVolumeModeFilesystem
 	block := SharedStorageVolumeModeBlock
 	perNode := SharedStorageVolumeModeBlockPerNode
-	validator := &StorageBasedRemediationConfigValidator{}
+	validator := newTestValidator(t)
 	for _, oldMode := range []*SharedStorageVolumeModeType{nil, &filesystem, &block, &perNode} {
 		for _, newMode := range []*SharedStorageVolumeModeType{nil, &filesystem, &block, &perNode} {
 			oldObj := &StorageBasedRemediationConfig{Spec: StorageBasedRemediationConfigSpec{
@@ -48,7 +50,7 @@ func TestConfigUpdateEffectiveModes(t *testing.T) {
 }
 
 func TestConfigDurationAdmission(t *testing.T) {
-	validator := &StorageBasedRemediationConfigValidator{}
+	validator := newTestValidator(t)
 	perNode := SharedStorageVolumeModeBlockPerNode
 	defaults := map[string]string{
 		ioTimeoutField: "15s", outageGraceField: "60s", recoveryPeriodField: "5m",
@@ -177,7 +179,7 @@ func isMutuallyExclusiveRole(key string) bool {
 func TestStorageBasedRemediationConfigValidator_ValidateUpdate_VolumeModeImmutability(t *testing.T) {
 	filesystem := SharedStorageVolumeModeFilesystem
 	block := SharedStorageVolumeModeBlock
-	validator := &StorageBasedRemediationConfigValidator{}
+	validator := newTestValidator(t)
 
 	tests := []struct {
 		name    string
@@ -377,5 +379,124 @@ func Test_nodeSelectorOverlaps(t *testing.T) {
 				t.Errorf("nodeSelectorOverlaps() = %v, expected %v", result, tt.expected)
 			}
 		})
+	}
+}
+
+// RHWA-2063 (API-04), part 1: the webhook call site.
+//
+// The two TODOs in storagebasedremediationconfig_webhook.go defer node-selector
+// overlap validation to the controller, and the controller defers it back. The
+// validator therefore has to carry a reader and reach the shared check. These
+// tests pin only that it is reached and that spec validation still runs first;
+// the check's own behaviour is covered in overlap_test.go.
+
+// newTestValidator builds a validator backed by the shared node fixture plus
+// the given existing configurations.
+func newTestValidator(t *testing.T, existing ...*StorageBasedRemediationConfig) *StorageBasedRemediationConfigValidator {
+	t.Helper()
+	return &StorageBasedRemediationConfigValidator{Client: overlapClient(t, existing...)}
+}
+
+func TestValidateCreateRejectsOverlap(t *testing.T) {
+	existing := blockPerNodeConfig(nsSecondary, "all-workers")
+	validator := newTestValidator(t, existing)
+
+	incoming := blockPerNodeConfig(nsPrimary, "zone-a", withSelector(map[string]string{zoneLabel: "a"}))
+	_, err := validator.ValidateCreate(t.Context(), incoming)
+	if !errors.Is(err, ErrNodeSelectorOverlap) {
+		t.Fatalf("ValidateCreate() = %v, want ErrNodeSelectorOverlap", err)
+	}
+	if !strings.Contains(err.Error(), "all-workers") {
+		t.Errorf("error %q does not name the conflicting configuration", err)
+	}
+}
+
+func TestValidateCreateRejectsSecondStorageClass(t *testing.T) {
+	existing := blockPerNodeConfig(nsPrimary, "zone-a",
+		withSelector(map[string]string{zoneLabel: "a"}), withStorageClass(testStorageClass))
+	validator := newTestValidator(t, existing)
+
+	incoming := blockPerNodeConfig(nsPrimary, "pool-fast",
+		withSelector(map[string]string{storagePoolLabel: "fast"}), withStorageClass(otherStorageClass))
+	if _, err := validator.ValidateCreate(t.Context(), incoming); !errors.Is(err, ErrStorageClassConflict) {
+		t.Fatalf("ValidateCreate() = %v, want ErrStorageClassConflict", err)
+	}
+}
+
+func TestValidateCreateAcceptsDisjointSets(t *testing.T) {
+	existing := blockPerNodeConfig(nsSecondary, "zone-a", withSelector(map[string]string{zoneLabel: "a"}))
+	validator := newTestValidator(t, existing)
+
+	incoming := blockPerNodeConfig(nsPrimary, "pool-fast", withSelector(map[string]string{storagePoolLabel: "fast"}))
+	if _, err := validator.ValidateCreate(t.Context(), incoming); err != nil {
+		t.Errorf("ValidateCreate() rejected disjoint configurations: %v", err)
+	}
+}
+
+func TestValidateUpdateRejectsWidenedSelector(t *testing.T) {
+	// A selector may be narrowed or moved freely until it reaches nodes another
+	// BlockPerNode configuration already owns.
+	existing := blockPerNodeConfig(nsSecondary, "pool-fast",
+		withSelector(map[string]string{storagePoolLabel: "fast"}), withUID("uid-other"))
+	validator := newTestValidator(t, existing)
+
+	oldObj := blockPerNodeConfig(nsPrimary, "zone-a",
+		withSelector(map[string]string{zoneLabel: "a"}), withUID("uid-subject"))
+	widened := blockPerNodeConfig(nsPrimary, "zone-a", withUID("uid-subject")) // default: all linux workers
+
+	if _, err := validator.ValidateUpdate(t.Context(), oldObj, widened); !errors.Is(err, ErrNodeSelectorOverlap) {
+		t.Fatalf("ValidateUpdate() = %v, want ErrNodeSelectorOverlap", err)
+	}
+}
+
+func TestValidateUpdateIgnoresTheStoredCopyOfItself(t *testing.T) {
+	// The subject is already in the cluster; re-admitting it must not conflict
+	// with its own stored copy.
+	stored := blockPerNodeConfig(nsPrimary, "zone-a",
+		withSelector(map[string]string{zoneLabel: "a"}), withUID("uid-subject"))
+	validator := newTestValidator(t, stored)
+
+	updated := blockPerNodeConfig(nsPrimary, "zone-a",
+		withSelector(map[string]string{zoneLabel: "a"}), withUID("uid-subject"))
+	updated.Spec.SBRTimeoutSeconds = ptr.To(int32(60))
+
+	if _, err := validator.ValidateUpdate(t.Context(), stored, updated); err != nil {
+		t.Errorf("ValidateUpdate() conflicted with the subject's own stored copy: %v", err)
+	}
+}
+
+func TestValidatorWithoutClientFailsClosed(t *testing.T) {
+	// A validator wired without a reader silently skipped the check before; that
+	// is how the TODO survived. It has to be an error, not a pass.
+	validator := &StorageBasedRemediationConfigValidator{}
+	cfg := blockPerNodeConfig(nsPrimary, "incoming")
+
+	if _, err := validator.ValidateCreate(t.Context(), cfg); !errors.Is(err, ErrConflictCheckUnavailable) {
+		t.Errorf("ValidateCreate() = %v, want ErrConflictCheckUnavailable", err)
+	}
+	if _, err := validator.ValidateUpdate(t.Context(), cfg, cfg); !errors.Is(err, ErrConflictCheckUnavailable) {
+		t.Errorf("ValidateUpdate() = %v, want ErrConflictCheckUnavailable", err)
+	}
+}
+
+func TestValidateSpecFailsBeforeTheConflictCheck(t *testing.T) {
+	// Spec validation must not depend on cluster reads: an invalid spec is
+	// rejected on its own terms even with no reader at all.
+	validator := &StorageBasedRemediationConfigValidator{}
+	invalid := blockPerNodeConfig(nsPrimary, "no-storage-class", withStorageClass(""))
+
+	_, err := validator.ValidateCreate(t.Context(), invalid)
+	if err == nil {
+		t.Fatal("ValidateCreate() accepted BlockPerNode without a storage class")
+	}
+	if errors.Is(err, ErrConflictCheckUnavailable) {
+		t.Errorf("conflict check ran before spec validation: %v", err)
+	}
+}
+
+func TestValidateDeleteNeedsNoClient(t *testing.T) {
+	validator := &StorageBasedRemediationConfigValidator{}
+	if _, err := validator.ValidateDelete(t.Context(), blockPerNodeConfig(nsPrimary, "going-away")); err != nil {
+		t.Errorf("ValidateDelete() = %v, want nil", err)
 	}
 }
