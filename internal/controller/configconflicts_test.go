@@ -246,9 +246,10 @@ var _ = Describe("BlockPerNode configuration conflict re-check", func() {
 		}, timeout, interval).Should(MatchError(medik8sv1alpha1.ErrStorageClassConflict))
 	})
 
-	It("does not conflict with a shared-storage configuration on the same nodes", func() {
-		// AC 5: shared storage and BlockPerNode coexist. Only BlockPerNode
-		// gives a node a watchdog owner, so only BlockPerNode pairs matter.
+	It("conflicts with a shared-storage configuration on the same nodes", func() {
+		// Every mode except detect-only opens the watchdog, so a shared-storage
+		// configuration and a BlockPerNode configuration on the same nodes means
+		// two watchdog owners.
 		filesystem := medik8sv1alpha1.SharedStorageVolumeModeFilesystem
 		shared := &medik8sv1alpha1.StorageBasedRemediationConfig{
 			ObjectMeta: metav1.ObjectMeta{Namespace: otherNamespace, Name: "shared"},
@@ -260,7 +261,8 @@ var _ = Describe("BlockPerNode configuration conflict re-check", func() {
 		Expect(k8sClient.Create(ctx, shared)).To(Succeed())
 
 		perNode := newConfig(namespace, "per-node", nil)
-		Expect(controllerReconciler.checkConfigConflicts(ctx, perNode)).To(Succeed())
+		Expect(controllerReconciler.checkConfigConflicts(ctx, perNode)).
+			To(MatchError(medik8sv1alpha1.ErrNodeSelectorOverlap))
 	})
 
 	It("does not conflict with itself", func() {

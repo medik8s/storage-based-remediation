@@ -178,8 +178,10 @@ func TestOverlapIgnoresSelf(t *testing.T) {
 }
 
 func TestOverlapIgnoresNonBlockPerNodeConfigs(t *testing.T) {
-	// AC 5: a shared-storage configuration and a BlockPerNode configuration may
-	// select the same nodes. Only BlockPerNode gives a node a watchdog owner.
+	// A shared-storage existing configuration and a BlockPerNode incoming
+	// configuration on the same nodes must be rejected: every mode except
+	// detect-only opens the watchdog, so two configurations on one node means
+	// two watchdog owners.
 	for _, mode := range []SharedStorageVolumeModeType{
 		SharedStorageVolumeModeFilesystem,
 		SharedStorageVolumeModeBlock,
@@ -188,21 +190,36 @@ func TestOverlapIgnoresNonBlockPerNodeConfigs(t *testing.T) {
 			existing := blockPerNodeConfig(nsPrimary, "shared", withMode(mode))
 			incoming := blockPerNodeConfig(nsPrimary, "per-node")
 
-			if err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t, existing), incoming); err != nil {
-				t.Errorf("%s configuration treated as a conflict: %v", mode, err)
+			err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t, existing), incoming)
+			if !errors.Is(err, ErrNodeSelectorOverlap) {
+				t.Fatalf("got %v, want ErrNodeSelectorOverlap", err)
 			}
 		})
 	}
 }
 
 func TestOverlapSubjectNotBlockPerNode(t *testing.T) {
-	// The rule is BlockPerNode against BlockPerNode. A Filesystem configuration
-	// landing on the same nodes as a BlockPerNode one is allowed.
+	// A Filesystem incoming configuration landing on the same nodes as an
+	// existing BlockPerNode one must be rejected: both modes open the watchdog.
 	existing := blockPerNodeConfig(nsPrimary, "per-node")
 	incoming := blockPerNodeConfig(nsPrimary, "filesystem", withMode(SharedStorageVolumeModeFilesystem))
 
+	err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t, existing), incoming)
+	if !errors.Is(err, ErrNodeSelectorOverlap) {
+		t.Fatalf("got %v, want ErrNodeSelectorOverlap", err)
+	}
+}
+
+func TestOverlapSharedStorageAndBlockPerNodeDisjointAccepted(t *testing.T) {
+	// A shared-storage configuration and a BlockPerNode configuration on
+	// disjoint node sets are allowed.
+	existing := blockPerNodeConfig(nsPrimary, "shared",
+		withMode(SharedStorageVolumeModeFilesystem), withSelector(map[string]string{zoneLabel: "a"}))
+	incoming := blockPerNodeConfig(nsPrimary, "per-node",
+		withSelector(map[string]string{zoneLabel: "b"}))
+
 	if err := CheckBlockPerNodeConflicts(context.Background(), overlapClient(t, existing), incoming); err != nil {
-		t.Errorf("non-BlockPerNode subject rejected: %v", err)
+		t.Errorf("disjoint shared-storage and BlockPerNode rejected: %v", err)
 	}
 }
 
@@ -239,7 +256,9 @@ func TestOverlapSameStorageClassDisjointAccepted(t *testing.T) {
 
 func TestOverlapStorageClassIgnoresNonBlockPerNode(t *testing.T) {
 	existing := blockPerNodeConfig(nsPrimary, "shared",
-		withMode(SharedStorageVolumeModeBlock), withStorageClass(otherStorageClass))
+		withMode(SharedStorageVolumeModeBlock),
+		withStorageClass(otherStorageClass),
+		withSelector(map[string]string{zoneLabel: "b"}))
 	incoming := blockPerNodeConfig(nsPrimary, "per-node",
 		withSelector(map[string]string{zoneLabel: "a"}), withStorageClass(testStorageClass))
 
@@ -301,24 +320,18 @@ func TestOverlapListErrorIsNotSafe(t *testing.T) {
 	}
 }
 
-func TestOverlapNoNodesVisibleIsIndeterminate(t *testing.T) {
-	// A real cluster always has at least one Node. An empty list means the
-	// reader cannot see them (RBAC, cold cache), which is the same fail-safe
-	// case as a list error rather than a silent pass.
-	//
-	// If the implementation decides an empty cluster is legitimately
-	// conflict-free, this is the test to change, deliberately.
+func TestOverlapNoNodesIsConflictFree(t *testing.T) {
+	// An empty Node list without an error means the cluster has no Nodes,
+	// so no configuration can overlap another.
 	reader := fake.NewClientBuilder().
 		WithScheme(overlapScheme(t)).
 		WithObjects(blockPerNodeConfig(nsPrimary, "all-workers")).
 		Build()
 
-	err := CheckBlockPerNodeConflicts(context.Background(), reader, blockPerNodeConfig(nsPrimary, "incoming"))
-	if !errors.Is(err, ErrConflictCheckUnavailable) {
-		t.Fatalf("got %v, want ErrConflictCheckUnavailable", err)
+	if err := CheckBlockPerNodeConflicts(context.Background(), reader, blockPerNodeConfig(nsPrimary, "incoming")); err != nil {
+		t.Errorf("empty cluster reported a conflict: %v", err)
 	}
 }
-
 func TestOverlapNoExistingConfigs(t *testing.T) {
 	// First configuration in the cluster: nodes are visible, nothing to conflict
 	// with.
