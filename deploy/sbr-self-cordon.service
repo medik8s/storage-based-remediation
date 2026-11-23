@@ -1,0 +1,37 @@
+[Unit]
+Description=SBR pre-kubelet self-cordon
+# Run before kubelet so the cordon is in place before any workload can start.
+Before=kubelet.service
+# The cordon talks to the API server over the network, so wait for it rather
+# than burning the bounded retry window on an interface that is still down.
+Wants=network-online.target
+After=network-online.target
+# Run when the agent has written this node's journal at least once (the flag
+# is created after the first durable write and cleared only in detect-only
+# mode). The journal tiers decide whether the boot actually needs protection;
+# an ordinary reboot costs one process that exits immediately.
+ConditionPathExists=/var/lib/medik8s/state/sbr-armed
+# Never run inside a container: this unit exists to act on a real host before
+# kubelet starts there. Control-plane nodes are excluded by the agent, which
+# refuses to install the unit there; the unit itself has no role check, and
+# manual installation on any node is unsupported.
+ConditionPathExists=!/.dockerenv
+ConditionPathExists=/var/lib/medik8s/state
+
+[Service]
+Type=oneshot
+# The node identity descriptor the agent persists at enrollment. The file is
+# required (no "-" prefix): if the agent never provisioned it, the unit fails
+# to start rather than invoking the armed path with empty identity fields.
+EnvironmentFile=/var/lib/medik8s/state/sbr-identity.env
+ExecStart=/usr/local/bin/sbr-self-cordon -node-name=${NODE_NAME} -uid=${NODE_UID} -api-server=${API_SERVER}
+RemainAfterExit=yes
+# The cordon is best-effort in base mode; don't block the node forever. This
+# must exceed the command's total budget (CordonTotalBudget = 90s, the
+# context deadline that hard-bounds every retry and API call the unit makes),
+# or systemd kills the unit mid-retry and a cordon still being attempted
+# reads as a failure. Keep the two values in step when either changes.
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

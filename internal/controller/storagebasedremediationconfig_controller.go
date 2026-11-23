@@ -52,6 +52,7 @@ import (
 
 	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/v5/api/v1alpha1"
 	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
+	"github.com/medik8s/storage-based-remediation/v5/internal/bootunit"
 	"github.com/medik8s/storage-based-remediation/v5/internal/retry"
 )
 
@@ -1738,6 +1739,24 @@ func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *m
 		args = append(args, fmt.Sprintf("--%s=true", agent.FlagDetectOnlyMode))
 	}
 
+	// Node-local host state (journal, boot unit) is enabled per volume mode.
+	// Both flags derive from the API getters, so extending them to another
+	// mode or to a CRD field (design §5.4 bootUnitEnabled) needs no change
+	// here or in the agent: the flags and the host mounts in
+	// buildVolumes/buildVolumeMounts follow the getters.
+	if sbrConfig.Spec.IsJournalEnabled() {
+		args = append(args, fmt.Sprintf("--%s=true", agent.FlagJournalEnabled))
+		// The rejoin-cordon release gate: how long this node's storage must
+		// stay healthy before the agent releases the boot unit's cordon when
+		// no CR ever claimed the node. Outside BlockPerNode the getter is
+		// zero, and the flag is not passed at all.
+		args = append(args, fmt.Sprintf("--%s=%s", agent.FlagAutonomousRebootRecoveryPeriod,
+			sbrConfig.Spec.GetAutonomousRebootRecoveryPeriod()))
+	}
+	if sbrConfig.Spec.IsBootUnitEnabled() {
+		args = append(args, fmt.Sprintf("--%s=true", agent.FlagBootUnitEnabled))
+	}
+
 	return args
 }
 
@@ -1789,6 +1808,22 @@ func (r *StorageBasedRemediationConfigReconciler) buildVolumeMounts(sbrConfig *m
 			Name:      "shared-storage",
 			MountPath: sbrConfig.Spec.GetSharedStorageMountPath(),
 		})
+	}
+
+	// Host-state and boot unit wiring, enabled per volume mode (see
+	// IsJournalEnabled/IsBootUnitEnabled). The state root keeps its real path
+	// because the boot unit and the journal both refer to it by that path; see
+	// buildVolumes for why /usr/local is mounted at a side path. Modes without
+	// these features get no host-state or host-systemd surface at all.
+	if sbrConfig.Spec.IsJournalEnabled() {
+		mounts = append(mounts, corev1.VolumeMount{Name: "host-state", MountPath: bootunit.HostStateRoot})
+	}
+	if sbrConfig.Spec.IsBootUnitEnabled() {
+		mounts = append(mounts,
+			corev1.VolumeMount{Name: "host-systemd", MountPath: bootunit.ContainerSystemdDir},
+			corev1.VolumeMount{Name: "host-usr-local", MountPath: bootunit.ContainerHostUsrLocal},
+			corev1.VolumeMount{Name: "host-etc-kubernetes", MountPath: "/host/etc/kubernetes", ReadOnly: true},
+		)
 	}
 
 	return mounts
@@ -1853,6 +1888,59 @@ func (r *StorageBasedRemediationConfigReconciler) buildVolumes(sbrConfig *medik8
 				},
 			},
 		})
+	}
+
+	// Host-state and boot unit wiring, enabled per volume mode (see
+	// IsJournalEnabled/IsBootUnitEnabled). The agent installs the systemd unit
+	// and the binary on the host and keeps its journal under the state root, so
+	// it needs those host directories. /usr/local is mounted at /host/usr/local
+	// rather than at /usr/local: a same-path mount would shadow the image's own
+	// copy of the source binary and turn the install into a no-op onto itself.
+	// The state root is mounted for the journal even without the boot unit, so
+	// the two gates are separate.
+	if sbrConfig.Spec.IsJournalEnabled() {
+		volumes = append(volumes, corev1.Volume{
+			Name: "host-state",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: bootunit.HostStateRoot,
+					// DirectoryOrCreate: the first agent start makes it, and the
+					// journal lives here from then on.
+					Type: &[]corev1.HostPathType{corev1.HostPathDirectoryOrCreate}[0],
+				},
+			},
+		})
+	}
+	if sbrConfig.Spec.IsBootUnitEnabled() {
+		volumes = append(volumes,
+			corev1.Volume{
+				Name: "host-systemd",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: "/etc/systemd/system",
+						Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+					},
+				},
+			},
+			corev1.Volume{
+				Name: "host-usr-local",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: "/usr/local",
+						Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+					},
+				},
+			},
+			corev1.Volume{
+				Name: "host-etc-kubernetes",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: "/etc/kubernetes",
+						Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+					},
+				},
+			},
+		)
 	}
 
 	// Add shared storage volume if configured
