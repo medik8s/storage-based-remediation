@@ -18,6 +18,7 @@ package bootunit
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"k8s.io/client-go/tools/clientcmd"
@@ -84,4 +85,27 @@ func ResolveAPIServerFromNode() (string, error) {
 		attempts = append(attempts, fmt.Sprintf("%s: %v", path, err))
 	}
 	return "", fmt.Errorf("no usable node kubeconfig on this host: %s", strings.Join(attempts, "; "))
+}
+
+// caFileCandidates lists, in order, where the CA bundle the node's kubelet
+// trusts is looked for. It is a package variable so tests can substitute
+// their own paths; production always uses the constants.
+var caFileCandidates = []string{ContainerKubeletCAFile, ContainerKubernetesPKICAFile}
+
+// ResolveCAFile returns the CA bundle the boot unit should verify the API
+// server against, trying every known location.
+//
+// The same distribution split as ResolveAPIServerFromNode: OpenShift / RHCOS
+// keeps the kubelet CA at /etc/kubernetes/kubelet-ca.crt, while kubeadm-style
+// clusters (including kind) keep the cluster CA at /etc/kubernetes/pki/ca.crt.
+// The first candidate that exists as a regular file wins; when none exists the
+// first candidate is returned, so a missing bundle fails with the primary
+// path in the unit's error output rather than an empty one.
+func ResolveCAFile() string {
+	for _, path := range caFileCandidates {
+		if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
+			return path
+		}
+	}
+	return caFileCandidates[0]
 }

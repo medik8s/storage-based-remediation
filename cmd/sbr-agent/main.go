@@ -626,6 +626,22 @@ type SBRAgent struct {
 	// transition. Only the release loop touches it.
 	rejoinCordonHeld bool
 
+	// verdictWriteMutex serializes recordStorageVerdict's journal writes.
+	// Verdict transitions are decided under sbrHealthyMutex, so their call
+	// order is the true transition order; serializing the (bounded, best
+	// effort) writes preserves that order on disk, preventing a stalled
+	// older write from landing after a newer one and leaving the journal
+	// with a stale verdict. It is NOT held while sbrHealthyMutex is held:
+	// the disk I/O stays outside the health lock.
+	verdictWriteMutex sync.Mutex
+
+	// fenceExecMutex serializes executeSelfFencing: exactly one caller owns
+	// the decision check, the best-effort recordFenceDecision attempt and
+	// the reboot. Concurrent callers (the watchdog loop and the peer
+	// monitor's fence-message path) stand down instead of racing two
+	// incidents or two reboot sequences.
+	fenceExecMutex sync.Mutex
+
 	// nodeUID is this Node object's UID, read once at start-up. A reboot
 	// decision is bound to it so a replaced Node — whose workloads the cluster
 	// has already forgotten — cannot be cordoned on the strength of a decision
@@ -1798,13 +1814,17 @@ func (s *SBRAgent) heartbeatLoop() {
 			err := retry.Do(s.ctx, s.retryConfig, "write heartbeat to SBR", func() error {
 				return s.writeHeartbeatToSBR()
 			})
+			// The rejoin-release rule needs the same evidence the boot unit
+			// tiers use: this node's own durable storage access, sustained.
+			// Recorded FIRST, before the journal write: recordStorageOutcome
+			// is an instant memory update, while recordHeartbeatWrite does
+			// bounded journal I/O — a returned failure must invalidate the
+			// recovery clock before that I/O can delay it.
+			s.recordStorageOutcome(err == nil)
 			// Record the verdict, not every attempt: the boot unit needs the
 			// most recent one, and a healthy node must not write its journal
 			// once per heartbeat interval.
 			s.recordHeartbeatWrite(time.Since(heartbeatStart), err)
-			// The rejoin-release rule needs the same evidence the boot unit
-			// tiers use: this node's own durable storage access, sustained.
-			s.recordStorageOutcome(err == nil)
 
 			if err != nil {
 				failureCount := s.incrementFailureCount("heartbeat")
@@ -2413,6 +2433,19 @@ func (s *SBRAgent) executeSelfFencing(reason, source string) {
 		logger.Info("Detect-only mode: skipping self-fence", "reason", reason, "nodeName", s.nodeName)
 		return
 	}
+	// Exactly one caller owns the fence: the decision check, the journal
+	// attempt and the reboot. A second concurrent caller (the watchdog loop
+	// and the peer monitor can both reach this) stands down — the owner is
+	// already rebooting the host, which is the outcome the second caller
+	// wanted. The latch on fenceDecisionRecorded alone cannot guarantee
+	// this: two callers can both observe it unset and both record
+	// conflicting incidents before either reboots.
+	if !s.fenceExecMutex.TryLock() {
+		logger.Info("Self-fence already in progress; this caller stands down",
+			"reason", reason, "nodeName", s.nodeName)
+		return
+	}
+	defer s.fenceExecMutex.Unlock()
 	s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonSelfFenceInitiated,
 		fmt.Sprintf("Self-fencing initiated on (%s, %d): %s", s.nodeName, s.nodeID, reason))
 	logger.Error(nil, "Self-fencing initiated",

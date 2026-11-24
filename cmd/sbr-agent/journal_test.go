@@ -337,3 +337,51 @@ func TestSetSBRHealthyRecordsVerdictTransitions(t *testing.T) {
 		t.Fatal("a recovered verdict must be recorded as healthy")
 	}
 }
+
+// TestResumeRejectsForeignNodeUID pins the identity gate on the resume path:
+// a decision recorded for a DIFFERENT Node object must not drive this host's
+// watchdog — the cluster replaced the Node (deleting it is itself the
+// evacuation), and completing the old Node's reboot now would fence the new
+// incarnation for an incident it never had. Only a known-and-different pair
+// is rejected; an unknown binding on either side cannot be validated and the
+// resume proceeds on the host-level evidence.
+func TestResumeRejectsForeignNodeUID(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		agentUID    string
+		decisionUID string
+		wantResume  bool
+	}{
+		{"both known and different: rejected", "uid-current", "uid-old", false},
+		{"both known and equal: resumed", "uid-same", "uid-same", true},
+		{"unknown decision binding: resumed", "uid-current", "", true},
+		{"unknown current binding: resumed", "", "uid-old", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agent, j := journalAgent(t)
+			agent.nodeUID = tc.agentUID
+			ctx := context.Background()
+
+			boot := currentHostBootID()
+			if boot == "" {
+				t.Skip("cannot read the host boot ID on this platform")
+			}
+			arming := &bootunit.ArmingState{
+				Version:      1,
+				Phase:        bootunit.PhaseArmed,
+				NodeUID:      tc.decisionUID,
+				IncidentID:   "incident-f",
+				BeforeBootID: boot,
+				Source:       bootunit.SourceRequested,
+			}
+			if err := j.WriteArmingState(ctx, arming); err != nil {
+				t.Fatalf("WriteArmingState: %v", err)
+			}
+
+			agent.resumePendingRebootDecision()
+			if got := agent.fenceDecisionRecorded; got != tc.wantResume {
+				t.Fatalf("fenceDecisionRecorded = %v, want %v", got, tc.wantResume)
+			}
+		})
+	}
+}

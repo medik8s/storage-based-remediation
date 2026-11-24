@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/medik8s/common/pkg/nodestate/nodestatetest"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
@@ -418,5 +419,116 @@ func TestRejoinCordonHeldObservability(t *testing.T) {
 	}
 	if got := gaugeValue(t, rejoinCordonHeldGauge); got != 0 {
 		t.Fatalf("gauge = %v, want 0 after release", got)
+	}
+}
+
+// A CR carrying the LIVE Node's UID claims the node even when the startup
+// enrollment read failed and left the agent's nodeUID empty: matching against
+// more identities can only find more claims, and a claim prevents a release.
+func TestReleaseSkipsWhenACRCarriesTheLiveNodeUID(t *testing.T) {
+	cr := &v1alpha1.StorageBasedRemediation{
+		ObjectMeta: metav1.ObjectMeta{Name: "some-other-name", Namespace: "default"},
+	}
+	cr.Status.NodeUID = "uid-1" // the LIVE node's UID
+	agent, c := newReleaseTestAgent(t, 2*time.Minute, cordonedRejoinNode(), cr)
+	agent.nodeUID = "" // startup enrollment read failed
+
+	released, err := agent.maybeReleaseRejoinCordon(context.Background())
+	if err != nil || released {
+		t.Fatalf("release = %v, %v; want false, nil — the live UID's CR claims this node", released, err)
+	}
+	if got := nodeAfter(t, c); !got.Spec.Unschedulable {
+		t.Fatal("a node claimed by its live UID was released")
+	}
+}
+
+// Storage health invalidated DURING the release — here, by the status write
+// itself — must hold the cordon: the recovery evidence the release rests on
+// is gone, and uncordoning a node whose storage just failed is the one
+// outcome this loop exists to prevent. The already-cleared condition is
+// cosmetic; the keyed cordon keeps the node held for the next cycle, which
+// re-verifies with fresh health.
+func TestReleaseHoldsWhenHealthInvalidatedMidRelease(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("scheme: %v", err)
+	}
+	agent := &SBRAgent{
+		nodeName:                       "worker-1",
+		nodeUID:                        "uid-1",
+		autonomousRebootRecoveryPeriod: time.Minute,
+		storageHealthySince:            time.Now().Add(-2 * time.Minute),
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&corev1.Node{}).
+		WithObjects(cordonedRejoinNode()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourceUpdate: func(ctx context.Context, cl client.Client, name string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+				// The storage fails exactly as the condition clear lands.
+				agent.storageHealthySince = time.Time{}
+				return nil
+			},
+		}).
+		Build()
+	agent.k8sClient = c
+
+	released, err := agent.maybeReleaseRejoinCordon(context.Background())
+	if err != nil {
+		t.Fatalf("mid-release health invalidation must hold, not error: %v", err)
+	}
+	if released {
+		t.Fatal("the node was released although storage health was invalidated during the release")
+	}
+	got := nodeAfter(t, c)
+	if !got.Spec.Unschedulable {
+		t.Fatal("the cordon was released although storage health was invalidated mid-release")
+	}
+	if _, keyed := got.Annotations[bootunit.RejoinCordonAnnotation]; !keyed {
+		t.Fatal("the ownership key was removed although the release was held")
+	}
+}
+
+// A successful release completes the incident: the recorded arming decision
+// is cleared, so an ordinary later boot (maintenance, kernel update) is not
+// cordoned for an incident that already ran its course — the ArmingState
+// contract ("the agent clears the key after the protected boot completes").
+func TestReleaseClearsTheArmingDecision(t *testing.T) {
+	dir := nodestatetest.TempStateDir(t)
+	j, err := bootunit.NewJournal(dir)
+	if err != nil {
+		t.Fatalf("NewJournal: %v", err)
+	}
+	ctx := context.Background()
+	if err := j.WriteArmingState(ctx, &bootunit.ArmingState{
+		Version:      1,
+		Phase:        bootunit.PhaseArmed,
+		NodeUID:      "uid-1",
+		IncidentID:   "incident-done",
+		BeforeBootID: "boot-old",
+		Source:       bootunit.SourceRequested,
+	}); err != nil {
+		t.Fatalf("WriteArmingState: %v", err)
+	}
+
+	agent, c := newReleaseTestAgent(t, 2*time.Minute, cordonedRejoinNode())
+	agent.journal = j
+
+	released, err := agent.maybeReleaseRejoinCordon(context.Background())
+	if err != nil || !released {
+		t.Fatalf("release = %v, %v; want true, nil", released, err)
+	}
+	if got := nodeAfter(t, c); got.Spec.Unschedulable {
+		t.Fatal("node still cordoned after release")
+	}
+	arming, err := j.ReadArmingState(ctx)
+	if err != nil {
+		t.Fatalf("ReadArmingState after release: %v", err)
+	}
+	if arming != nil {
+		t.Fatalf("arming decision survived the release: %+v", arming)
 	}
 }

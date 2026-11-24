@@ -29,9 +29,16 @@ import (
 // path needs. It is an interface so the retry behavior can be tested without
 // an API server; production code passes a *nodeidentity.Client.
 type NodeClient interface {
+	GetOwnNode(ctx context.Context) (*nodeidentity.Node, error)
 	PatchUnschedulableWithAnnotations(ctx context.Context, unschedulable bool, annotations map[string]string) (*nodeidentity.Node, error)
 	PatchOwnNodeCondition(ctx context.Context, cond nodeidentity.Condition) (*nodeidentity.Node, error)
 }
+
+// ErrForeignCordon reports that the Node is already cordoned by an owner
+// other than SBR. The unit claims nothing in that case: stamping its
+// ownership key on a foreign cordon would make the release protocol uncordon
+// somebody else's restriction.
+var ErrForeignCordon = errors.New("bootunit: the node is cordoned by another owner; not claiming it")
 
 // Service provides the cordon-and-announce behavior the boot unit performs
 // when the arming decision is Armed. It is separate from the arming logic so
@@ -71,6 +78,27 @@ var cordonRetryDelay = CordonRetryDelay
 // Kubernetes convention. The same ID is recorded as the value of the
 // RejoinCordonAnnotation ownership key, in the same write that cordons.
 func (s *Service) CordonAndAnnounce(ctx context.Context, decision ArmingDecision, incidentID string) error {
+	// Foreign-cordon pre-check, once before the retry loop: an administrator
+	// may have cordoned (drained) this node before the reboot. Stamping the
+	// ownership key on their cordon would make the release protocol uncordon
+	// it later, so the unit claims nothing and announces nothing — the
+	// foreign cordon already keeps new workloads off the node, which is the
+	// protection this unit exists to provide. A cordon that already carries
+	// the key (a retry of our own) is re-applied idempotently below.
+	//
+	// The check runs once, not per attempt, so the CordonTotalBudget math
+	// (delays + one in-flight call) is unchanged. A read failure does not
+	// block the cordon attempt: the patch's UID precondition still protects
+	// against a replaced Node object.
+	checkCtx, cancelCheck := context.WithTimeout(ctx, APITimeout)
+	current, getErr := s.client.GetOwnNode(checkCtx)
+	cancelCheck()
+	if getErr == nil && current.Spec.Unschedulable {
+		if _, keyed := current.Metadata.Annotations[RejoinCordonAnnotation]; !keyed {
+			return ErrForeignCordon
+		}
+	}
+
 	var lastErr error
 	for attempt := 1; attempt <= CordonRetryAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {

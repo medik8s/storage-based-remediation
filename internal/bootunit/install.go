@@ -532,7 +532,16 @@ func enableUnit(systemdDir string) error {
 	if fi, err := os.Lstat(link); err == nil {
 		if fi.Mode()&os.ModeSymlink != 0 {
 			if existing, err := os.Readlink(link); err == nil && existing == HostUnitPath {
-				return nil // already enabled, exactly as systemctl leaves it
+				// Already enabled — but a previous enable may have created
+				// the symlink without confirming its directory entry. Confirm
+				// it now before reporting success: one transient sync failure
+				// must not leave the enablement unconfirmed for the life of
+				// the process (the same rule createArmingFlag applies to the
+				// gate). The symlink itself is left intact.
+				if serr := syncDir(wantsDir); serr != nil {
+					return fmt.Errorf("sync %s: %w", wantsDir, serr)
+				}
+				return nil
 			}
 		}
 		// A wrong target, or a wants entry that is not a symlink at all:

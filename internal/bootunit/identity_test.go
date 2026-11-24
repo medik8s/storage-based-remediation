@@ -190,3 +190,52 @@ users:
 		}
 	})
 }
+
+// TestResolveCAFileTriesEveryLayout pins the CA-bundle counterpart of the
+// kubeconfig resolution: OpenShift/RHCOS keeps the kubelet CA at
+// /etc/kubernetes/kubelet-ca.crt, kubeadm-style clusters at
+// /etc/kubernetes/pki/ca.crt. The first existing candidate wins; when none
+// exists the OpenShift default is returned so failures name a familiar path.
+func TestResolveCAFileTriesEveryLayout(t *testing.T) {
+	openshift := filepath.Join(t.TempDir(), "kubelet-ca.crt")
+	kubeadm := filepath.Join(t.TempDir(), "pki-ca.crt")
+	if err := os.WriteFile(openshift, []byte("ca"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kubeadm, []byte("ca"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(t.TempDir(), "missing-ca.crt")
+
+	orig := caFileCandidates
+	t.Cleanup(func() { caFileCandidates = orig })
+
+	t.Run("openshift layout wins when both exist", func(t *testing.T) {
+		caFileCandidates = []string{openshift, kubeadm}
+		if got := ResolveCAFile(); got != openshift {
+			t.Fatalf("ResolveCAFile = %q, want %q", got, openshift)
+		}
+	})
+
+	t.Run("kubeadm layout used when the openshift bundle is absent", func(t *testing.T) {
+		caFileCandidates = []string{missing, kubeadm}
+		if got := ResolveCAFile(); got != kubeadm {
+			t.Fatalf("ResolveCAFile = %q, want %q", got, kubeadm)
+		}
+	})
+
+	t.Run("no candidate exists falls back to the first", func(t *testing.T) {
+		caFileCandidates = []string{missing}
+		if got := ResolveCAFile(); got != missing {
+			t.Fatalf("ResolveCAFile = %q, want the first candidate as fallback", got)
+		}
+	})
+
+	t.Run("a directory is not a CA bundle", func(t *testing.T) {
+		dir := t.TempDir()
+		caFileCandidates = []string{dir, kubeadm}
+		if got := ResolveCAFile(); got != kubeadm {
+			t.Fatalf("ResolveCAFile = %q, want %q; a directory must be skipped", got, kubeadm)
+		}
+	})
+}

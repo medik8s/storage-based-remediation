@@ -35,6 +35,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -54,7 +55,7 @@ func run() int {
 		nodeName  = fs.String("node-name", "", "name of this Kubernetes node")
 		uid       = fs.String("uid", "", "expected Node UID, recorded while the node was healthy")
 		apiServer = fs.String("api-server", "", "direct host-routable API endpoint")
-		caFile    = fs.String("ca", "/etc/kubernetes/kubelet-ca.crt", "CA bundle path")
+		caFile    = fs.String("ca", bootunit.ContainerKubeletCAFile, "CA bundle path (default resolved per distribution)")
 		certFile  = fs.String("cert", "/var/lib/kubelet/pki/kubelet-client-current.pem", "kubelet client certificate")
 		keyFile   = fs.String("key", "/var/lib/kubelet/pki/kubelet-client-current.pem", "kubelet client key; the kubelet client PEM combines certificate and key, so this defaults to the same file as -cert")
 		stateDir  = fs.String("state-dir", "", "journal state directory (default "+bootunit.HostStateRoot+")")
@@ -94,11 +95,19 @@ func run() int {
 	fmt.Printf("sbr-self-cordon: node=%s decision=%s\n", *nodeName, decision)
 
 	// Build the node identity client from the pre-recorded descriptor.
+	// The CA bundle follows the same distribution split as the API endpoint:
+	// OpenShift/RHCOS keeps the kubelet CA at /etc/kubernetes/kubelet-ca.crt,
+	// kubeadm-style clusters (and kind) at /etc/kubernetes/pki/ca.crt. An
+	// explicitly passed -ca is respected as-is.
+	caFilePath := *caFile
+	if caFilePath == bootunit.ContainerKubeletCAFile {
+		caFilePath = bootunit.ResolveCAFile()
+	}
 	cfg := nodeidentity.Config{
 		NodeName:    *nodeName,
 		ExpectedUID: *uid,
 		APIServer:   *apiServer,
-		CAFile:      *caFile,
+		CAFile:      caFilePath,
 		CertFile:    *certFile,
 		KeyFile:     *keyFile,
 	}
@@ -130,6 +139,15 @@ func run() int {
 
 	svc := bootunit.NewService(client)
 	if err := svc.CordonAndAnnounce(ctx, decision, incidentID); err != nil {
+		if errors.Is(err, bootunit.ErrForeignCordon) {
+			// Someone else's cordon already holds the node; it is not this
+			// unit's to release, and the release protocol never touches it.
+			// Protection is present, so this is a completed boot, not a
+			// failed one.
+			fmt.Printf("sbr-self-cordon: node=%s state=%s\n",
+				*nodeName, bootunit.BootStateForeignCordon)
+			return 0
+		}
 		fmt.Fprintf(os.Stderr, "sbr-self-cordon: %v\n", err)
 		fmt.Printf("sbr-self-cordon: node=%s state=%s\n",
 			*nodeName, bootunit.BootStateCordonFailed)

@@ -131,6 +131,16 @@ const (
 	// path holds the kubelet's KubeletConfiguration instead — not a
 	// kubeconfig — which is why it is only the fallback candidate.
 	ContainerKubeletConf = "/host/etc/kubernetes/kubelet.conf"
+
+	// ContainerKubeletCAFile is the CA bundle the kubelet trusts on
+	// OpenShift / RHCOS: /etc/kubernetes/kubelet-ca.crt. It is the default
+	// the boot unit verifies the API server against.
+	ContainerKubeletCAFile = "/etc/kubernetes/kubelet-ca.crt"
+
+	// ContainerKubernetesPKICAFile is the cluster CA on kubeadm-style
+	// clusters, including kind: /etc/kubernetes/pki/ca.crt. The second
+	// candidate ResolveCAFile tries when the OpenShift bundle is absent.
+	ContainerKubernetesPKICAFile = "/etc/kubernetes/pki/ca.crt"
 )
 
 // RejoinConditionType is the Node condition the boot unit publishes when it
@@ -207,4 +217,12 @@ const (
 	// The node boots normally — this is the base-mode behavior (the cordon
 	// is a scheduler signal, not a fence).
 	BootStateCordonFailed BootState = "cordon-failed"
+
+	// BootStateForeignCordon means the node was already cordoned by an
+	// owner other than SBR (an administrator drained it before the
+	// reboot). The unit claimed nothing and announced nothing: the foreign
+	// cordon already keeps new workloads off the node, which is the
+	// protection this unit exists to provide. It is not this unit's to
+	// release, and the release protocol never touches it.
+	BootStateForeignCordon BootState = "foreign-cordon"
 )

@@ -39,9 +39,20 @@ type stubNodeClient struct {
 
 	record func(context.Context)
 
+	// getNode, when set, scripts the foreign-cordon pre-check's Node read;
+	// nil means an uncordoned Node, so the pre-check never blocks.
+	getNode func() (*nodeidentity.Node, error)
+
 	cordonCalls int
 	cordonAnnos []map[string]string
 	condCalls   int
+}
+
+func (c *stubNodeClient) GetOwnNode(ctx context.Context) (*nodeidentity.Node, error) {
+	if c.getNode != nil {
+		return c.getNode()
+	}
+	return &nodeidentity.Node{}, nil
 }
 
 func (c *stubNodeClient) PatchUnschedulableWithAnnotations(ctx context.Context, unschedulable bool, annotations map[string]string) (*nodeidentity.Node, error) {
@@ -250,5 +261,59 @@ func TestCordonAndAnnounceBoundsEachCall(t *testing.T) {
 			t.Errorf("call %d deadline %v is later than %v; a hung call would spend the whole budget",
 				i, deadline, limit)
 		}
+	}
+}
+
+// TestCordonAndAnnounceDoesNotClaimAForeignCordon pins the ownership
+// boundary: a node already cordoned without SBR's key belongs to whoever
+// cordoned it (an administrator drained it before the reboot). The unit must
+// not stamp its key on their cordon — the release protocol would then
+// uncordon it — and must not announce either: both writes are skipped and
+// the caller is told, once, without retrying.
+func TestCordonAndAnnounceDoesNotClaimAForeignCordon(t *testing.T) {
+	foreign := &nodeidentity.Node{}
+	foreign.Spec.Unschedulable = true
+	client := &stubNodeClient{getNode: func() (*nodeidentity.Node, error) { return foreign, nil }}
+	svc := NewService(client)
+
+	err := svc.CordonAndAnnounce(context.Background(), ArmingDecision{Armed: true, Reason: "test"}, "incident-1")
+	if !errors.Is(err, ErrForeignCordon) {
+		t.Fatalf("want ErrForeignCordon, got %v", err)
+	}
+	if client.cordonCalls != 0 || client.condCalls != 0 {
+		t.Fatalf("foreign cordon was touched: %d cordon calls, %d condition calls", client.cordonCalls, client.condCalls)
+	}
+}
+
+// A cordon that already carries SBR's ownership key is our own retry state:
+// the cordon is re-applied idempotently and the announcement proceeds.
+func TestCordonAndAnnounceRetriesOwnCordon(t *testing.T) {
+	own := &nodeidentity.Node{}
+	own.Spec.Unschedulable = true
+	own.Metadata.Annotations = map[string]string{RejoinCordonAnnotation: "incident-1"}
+	client := &stubNodeClient{getNode: func() (*nodeidentity.Node, error) { return own, nil }}
+	svc := NewService(client)
+
+	if err := svc.CordonAndAnnounce(context.Background(), ArmingDecision{Armed: true, Reason: "test"}, "incident-1"); err != nil {
+		t.Fatalf("CordonAndAnnounce over our own cordon: %v", err)
+	}
+	if client.cordonCalls != 1 || client.condCalls != 1 {
+		t.Fatalf("cordon calls = %d, condition calls = %d; want 1 and 1", client.cordonCalls, client.condCalls)
+	}
+}
+
+// A failed pre-check read must not block the cordon attempt: the patch's UID
+// precondition still protects against a replaced Node object.
+func TestCordonAndAnnounceProceedsWhenPrecheckReadFails(t *testing.T) {
+	client := &stubNodeClient{getNode: func() (*nodeidentity.Node, error) {
+		return nil, fmt.Errorf("api unreachable")
+	}}
+	svc := NewService(client)
+
+	if err := svc.CordonAndAnnounce(context.Background(), ArmingDecision{Armed: true, Reason: "test"}, "incident-1"); err != nil {
+		t.Fatalf("CordonAndAnnounce with an unreadable Node: %v", err)
+	}
+	if client.cordonCalls != 1 || client.condCalls != 1 {
+		t.Fatalf("cordon calls = %d, condition calls = %d; want 1 and 1", client.cordonCalls, client.condCalls)
 	}
 }

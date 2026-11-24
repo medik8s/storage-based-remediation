@@ -20,8 +20,16 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/medik8s/storage-based-remediation/v5/internal/bootunit"
 )
 
 // failingClient fails every Get. The disabled gate must not touch the API at
@@ -56,5 +64,96 @@ func TestMaybeSetupBootUnitEnabledDelegates(t *testing.T) {
 		context.Background(), failingClient{}, "node-a", nil, false, true)
 	if err == nil {
 		t.Fatal("enabled boot unit must propagate the setup error")
+	}
+}
+
+// stubClearArmingFlag replaces the host-touching clear for a test and counts
+// calls. The real function removes /var/lib/medik8s/state/sbr-armed, which a
+// unit test must never touch.
+func stubClearArmingFlag(t *testing.T) *int {
+	t.Helper()
+	calls := 0
+	orig := clearArmingFlag
+	t.Cleanup(func() { clearArmingFlag = orig })
+	clearArmingFlag = func() error {
+		calls++
+		return nil
+	}
+	return &calls
+}
+
+// A control-plane node that was enrolled while a worker may still carry the
+// boot unit's gate: the promotion must clear it, so the unit cannot cordon a
+// control-plane member at the next boot. A fresh control-plane node (no gate)
+// still succeeds — the clear is a no-op.
+func TestSetupBootUnitClearsGateOnControlPlaneNode(t *testing.T) {
+	calls := stubClearArmingFlag(t)
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "cp-1", UID: "uid-cp"}}
+	node.Labels = map[string]string{"node-role.kubernetes.io/control-plane": ""}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).Build()
+
+	uid, err := maybeSetupBootUnit(context.Background(), c, "cp-1", nil, false, true)
+	if err != nil {
+		t.Fatalf("setupBootUnit on control-plane: %v", err)
+	}
+	if uid != "uid-cp" {
+		t.Fatalf("node UID = %q, want uid-cp", uid)
+	}
+	if *calls != 1 {
+		t.Fatalf("gate clear calls = %d, want 1", *calls)
+	}
+}
+
+// In detect-only mode the gate is cleared BEFORE any read or install work:
+// the clear is the safety property of that path and must happen even when
+// everything after it fails — here, the very first Node read.
+func TestSetupBootUnitDetectOnlyClearsGateBeforeFailingReads(t *testing.T) {
+	calls := stubClearArmingFlag(t)
+
+	_, err := maybeSetupBootUnit(context.Background(), failingClient{}, "node-a", nil, true, true)
+	if err == nil {
+		t.Fatal("want the Node-read error to surface")
+	}
+	if *calls != 1 {
+		t.Fatalf("gate clear calls = %d, want 1 — the clear must precede the failing read", *calls)
+	}
+}
+
+// Exactly one caller owns the fence: while one executeSelfFencing is in
+// progress (here: the mutex is held by the test), a second caller stands
+// down without emitting the fence event or touching the journal — the owner
+// is already rebooting the host, which is the outcome the second caller
+// wanted. The reboot method "none" keeps the test from rebooting anything.
+func TestExecuteSelfFencingStandsDownWhenAnotherFenceIsInProgress(t *testing.T) {
+	rec := record.NewFakeRecorder(4)
+	agent := &SBRAgent{
+		nodeName:       "worker-1",
+		recorder:       rec,
+		rebootMethod:   RebootMethodNone,
+		recorderObject: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}},
+	}
+
+	agent.fenceExecMutex.Lock()
+	t.Cleanup(agent.fenceExecMutex.Unlock)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		agent.executeSelfFencing("concurrent trigger", bootunit.SourceAutonomous)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the concurrent caller did not stand down; it must not block on the fence owner")
+	}
+	select {
+	case e := <-rec.Events:
+		t.Fatalf("the stood-down caller emitted %q; only the fence owner may act", e)
+	default:
 	}
 }

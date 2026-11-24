@@ -170,9 +170,13 @@ func (s *SBRAgent) maybeReleaseRejoinCordon(ctx context.Context) (bool, error) {
 		}
 	}
 	// A CR claiming this node — in any namespace — transfers ownership of
-	// the release to the peer path. An unreadable CR list is an error, not
-	// a "no": releasing on unverified checks is the one forbidden outcome.
-	claimed, err := s.remediationClaimsThisNode(ctx)
+	// the release to the peer path. CRs are matched against the enrollment
+	// UID and, when the startup read failed and left it empty, against the
+	// UID of the live Node this call just read: more detected claims means
+	// fewer wrongful releases, never more. An unreadable CR list is an
+	// error, not a "no": releasing on unverified checks is the one
+	// forbidden outcome.
+	claimed, err := s.remediationClaimsThisNode(ctx, string(node.UID))
 	if err != nil {
 		return false, err
 	}
@@ -205,6 +209,19 @@ func (s *SBRAgent) maybeReleaseRejoinCordon(ctx context.Context) (bool, error) {
 		}
 	}
 
+	// Re-validate health before uncordoning: the status write took time,
+	// and a storage failure recorded while it was in flight invalidates
+	// the recovery evidence the release rests on. Aborting here leaves the
+	// cordon and the key in place — the next cycle re-verifies with fresh
+	// health, and the already-cleared condition is cosmetic (it is
+	// republished by nothing, but the keyed cordon keeps the node held and
+	// the alert active until a healthy release or break-glass).
+	if healthyFor, ok := s.storageHealthyFor(); !ok || healthyFor < s.autonomousRebootRecoveryPeriod {
+		logger.Info("Storage health was invalidated during the release; holding the cordon for re-evaluation",
+			"nodeName", s.nodeName)
+		return false, nil
+	}
+
 	// Uncordon and remove the ownership key in ONE write, so a released
 	// cordon can never keep its marker and a removed marker can never leave
 	// an SBR-owned cordon behind.
@@ -217,6 +234,20 @@ func (s *SBRAgent) maybeReleaseRejoinCordon(ctx context.Context) (bool, error) {
 	// The loop exits after a successful release, so the gauge must be
 	// cleared here rather than on the next observation.
 	s.observeRejoinCordon(false)
+
+	// The protected boot is complete and released: clear the recorded
+	// decision so the incident cannot re-arm later, ordinary boots — the
+	// ArmingState contract ("the agent clears the key after the protected
+	// boot completes"). Best effort: a failed clear means the next boot
+	// cordons again and this loop releases again, which self-heals.
+	if s.journal != nil {
+		clearCtx, clearCancel := context.WithTimeout(context.Background(), journalWriteTimeout)
+		defer clearCancel()
+		if err := s.journal.ClearArmingState(clearCtx); err != nil {
+			logger.Error(err, "Released the cordon but could not clear the recorded reboot decision; the next boot may cordon again and self-heal through release",
+				"path", s.journal.Path())
+		}
+	}
 
 	return true, nil
 }
@@ -252,7 +283,13 @@ func (s *SBRAgent) observeRejoinCordon(held bool) {
 // in a namespace other than the agent's own, so this lists cluster-wide
 // rather than reading one well-known object. A match in a foreign namespace
 // still counts: ownership of the release is the CR's wherever the CR lives.
-func (s *SBRAgent) remediationClaimsThisNode(ctx context.Context) (bool, error) {
+//
+// liveUID is the UID of the Node this release attempt just read. It matches
+// CRs even when the startup enrollment read failed and left s.nodeUID empty:
+// matching against more identities can only find more claims, and finding a
+// claim prevents a release — the safe direction. It never substitutes for
+// the enrollment UID in the ownership checks above.
+func (s *SBRAgent) remediationClaimsThisNode(ctx context.Context, liveUID string) (bool, error) {
 	list := &v1alpha1.StorageBasedRemediationList{}
 	if err := s.k8sClient.List(ctx, list); err != nil {
 		return false, fmt.Errorf("list remediation CRs: %w", err)
@@ -262,6 +299,9 @@ func (s *SBRAgent) remediationClaimsThisNode(ctx context.Context) (bool, error) 
 			return true, nil
 		}
 		if s.nodeUID != "" && string(cr.Status.NodeUID) == s.nodeUID {
+			return true, nil
+		}
+		if liveUID != "" && string(cr.Status.NodeUID) == liveUID {
 			return true, nil
 		}
 	}

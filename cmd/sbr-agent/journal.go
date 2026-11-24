@@ -42,6 +42,12 @@ const journalWriteTimeout = 5 * time.Second
 // test can observe the ordering without writing to the host's state root.
 var createArmingFlag = bootunit.CreateArmingFlag
 
+// clearArmingFlag closes the boot unit's gate. A package variable for the
+// same reason as createArmingFlag: setupBootUnit clears the gate in
+// detect-only and control-plane paths, and tests must observe that without
+// touching the host's state root.
+var clearArmingFlag = bootunit.ClearArmingFlag
+
 // recordRunning records that this agent is alive in this boot, so a boot that
 // starts with the journal still saying "running" is recognised as a reset,
 // a panic or a power loss rather than an orderly reboot.
@@ -139,6 +145,10 @@ func (s *SBRAgent) recordStorageVerdict(healthy bool) {
 	if s.journal == nil {
 		return
 	}
+	// Serialized so disk order follows transition order (see the field
+	// comment on verdictWriteMutex); the health lock is not held here.
+	s.verdictWriteMutex.Lock()
+	defer s.verdictWriteMutex.Unlock()
 	entry := nodestate.ConditionEntry{
 		Type:   bootunit.StorageUnhealthyConditionType,
 		Status: "False",
@@ -196,6 +206,18 @@ func (s *SBRAgent) resumePendingRebootDecision() {
 		return
 	}
 	if arming == nil || arming.Phase != bootunit.PhaseArmed {
+		return
+	}
+	// A decision bound to a different Node object must not drive this host's
+	// watchdog: the cluster replaced the Node (deleting it is itself the
+	// evacuation), and completing the old Node's reboot now would fence the
+	// new incarnation for an incident it never had. Reject only when both
+	// UIDs are known — an unknown binding cannot be validated, and the
+	// host-level evidence (the boot never happened) still stands.
+	if s.nodeUID != "" && arming.NodeUID != "" && arming.NodeUID != s.nodeUID {
+		logger.Info("Recorded reboot decision belongs to a different Node object; not resuming it",
+			"decisionNodeUID", arming.NodeUID, "currentNodeUID", s.nodeUID,
+			"incidentID", arming.IncidentID, "path", s.journal.Path())
 		return
 	}
 	current := currentHostBootID()

@@ -67,6 +67,10 @@ func maybeSetupBootUnit(
 //
 // The order is load-bearing:
 //
+//  0. In detect-only mode, clear the gate FIRST — before any read or install
+//     work — so the clear happens even when every step below fails. The
+//     control-plane branch clears too: a promoted node may carry a worker-era
+//     gate, and the promotion itself must end the protection.
 //  1. Persist the identity descriptor first. The installed unit declares it a
 //     required EnvironmentFile, so a node without one refuses to start the unit
 //     rather than running the armed path with empty identity fields.
@@ -81,9 +85,8 @@ func maybeSetupBootUnit(
 //     and let the journal tiers decide; the agent does not need it for the
 //     current boot, where it is already running.
 //
-// A detect-only agent never removes or unlocks anything on the host, and it
-// must never leave a gate that would cordon a node it is not remediating, so it
-// clears the flag instead of creating it.
+// A detect-only agent must never leave a gate that would cordon a node it is
+// not remediating, so it clears the flag instead of creating it.
 //
 // Returning an error means the wiring is degraded, not that the node is unsafe.
 //
@@ -98,6 +101,20 @@ func setupBootUnit(
 	journal *bootunit.Journal,
 	detectOnly bool,
 ) (string, error) {
+	// Detect-only mode clears the gate FIRST, before any read or install
+	// work: the clear is the safety property of this path (an agent that
+	// remediates nothing must not leave a gate that cordons on its behalf),
+	// it needs no API and no Node identity, and it must happen even when
+	// every step below fails. A clear failure is returned and the agent
+	// continues (the caller treats setup as best effort); the next agent
+	// restart retries it.
+	if detectOnly {
+		if err := clearArmingFlag(); err != nil {
+			return "", fmt.Errorf("clear the boot unit gate in detect-only mode: %w", err)
+		}
+		logger.Info("Detect-only mode: boot unit gate cleared", "nodeName", nodeName)
+	}
+
 	node := &corev1.Node{}
 	if err := k8sClient.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
 		return "", fmt.Errorf("read node %s for its identity: %w", nodeName, err)
@@ -110,9 +127,16 @@ func setupBootUnit(
 	// The boot unit cordons the node before kubelet starts. On a control-plane
 	// node that would remove a control-plane member from scheduling outside
 	// SBR's remediation policy, so the unit is never installed or gated there.
+	// A node promoted to control-plane after its worker days may still carry
+	// a gate from when it was enrolled: clear it, so the promotion itself
+	// ends the protection. A missing gate is a no-op, so a fresh
+	// control-plane node still succeeds.
 	// This is defence in depth: the DaemonSet selector already targets workers.
 	if bootunit.IsControlPlaneNode(node) {
-		logger.Info("Control-plane node: not installing the pre-kubelet self-cordon unit",
+		if err := clearArmingFlag(); err != nil {
+			return nodeUID, fmt.Errorf("clear the boot unit gate on control-plane node %s: %w", nodeName, err)
+		}
+		logger.Info("Control-plane node: not installing the pre-kubelet self-cordon unit; any existing gate cleared",
 			"nodeName", nodeName)
 		return nodeUID, nil
 	}
@@ -141,11 +165,9 @@ func setupBootUnit(
 	}
 
 	if detectOnly {
-		// Detect-only mode remediates nothing, so a boot unit that cordons
-		// would be acting on behalf of a decision this agent never makes.
-		if err := bootunit.ClearArmingFlag(); err != nil {
-			return nodeUID, fmt.Errorf("clear the boot unit gate in detect-only mode: %w", err)
-		}
+		// The gate was already cleared at the top of this function; nothing
+		// below this point creates it. The unit stays installed so a later
+		// switch back to remediation only needs to open the gate.
 		logger.Info("Detect-only mode: boot unit installed but not gated on", "nodeName", nodeName)
 		return nodeUID, nil
 	}
