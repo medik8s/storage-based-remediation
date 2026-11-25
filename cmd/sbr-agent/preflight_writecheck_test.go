@@ -169,7 +169,7 @@ func TestCreatePreflightSentinelAt_NeverCreatedOnPreflightFailure(t *testing.T) 
 	}
 
 	// No watchdog file and no SBR device: preflight must fail.
-	err := runPreflightChecks(watchdogPath, "", "test-node", 1, false)
+	err := runPreflightChecks(watchdogPath, "", "test-node", 1, false, false)
 	if err == nil {
 		t.Fatal("expected runPreflightChecks to fail with no watchdog and no SBR device")
 	}

@@ -37,19 +37,22 @@ const preflightBlockProbeTimeout = 2 * time.Second
 // runPreflightChecks performs critical startup validation before entering main event loops
 // Returns success if EITHER watchdog is active OR SBR device is accessible (or both)
 // When detectOnlyMode is true, the watchdog check is skipped since the agent won't use it
-func runPreflightChecks(watchdogPath, sbrDevicePath, nodeName string, nodeID uint16, detectOnlyMode bool) error {
+func runPreflightChecks(watchdogPath, sbrDevicePath, nodeName string, nodeID uint16, detectOnlyMode, localAgentConflict bool) error {
 	logger.Info("Running pre-flight checks",
 		"watchdogPath", watchdogPath,
 		"sbrDevicePath", sbrDevicePath,
 		"nodeName", nodeName,
 		"nodeID", nodeID,
-		"detectOnlyMode", detectOnlyMode)
+		"detectOnlyMode", detectOnlyMode,
+		"localAgentConflict", localAgentConflict)
 
 	// Check watchdog device availability (skip in detect-only mode)
 	var watchdogErr error
 	if detectOnlyMode {
 		// Treat as successful - watchdog is not needed in detect-only mode
 		logger.Info("Skipping watchdog pre-flight check (detect-only mode enabled)")
+	} else if localAgentConflict {
+		logger.Info("skipping watchdog pre-flight check (other agent holds the lock)")
 	} else if watchdogPath != "" {
 		watchdogErr = checkWatchdogDevice(watchdogPath)
 	}

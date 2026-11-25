@@ -3062,9 +3062,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	if *journalEnabled {
+		localAgentLock, lockFileErr := hostlock.Acquire(hostlock.DefaultLockPath)
+		defer localAgentLock.Release()
+		localAgentConflict = (lockFileErr != nil)
+	}
 	// Run pre-flight checks before creating the agent
 	// Pass detectOnlyMode to skip watchdog check when not needed
-	if err := runPreflightChecks(*watchdogPath, *sbrDevice, nodeNameValue, nodeIDValue, *detectOnlyMode); err != nil {
+	if err := runPreflightChecks(*watchdogPath, *sbrDevice, nodeNameValue, nodeIDValue, *detectOnlyMode, localAgentConflict); err != nil {
 		logger.Error(err, "Pre-flight checks failed")
 		os.Exit(1)
 	}
@@ -3147,26 +3152,8 @@ func main() {
 		}
 	}
 
-	// TODO: drop this read once the operator passes the mode as an agent argument.
-	blockPerNodeMode := false
-	{
-		cfg := &v1alpha1.StorageBasedRemediationConfig{}
-		cfgKey := client.ObjectKey{Name: *sbrConfigNameFlag, Namespace: os.Getenv("POD_NAMESPACE")}
-		if err := k8sClient.Get(context.Background(), cfgKey, cfg); err != nil {
-			logger.Error(err, "Failed to get StorageBasedRemediationConfig; assuming shared storage",
-				"key", cfgKey)
-		} else {
-			blockPerNodeMode = cfg.Spec.IsBlockPerNodeMode()
-		}
-	}
-
 	// Create SBR agent (hash mapping is always enabled)
 	var wd mocks.WatchdogInterface
-	if blockPerNodeMode {
-		localAgentLock, lockFileErr := hostlock.Acquire(hostlock.DefaultLockPath)
-		defer localAgentLock.Release()
-		localAgentConflict = (lockFileErr != nil)
-	}
 
 	switch {
 	case *detectOnlyMode:
