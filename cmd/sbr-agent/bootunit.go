@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -28,8 +29,8 @@ import (
 
 // maybeSetupBootUnit gates setupBootUnit on the controller's decision.
 //
-// The controller derives the flag from the configuration's IsBootUnitEnabled()
-// (BlockPerNode today); the agent holds no volume-mode logic of its own, so
+// The controller derives the flag from IsBootUnitEnabled(), which checks the
+// mode and spec.bootUnitEnabled. The agent holds no volume-mode logic, so
 // enabling the unit for another mode later is an API/controller change, not an
 // agent one. A disabled unit means no host writes at all for it — nothing is
 // installed, gated, or verified.
@@ -43,13 +44,14 @@ func maybeSetupBootUnit(
 	journal *bootunit.Journal,
 	detectOnly bool,
 	enabled bool,
+	timeout ...time.Duration,
 ) (string, error) {
 	if !enabled {
 		logger.Info("Pre-kubelet boot unit is not enabled for this deployment; not installing it",
 			"nodeName", nodeName)
 		return "", nil
 	}
-	nodeUID, err := setupBootUnit(ctx, k8sClient, nodeName, journal, detectOnly)
+	nodeUID, err := setupBootUnit(ctx, k8sClient, nodeName, journal, detectOnly, timeout...)
 	if err != nil {
 		return nodeUID, err
 	}
@@ -100,6 +102,7 @@ func setupBootUnit(
 	nodeName string,
 	journal *bootunit.Journal,
 	detectOnly bool,
+	timeout ...time.Duration,
 ) (string, error) {
 	// Detect-only mode clears the gate FIRST, before any read or install
 	// work: the clear is the safety property of this path (an agent that
@@ -156,11 +159,11 @@ func setupBootUnit(
 		return nodeUID, fmt.Errorf("write the boot unit identity descriptor: %w", err)
 	}
 
-	if err := bootunit.Install(bootunit.ContainerSystemdDir); err != nil {
+	if err := bootunit.Install(bootunit.ContainerSystemdDir, timeout...); err != nil {
 		return nodeUID, fmt.Errorf("install the boot unit: %w", err)
 	}
 
-	if err := bootunit.Verify(bootunit.ContainerSystemdDir); err != nil {
+	if err := bootunit.Verify(bootunit.ContainerSystemdDir, timeout...); err != nil {
 		return nodeUID, fmt.Errorf("verify the boot unit wiring: %w", err)
 	}
 

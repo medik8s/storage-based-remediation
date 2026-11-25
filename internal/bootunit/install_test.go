@@ -24,6 +24,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/medik8s/common/pkg/nodestate"
 
@@ -265,6 +266,21 @@ func TestVerifyFS(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestVerifyFSConfiguredTimeout(t *testing.T) {
+	template := "ExecStart=/usr/local/bin/sbr-self-cordon -boot-unit-timeout=@BOOT_UNIT_TIMEOUT@\nTimeoutStartSec=@BOOT_UNIT_CEILING@\n"
+	rendered, err := RenderUnit([]byte(template), 2*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsys, unitDir := verifyFixture(t, "binary-v1", "binary-v1", string(rendered), template)
+	if err := VerifyFS(unitDir, fsys, 2*time.Minute); err != nil {
+		t.Fatalf("configured unit rejected: %v", err)
+	}
+	if err := VerifyFS(unitDir, fsys, 3*time.Minute); err == nil {
+		t.Fatal("unit with a different timeout must fail verification")
 	}
 }
 

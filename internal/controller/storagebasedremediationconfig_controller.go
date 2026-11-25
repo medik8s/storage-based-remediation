@@ -1755,6 +1755,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *m
 	}
 	if sbrConfig.Spec.IsBootUnitEnabled() {
 		args = append(args, fmt.Sprintf("--%s=true", agent.FlagBootUnitEnabled))
+		args = append(args, fmt.Sprintf("--%s=%s", agent.FlagBootUnitTimeout, sbrConfig.Spec.GetBootUnitTimeout()))
 	}
 
 	return args

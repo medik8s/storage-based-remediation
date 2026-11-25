@@ -344,12 +344,9 @@ func (s *StorageBasedRemediationConfigSpec) IsJournalEnabled() bool {
 	return s.IsBlockPerNodeMode()
 }
 
-// IsBootUnitEnabled reports whether the pre-kubelet boot unit is deployed for
-// this configuration. The unit's arming tiers read the journal, so enabling it
-// implies the journal. The planned spec.bootUnitEnabled field (design §5.4)
-// plugs in here when it lands.
+// IsBootUnitEnabled reports whether this configuration enables the host service.
 func (s *StorageBasedRemediationConfigSpec) IsBootUnitEnabled() bool {
-	return s.IsJournalEnabled()
+	return s.IsBlockPerNodeMode() && s.GetBootUnitEnabled()
 }
 
 func (s *StorageBasedRemediationConfigSpec) GetIOTimeout() time.Duration {

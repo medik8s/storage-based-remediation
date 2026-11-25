@@ -142,3 +142,11 @@ func TestRunRejectsUnknownFlags(t *testing.T) {
 		t.Errorf("exit code = %d, want 1 for a flag parse failure", code)
 	}
 }
+
+func TestRunRejectsNonpositiveBootTimeout(t *testing.T) {
+	for _, timeout := range []string{"0s", "-1s"} {
+		if code := runWithArgs(t, "-boot-unit-timeout="+timeout); code != 1 {
+			t.Errorf("exit code = %d for timeout %s, want 1", code, timeout)
+		}
+	}
+}

@@ -59,8 +59,13 @@ func run() int {
 		certFile  = fs.String("cert", "/var/lib/kubelet/pki/kubelet-client-current.pem", "kubelet client certificate")
 		keyFile   = fs.String("key", "/var/lib/kubelet/pki/kubelet-client-current.pem", "kubelet client key; the kubelet client PEM combines certificate and key, so this defaults to the same file as -cert")
 		stateDir  = fs.String("state-dir", "", "journal state directory (default "+bootunit.HostStateRoot+")")
+		timeout   = fs.Duration("boot-unit-timeout", bootunit.CordonTotalBudget, "positive timeout for cordon retries and API calls")
 	)
 	if err := fs.Parse(os.Args[1:]); err != nil {
+		return 1
+	}
+	if *timeout <= 0 {
+		fmt.Fprintln(os.Stderr, "sbr-self-cordon: boot-unit-timeout must be positive")
 		return 1
 	}
 
@@ -133,8 +138,8 @@ func run() int {
 	// The total budget covers every retry delay plus one in-flight call, and
 	// stays below the unit's TimeoutStartSec: a budget above it would let
 	// systemd kill the unit mid-retry, and a cordon still being attempted
-	// would read as a cordon failure. See CordonTotalBudget.
-	ctx, cancel := context.WithTimeout(context.Background(), bootunit.CordonTotalBudget)
+	// would read as a cordon failure. The installer applies the same timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
 	svc := bootunit.NewService(client)

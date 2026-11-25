@@ -112,8 +112,10 @@ var (
 			"journal write becomes a no-op.")
 	bootUnitEnabled = flag.Bool(agent.FlagBootUnitEnabled, false,
 		"Install and gate the pre-kubelet self-cordon boot unit. Set by the controller "+
-			"from the configuration's volume mode; when false, the agent writes nothing "+
+			"from the configuration's boot enablement; when false, the agent writes nothing "+
 			"to the host's systemd or state directories for the unit.")
+	bootUnitTimeoutFlag = flag.Duration(agent.FlagBootUnitTimeout, 0,
+		"Positive boot-unit timeout. Required when boot-unit-enabled is true.")
 	autonomousRebootRecoveryPeriodFlag = flag.Duration(agent.FlagAutonomousRebootRecoveryPeriod, 5*time.Minute,
 		"How long this node's storage must stay healthy before the agent releases the boot "+
 			"unit's cordon when no remediation CR ever claimed the node. Set by the controller "+
@@ -2941,6 +2943,10 @@ func runBlockInit(devicePath string, ioTimeout time.Duration, log logr.Logger) e
 
 func main() {
 	flag.Parse()
+	if *bootUnitEnabled && *bootUnitTimeoutFlag <= 0 {
+		fmt.Fprintln(os.Stderr, "boot-unit-enabled requires a positive boot-unit-timeout")
+		os.Exit(1)
+	}
 	MaxConsecutiveFailures = *maxConsecutiveFailuresFlag
 
 	// Initialize structured logger first
@@ -3125,12 +3131,12 @@ func main() {
 	// but it must never keep this agent from fencing. The boot files come from
 	// the agent image and are already available at this point, so a degraded
 	// result is a wiring fault worth surfacing, not a transient startup race.
-	// The controller enables the unit per volume mode; a disabled unit means
+	// The controller enables the unit from the API flag; a disabled unit means
 	// no host writes at all for it.
 	{
 		bootUnitCtx, cancel := context.WithTimeout(context.Background(), bootUnitSetupTimeout)
 		var bootErr error
-		nodeUID, bootErr = maybeSetupBootUnit(bootUnitCtx, k8sClient, nodeNameValue, journal, *detectOnlyMode, *bootUnitEnabled)
+		nodeUID, bootErr = maybeSetupBootUnit(bootUnitCtx, k8sClient, nodeNameValue, journal, *detectOnlyMode, *bootUnitEnabled, *bootUnitTimeoutFlag)
 		cancel()
 		if bootErr != nil {
 			logger.Error(bootErr, "Boot unit wiring degraded: this node would boot without pre-kubelet self-cordon",
