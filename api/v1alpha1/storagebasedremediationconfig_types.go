@@ -18,9 +18,11 @@ package v1alpha1
 
 import (
 	"fmt"
+	"sort"
 	"time"
 	"unicode"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
@@ -44,6 +46,11 @@ const (
 	DefaultAutonomousRebootRecoveryPeriod time.Duration = 5 * time.Minute
 	// RelatedImageAgent when this env is set it contains the image of SBR agent
 	RelatedImageAgent = "RELATED_IMAGE_AGENT"
+
+	// NodeSelectorOSKey is the well-known label key carrying the node operating system.
+	NodeSelectorOSKey = "kubernetes.io/os"
+	// NodeSelectorOSLinux is the only operating system SBR agents run on.
+	NodeSelectorOSLinux = "linux"
 )
 
 // DetectOnlyModeType specifies whether SBR runs in detect-only mode (no remediation).
@@ -344,6 +351,48 @@ func (s *StorageBasedRemediationConfigSpec) GetNodeSelector() map[string]string 
 	return map[string]string{
 		"node-role.kubernetes.io/worker": "",
 	}
+}
+
+// EffectiveNodeSelector returns the label set a node must carry for this configuration to
+// select it: the configured selector (or the worker-role default when unset) plus the Linux-only
+// restriction the operator always applies to the agent DaemonSet.
+//
+// This mirrors the DaemonSet node selector the configuration controller builds, so admission and
+// runtime agree on which nodes a configuration owns.
+func (s *StorageBasedRemediationConfigSpec) EffectiveNodeSelector() map[string]string {
+	effective := make(map[string]string, len(s.NodeSelector)+1)
+	for key, value := range s.GetNodeSelector() {
+		effective[key] = value
+	}
+	// The Linux-only restriction is not user-overridable.
+	effective[NodeSelectorOSKey] = NodeSelectorOSLinux
+	return effective
+}
+
+// SelectsNode reports whether the given node is selected by this configuration, using the
+// effective selector (worker default plus the Linux-only restriction).
+func (s *StorageBasedRemediationConfigSpec) SelectsNode(node *corev1.Node) bool {
+	labels := node.GetLabels()
+	for key, value := range s.EffectiveNodeSelector() {
+		actual, found := labels[key]
+		if !found || actual != value {
+			return false
+		}
+	}
+	return true
+}
+
+// SelectedNodeNames returns the sorted names of the nodes this configuration selects out of the
+// given node list.
+func (s *StorageBasedRemediationConfigSpec) SelectedNodeNames(nodes []corev1.Node) []string {
+	selected := make([]string, 0, len(nodes))
+	for i := range nodes {
+		if s.SelectsNode(&nodes[i]) {
+			selected = append(selected, nodes[i].Name)
+		}
+	}
+	sort.Strings(selected)
+	return selected
 }
 
 // ValidateSharedStorageClass validates the shared storage class configuration
