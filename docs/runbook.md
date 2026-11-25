@@ -251,6 +251,47 @@ Scrape: agent runs with `hostNetwork: true`; scrape via node IP on port 8082. Th
 | `spec.nodeName` rejection | Remove this field — it does not exist in the current CRD |
 | Remediation forced complete but node still up | Timeout path; node may not have rebooted — check agent and node logs |
 
+### 5.6 Node held by the pre-kubelet cordon (`SBRRejoinPending`)
+
+*BlockPerNode mode only.* After an armed reboot, the pre-kubelet self-cordon
+unit cordons the node and publishes the `SBRRejoinPending` condition before
+kubelet starts, so no workload is scheduled onto the node before the cluster
+has finished evacuating it. The unit never releases the cordon itself —
+release belongs to whoever owns the remediation:
+
+- **A remediation CR exists**: a peer releases the cordon, the OutOfService
+  taint and the condition together when the CR's restrictions are released at
+  CR cleanup (NHC deletes the CR after its `healthyDelay`).
+- **No CR ever existed** (autonomous reboot): the local agent releases the
+  cordon and clears the condition after storage has stayed healthy for the
+  `autonomousRebootRecoveryPeriod` and a live check shows no CR and no
+  OutOfService taint.
+
+The `SBRRejoinCordonHeld` alert (see
+[Prometheus metrics](sbr-agent-prometheus-metrics.md)) fires when a re-joined
+node stays held longer than expected — a stuck CR, or an agent that cannot
+verify or perform its release.
+
+**Break-glass release** (last resort, when neither automatic path works):
+
+```bash
+# All three changes go together — a node released without clearing the
+# condition (or the reverse) is a support incident waiting to happen.
+oc uncordon <node>
+oc patch node <node> --subresource=status --type strategic \
+  -p '{"status":{"conditions":[{"type":"SBRRejoinPending","$patch":"delete"}]}}'
+oc patch node <node> --type merge \
+  -p '{"metadata":{"annotations":{"sbr.medik8s.io/rejoin-cordon":null}}}'
+```
+
+Check *why* the node was held before releasing it: the cordon exists so that
+workloads do not start on a node whose volumes may not have detached yet.
+If an active remediation CR names the node, let the peer path finish instead.
+
+Manual installation of the boot unit on any node is unsupported — the agent
+installs it (and refuses control-plane nodes), so out-of-band installs have
+no owner for their cordon.
+
 ---
 
 ## 6. Known doc/code mismatches

@@ -33,8 +33,10 @@ package utils
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -460,22 +462,45 @@ func (tc *TestClients) testCacheCoherency(podName, namespace string) error {
 	return nil
 }
 
+// execInPodTimeout bounds every kubectl exec the debug helpers run.
+//
+// The storage-failure e2e cuts a node's access to the shared storage and
+// then, when a test fails, the failure dump reads the fence and heartbeat
+// device files from a pod on exactly that node. Those reads are storage I/O:
+// with the storage disrupted they block in uninterruptible kernel I/O and
+// kubectl never returns. Without a deadline here, one failed test hung the
+// whole job until the workflow's 60-minute step timeout instead of reporting
+// the failure that caused the dump.
+var execInPodTimeout = 30 * time.Second
+
+// runKubectlExec runs one kubectl invocation bounded by ctx. It is a package
+// variable so tests can substitute a runner that never touches a cluster.
+var runKubectlExec = func(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
+}
+
 // execInPod executes a command in a pod and returns stdout, stderr, and error
-// Uses kubectl exec with system:admin privileges instead of REST API
+// Uses kubectl exec with system:admin privileges instead of REST API.
+// Every invocation is bounded by execInPodTimeout; see its comment for why a
+// diagnostic read must never be allowed to run without a deadline.
 func (tc *TestClients) execInPod(podName, namespace string, command []string) (string, string, error) {
 	// Build kubectl exec command
 	args := []string{"exec", "-n", namespace, podName, "--"}
 	args = append(args, command...)
 
-	cmd := exec.Command("kubectl", args...)
-
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		return "", stderr.String(), fmt.Errorf("kubectl exec failed: %w", err)
+	ctx, cancel := context.WithTimeout(context.Background(), execInPodTimeout)
+	defer cancel()
+	if err := runKubectlExec(ctx, args, &stdout, &stderr); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return stdout.String(), stderr.String(), fmt.Errorf(
+				"kubectl exec timed out after %s (pod %s/%s, command %v): reading storage-backed files from a node with disrupted storage can block in uninterruptible I/O",
+				execInPodTimeout, namespace, podName, command)
+		}
+		return stdout.String(), stderr.String(), fmt.Errorf("kubectl exec failed: %w", err)
 	}
 
 	return stdout.String(), stderr.String(), nil

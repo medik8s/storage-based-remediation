@@ -296,6 +296,10 @@ manager: build ## Alias for building the manager binary
 build-agent: manifests generate fmt vet ## Build SBR agent binary.
 	./hack/build.sh -o bin/sbr-agent ./cmd/sbr-agent
 
+.PHONY: build-self-cordon
+build-self-cordon: vet ## Build SBR self-cordon boot unit binary.
+	go build -o bin/sbr-self-cordon ./cmd/sbr-self-cordon
+
 ##@ Tools
 
 .PHONY: setup-odf-storage

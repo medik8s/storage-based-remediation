@@ -66,6 +66,32 @@ The metrics port can also be configured through environment variables if needed 
   - `0` = Node is not in this status
 - **Usage**: Monitor cluster membership and detect failed nodes
 
+### Boot Unit Metrics
+
+These metrics exist only in `BlockPerNode` mode, where the pre-kubelet
+self-cordon unit is deployed.
+
+#### `sbr_rejoin_cordon_held` (Gauge)
+- **Description**: 1 while this node is held by the boot unit's keyed cordon
+  after a rejoin (the `SBRRejoinPending` condition), 0 otherwise
+- **Usage**: Alert when a re-joined node stays held. With an active
+  remediation CR a peer releases the cordon at CR cleanup; without one, the
+  local agent releases it after sustained healthy storage. A value stuck at
+  1 means neither happened and the node needs attention (see the runbook).
+
+#### `sbr_reboot_decisions_resumed_total` (Counter)
+- **Description**: Reboot decisions resumed at agent start because the
+  recorded boot never changed
+- **Usage**: A rising value with no boot change means the host is not
+  resetting although a decision was made: the decision is kept and watchdog
+  petting is withheld, so the node needs attention.
+
+#### `sbr_boot_unit_setup_failed_total` (Counter)
+- **Description**: Failed attempts to install, verify or clean up the
+  pre-kubelet self-cordon unit on this node
+- **Usage**: A non-zero value means this node would boot without pre-kubelet
+  self-cordon — degraded rejoin protection. The agent still fences normally.
+
 ## Metrics Endpoint
 
 The metrics are exposed via HTTP at:
@@ -219,6 +245,21 @@ groups:
     annotations:
       summary: "SBR Agent initiated self-fence on {{ $labels.instance }}"
       description: "SBR Agent on {{ $labels.instance }} has initiated {{ $value }} self-fence event(s) in the last minute"
+
+  - alert: SBRRejoinCordonHeld
+    expr: sbr_rejoin_cordon_held == 1
+    for: 15m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Node {{ $labels.instance }} is held by the SBR boot unit's cordon after rejoin"
+      description: >-
+        The node re-joined with the pre-kubelet self-cordon in place
+        (SBRRejoinPending) and has not been released for 15 minutes. With an
+        active remediation CR a peer should release it at CR cleanup; without
+        one the local agent should release it after sustained healthy storage.
+        Neither happened — check for a stuck CR or an unhealthy agent, and see
+        the runbook's break-glass release before releasing manually.
 ```
 
 ## Troubleshooting
