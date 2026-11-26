@@ -122,14 +122,13 @@ func selectedNodes(config *api.StorageBasedRemediationConfig, nodes []corev1.Nod
 	return selected
 }
 
-func (r *StorageBasedRemediationConfigReconciler) configurationConflicts(ctx context.Context, config *api.StorageBasedRemediationConfig, nodes []corev1.Node) (bool, error) {
+func (r *StorageBasedRemediationConfigReconciler) configurationConflicts(ctx context.Context, config *api.StorageBasedRemediationConfig, fullNodes, targets []corev1.Node) (bool, error) {
 	var configs api.StorageBasedRemediationConfigList
 	if err := r.List(ctx, &configs); err != nil {
 		return false, err
 	}
-	ours := selectedNodes(config, nodes)
 	names := map[string]bool{}
-	for _, n := range ours {
+	for _, n := range targets {
 		names[n.Name] = true
 	}
 	for i := range configs.Items {
@@ -140,7 +139,7 @@ func (r *StorageBasedRemediationConfigReconciler) configurationConflicts(ctx con
 		if other.Spec.IsBlockPerNodeMode() && config.Spec.SharedStorageClass != other.Spec.SharedStorageClass {
 			return true, nil
 		}
-		for _, n := range selectedNodes(other, nodes) {
+		for _, n := range selectedNodes(other, fullNodes) {
 			if names[n.Name] {
 				return true, nil
 			}
@@ -242,12 +241,16 @@ func watcherResourceName(config *api.StorageBasedRemediationConfig) string {
 }
 
 func (r *StorageBasedRemediationConfigReconciler) ensureWatcherPermissions(ctx context.Context, config *api.StorageBasedRemediationConfig) error {
-	name := watcherResourceName(config)
+	return r.ensurePerNodePermissions(ctx, config, watcherResourceName(config), "sbr-operator-sbr-watcher-role",
+		fmt.Errorf("watcher service account belongs to another owner"), fmt.Errorf("watcher binding belongs to another owner"))
+}
+
+func (r *StorageBasedRemediationConfigReconciler) ensurePerNodePermissions(ctx context.Context, config *api.StorageBasedRemediationConfig, name, clusterRole string, serviceAccountOwnershipError, bindingOwnershipError error) error {
 	managed := map[string]string{blockpernode.ConfigurationUIDLabel: string(config.UID), "app.kubernetes.io/managed-by": SBROperatorName}
 	sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: config.Namespace}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sa, func() error {
 		if sa.ResourceVersion != "" && sa.Labels[blockpernode.ConfigurationUIDLabel] != string(config.UID) {
-			return fmt.Errorf("watcher service account belongs to another owner")
+			return serviceAccountOwnershipError
 		}
 		sa.Labels = managed
 		return nil
@@ -258,10 +261,10 @@ func (r *StorageBasedRemediationConfigReconciler) ensureWatcherPermissions(ctx c
 	binding := &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, binding, func() error {
 		if binding.ResourceVersion != "" && binding.Labels[blockpernode.ConfigurationUIDLabel] != string(config.UID) {
-			return fmt.Errorf("watcher binding belongs to another owner")
+			return bindingOwnershipError
 		}
 		binding.Labels = managed
-		binding.RoleRef = rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "sbr-operator-sbr-watcher-role"}
+		binding.RoleRef = rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: clusterRole}
 		binding.Subjects = []rbacv1.Subject{{Kind: "ServiceAccount", Name: name, Namespace: config.Namespace}}
 		return nil
 	})
@@ -279,7 +282,7 @@ func (r *StorageBasedRemediationConfigReconciler) reconcileBlockPerNode(ctx cont
 	}
 	targets := selectedNodes(config, nodes.Items)
 	result.targets = len(targets)
-	conflict, err := r.configurationConflicts(ctx, config, nodes.Items)
+	conflict, err := r.configurationConflicts(ctx, config, nodes.Items, targets)
 	if err != nil {
 		result.unavailable = true
 		_ = r.writeWatcherStatus(ctx, config, result)
@@ -431,16 +434,14 @@ func configurePerNodeAgent(daemon *appsv1.DaemonSet, config *api.StorageBasedRem
 	daemon.Spec.Template.Labels[blockpernode.ConfigurationUIDLabel] = string(config.UID)
 	c := &daemon.Spec.Template.Spec.Containers[0]
 	daemon.Spec.Template.Spec.ServiceAccountName = peerResourceName(config)
-	c.Args = []string{"--block-per-node=true"}
 	c.Env = append(c.Env, corev1.EnvVar{Name: "SBR_CONFIGURATION_UID", Value: string(config.UID)})
 	c.Env = append(c.Env, corev1.EnvVar{Name: blockpernode.ProbeIntervalEnv, Value: config.Spec.GetSBRUpdateInterval().String()}, corev1.EnvVar{Name: blockpernode.IOTimeoutEnv, Value: config.Spec.GetIOTimeout().String()}, corev1.EnvVar{Name: blockpernode.FailuresEnv, Value: strconv.Itoa(int(config.Spec.GetMaxConsecutiveFailures()))})
 	c.VolumeDevices = []corev1.VolumeDevice{{Name: blockpernode.ProbeVolume, DevicePath: blockpernode.ProbeDevice}}
-	c.ReadinessProbe = nil
 	// The probe runtime has no watchdog readiness contract until executor integration.
-	c.VolumeMounts = nil
+	c.ReadinessProbe = nil
 	c.SecurityContext = &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}
 	daemon.Spec.Template.Spec.HostPID = false
-	daemon.Spec.Template.Spec.Volumes = []corev1.Volume{{Name: blockpernode.ProbeVolume, VolumeSource: corev1.VolumeSource{Ephemeral: &corev1.EphemeralVolumeSource{VolumeClaimTemplate: &corev1.PersistentVolumeClaimTemplate{Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}, VolumeMode: ptr.To(corev1.PersistentVolumeBlock), StorageClassName: ptr.To(config.Spec.SharedStorageClass), Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Mi")}}}}}}}}
+	daemon.Spec.Template.Spec.Volumes = append(daemon.Spec.Template.Spec.Volumes, corev1.Volume{Name: blockpernode.ProbeVolume, VolumeSource: corev1.VolumeSource{Ephemeral: &corev1.EphemeralVolumeSource{VolumeClaimTemplate: &corev1.PersistentVolumeClaimTemplate{Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}, VolumeMode: ptr.To(corev1.PersistentVolumeBlock), StorageClassName: ptr.To(config.Spec.SharedStorageClass), Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Mi")}}}}}}})
 }
 
 func ownedBy(object metav1.Object, uid types.UID) bool {

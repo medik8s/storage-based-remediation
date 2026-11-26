@@ -5,7 +5,6 @@ package blockpernode
 import (
 	"fmt"
 	"testing"
-	"unsafe"
 )
 
 type probeMemory struct {
@@ -46,10 +45,6 @@ func TestProbeRequiresWriteFlushAndVerification(t *testing.T) {
 				t.Fatalf("result %v", err)
 			}
 		})
-	}
-	b := alignedSlot()
-	if len(b) != 4096 || uintptr(unsafe.Pointer(&b[0]))%4096 != 0 {
-		t.Fatal("unaligned slot")
 	}
 	if _, err := OpenDevice("/dev/null", false); err == nil {
 		t.Fatal("accepted character device")

@@ -26,7 +26,7 @@ func perNodeStartupTiming(values map[string]string, flags *flag.FlagSet) (*block
 		switch f.Name {
 		case agent.FlagSBRUpdateInterval:
 			expected = timing.ProbeInterval.Duration.String()
-		case "io-timeout":
+		case agent.FlagIOTimeout:
 			expected = timing.IOTimeout.Duration.String()
 		case agent.FlagMaxConsecutiveFailures:
 			expected = fmt.Sprint(timing.MaxConsecutiveFailures)

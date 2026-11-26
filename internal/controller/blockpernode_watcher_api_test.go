@@ -63,6 +63,13 @@ func TestWatcherReconcileWithAPIDefaultsKeepsStoredTemplate(t *testing.T) {
 	config := watcherConfig()
 	config.UID, config.Generation = "", 0
 	config.Spec.NodeSelector = map[string]string{"selected": "true"}
+	config.Spec.WatchdogPath = "/custom/dev/watchdog4"
+	config.Spec.BootUnitEnabled = ptr.To(true)
+	config.Spec.BootUnitTimeout = &metav1.Duration{Duration: 2 * time.Minute}
+	config.Spec.AutonomousRebootRecoveryPeriod = &metav1.Duration{Duration: 7 * time.Minute}
+	config.Spec.IOTimeout = &metav1.Duration{Duration: 24 * time.Second}
+	config.Spec.SBRTimeoutSeconds = ptr.To[int32](60)
+	config.Spec.MaxConsecutiveFailures = ptr.To[int32](11)
 	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: config.Namespace}}); err != nil {
 		t.Fatalf("create Namespace: %v", err)
 	}
@@ -93,6 +100,17 @@ func TestWatcherReconcileWithAPIDefaultsKeepsStoredTemplate(t *testing.T) {
 		}
 	}
 	reconcile()
+	wantAgent := perNodeDaemonSetSettings{true, "2m0s", "7m0s", "10s", "24s", "11"}
+	checkStoredAgent := func() {
+		t.Helper()
+		daemon := &appsv1.DaemonSet{}
+		key := client.ObjectKey{Name: "sbr-agent-" + config.Name, Namespace: config.Namespace}
+		if err := c.Get(ctx, key, daemon); err != nil {
+			t.Fatalf("read API-persisted agent DaemonSet: %v", err)
+		}
+		checkPerNodeDaemonSet(t, daemon, config.UID, wantAgent)
+	}
+	checkStoredAgent()
 	deployments := &appsv1.DeploymentList{}
 	if err := c.List(ctx, deployments, client.InNamespace(config.Namespace), client.MatchingLabels{blockpernode.ConfigurationUIDLabel: string(config.UID)}); err != nil {
 		t.Fatalf("list watcher Deployments: %v", err)
@@ -198,4 +216,11 @@ func TestWatcherReconcileWithAPIDefaultsKeepsStoredTemplate(t *testing.T) {
 	if deployment.Spec.Template.Annotations[placementRepair] != repairMarker {
 		t.Fatalf("reconcile changed placement repair marker: previous=%q current=%q", repairMarker, deployment.Spec.Template.Annotations[placementRepair])
 	}
+	config.Spec.BootUnitEnabled = ptr.To(false)
+	if err := c.Update(ctx, config); err != nil {
+		t.Fatalf("disable the boot unit in the API configuration: %v", err)
+	}
+	reconcile()
+	wantAgent.bootEnabled, wantAgent.bootTimeout = false, ""
+	checkStoredAgent()
 }

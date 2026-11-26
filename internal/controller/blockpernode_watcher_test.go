@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"testing"
@@ -797,7 +798,8 @@ func TestConfigurationConflictIncludesOtherNamespacesAndStorageClasses(t *testin
 	second.Spec.SharedStorageClass = "other-class"
 	r := watcherReconciler(first, second)
 	for _, config := range []*api.StorageBasedRemediationConfig{first, second} {
-		conflict, err := r.configurationConflicts(ctx, config, []corev1.Node{a, b})
+		nodes := []corev1.Node{a, b}
+		conflict, err := r.configurationConflicts(ctx, config, nodes, selectedNodes(config, nodes))
 		if err != nil || !conflict {
 			t.Fatalf("disjoint class conflict missing: %t %v", conflict, err)
 		}
@@ -805,12 +807,66 @@ func TestConfigurationConflictIncludesOtherNamespacesAndStorageClasses(t *testin
 	second.Spec.SharedStorageClass = "rwx"
 	second.Spec.NodeSelector = first.Spec.NodeSelector
 	r = watcherReconciler(first, second)
-	conflict, err := r.configurationConflicts(ctx, first, []corev1.Node{a, b})
+	nodes := []corev1.Node{a, b}
+	conflict, err := r.configurationConflicts(ctx, first, nodes, selectedNodes(first, nodes))
 	if err != nil || !conflict {
 		t.Fatalf("overlap conflict missing: %t %v", conflict, err)
 	}
 	a.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse}}
 	if len(selectedNodes(first, []corev1.Node{a, b})) != 1 {
 		t.Fatal("NotReady target left selection")
+	}
+}
+
+type configurationListErrorClient struct {
+	client.Client
+	err error
+}
+
+func (c *configurationListErrorClient) List(ctx context.Context, list client.ObjectList, options ...client.ListOption) error {
+	if _, ok := list.(*api.StorageBasedRemediationConfigList); ok {
+		return c.err
+	}
+	return c.Client.List(ctx, list, options...)
+}
+
+func TestConfigurationConflictPreservesListError(t *testing.T) {
+	config := watcherConfig()
+	nodes := []corev1.Node{watcherNode("a")}
+	r := watcherReconciler(config)
+	failure := errors.New("configuration list failed")
+	r.Client = &configurationListErrorClient{Client: r.Client, err: failure}
+	conflict, err := r.configurationConflicts(context.Background(), config, nodes, selectedNodes(config, nodes))
+	if conflict || !errors.Is(err, failure) {
+		t.Fatalf("conflict = %t, error = %v, want false and %v", conflict, err, failure)
+	}
+}
+
+func TestConfigurationConflictIncludesSharedModes(t *testing.T) {
+	for _, mode := range []*api.SharedStorageVolumeModeType{nil, ptr.To(api.SharedStorageVolumeModeFilesystem), ptr.To(api.SharedStorageVolumeModeBlock)} {
+		second := watcherConfig()
+		second.Spec.SharedStorageVolumeMode = mode
+		t.Run(string(second.Spec.GetSharedStorageVolumeMode()), func(t *testing.T) {
+			first := watcherConfig()
+			second.Name, second.Namespace, second.UID = "second", "other", "second-uid"
+			second.Spec.SharedStorageClass = "other-class"
+			first.Spec.NodeSelector = map[string]string{"target": "first"}
+			second.Spec.NodeSelector = map[string]string{"target": "second"}
+			a, b := watcherNode("a"), watcherNode("b")
+			a.Labels["target"], b.Labels["target"] = "first", "second"
+			nodes := []corev1.Node{a, b}
+			targets := selectedNodes(first, nodes)
+			r := watcherReconciler(first, second)
+			conflict, err := r.configurationConflicts(context.Background(), first, nodes, targets)
+			if err != nil || conflict {
+				t.Fatalf("disjoint shared-mode configuration conflicts: %t %v", conflict, err)
+			}
+			second.Spec.NodeSelector = first.Spec.NodeSelector
+			r = watcherReconciler(first, second)
+			conflict, err = r.configurationConflicts(context.Background(), first, nodes, targets)
+			if err != nil || !conflict {
+				t.Fatalf("overlapping shared-mode configuration does not conflict: %t %v", conflict, err)
+			}
+		})
 	}
 }

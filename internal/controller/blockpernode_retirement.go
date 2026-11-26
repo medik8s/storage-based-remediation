@@ -349,29 +349,6 @@ func excludeRetiringTargets(daemon *appsv1.DaemonSet, checks []api.RetirementRel
 }
 
 func (r *StorageBasedRemediationConfigReconciler) ensurePeerPermissions(ctx context.Context, config *api.StorageBasedRemediationConfig) error {
-	name := peerResourceName(config)
-	managed := map[string]string{blockpernode.ConfigurationUIDLabel: string(config.UID), "app.kubernetes.io/managed-by": SBROperatorName}
-	sa := &corev1.ServiceAccount{}
-	sa.Name, sa.Namespace = name, config.Namespace
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, sa, func() error {
-		if sa.ResourceVersion != "" && sa.Labels[blockpernode.ConfigurationUIDLabel] != string(config.UID) {
-			return fmt.Errorf("peer service account identity does not match")
-		}
-		sa.Labels = managed
-		return nil
-	}); err != nil {
-		return err
-	}
-	binding := &rbacv1.ClusterRoleBinding{}
-	binding.Name = name
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, binding, func() error {
-		if binding.ResourceVersion != "" && binding.Labels[blockpernode.ConfigurationUIDLabel] != string(config.UID) {
-			return fmt.Errorf("peer binding identity does not match")
-		}
-		binding.Labels = managed
-		binding.Subjects = []rbacv1.Subject{{Kind: "ServiceAccount", Name: name, Namespace: config.Namespace}}
-		binding.RoleRef = rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "sbr-operator-sbr-agent-role"}
-		return nil
-	})
-	return err
+	return r.ensurePerNodePermissions(ctx, config, peerResourceName(config), "sbr-operator-sbr-agent-role",
+		fmt.Errorf("peer service account identity does not match"), fmt.Errorf("peer binding identity does not match"))
 }

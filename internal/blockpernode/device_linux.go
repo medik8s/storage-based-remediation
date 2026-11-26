@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"os"
 	"time"
-	"unsafe"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/medik8s/storage-based-remediation/v5/internal/blockdevice"
 	"github.com/medik8s/storage-based-remediation/v5/internal/sbdprotocol"
 )
 
@@ -38,14 +38,8 @@ func OpenDevice(path string, writable bool) (*Device, error) {
 	return &Device{file: f}, nil
 }
 
-func alignedSlot() []byte {
-	data := make([]byte, 2*sbdprotocol.PerNodeHeartbeatSlotSize)
-	offset := int((uintptr(sbdprotocol.PerNodeHeartbeatSlotSize) - uintptr(unsafe.Pointer(&data[0]))%uintptr(sbdprotocol.PerNodeHeartbeatSlotSize)) % uintptr(sbdprotocol.PerNodeHeartbeatSlotSize))
-	return data[offset : offset+sbdprotocol.PerNodeHeartbeatSlotSize]
-}
-
 func (d *Device) Read() (uint64, error) {
-	b := alignedSlot()
+	b := blockdevice.DirectIOAlloc(sbdprotocol.PerNodeHeartbeatSlotSize)
 	n, err := d.file.ReadAt(b, 0)
 	if err != nil {
 		return 0, err
@@ -69,7 +63,7 @@ type probeIO interface {
 }
 
 func verifyProbe(device probeIO, sequence, completed uint64) error {
-	written := alignedSlot()
+	written := blockdevice.DirectIOAlloc(sbdprotocol.PerNodeHeartbeatSlotSize)
 	copy(written, sbdprotocol.MarshalPerNodeHeartbeat(sbdprotocol.PerNodeHeartbeat{Timestamp: uint64(time.Now().UnixNano()), Sequence: sequence, CompletedSequence: completed}))
 	if n, err := device.WriteAt(written, 0); err != nil {
 		return err
@@ -79,7 +73,7 @@ func verifyProbe(device probeIO, sequence, completed uint64) error {
 	if err := device.Sync(); err != nil {
 		return err
 	}
-	read := alignedSlot()
+	read := blockdevice.DirectIOAlloc(sbdprotocol.PerNodeHeartbeatSlotSize)
 	if n, err := device.ReadAt(read, 0); err != nil {
 		return err
 	} else if n != len(read) {
