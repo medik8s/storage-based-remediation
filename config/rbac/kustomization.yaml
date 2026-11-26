@@ -7,6 +7,7 @@ resources:
 # SBR Agent RBAC - minimal permissions for agent operations
 - sbr_agent_service_account.yaml
 - sbr_agent_generated_role.yaml
+- sbr_watcher_generated_role.yaml
 - sbr_agent_role_binding.yaml
 - sbr_agent_privileged_scc_role.yaml
 
@@ -51,4 +52,3 @@ resources:
 - storagebasedremediationconfig_admin_role.yaml
 - storagebasedremediationconfig_editor_role.yaml
 - storagebasedremediationconfig_viewer_role.yaml
-

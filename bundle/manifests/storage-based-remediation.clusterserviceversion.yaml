@@ -113,6 +113,7 @@ spec:
           - events
           verbs:
           - create
+          - get
           - list
           - patch
           - watch
@@ -169,6 +170,7 @@ spec:
           - apps
           resources:
           - daemonsets
+          - deployments
           verbs:
           - create
           - delete
@@ -176,6 +178,14 @@ spec:
           - list
           - patch
           - update
+          - watch
+        - apiGroups:
+          - apps
+          resources:
+          - replicasets
+          verbs:
+          - get
+          - list
           - watch
         - apiGroups:
           - batch
@@ -283,6 +293,8 @@ spec:
         - apiGroups:
           - storage.k8s.io
           resources:
+          - csidrivers
+          - csinodes
           - storageclasses
           verbs:
           - get

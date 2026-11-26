@@ -22,6 +22,7 @@ import (
 	"time"
 	"unicode"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 
@@ -86,7 +87,8 @@ const (
 	// SBRConfigConditionSharedStorageReady indicates whether shared storage is properly configured
 	SBRConfigConditionSharedStorageReady SBRConfigConditionType = "SharedStorageReady"
 	// SBRConfigConditionReady indicates the overall readiness of the StorageBasedRemediationConfig
-	SBRConfigConditionReady SBRConfigConditionType = "Ready"
+	SBRConfigConditionReady                 SBRConfigConditionType = "Ready"
+	SBRConfigConditionWatcherResourcesReady SBRConfigConditionType = "WatcherResourcesReady"
 )
 
 // StorageBasedRemediationConfigSpec defines the desired state of StorageBasedRemediationConfig.
@@ -118,7 +120,7 @@ type StorageBasedRemediationConfigSpec struct {
 	// SharedStorageClass names the StorageClass for SBR storage.
 	// Filesystem and Block require ReadWriteMany (RWX) storage.
 	// BlockPerNode requires one ReadWriteMany (RWX) Block claim per node with read-only watchers.
-	// BlockPerNode currently defines the API only. The operator does not implement this storage mode.
+	// BlockPerNode provisions probes and watchers. Remediation integration remains incomplete.
 	// +optional
 	SharedStorageClass string `json:"sharedStorageClass,omitempty"`
 
@@ -132,7 +134,7 @@ type StorageBasedRemediationConfigSpec struct {
 	SharedStorageVolumeMode *SharedStorageVolumeModeType `json:"sharedStorageVolumeMode,omitempty"`
 
 	// IOTimeout limits a storage I/O operation. The API default is 15s for BlockPerNode and 2s for existing modes.
-	// This API field does not change the running agent timeout.
+	// BlockPerNode applies this value at agent Pod startup. Existing modes retain their current timeout path.
 	// +optional
 	IOTimeout *metav1.Duration `json:"ioTimeout,omitempty"`
 
@@ -593,6 +595,48 @@ type StorageBasedRemediationConfigStatus struct {
 	// check and the concurrent write check).
 	// +optional
 	StorageValidation *StorageValidationStatus `json:"storageValidation,omitempty"`
+	// Retirement retains release and process checks before workload removal.
+	// +optional
+	Retirement *RetirementStatus `json:"retirement,omitempty"`
+}
+
+type RetirementStatus struct {
+	// +kubebuilder:validation:Enum=Retiring;Shutdown;Released
+	Phase             string                    `json:"phase"`
+	InventoryComplete bool                      `json:"inventoryComplete"`
+	ReleaseChecks     []RetirementReleaseCheck  `json:"releaseChecks,omitempty"`
+	ShutdownChecks    []RetirementShutdownCheck `json:"shutdownChecks,omitempty"`
+	// +kubebuilder:validation:MaxItems=64
+	OutstandingChecks []string `json:"outstandingChecks,omitempty"`
+}
+
+type RetirementReleaseCheck struct {
+	NodeName            string `json:"nodeName"`
+	NodeUID             string `json:"nodeUID"`
+	OwnershipGeneration string `json:"ownershipGeneration"`
+	Completed           bool   `json:"completed"`
+}
+
+type RetirementShutdownCheck struct {
+	PodNamespace  string `json:"podNamespace"`
+	PodName       string `json:"podName"`
+	PodUID        string `json:"podUID"`
+	NodeUID       string `json:"nodeUID"`
+	ContainerName string `json:"containerName"`
+	ContainerID   string `json:"containerID"`
+	// DisarmRequired is absent until executor integration establishes the requirement.
+	// +optional
+	DisarmRequired *bool `json:"disarmRequired,omitempty"`
+	// +optional
+	TerminationEvidence *RetirementTerminationEvidence `json:"terminationEvidence,omitempty"`
+	DisarmConfirmed     bool                           `json:"disarmConfirmed"`
+}
+
+type RetirementTerminationEvidence struct {
+	PodUID                string                          `json:"podUID"`
+	ContainerID           string                          `json:"containerID"`
+	SourceResourceVersion string                          `json:"sourceResourceVersion"`
+	State                 corev1.ContainerStateTerminated `json:"state"`
 }
 
 // +kubebuilder:object:root=true

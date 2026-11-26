@@ -136,8 +136,9 @@ const (
 // StorageBasedRemediationConfigReconciler reconciles a StorageBasedRemediationConfig object
 type StorageBasedRemediationConfigReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	APIReader client.Reader
+	Scheme    *runtime.Scheme
+	Recorder  record.EventRecorder
 
 	// Retry configuration for Kubernetes API operations
 	retryConfig retry.Config
@@ -810,6 +811,12 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 		logger.Error(err, "Failed to get agent image")
 		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
 	}
+	if sbrConfig.Spec.IsBlockPerNodeMode() {
+		if err := sbrConfig.Spec.ValidateAll(); err != nil {
+			return ctrl.Result{}, err
+		}
+		return r.reconcileBlockPerNode(ctx, &sbrConfig, agentImage)
+	}
 	logger.V(1).Info("Starting StorageBasedRemediationConfig reconciliation",
 		"spec.image", agentImage,
 		"namespace", sbrConfig.Namespace,
@@ -1001,6 +1008,9 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 // handleDeletion handles the cleanup when an StorageBasedRemediationConfig is being deleted
 func (r *StorageBasedRemediationConfigReconciler) handleDeletion(
 	ctx context.Context, sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig, logger logr.Logger) (ctrl.Result, error) {
+	if sbrConfig.Spec.IsBlockPerNodeMode() {
+		return r.retireBlockPerNode(ctx, sbrConfig, true)
+	}
 	logger.Info("Starting StorageBasedRemediationConfig cleanup")
 
 	// Clean up the ClusterRoleBinding specific to this StorageBasedRemediationConfig
@@ -2160,6 +2170,7 @@ func (r *StorageBasedRemediationConfigReconciler) SetupWithManager(mgr ctrl.Mana
 	logger.Info("Setting up StorageBasedRemediationConfig controller")
 
 	r.FilterLog = logger.WithName("filter")
+	r.APIReader = mgr.GetAPIReader()
 
 	// only react when the spec generation actually changes. DeleteFunc explicitly
 	// documents the intent to re-create the NetworkPolicy if it is ever deleted out-of-band.
@@ -2177,6 +2188,18 @@ func (r *StorageBasedRemediationConfigReconciler) SetupWithManager(mgr ctrl.Mana
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
 		Owns(&networkingv1.NetworkPolicy{}, builder.WithPredicates(networkPolicyPredicates)).
+		Owns(&appsv1.Deployment{}).
+		Watches(&corev1.Node{}, r.blockPerNodeEvents(), builder.WithPredicates(blockPerNodeNodePredicate())).
+		Watches(&corev1.Pod{}, r.blockPerNodeEvents()).
+		Watches(&corev1.PersistentVolumeClaim{}, r.blockPerNodeEvents()).
+		Watches(&corev1.PersistentVolume{}, r.blockPerNodeEvents()).
+		Watches(&storagev1.StorageClass{}, r.blockPerNodeEvents()).
+		Watches(&storagev1.CSINode{}, r.blockPerNodeEvents()).
+		Watches(&storagev1.CSIDriver{}, r.blockPerNodeEvents()).
+		Watches(&appsv1.ReplicaSet{}, r.blockPerNodeEvents()).
+		Watches(&appsv1.DaemonSet{}, r.blockPerNodeEvents()).
+		Watches(&corev1.Event{}, r.blockPerNodeEvents()).
+		Watches(&medik8sv1alpha1.StorageBasedRemediationConfig{}, r.blockPerNodeEvents(), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("sbrconfig").
 		Complete(r)
 

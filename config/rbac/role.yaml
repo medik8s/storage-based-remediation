@@ -10,6 +10,7 @@ rules:
   - events
   verbs:
   - create
+  - get
   - list
   - patch
   - watch
@@ -66,6 +67,7 @@ rules:
   - apps
   resources:
   - daemonsets
+  - deployments
   verbs:
   - create
   - delete
@@ -73,6 +75,14 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - replicasets
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - batch
@@ -180,6 +190,8 @@ rules:
 - apiGroups:
   - storage.k8s.io
   resources:
+  - csidrivers
+  - csinodes
   - storageclasses
   verbs:
   - get

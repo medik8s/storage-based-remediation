@@ -67,7 +67,7 @@ spec:
               ioTimeout:
                 description: |-
                   IOTimeout limits a storage I/O operation. The API default is 15s for BlockPerNode and 2s for existing modes.
-                  This API field does not change the running agent timeout.
+                  BlockPerNode applies this value at agent Pod startup. Existing modes retain their current timeout path.
                 type: string
               maxConsecutiveFailures:
                 description: |-
@@ -120,7 +120,7 @@ spec:
                   SharedStorageClass names the StorageClass for SBR storage.
                   Filesystem and Block require ReadWriteMany (RWX) storage.
                   BlockPerNode requires one ReadWriteMany (RWX) Block claim per node with read-only watchers.
-                  BlockPerNode currently defines the API only. The operator does not implement this storage mode.
+                  BlockPerNode provisions probes and watchers. Remediation integration remains incomplete.
                 type: string
               sharedStorageVolumeMode:
                 description: |-
@@ -272,6 +272,127 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              retirement:
+                description: Retirement retains release and process checks before
+                  workload removal.
+                properties:
+                  inventoryComplete:
+                    type: boolean
+                  outstandingChecks:
+                    items:
+                      type: string
+                    maxItems: 64
+                    type: array
+                  phase:
+                    enum:
+                    - Retiring
+                    - Shutdown
+                    - Released
+                    type: string
+                  releaseChecks:
+                    items:
+                      properties:
+                        completed:
+                          type: boolean
+                        nodeName:
+                          type: string
+                        nodeUID:
+                          type: string
+                        ownershipGeneration:
+                          type: string
+                      required:
+                      - completed
+                      - nodeName
+                      - nodeUID
+                      - ownershipGeneration
+                      type: object
+                    type: array
+                  shutdownChecks:
+                    items:
+                      properties:
+                        containerID:
+                          type: string
+                        containerName:
+                          type: string
+                        disarmConfirmed:
+                          type: boolean
+                        disarmRequired:
+                          description: DisarmRequired is absent until executor integration
+                            establishes the requirement.
+                          type: boolean
+                        nodeUID:
+                          type: string
+                        podName:
+                          type: string
+                        podNamespace:
+                          type: string
+                        podUID:
+                          type: string
+                        terminationEvidence:
+                          properties:
+                            containerID:
+                              type: string
+                            podUID:
+                              type: string
+                            sourceResourceVersion:
+                              type: string
+                            state:
+                              description: ContainerStateTerminated is a terminated
+                                state of a container.
+                              properties:
+                                containerID:
+                                  description: Container's ID in the format '<type>://<container_id>'
+                                  type: string
+                                exitCode:
+                                  description: Exit status from the last termination
+                                    of the container
+                                  format: int32
+                                  type: integer
+                                finishedAt:
+                                  description: Time at which the container last terminated
+                                  format: date-time
+                                  type: string
+                                message:
+                                  description: Message regarding the last termination
+                                    of the container
+                                  type: string
+                                reason:
+                                  description: (brief) reason from the last termination
+                                    of the container
+                                  type: string
+                                signal:
+                                  description: Signal from the last termination of
+                                    the container
+                                  format: int32
+                                  type: integer
+                                startedAt:
+                                  description: Time at which previous execution of
+                                    the container started
+                                  format: date-time
+                                  type: string
+                              required:
+                              - exitCode
+                              type: object
+                          required:
+                          - containerID
+                          - podUID
+                          - sourceResourceVersion
+                          - state
+                          type: object
+                      required:
+                      - containerID
+                      - containerName
+                      - disarmConfirmed
+                      - nodeUID
+                      - podName
+                      - podNamespace
+                      - podUID
+                      type: object
+                    type: array
+                required:
+                - inventoryComplete
+                - phase
+                type: object
               storageValidation:
                 description: |-
                   StorageValidation caches the result of the storage validation checks (StorageClass RWX
