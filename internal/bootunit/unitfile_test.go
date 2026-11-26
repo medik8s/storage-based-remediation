@@ -36,6 +36,10 @@ func TestUnitFileMatchesConstants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the shipped unit file: %v", err)
 	}
+	raw, err = RenderUnit(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Collect every directive; ConditionPathExists legitimately appears
 	// several times, so values are gathered per key rather than overwritten.
@@ -109,5 +113,38 @@ func TestUnitFileMatchesConstants(t *testing.T) {
 	if budget := int(CordonTotalBudget / time.Second); sec <= budget {
 		t.Errorf("TimeoutStartSec=%ds must exceed the cordon budget of %ds, or systemd kills the unit mid-retry",
 			sec, budget)
+	}
+}
+
+func TestRenderUnitTimeout(t *testing.T) {
+	template, err := os.ReadFile(filepath.Join("..", "..", "deploy", UnitName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		timeout time.Duration
+		ceiling string
+	}{
+		{time.Nanosecond, "6"},
+		{2 * time.Minute, "125"},
+		{10*time.Second + time.Nanosecond, "16"},
+	} {
+		rendered, err := RenderUnit(template, tc.timeout)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"-boot-unit-timeout=" + tc.timeout.String(),
+			"TimeoutStartSec=" + tc.ceiling + "\n",
+		} {
+			if !strings.Contains(string(rendered), want) {
+				t.Errorf("rendered timeout %s lacks %q", tc.timeout, want)
+			}
+		}
+	}
+	for _, timeout := range []time.Duration{0, -time.Second} {
+		if _, err := RenderUnit(template, timeout); err == nil {
+			t.Errorf("accepted nonpositive timeout %s", timeout)
+		}
 	}
 }

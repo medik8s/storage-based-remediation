@@ -18,7 +18,7 @@ DEFAULT_VERSION := 5.9.0
 VERSION ?= $(DEFAULT_VERSION)
 # The version this build replaces in the upgrade graph. Defaults to the last GA release
 # so the generated catalog always has a valid upgrade edge (override for point releases).
-PREVIOUS_VERSION ?= 0.3.1
+PREVIOUS_VERSION ?= 5.8.0
 # Lower bound for the skipRange field, should be set to the oldest supported version.
 SKIP_RANGE_LOWER ?= 0.3.0
 export VERSION

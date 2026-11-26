@@ -24,14 +24,13 @@ Type=oneshot
 # required (no "-" prefix): if the agent never provisioned it, the unit fails
 # to start rather than invoking the armed path with empty identity fields.
 EnvironmentFile=/var/lib/medik8s/state/sbr-identity.env
-ExecStart=/usr/local/bin/sbr-self-cordon -node-name=${NODE_NAME} -uid=${NODE_UID} -api-server=${API_SERVER}
+ExecStart=/usr/local/bin/sbr-self-cordon -node-name=${NODE_NAME} -uid=${NODE_UID} -api-server=${API_SERVER} -boot-unit-timeout=@BOOT_UNIT_TIMEOUT@
 RemainAfterExit=yes
 # The cordon is best-effort in base mode; don't block the node forever. This
-# must exceed the command's total budget (CordonTotalBudget = 90s, the
-# context deadline that hard-bounds every retry and API call the unit makes),
+# must exceed the command's configured timeout,
 # or systemd kills the unit mid-retry and a cordon still being attempted
-# reads as a failure. Keep the two values in step when either changes.
-TimeoutStartSec=120
+# reads as a failure. The installer renders both values from the same timeout.
+TimeoutStartSec=@BOOT_UNIT_CEILING@
 
 [Install]
 WantedBy=multi-user.target

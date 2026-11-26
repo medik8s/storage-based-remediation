@@ -27,11 +27,21 @@ spec:
   # API example only. BlockPerNode operation is not implemented.
   # These fields do not provide a working BlockPerNode deployment.
   # ioTimeout does not change the running agent timeout.
-  # sharedStorageClass: "private-rwo-block-class"
+  # sharedStorageClass: "rwx-block-storage"
+  # BlockPerNode requires an RWX Block StorageClass. Watchers mount each claim read-only.
   # sharedStorageVolumeMode: BlockPerNode
   # ioTimeout: 15s
   # totalOutageGracePeriod: 60s
   # autonomousRebootRecoveryPeriod: 5m
+  # oosTaintPolicy: OnTimeout
+  # rebootGracePeriod: 60s
+  # bootUnitEnabled: false
+  # watcherGroupSize: 16
+  # watcherGroupLabels:
+  #   - example.com/rack
+  # Optional enabled boot-unit example. Set both fields together:
+  # bootUnitEnabled: true
+  # bootUnitTimeout: 2m
 
 
   # ========================================================================

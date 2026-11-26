@@ -83,11 +83,25 @@ type StorageBasedRemediationStatus struct {
 	// +kubebuilder:validation:MinLength=1
 	// +optional
 	BeforeBootID string `json:"beforeBootID,omitempty"`
-	// +kubebuilder:validation:Enum=Offered;Accepted;Cancelled;BootEnded
+	// +kubebuilder:validation:Enum=Offered;Accepted;Cancelled;Superseded;BootEnded
 	// +optional
 	ExecutionPhase string `json:"executionPhase,omitempty"`
 	// +optional
 	ObservedBootID string `json:"observedBootID,omitempty"`
+	// BootObservation reports a boot change separately from execution and does not establish its cause.
+	// +kubebuilder:validation:Enum=AcceptedBootEnded;BootObserved;EvidenceUnavailable
+	// +optional
+	BootObservation string `json:"bootObservation,omitempty"`
+	// Policy records the fixed OutOfService policy for this request.
+	// +kubebuilder:validation:Enum=OnTimeout;OnReboot
+	// +optional
+	Policy string `json:"policy,omitempty"`
+	// OfferedAt records the fixed offer time saved in the Node annotation.
+	// +optional
+	OfferedAt *metav1.Time `json:"offeredAt,omitempty"`
+	// RebootDeadline records the fixed deadline saved in the Node annotation.
+	// +optional
+	RebootDeadline *metav1.Time `json:"rebootDeadline,omitempty"`
 	// +optional
 	Cleanup *CleanupStatus `json:"cleanup,omitempty"`
 	// RestrictionsReleased describes this CR's restrictions. It does not establish Node schedulability.
@@ -128,6 +142,9 @@ type CleanupStatus struct {
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.volumeMode) || (has(self.status) && has(self.status.volumeMode) && self.status.volumeMode == oldSelf.status.volumeMode)",message="volumeMode cannot change or be removed"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.beforeBootID) || (has(self.status) && has(self.status.beforeBootID) && self.status.beforeBootID == oldSelf.status.beforeBootID)",message="beforeBootID cannot change or be removed"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.cleanup) || !has(oldSelf.status.cleanup.deadline) || (has(self.status) && has(self.status.cleanup) && has(self.status.cleanup.deadline) && self.status.cleanup.deadline == oldSelf.status.cleanup.deadline)",message="cleanup.deadline cannot change or be removed"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.policy) || (has(self.status) && has(self.status.policy) && self.status.policy == oldSelf.status.policy)",message="policy cannot change or be removed"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.offeredAt) || (has(self.status) && has(self.status.offeredAt) && self.status.offeredAt == oldSelf.status.offeredAt)",message="offeredAt cannot change or be removed"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.rebootDeadline) || (has(self.status) && has(self.status.rebootDeadline) && self.status.rebootDeadline == oldSelf.status.rebootDeadline)",message="rebootDeadline cannot change or be removed"
 // +kubebuilder:printcolumn:name="Node",type="string",JSONPath=".metadata.name"
 // +kubebuilder:printcolumn:name="Processing",type="string",JSONPath=".status.conditions[?(@.type=='Processing')].status"
 // +kubebuilder:printcolumn:name="Succeeded",type="string",JSONPath=".status.conditions[?(@.type=='Succeeded')].status"

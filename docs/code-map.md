@@ -64,7 +64,7 @@ Owns all agent loops, the embedded controller-runtime manager, and the self-fenc
 | `peerMonitorLoop` | Read peers, check liveness, set `SBRStorageUnhealthy` on Node |
 | `readOwnSlotForFenceMessage` | Detect fence message in own slot → self-fence |
 | `executeSelfFencing` | panic / systemctl-reboot / none |
-| `shouldTriggerSelfFence` | Threshold check + abort if no remediation CR |
+| `shouldTriggerSelfFence` | Failure/progress deadline check + abort if no remediation CR |
 | `remediationExistsForThisNode` | K8s Get with 5s timeout; used as CR existence gate |
 | `initializeControllerManager`, `addSBRRemediationController` | Embed `SBRRemediationReconciler` in agent |
 
@@ -132,7 +132,7 @@ Flag name constants (`FlagWatchdogPath`, `FlagSBRDevice`, etc.), defaults, and *
 | `(*StorageBasedRemediationConfigReconciler).Reconcile` | `internal/controller/storagebasedremediationconfig_controller.go` | Validate SC, PVC, init Job, DaemonSet, status |
 | `(*StorageBasedRemediationConfigReconciler).validateStorageClass` | `internal/controller/storagebasedremediationconfig_controller.go` | RWX provisioner checks + optional test PVC |
 | `(*StorageBasedRemediationConfigReconciler).buildDaemonSet` | `internal/controller/storagebasedremediationconfig_controller.go` | Build full privileged pod spec with host mounts and agent args |
-| `shouldTriggerSelfFence` | `cmd/sbr-agent/main.go` | Failure threshold check; aborts if no remediation CR confirmed |
+| `shouldTriggerSelfFence` | `cmd/sbr-agent/main.go` | Failure/progress deadline check; aborts if no remediation CR confirmed |
 | `handleWatchdogTickSBRUnhealthy` | `cmd/sbr-agent/main.go` | Per-tick: detect-only / stop petting (CR exists or API error) / keep petting (no CR) |
 | `executeSelfFencing` | `cmd/sbr-agent/main.go` | Runs reboot method; stops watchdog petting |
 | `peerMonitorLoop` | `cmd/sbr-agent/main.go` | Read peers, assess liveness, set `SBRStorageUnhealthy` node condition |
@@ -153,7 +153,7 @@ Flag name constants (`FlagWatchdogPath`, `FlagSBRDevice`, etc.), defaults, and *
 | **Where is peer health checked?** | `cmd/sbr-agent/main.go`: `peerMonitorLoop` → `readPeerHeartbeat` → `peerMonitor.updatePeer` / `checkPeerLiveness`. |
 | **Where is node condition set?** | `cmd/sbr-agent/main.go`: `setNodeConditionSBRStorageUnhealthy`, `setNodeConditionSBRStorageUnhealthyStatus`. Type constant: `api/v1alpha1/storagebasedremediation_types.go` — `NodeConditionSBRStorageUnhealthy`. |
 | **Where is watchdog petted?** | `internal/watchdog/watchdog.go`: `Pet()`. Called from `cmd/sbr-agent/main.go`: `petWatchdogWhenHealthy` and (conditionally) `handleWatchdogTickSBRUnhealthy`. |
-| **Where is self-fence decision made?** | `cmd/sbr-agent/main.go`: `shouldTriggerSelfFence` (failure counts + CR gate), called from `watchdogLoop`. |
+| **Where is self-fence decision made?** | `cmd/sbr-agent/main.go`: `shouldTriggerSelfFence` (failure counts + heartbeat progress deadline + CR gate), called from `watchdogLoop`. |
 | **Where is OOS taint applied?** | `internal/controller/storagebasedremediation_controller.go`: `ensureOutOfServiceTaint`. Delayed for fresh agent remediations: `isRemediationFresh`, `SBRAgentRemediationFreshAge`. |
 | **Where is the DaemonSet built?** | `internal/controller/storagebasedremediationconfig_controller.go`: `buildDaemonSet`, `buildSBRAgentArgs`, `buildVolumeMounts`, `buildVolumes`, `buildNodeSelector`. |
 | **Where is StorageClass validated?** | API name format: `api/v1alpha1/storagebasedremediationconfig_types.go` — `ValidateSharedStorageClass`. RWX/provisioner check: `internal/controller/storagebasedremediationconfig_controller.go` — `validateStorageClass`, `isRWXCompatibleProvisioner`, `testRWXSupport`. |

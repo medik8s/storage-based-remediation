@@ -79,6 +79,7 @@ const (
 	// FlagBootUnitEnabled enables installing and gating the pre-kubelet boot unit.
 	// It implies FlagJournalEnabled: the unit's arming tiers read the journal.
 	FlagBootUnitEnabled = "boot-unit-enabled"
+	FlagBootUnitTimeout = "boot-unit-timeout"
 
 	// FlagAutonomousRebootRecoveryPeriod specifies how long this node's storage
 	// must stay healthy before the agent releases the boot unit's cordon when

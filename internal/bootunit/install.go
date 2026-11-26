@@ -17,6 +17,7 @@ limitations under the License.
 package bootunit
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -25,6 +26,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/medik8s/common/pkg/nodestate"
 
@@ -137,7 +140,7 @@ func EnsureStateRoot() error {
 // hostSystemdDir is where THIS PROCESS sees the host's /etc/systemd/system
 // (ContainerSystemdDir in the agent). Activation is separate: systemctl runs
 // in the host namespace, where the same file appears at its real path.
-func Install(hostSystemdDir string) error {
+func Install(hostSystemdDir string, timeout ...time.Duration) error {
 	if hostSystemdDir == "" {
 		hostSystemdDir = ContainerSystemdDir
 	}
@@ -167,7 +170,16 @@ func Install(hostSystemdDir string) error {
 
 	// 3. Write the systemd unit file.
 	unitPath := filepath.Join(hostSystemdDir, UnitName)
-	unitChanged, err := copyIfChanged(ContainerUnitPath, unitPath, 0644)
+	template, err := os.ReadFile(ContainerUnitPath)
+	if err != nil {
+		return fmt.Errorf("read container unit file: %w", err)
+	}
+	rendered, err := RenderUnit(template, timeout...)
+	if err != nil {
+		return err
+	}
+	unitHash := sha256.Sum256(rendered)
+	unitChanged, err := writeIfChanged(bytes.NewReader(rendered), hex.EncodeToString(unitHash[:]), unitPath, 0644)
 	if err != nil {
 		return fmt.Errorf("install unit file: %w", err)
 	}
@@ -327,14 +339,14 @@ func clearArmingFlag(path string) error {
 // Returns nil when everything is in place, or an error describing what is
 // wrong. The agent reports degraded rejoin protection; it never silently
 // disables fencing.
-func Verify(hostSystemdDir string) error {
-	return VerifyFS(hostSystemdDir, nodestate.OSFileSystem())
+func Verify(hostSystemdDir string, timeout ...time.Duration) error {
+	return VerifyFS(hostSystemdDir, nodestate.OSFileSystem(), timeout...)
 }
 
 // VerifyFS is Verify with the filesystem injected, using the same
 // abstraction as the nodestate store, so tests can verify the wiring
 // without touching host paths.
-func VerifyFS(hostSystemdDir string, fsys nodestate.FS) error {
+func VerifyFS(hostSystemdDir string, fsys nodestate.FS, timeout ...time.Duration) error {
 	if hostSystemdDir == "" {
 		hostSystemdDir = "/etc/systemd/system"
 	}
@@ -361,14 +373,22 @@ func VerifyFS(hostSystemdDir string, fsys nodestate.FS) error {
 		return fmt.Errorf("stat %s: %w", unitPath, err)
 	}
 
-	// Unit file hash matches the container image. The binary is hash-checked
-	// a few lines up; a unit whose content drifted (an old version, a manual
-	// edit, a truncated write) is just as broken as a mismatched binary, and
-	// verifying existence alone would report it healthy.
-	containerUnitHash, err := fileHashFS(fsys, ContainerUnitPath)
+	// Compare the installed unit with the template rendered for this timeout.
+	containerUnit, err := fsys.Open(ContainerUnitPath, nodestate.OpenOptions{})
 	if err != nil {
 		return fmt.Errorf("read container unit file: %w", err)
 	}
+	defer containerUnit.Close()
+	template, err := io.ReadAll(containerUnit)
+	if err != nil {
+		return fmt.Errorf("read container unit file: %w", err)
+	}
+	rendered, err := RenderUnit(template, timeout...)
+	if err != nil {
+		return err
+	}
+	unitHash := sha256.Sum256(rendered)
+	containerUnitHash := hex.EncodeToString(unitHash[:])
 	hostUnitHash, err := fileHashFS(fsys, unitPath)
 	if err != nil {
 		return fmt.Errorf("read unit file: %w", err)
@@ -410,7 +430,15 @@ func copyIfChanged(src, dst string, mode os.FileMode) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("read source %s: %w", src, err)
 	}
+	in, err := os.Open(src)
+	if err != nil {
+		return false, err
+	}
+	defer in.Close()
+	return writeIfChanged(in, srcHash, dst, mode)
+}
 
+func writeIfChanged(in io.Reader, srcHash, dst string, mode os.FileMode) (bool, error) {
 	dstHash, err := fileHash(dst)
 	if err == nil && srcHash == dstHash {
 		// Content already correct. Reconcile the mode: a matching hash with
@@ -434,12 +462,6 @@ func copyIfChanged(src, dst string, mode os.FileMode) (bool, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("read destination %s: %w", dst, err)
 	}
-
-	in, err := os.Open(src)
-	if err != nil {
-		return false, err
-	}
-	defer in.Close()
 
 	tmp := dst + ".tmp"
 	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
@@ -472,6 +494,27 @@ func copyIfChanged(src, dst string, mode os.FileMode) (bool, error) {
 		return true, fmt.Errorf("sync %s after rename: %w", filepath.Dir(dst), err)
 	}
 	return true, nil
+}
+
+// RenderUnit applies the configured timeout to the command and service ceiling.
+// Callers without a timeout retain the previous 90-second and 120-second limits.
+func RenderUnit(template []byte, configured ...time.Duration) ([]byte, error) {
+	timeout := CordonTotalBudget
+	ceiling := int64(120)
+	if len(configured) > 0 {
+		timeout = configured[0]
+		seconds := timeout / time.Second
+		if timeout%time.Second != 0 {
+			seconds++
+		}
+		ceiling = int64(seconds) + 5
+	}
+	if timeout <= 0 {
+		return nil, fmt.Errorf("boot-unit-timeout must be positive")
+	}
+	rendered := strings.ReplaceAll(string(template), "@BOOT_UNIT_TIMEOUT@", timeout.String())
+	rendered = strings.ReplaceAll(rendered, "@BOOT_UNIT_CEILING@", fmt.Sprint(ceiling))
+	return []byte(rendered), nil
 }
 
 // fileHash returns the SHA-256 hex digest of a file, or an error if the

@@ -112,8 +112,10 @@ var (
 			"journal write becomes a no-op.")
 	bootUnitEnabled = flag.Bool(agent.FlagBootUnitEnabled, false,
 		"Install and gate the pre-kubelet self-cordon boot unit. Set by the controller "+
-			"from the configuration's volume mode; when false, the agent writes nothing "+
+			"from the configuration's boot enablement; when false, the agent writes nothing "+
 			"to the host's systemd or state directories for the unit.")
+	bootUnitTimeoutFlag = flag.Duration(agent.FlagBootUnitTimeout, 0,
+		"Positive boot-unit timeout. Required when boot-unit-enabled is true.")
 	autonomousRebootRecoveryPeriodFlag = flag.Duration(agent.FlagAutonomousRebootRecoveryPeriod, 5*time.Minute,
 		"How long this node's storage must stay healthy before the agent releases the boot "+
 			"unit's cordon when no remediation CR ever claimed the node. Set by the controller "+
@@ -543,6 +545,7 @@ type SBRAgent struct {
 	cancel              context.CancelFunc
 	sbrHealthy          bool
 	sbrHealthyMutex     sync.RWMutex
+	lastHeartbeatTime   time.Time // guarded by sbrHealthyMutex; independent of blocked storage operations
 	heartbeatSequence   uint64
 	heartbeatSeqMutex   sync.Mutex
 	peerMonitor         *peerMonitor
@@ -1259,6 +1262,23 @@ func (s *SBRAgent) isSBRHealthy() bool {
 	return s.sbrHealthy
 }
 
+func (s *SBRAgent) recordHeartbeatSuccess() {
+	s.sbrHealthyMutex.Lock()
+	defer s.sbrHealthyMutex.Unlock()
+	s.lastHeartbeatTime = time.Now()
+}
+
+// heartbeatStalled detects I/O that never returns, even when the failure counter
+// and sbrHealthy flag cannot be updated by the blocked heartbeat goroutine.
+func (s *SBRAgent) heartbeatStalled() bool {
+	s.sbrHealthyMutex.RLock()
+	defer s.sbrHealthyMutex.RUnlock()
+	if s.lastHeartbeatTime.IsZero() || s.heartbeatInterval <= 0 {
+		return false
+	}
+	return time.Since(s.lastHeartbeatTime) >= time.Duration(MaxConsecutiveFailures)*s.heartbeatInterval
+}
+
 // remediationExistsForThisNode checks if a StorageBasedRemediation CR exists for this node.
 // Uses a short timeout to avoid blocking the watchdog loop. Returns (true, nil) if the CR
 // exists, (false, nil) if it does not (IsNotFound), and (false, err) on API errors or timeout.
@@ -1390,6 +1410,13 @@ func (s *SBRAgent) shouldTriggerSelfFence() (bool, string) {
 			fmt.Sprintf("Heartbeat write failures on (%s, %d) exceeded threshold", s.nodeName, s.nodeID))
 		shouldSelfFence = true
 		msg = fmt.Sprintf("heartbeat write failures exceeded threshold (%d)", MaxConsecutiveFailures)
+	} else if s.heartbeatStalled() {
+		// A blocked filesystem call cannot increment a returned-error counter or
+		// clear sbrHealthy. Fence on missed progress as well, while retaining the
+		// remediation-CR check below so NHC still decides whether fencing is allowed.
+		shouldSelfFence = true
+		msg = fmt.Sprintf("no completed SBR heartbeat for at least %s",
+			time.Duration(MaxConsecutiveFailures)*s.heartbeatInterval)
 	}
 	if shouldSelfFence {
 		if remediationExist, err := s.remediationExistsForThisNode(); err == nil && !remediationExist {
@@ -1600,6 +1627,8 @@ func (s *SBRAgent) StartWithContext(ctx context.Context) error {
 	// completes it; dropping it would let the node keep running after peers
 	// may already have applied the OutOfService taint.
 	s.resumePendingRebootDecision()
+	// Start the freshness deadline with one missed-heartbeat window of startup grace.
+	s.recordHeartbeatSuccess()
 
 	// Start node manager periodic sync if using hash mapping
 	if s.nodeManager != nil {
@@ -1836,6 +1865,7 @@ func (s *SBRAgent) heartbeatLoop() {
 
 			} else {
 				// Success - reset failure count and update status
+				s.recordHeartbeatSuccess()
 				s.resetFailureCount("heartbeat")
 				// Only mark as healthy if it was previously unhealthy AND no remediation CR exists
 				// The regular SBR device loop will also update this
@@ -2913,6 +2943,10 @@ func runBlockInit(devicePath string, ioTimeout time.Duration, log logr.Logger) e
 
 func main() {
 	flag.Parse()
+	if *bootUnitEnabled && *bootUnitTimeoutFlag <= 0 {
+		fmt.Fprintln(os.Stderr, "boot-unit-enabled requires a positive boot-unit-timeout")
+		os.Exit(1)
+	}
 	MaxConsecutiveFailures = *maxConsecutiveFailuresFlag
 
 	// Initialize structured logger first
@@ -3097,12 +3131,12 @@ func main() {
 	// but it must never keep this agent from fencing. The boot files come from
 	// the agent image and are already available at this point, so a degraded
 	// result is a wiring fault worth surfacing, not a transient startup race.
-	// The controller enables the unit per volume mode; a disabled unit means
+	// The controller enables the unit from the API flag; a disabled unit means
 	// no host writes at all for it.
 	{
 		bootUnitCtx, cancel := context.WithTimeout(context.Background(), bootUnitSetupTimeout)
 		var bootErr error
-		nodeUID, bootErr = maybeSetupBootUnit(bootUnitCtx, k8sClient, nodeNameValue, journal, *detectOnlyMode, *bootUnitEnabled)
+		nodeUID, bootErr = maybeSetupBootUnit(bootUnitCtx, k8sClient, nodeNameValue, journal, *detectOnlyMode, *bootUnitEnabled, *bootUnitTimeoutFlag)
 		cancel()
 		if bootErr != nil {
 			logger.Error(bootErr, "Boot unit wiring degraded: this node would boot without pre-kubelet self-cordon",

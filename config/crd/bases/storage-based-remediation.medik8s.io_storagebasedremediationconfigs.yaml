@@ -46,6 +46,15 @@ spec:
                   AutonomousRebootRecoveryPeriod defines the BlockPerNode recovery period, with an effective default of 5m.
                   The duration must be positive. The effective value is immutable after creation.
                 type: string
+              bootUnitEnabled:
+                description: BootUnitEnabled enables the optional host boot service.
+                  The effective default is false.
+                type: boolean
+              bootUnitTimeout:
+                description: |-
+                  BootUnitTimeout limits the boot service delay. Enabling the service requires an explicit positive timeout.
+                  A valid timeout has no effect while the service is disabled.
+                type: string
               detectOnlyMode:
                 description: |-
                   DetectOnlyMode when set to Enabled disables all remediation: the agent disarms the watchdog (no reboot)
@@ -82,6 +91,17 @@ spec:
                   If not specified, defaults to worker nodes only (node-role.kubernetes.io/worker: "").
                   The selector is merged with the default requirement for kubernetes.io/os=linux.
                 type: object
+              oosTaintPolicy:
+                description: OOSTaintPolicy controls when peers can apply OutOfService.
+                  The effective default is OnTimeout.
+                enum:
+                - OnTimeout
+                - OnReboot
+                type: string
+              rebootGracePeriod:
+                description: RebootGracePeriod starts at the saved offer time. Its
+                  effective default is 60s.
+                type: string
               sbrTimeoutSeconds:
                 description: |-
                   SBRTimeoutSeconds configures the base timing for failure detection.
@@ -99,14 +119,14 @@ spec:
                 description: |-
                   SharedStorageClass names the StorageClass for SBR storage.
                   Filesystem and Block require ReadWriteMany (RWX) storage.
-                  BlockPerNode requires private ReadWriteOnce (RWO) Block storage for each node.
+                  BlockPerNode requires one ReadWriteMany (RWX) Block claim per node with read-only watchers.
                   BlockPerNode currently defines the API only. The operator does not implement this storage mode.
                 type: string
               sharedStorageVolumeMode:
                 description: |-
                   SharedStorageVolumeMode selects the SBR storage mode.
                   Filesystem (default) uses an RWX filesystem. Block uses an RWX raw block device.
-                  BlockPerNode defines private RWO Block storage. It is not a Kubernetes volumeMode value.
+                  BlockPerNode defines per-node RWX Block storage with read-only watchers. It is not a Kubernetes volumeMode value.
                   Block and BlockPerNode require sharedStorageClass.
                   This field is immutable after creation.
                 enum:
@@ -125,6 +145,21 @@ spec:
                   WatchdogPath is the path to the watchdog device on the host
                   If not specified, defaults to "/dev/watchdog"
                 type: string
+              watcherGroupLabels:
+                description: WatcherGroupLabels adds distinct Node label keys to the
+                  region and zone grouping keys.
+                items:
+                  maxLength: 317
+                  pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
+              watcherGroupSize:
+                description: WatcherGroupSize limits targets per watcher group. The
+                  effective default is 16.
+                format: int32
+                minimum: 1
+                type: integer
             type: object
             x-kubernetes-validations:
             - message: sharedStorageClass is required for Block and BlockPerNode
@@ -146,6 +181,32 @@ spec:
             - message: autonomousRebootRecoveryPeriod must be positive
               rule: '!has(self.autonomousRebootRecoveryPeriod) || duration(self.autonomousRebootRecoveryPeriod)
                 > duration(''0s'')'
+            - message: oosTaintPolicy requires BlockPerNode
+              rule: '!has(self.oosTaintPolicy) || (has(self.sharedStorageVolumeMode)
+                && self.sharedStorageVolumeMode == ''BlockPerNode'')'
+            - message: rebootGracePeriod requires BlockPerNode
+              rule: '!has(self.rebootGracePeriod) || (has(self.sharedStorageVolumeMode)
+                && self.sharedStorageVolumeMode == ''BlockPerNode'')'
+            - message: bootUnitEnabled requires BlockPerNode
+              rule: '!has(self.bootUnitEnabled) || (has(self.sharedStorageVolumeMode)
+                && self.sharedStorageVolumeMode == ''BlockPerNode'')'
+            - message: bootUnitTimeout requires BlockPerNode
+              rule: '!has(self.bootUnitTimeout) || (has(self.sharedStorageVolumeMode)
+                && self.sharedStorageVolumeMode == ''BlockPerNode'')'
+            - message: watcherGroupSize requires BlockPerNode
+              rule: '!has(self.watcherGroupSize) || (has(self.sharedStorageVolumeMode)
+                && self.sharedStorageVolumeMode == ''BlockPerNode'')'
+            - message: watcherGroupLabels requires BlockPerNode
+              rule: '!has(self.watcherGroupLabels) || (has(self.sharedStorageVolumeMode)
+                && self.sharedStorageVolumeMode == ''BlockPerNode'')'
+            - message: rebootGracePeriod must be positive
+              rule: '!has(self.rebootGracePeriod) || duration(self.rebootGracePeriod)
+                > duration(''0s'')'
+            - message: bootUnitTimeout must be positive
+              rule: '!has(self.bootUnitTimeout) || duration(self.bootUnitTimeout)
+                > duration(''0s'')'
+            - message: bootUnitTimeout is required when bootUnitEnabled is true
+              rule: '!has(self.bootUnitEnabled) || !self.bootUnitEnabled || has(self.bootUnitTimeout)'
           status:
             description: StorageBasedRemediationConfigStatus defines the observed
               state of StorageBasedRemediationConfig.

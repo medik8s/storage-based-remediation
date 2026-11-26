@@ -20,19 +20,23 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	medik8sv1alpha1 "github.com/medik8s/storage-based-remediation/v5/api/v1alpha1"
 	"github.com/medik8s/storage-based-remediation/v5/internal/agent"
 	"github.com/medik8s/storage-based-remediation/v5/internal/bootunit"
 )
 
-// blockPerNodeConfig returns a configuration that selects BlockPerNode, the
-// only mode where the journal and the boot unit are enabled today.
 func blockPerNodeConfig() *medik8sv1alpha1.StorageBasedRemediationConfig {
 	perNode := medik8sv1alpha1.SharedStorageVolumeModeBlockPerNode
+	enabled := true
 	return &medik8sv1alpha1.StorageBasedRemediationConfig{
 		Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
 			SharedStorageVolumeMode: &perNode,
+			BootUnitEnabled:         &enabled,
+			BootUnitTimeout:         &metav1.Duration{Duration: 2 * time.Minute},
 		},
 	}
 }
@@ -152,10 +156,30 @@ func TestDaemonSetPassesHostStateFlagsInBlockPerNode(t *testing.T) {
 	for _, want := range []string{
 		"--" + agent.FlagJournalEnabled + "=true",
 		"--" + agent.FlagBootUnitEnabled + "=true",
+		"--" + agent.FlagBootUnitTimeout + "=2m0s",
 		"--" + agent.FlagAutonomousRebootRecoveryPeriod + "=5m0s",
 	} {
 		if !slices.Contains(args, want) {
 			t.Errorf("agent args %v are missing %q", args, want)
+		}
+	}
+}
+
+func TestDaemonSetOmitsDisabledBootSettings(t *testing.T) {
+	r := &StorageBasedRemediationConfigReconciler{}
+	disabled := false
+	for _, enabled := range []*bool{nil, &disabled} {
+		cfg := blockPerNodeConfig()
+		cfg.Spec.BootUnitEnabled = enabled
+		args := r.buildSBRAgentArgs(cfg)
+		if !slices.Contains(args, "--"+agent.FlagJournalEnabled+"=true") {
+			t.Fatal("disabled boot unit must retain journaling")
+		}
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "--"+agent.FlagBootUnitEnabled+"=") ||
+				strings.HasPrefix(arg, "--"+agent.FlagBootUnitTimeout+"=") {
+				t.Errorf("disabled boot unit received %q", arg)
+			}
 		}
 	}
 }

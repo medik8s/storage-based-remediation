@@ -69,6 +69,7 @@ func TestHostStateEnablementFollowsVolumeMode(t *testing.T) {
 	filesystem := SharedStorageVolumeModeFilesystem
 	block := SharedStorageVolumeModeBlock
 	perNode := SharedStorageVolumeModeBlockPerNode
+	enabledValue, disabledValue := true, false
 	for _, tc := range []struct {
 		mode        *SharedStorageVolumeModeType
 		wantJournal bool
@@ -78,13 +79,15 @@ func TestHostStateEnablementFollowsVolumeMode(t *testing.T) {
 		{&block, false},
 		{&perNode, true},
 	} {
-		spec := StorageBasedRemediationConfigSpec{SharedStorageVolumeMode: tc.mode}
-		if got := spec.IsJournalEnabled(); got != tc.wantJournal {
-			t.Errorf("IsJournalEnabled() for mode %v = %v, want %v", tc.mode, got, tc.wantJournal)
-		}
-		// The boot unit reads the journal, so it cannot be enabled without it.
-		if got := spec.IsBootUnitEnabled(); got != tc.wantJournal {
-			t.Errorf("IsBootUnitEnabled() for mode %v = %v, want %v", tc.mode, got, tc.wantJournal)
+		for _, enabled := range []*bool{nil, &disabledValue, &enabledValue} {
+			spec := StorageBasedRemediationConfigSpec{SharedStorageVolumeMode: tc.mode, BootUnitEnabled: enabled}
+			if got := spec.IsJournalEnabled(); got != tc.wantJournal {
+				t.Errorf("IsJournalEnabled() for mode %v = %v, want %v", tc.mode, got, tc.wantJournal)
+			}
+			wantBoot := tc.wantJournal && enabled != nil && *enabled
+			if got := spec.IsBootUnitEnabled(); got != wantBoot {
+				t.Errorf("IsBootUnitEnabled() for mode %v and enablement %v = %v, want %v", tc.mode, enabled, got, wantBoot)
+			}
 		}
 	}
 }

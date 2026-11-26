@@ -159,20 +159,29 @@ spec:
 | `ioTimeout` | `2s`, or `15s` for BlockPerNode | Optional duration from `1s` through `10m`. API definition only. |
 | `totalOutageGracePeriod` | `60s` for BlockPerNode | Optional duration from `0s` through `1h`. BlockPerNode only. The effective value is immutable. |
 | `autonomousRebootRecoveryPeriod` | `5m` for BlockPerNode | Optional positive duration. BlockPerNode only. The effective value is immutable. |
+| `oosTaintPolicy` | `OnTimeout` | BlockPerNode only. `OnTimeout` or `OnReboot`. |
+| `rebootGracePeriod` | `60s` | BlockPerNode only. Positive duration, measured from the saved offer time. |
+| `bootUnitEnabled` | `false` | BlockPerNode only. Enabling requires an explicit positive timeout. |
+| `bootUnitTimeout` | None | BlockPerNode only. Positive duration. It has no effect when the unit is disabled. |
+| `watcherGroupSize` | `16` | BlockPerNode only. Integer of at least one. |
+| `watcherGroupLabels` | Empty list | BlockPerNode only. Distinct valid Node label keys, in addition to region and zone. |
 | `nodeSelector` | Worker nodes | Label selector restricting which nodes run the agent |
 | `sbrTimeoutSeconds` | `30` | SBR detection timeout in seconds (10–300) |
-| `maxConsecutiveFailures` | `7` | Consecutive watchdog, SBR-device, local-heartbeat, or peer-heartbeat failures before declaring a node unhealthy (2–32) |
+| `maxConsecutiveFailures` | `7` | Consecutive watchdog, SBR-device, local-heartbeat, or peer-heartbeat failures (2–32); also sets the local heartbeat progress deadline to this many heartbeat intervals |
 | `detectOnlyMode` | `Disabled` | When `Enabled`, detects failures without performing remediation |
 
 **Note**: The namespace is set via `metadata.namespace`. The agent image is managed automatically
 by the operator — do not set `spec.image` (the field does not exist in the CRD).
 
-BlockPerNode defines private RWO Block storage for each node. It is an SBR mode, not a Kubernetes `volumeMode` value.
+BlockPerNode defines one RWX Block claim per node with read-only watchers. Its Kubernetes claims use `volumeMode: Block`.
 Filesystem and shared Block continue to require RWX storage.
 This change adds API definitions only. It does not implement BlockPerNode operation or apply `ioTimeout` to running agents.
 The API server does not store defaults for the new duration fields.
 Omitted BlockPerNode-only durations return zero in existing modes. Explicit values remain invalid in those modes.
 See the [API contract](sbr-config-user-guide.md#storage-mode-and-duration-api) for update rules and remediation status fields.
+All six policy, boot-unit, and watcher fields are mutable. Existing requests retain their saved policy and deadline.
+Shared modes reject explicit values, including a false boot flag or an empty label list.
+API acceptance does not establish BlockPerNode runtime support.
 
 ---
 
