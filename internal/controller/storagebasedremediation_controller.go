@@ -132,6 +132,9 @@ type SBRRemediationReconciler struct {
 	sbrConfigName      string
 	sbrConfigNamespace string
 
+	// APIReader bypasses the manager's cache. Node execution record updates validate state and then
+	// write it back under that read's resourceVersion, so a cached read would both judge against a
+	// stale view and keep losing the precondition until the cache caught up.
 	APIReader client.Reader
 }
 
