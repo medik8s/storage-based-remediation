@@ -56,6 +56,18 @@ func (s *SBRAgent) recordStorageOutcome(ok bool) {
 		if s.storageHealthySince.IsZero() {
 			s.storageHealthySince = time.Now()
 		}
+		// The same clock clears the reset budget's outage epoch (design
+		// §5.6 line 654): after storage stays healthy for the recovery
+		// period, the epoch's autonomous attempt no longer blocks the next
+		// one. The ledger flushes only on the actual transition, so this
+		// adds no journal I/O to the steady-state heartbeat path.
+		if s.budgetLedger != nil {
+			// One call, so the ledger clamps the recovery start to the latest
+			// charge under its own lock: reading the charge time here and
+			// observing afterwards would let a fence charge in between and
+			// have its new epoch cleared by this older clock.
+			s.budgetLedger.ObserveHealthySince(s.storageHealthySince, time.Now(), s.autonomousRebootRecoveryPeriod)
+		}
 		return
 	}
 	s.storageHealthySince = time.Time{}

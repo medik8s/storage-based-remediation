@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -57,6 +58,7 @@ import (
 	"github.com/medik8s/storage-based-remediation/v5/internal/blockdevice"
 	"github.com/medik8s/storage-based-remediation/v5/internal/blockformat"
 	"github.com/medik8s/storage-based-remediation/v5/internal/bootunit"
+	"github.com/medik8s/storage-based-remediation/v5/internal/budget"
 	"github.com/medik8s/storage-based-remediation/v5/internal/controller"
 	"github.com/medik8s/storage-based-remediation/v5/internal/mocks"
 	"github.com/medik8s/storage-based-remediation/v5/internal/retry"
@@ -210,12 +212,15 @@ const (
 	EventReasonSBRUnhealthySkipPetAPIError   = "SBRUnhealthySkipPetAPIError"   // Emitted when SBR unhealthy and remediation CR check failed (API error), skipping pet
 	EventReasonSBRUnhealthyDetectOnly        = "SBRUnhealthyDetectOnly"        // Emitted in detect-only mode when SBR becomes unhealthy (watchdog disarmed)
 	EventReasonSelfFenceAbortedNoRemediation = "SelfFenceAbortedNoRemediation" // Emitted when self-fence aborted because no StorageBasedRemediation CR exists
-	EventReasonWatchdogPetFailed             = "WatchdogPetFailed"             // Emitted when watchdog pet failures exceed threshold
-	EventReasonRebootDecisionResumed         = "RebootDecisionResumed"         // Emitted when a reboot decision from the current boot is resumed at agent start
-	EventReasonRejoinCordonHeld              = "RejoinCordonHeld"              // Emitted when the agent first observes this node held by the boot unit's keyed cordon
-	EventReasonSBRWriteFailed                = "SBRWriteFailed"                // Emitted when SBR device write failures exceed threshold
-	EventReasonHeartbeatWriteFailed          = "HeartbeatWriteFailed"          // Emitted when heartbeat write failures exceed threshold
-	EventReasonFenceMessageDetected          = "FenceMessageDetected"          // Emitted when a fence message is read from the agent's own slot
+	// Emitted when trusted history shows the current outage's autonomous
+	// attempt is consumed (design §5.6); the watchdog keeps being fed.
+	EventReasonBudgetExhausted       = budget.ReasonBudgetExhausted
+	EventReasonWatchdogPetFailed     = "WatchdogPetFailed"     // Emitted when watchdog pet failures exceed threshold
+	EventReasonRebootDecisionResumed = "RebootDecisionResumed" // Emitted when a reboot decision from the current boot is resumed at agent start
+	EventReasonRejoinCordonHeld      = "RejoinCordonHeld"      // Emitted when the agent first observes this node held by the boot unit's keyed cordon
+	EventReasonSBRWriteFailed        = "SBRWriteFailed"        // Emitted when SBR device write failures exceed threshold
+	EventReasonHeartbeatWriteFailed  = "HeartbeatWriteFailed"  // Emitted when heartbeat write failures exceed threshold
+	EventReasonFenceMessageDetected  = "FenceMessageDetected"  // Emitted when a fence message is read from the agent's own slot
 )
 
 // metricsOnce ensures metrics are only registered once
@@ -637,6 +642,19 @@ type SBRAgent struct {
 	// with a stale verdict. It is NOT held while sbrHealthyMutex is held:
 	// the disk I/O stays outside the health lock.
 	verdictWriteMutex sync.Mutex
+
+	// budgetLedger is the reset-budget authority (design §5.6): it refuses
+	// a second autonomous reboot attempt in the same outage and clears the
+	// outage only after sustained storage recovery. Nil outside BlockPerNode
+	// (no journal); charged under fenceExecMutex, observed from the
+	// heartbeat path — the ledger serializes itself.
+	budgetLedger *budget.Ledger
+
+	// budgetRefusalReported latches the once-per-outage BudgetExhausted
+	// report. The watchdog loop evaluates every tick, so an unlatched event
+	// would flood the API with identical warnings for as long as storage
+	// stays unhealthy. It re-arms when the budget permits again.
+	budgetRefusalReported atomic.Bool
 
 	// fenceExecMutex serializes executeSelfFencing: exactly one caller owns
 	// the decision check, the best-effort recordFenceDecision attempt and
@@ -1756,17 +1774,36 @@ func (s *SBRAgent) watchdogLoop() {
 				return
 			}
 
+			// The reset budget (design §5.6 lines 562-563): when this
+			// outage's autonomous attempt is already spent, the node is
+			// deliberately kept alive — the agent reports BudgetExhausted
+			// once and keeps feeding the watchdog. The loop must NOT stop:
+			// stopping the feed would let the hardware watchdog reset the
+			// node anyway and make the budget pointless.
+			spent := s.autonomousBudgetSpent()
+			if spent {
+				s.reportBudgetExhaustedOnce()
+			} else {
+				s.budgetRefusalReported.Store(false)
+			}
+
 			// Check if we should trigger self-fence due to consecutive failures
-			if shouldFence, reason := s.shouldTriggerSelfFence(); shouldFence {
-				logger.Error(nil, "Triggering self-fence due to consecutive failures", "reason", reason)
-				s.executeSelfFencing(reason, bootunit.SourceAutonomous)
-				return
+			if !spent {
+				if shouldFence, reason := s.shouldTriggerSelfFence(); shouldFence {
+					logger.Error(nil, "Triggering self-fence due to consecutive failures", "reason", reason)
+					if s.executeSelfFencing(reason, bootunit.SourceAutonomous) {
+						// The fence committed to a reboot: stop feeding so it
+						// happens (software reboot, or the watchdog if that
+						// stalls — the designed fallback).
+						return
+					}
+				}
 			}
 
 			if s.isSBRHealthy() {
 				s.petWatchdogWhenHealthy()
 			} else {
-				s.handleWatchdogTickSBRUnhealthy()
+				s.handleWatchdogTickSBRUnhealthy(spent)
 			}
 		}
 	}
@@ -1789,9 +1826,40 @@ func (s *SBRAgent) petWatchdogWhenHealthy() {
 	}
 }
 
+// autonomousBudgetSpent reports whether the reset budget has already consumed
+// this outage's autonomous attempt (design §5.6). It is the cheap pre-check
+// that keeps the watchdog loop from re-evaluating — and re-reporting — a
+// fence the budget is going to refuse anyway.
+func (s *SBRAgent) autonomousBudgetSpent() bool {
+	return s.budgetLedger != nil && !s.budgetLedger.PermitsAutonomous()
+}
+
+// reportBudgetExhaustedOnce emits the BudgetExhausted warning at most once
+// per outage, so a node waiting out a long outage reports the condition
+// without flooding the API every watchdog tick.
+func (s *SBRAgent) reportBudgetExhaustedOnce() {
+	if !s.budgetRefusalReported.CompareAndSwap(false, true) {
+		return
+	}
+	if s.recorder == nil {
+		return
+	}
+	s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonBudgetExhausted,
+		fmt.Sprintf("Reset budget exhausted on (%s, %d): this outage's autonomous reboot is already spent; "+
+			"feeding the watchdog and waiting for storage to recover", s.nodeName, s.nodeID))
+}
+
 // handleWatchdogTickSBRUnhealthy handles one watchdog tick when SBR is unhealthy: detect-only event,
 // or remediation CR check and either skip pet (reboot) or pet (let NHC decide).
-func (s *SBRAgent) handleWatchdogTickSBRUnhealthy() {
+//
+// budgetSpent reports that the reset budget already refused this outage's
+// autonomous reboot. It changes exactly one decision — what to do when the
+// remediation state cannot be read. With a live budget that state is unknown
+// and the existing choice stands (skip the pet, reboot imminent). With a spent
+// budget the autonomous path is closed by design, so the node is kept alive: a
+// genuinely pending requested reboot is not lost by petting, because the peer's
+// requested-reboot path is never gated by this budget.
+func (s *SBRAgent) handleWatchdogTickSBRUnhealthy(budgetSpent bool) {
 	agentHealthyGauge.Set(0)
 	if s.detectOnlyMode {
 		s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonSBRUnhealthyDetectOnly,
@@ -1802,6 +1870,22 @@ func (s *SBRAgent) handleWatchdogTickSBRUnhealthy() {
 	}
 	remediationExists, checkErr := s.remediationExistsForThisNode()
 	if checkErr != nil {
+		if budgetSpent {
+			// The budget already said this node will not reboot itself again
+			// in this outage; an unreadable remediation state cannot override
+			// that. A requested reboot, if one is pending, arrives through the
+			// peer's fence path, which the budget does not gate.
+			logger.Error(checkErr, "SBR unhealthy and the remediation state is unknown, "+
+				"but the reset budget is spent; petting the watchdog",
+				"sbrDevicePath", s.heartbeatDevicePath)
+			if err := s.watchdog.Pet(); err != nil {
+				logger.Error(err, "Failed to pet watchdog while the reset budget is spent; retry next tick",
+					"watchdogPath", s.watchdog.Path())
+				return
+			}
+			watchdogPetsCounter.Inc()
+			return
+		}
 		s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonSBRUnhealthySkipPetAPIError,
 			fmt.Sprintf("SBR device unhealthy on (%s, %d); API check failed, skipping watchdog pet, reboot imminent", s.nodeName, s.nodeID))
 		logger.Error(checkErr, "Skipping watchdog pet - SBR unhealthy and could not verify remediation CR",
@@ -2458,10 +2542,17 @@ func (s *SBRAgent) setSelfFenceDetected(detected bool) {
 // (bootunit.SourceAutonomous) or a remediation requested through a fence
 // message from a peer (bootunit.SourceRequested) — and is written into the
 // journal with the reboot decision.
-func (s *SBRAgent) executeSelfFencing(reason, source string) {
+//
+// It reports whether this call committed to a reboot. Callers that stop
+// feeding the watchdog afterwards must check the result: a refused fence
+// (detect-only, another fence already in progress, or the reset budget) has
+// NOT concluded the host's fate, and stopping the feed would let the
+// hardware watchdog reset the node anyway — which is exactly what the reset
+// budget exists to prevent (design §5.6).
+func (s *SBRAgent) executeSelfFencing(reason, source string) bool {
 	if s.detectOnlyMode {
 		logger.Info("Detect-only mode: skipping self-fence", "reason", reason, "nodeName", s.nodeName)
-		return
+		return false
 	}
 	// Exactly one caller owns the fence: the decision check, the journal
 	// attempt and the reboot. A second concurrent caller (the watchdog loop
@@ -2473,9 +2564,27 @@ func (s *SBRAgent) executeSelfFencing(reason, source string) {
 	if !s.fenceExecMutex.TryLock() {
 		logger.Info("Self-fence already in progress; this caller stands down",
 			"reason", reason, "nodeName", s.nodeName)
-		return
+		return false
 	}
 	defer s.fenceExecMutex.Unlock()
+
+	// The reset budget (design §5.6 lines 562-563): an autonomous attempt is
+	// refused when trusted history shows this outage's attempt is already
+	// consumed. The refusal must leave everything untouched — no
+	// self-fence-detected latch, no decision recorded — so the watchdog
+	// keeps being fed while storage may still recover and clear the epoch.
+	// Requested reboots are never gated here: NHC limits those. They are
+	// still recorded below, without consuming the allowance.
+	if source == bootunit.SourceAutonomous && s.budgetLedger != nil && !s.budgetLedger.PermitsAutonomous() {
+		s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonBudgetExhausted,
+			fmt.Sprintf("Self-fence refused on (%s, %d): %s; this outage's autonomous attempt is "+
+				"already consumed, feeding the watchdog",
+				s.nodeName, s.nodeID, s.budgetLedger.Exhausted()))
+		logger.Info("Self-fence refused: reset budget exhausted for the current outage; feeding the watchdog",
+			"reason", reason, "nodeName", s.nodeName, "report", s.budgetLedger.Exhausted())
+		return false
+	}
+
 	s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, EventReasonSelfFenceInitiated,
 		fmt.Sprintf("Self-fencing initiated on (%s, %d): %s", s.nodeName, s.nodeID, reason))
 	logger.Error(nil, "Self-fencing initiated",
@@ -2501,7 +2610,32 @@ func (s *SBRAgent) executeSelfFencing(reason, source string) {
 	// state behind for the next unrelated restart, which nothing would release.
 	if s.rebootMethod != RebootMethodNone && !s.fenceDecisionRecorded {
 		s.fenceDecisionRecorded = true
-		s.recordFenceDecision(source, reason)
+		// One identity for the whole commitment: the arming decision, the
+		// journal record and the budget charge all name the same incident,
+		// so a restart reconcile cannot charge the same decision twice
+		// (design §5.7: the attempt ID is the decision's ID).
+		incidentID := ""
+		if id, err := bootunit.NewIncidentID(); err != nil {
+			logger.Error(err, "Cannot generate an incident ID for the reboot decision")
+		} else {
+			incidentID = id
+		}
+		// Charge the budget first: the charge is what the refusal above
+		// consumed, and it must land even if the decision write below
+		// fails — both writes are best-effort by design (§5.6 line 650).
+		if s.budgetLedger != nil {
+			epochID, err := budget.NewLocalEpochID()
+			if err != nil {
+				logger.Error(err, "Cannot assign an outage epoch ID; charging with the decision ID")
+			}
+			if epochID == "" {
+				// A unique-enough fallback: the charge still opens an
+				// epoch, which is what the budget needs.
+				epochID = "local-" + incidentID
+			}
+			s.chargeBudget(sourceToBudgetKind(source), incidentID, epochID)
+		}
+		s.recordFenceDecision(source, reason, incidentID)
 	}
 
 	// Give some time for the log message to be written
@@ -2514,7 +2648,7 @@ func (s *SBRAgent) executeSelfFencing(reason, source string) {
 			"nodeID", s.nodeID,
 			"nodeName", s.nodeName)
 		// Do nothing - self-fencing is disabled for testing purposes
-		return
+		return true
 
 	case "systemctl-reboot":
 		logger.Error(nil, "Attempting aggressive systemctl reboot for self-fencing",
@@ -2539,7 +2673,7 @@ func (s *SBRAgent) executeSelfFencing(reason, source string) {
 			} else {
 				logger.Error(nil, "Reboot command executed", "method", i+1, "command", cmd)
 				// Command succeeded, no need to try others
-				return
+				return true
 			}
 		}
 
@@ -3145,6 +3279,12 @@ func main() {
 		}
 	}
 
+	// The boot unit is optional and disabled by default, and when it is off it
+	// reports no UID. The reset budget still needs the binding — otherwise an
+	// epoch charged by a replaced Node would keep limiting the new one — so the
+	// UID falls back to a direct Node read.
+	nodeUID = startupNodeUID(context.Background(), k8sClient, nodeNameValue, nodeUID)
+
 	// Create SBR agent (hash mapping is always enabled)
 	var wd mocks.WatchdogInterface
 	if *detectOnlyMode {
@@ -3224,7 +3364,13 @@ func main() {
 	// Hand the agent the journal opened above. A nil journal stays nil: every
 	// write through it is a no-op by design.
 	sbrAgent.journal = journal
+	// nodeUID is set first: the recovered budget is bound to the Node object
+	// before it can affect permits, so an epoch charged by a replaced Node
+	// cannot block this one.
 	sbrAgent.nodeUID = nodeUID
+	// The reset budget runs on the journal: no journal (non-BlockPerNode)
+	// means no budget, and loadBudgetLedger already reports how it recovered.
+	sbrAgent.budgetLedger = sbrAgent.loadBudgetLedger()
 	sbrAgent.bootUnitEnabled = *bootUnitEnabled
 	sbrAgent.autonomousRebootRecoveryPeriod = *autonomousRebootRecoveryPeriodFlag
 

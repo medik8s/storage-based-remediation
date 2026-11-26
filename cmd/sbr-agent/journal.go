@@ -26,8 +26,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/medik8s/storage-based-remediation/v5/internal/bootunit"
+	"github.com/medik8s/storage-based-remediation/v5/internal/budget"
 )
 
 // journalWriteTimeout bounds a single journal write.
@@ -261,16 +263,18 @@ func (s *SBRAgent) resumePendingRebootDecision() {
 // must proceed. The weaker journal tiers exist for exactly this case — an
 // agent that dies without recording a decision still leaves the shutdown state
 // and the storage verdict behind.
-func (s *SBRAgent) recordFenceDecision(source, reason string) {
+func (s *SBRAgent) recordFenceDecision(source, reason, incidentID string) {
 	if s.journal == nil {
 		logger.V(1).Info("No journal available; not recording the reboot decision", "reason", reason)
 		return
 	}
 
-	incidentID, err := bootunit.NewIncidentID()
-	if err != nil {
-		logger.Error(err, "Cannot generate an incident ID; not recording the reboot decision")
-		return
+	var err error
+	if incidentID == "" {
+		if incidentID, err = bootunit.NewIncidentID(); err != nil {
+			logger.Error(err, "Cannot generate an incident ID; not recording the reboot decision")
+			return
+		}
 	}
 
 	arming := &bootunit.ArmingState{
@@ -320,4 +324,162 @@ func (s *SBRAgent) configUID() string {
 		return ""
 	}
 	return string(obj.GetUID())
+}
+
+// resolveNodeUID reads this Node object's UID. setupBootUnit supplies it when
+// the boot unit runs, but the unit is optional and off by default while the
+// reset budget is not: without the UID a recovered epoch cannot be checked
+// against the Node that owns it, and a replacement Node would inherit its
+// predecessor's spent budget.
+//
+// Best effort. An unreachable API leaves the binding unknown, which the budget
+// treats as unverifiable and keeps — the conservative direction.
+func resolveNodeUID(ctx context.Context, c client.Client, nodeName string) string {
+	if c == nil || nodeName == "" {
+		return ""
+	}
+	readCtx, cancel := context.WithTimeout(ctx, bootUnitSetupTimeout)
+	defer cancel()
+	node := &corev1.Node{}
+	if err := c.Get(readCtx, client.ObjectKey{Name: nodeName}, node); err != nil {
+		logger.Error(err, "Cannot read this Node's UID; the reset budget will treat its history as unbound",
+			"nodeName", nodeName)
+		return ""
+	}
+	return string(node.UID)
+}
+
+// startupNodeUID returns the Node binding the reset budget uses: the value the
+// boot unit reported when it ran, otherwise a direct read of the Node object.
+// The boot unit is optional and off by default, so the budget cannot depend on
+// it for an identity it needs in every BlockPerNode deployment.
+func startupNodeUID(ctx context.Context, c client.Client, nodeName, fromBootUnit string) string {
+	if fromBootUnit != "" {
+		return fromBootUnit
+	}
+	return resolveNodeUID(ctx, c, nodeName)
+}
+
+// loadBudgetLedger builds the reset-budget ledger (design §5.6) over the
+// node-local journal. It is called once at startup, only when the journal
+// exists: outside BlockPerNode there is no journal and no budget. An
+// unreadable or foreign journal yields unknown history — the ledger runs
+// in memory, attempts stay permitted after the fresh §5.6 checks, and the
+// condition is reported through budget.ReasonHistoryUnknown rather than
+// silently treated as an unused allowance.
+func (s *SBRAgent) loadBudgetLedger() *budget.Ledger {
+	if s.journal == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), journalWriteTimeout)
+	defer cancel()
+
+	recovered, err := s.journal.ReadBudgetState(ctx)
+	switch {
+	case err == nil:
+		if recovered == nil {
+			logger.Info("No reset-budget history in the journal; starting with unknown history",
+				"path", s.journal.Path())
+			s.reportBudgetHistoryUnknown("the journal holds no reset-budget history")
+		}
+	case errors.Is(err, budget.ErrUnknownSchema):
+		// A newer build wrote this ledger. Never overwrite it; run with
+		// unknown history and say so.
+		logger.Error(err, "Reset-budget ledger has an unsupported schema version; "+
+			"running with unknown history and not overwriting it",
+			"path", s.journal.Path())
+		s.reportBudgetHistoryUnknown("the journal's reset-budget ledger has an unsupported schema version")
+	default:
+		logger.Error(err, "Cannot read the reset-budget ledger; running with unknown history",
+			"path", s.journal.Path())
+		s.reportBudgetHistoryUnknown("the reset-budget ledger could not be read")
+	}
+
+	persist := func(state budget.State) error {
+		wctx, wcancel := context.WithTimeout(context.Background(), journalWriteTimeout)
+		defer wcancel()
+		err := s.journal.WriteBudgetState(wctx, func(*budget.State) (*budget.State, error) {
+			// This process is the budget's only writer (the host lock is
+			// deferred work); the in-memory state is the authority and the
+			// journal is its mirror.
+			next := state
+			return &next, nil
+		})
+		if err != nil {
+			// The ledger treats persistence as best effort and cannot report
+			// this itself, so it is reported here: without it a budget that
+			// never reaches the journal would be invisible.
+			logger.Error(err, "Failed to persist the reset-budget ledger; the in-memory budget stands and the write is retried",
+				"path", s.journal.Path())
+		}
+		return err
+	}
+	ledger := budget.NewLedger(recovered, persist)
+	// A ledger charged by a replaced Node must not limit this one: deleting
+	// the Node object is itself how the cluster evacuates it, so the new
+	// incarnation starts without a spent budget.
+	if ledger.DropForeignEpoch(s.nodeUID) {
+		logger.Info("Discarded a reset-budget epoch charged by a different Node object",
+			"nodeUID", s.nodeUID, "path", s.journal.Path())
+	}
+	return ledger
+}
+
+// reportBudgetHistoryUnknown publishes the HistoryUnknown token (design
+// §5.10) when the budget runs without trusted history. An unknown history
+// still permits an attempt after the fresh §5.6 checks, so this is not a
+// refusal — it tells operators that the accounting is incomplete and that a
+// reboot loop is therefore less constrained than usual.
+func (s *SBRAgent) reportBudgetHistoryUnknown(cause string) {
+	if s.recorder == nil {
+		return
+	}
+	s.recorder.Event(s.recorderObject, corev1.EventTypeWarning, budget.ReasonHistoryUnknown,
+		fmt.Sprintf("Reset budget history unknown on (%s, %d): %s; "+
+			"autonomous reboots remain permitted after the fresh checks", s.nodeName, s.nodeID, cause))
+}
+
+// chargeBudget records a reboot commitment against the reset budget
+// (design §5.6/§5.7). Best-effort by contract: a failed journal write never
+// blocks a permitted reboot and never reverses the in-memory charge, which
+// the next successful write catches up. A nil ledger (no journal, non
+// BlockPerNode modes) is a no-op.
+func (s *SBRAgent) chargeBudget(kind budget.AttemptKind, attemptID, epochID string) {
+	if s.budgetLedger == nil {
+		return
+	}
+	if attemptID == "" {
+		// Never skip the charge for want of an ID: an uncharged permitted
+		// reboot is an unrecorded one, and a lost charge is how a reboot
+		// loop comes back.
+		id, err := bootunit.NewIncidentID()
+		if err != nil {
+			logger.Error(err, "Cannot generate a fallback attempt ID; the reboot proceeds but the budget charge is lost")
+			return
+		}
+		attemptID = id
+	}
+	attempt := budget.Attempt{
+		ID:        attemptID,
+		EpochID:   epochID,
+		Kind:      kind,
+		NodeUID:   s.nodeUID,
+		ConfigUID: s.configUID(),
+		BootID:    currentHostBootID(),
+	}
+	if err := s.budgetLedger.Charge(attempt, time.Now()); err != nil {
+		logger.Error(err, "Cannot persist the reset-budget charge; the in-memory budget is charged and the reboot proceeds",
+			"attemptID", attemptID, "kind", kind, "epochID", epochID)
+	}
+}
+
+// sourceToBudgetKind maps the fence source onto the budget's attempt kind:
+// only autonomous attempts consume the outage's allowance (design §5.6
+// line 620 — a requested reboot marks the outage without counting toward
+// the autonomous limit).
+func sourceToBudgetKind(source string) budget.AttemptKind {
+	if source == bootunit.SourceRequested {
+		return budget.KindRequested
+	}
+	return budget.KindAutonomous
 }

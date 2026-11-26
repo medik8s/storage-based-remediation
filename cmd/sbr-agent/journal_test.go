@@ -28,9 +28,12 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/medik8s/storage-based-remediation/v5/internal/bootunit"
+	"github.com/medik8s/storage-based-remediation/v5/internal/budget"
 )
 
 // journalAgent returns an agent wired only with what the journal helpers use.
@@ -71,7 +74,7 @@ func TestRecordFenceDecisionWritesArmingStateAndOpensTheGate(t *testing.T) {
 	agent.recorderObject = &corev1.Node{ObjectMeta: metav1.ObjectMeta{UID: "config-uid-1"}}
 	flags := stubArmingFlag(t)
 
-	agent.recordFenceDecision(bootunit.SourceAutonomous, "storage unhealthy")
+	agent.recordFenceDecision(bootunit.SourceAutonomous, "storage unhealthy", "")
 
 	if *flags != 1 {
 		t.Errorf("gate opened %d times, want 1", *flags)
@@ -111,7 +114,7 @@ func TestRecordFenceDecisionRecordsTheRequestedSource(t *testing.T) {
 	// A fence requested through a remediation (a peer's fence message) must
 	// be distinguishable in the journal from an autonomous one: the release
 	// protocol and the budget accounting treat the two differently.
-	agent.recordFenceDecision(bootunit.SourceRequested, "fence message received")
+	agent.recordFenceDecision(bootunit.SourceRequested, "fence message received", "")
 
 	if *flags != 1 {
 		t.Errorf("gate opened %d times, want 1", *flags)
@@ -130,7 +133,7 @@ func TestRecordFenceDecisionOpensNoGateWithoutAJournal(t *testing.T) {
 	agent := &SBRAgent{}
 	flags := stubArmingFlag(t)
 
-	agent.recordFenceDecision(bootunit.SourceAutonomous, "storage unhealthy")
+	agent.recordFenceDecision(bootunit.SourceAutonomous, "storage unhealthy", "")
 
 	if *flags != 0 {
 		t.Error("a gate must never be opened without a journal behind it")
@@ -383,5 +386,118 @@ func TestResumeRejectsForeignNodeUID(t *testing.T) {
 				t.Fatalf("fenceDecisionRecorded = %v, want %v", got, tc.wantResume)
 			}
 		})
+	}
+}
+
+// The reset budget needs this Node's UID even when the boot unit is disabled
+// (its default), so the UID is read independently of the unit.
+func TestResolveNodeUID(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "node-uid-1"}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).Build()
+
+	if got := resolveNodeUID(context.Background(), c, "worker-1"); got != "node-uid-1" {
+		t.Fatalf("resolveNodeUID = %q, want node-uid-1", got)
+	}
+	// An unreachable API leaves the binding unknown rather than inventing one.
+	if got := resolveNodeUID(context.Background(), failingClient{}, "worker-1"); got != "" {
+		t.Fatalf("resolveNodeUID on a failing client = %q, want empty", got)
+	}
+	if got := resolveNodeUID(context.Background(), c, ""); got != "" {
+		t.Fatalf("resolveNodeUID without a node name = %q, want empty", got)
+	}
+}
+
+// An epoch charged by a replaced Node must not limit the new one, including on
+// the disabled-boot-unit path where the UID comes from resolveNodeUID rather
+// than from the unit.
+func TestLoadBudgetLedgerDropsAnEpochFromAReplacedNode(t *testing.T) {
+	j, err := bootunit.NewJournal(nodestatetest.TempStateDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	// The predecessor charged this host's only autonomous attempt.
+	stale := budget.State{
+		SchemaVersion: budget.SchemaVersion,
+		CurrentEpoch:  &budget.Epoch{ID: "local-old", AutonomousCharged: true, LastChargeAt: time.Now()},
+		Attempts: []budget.Attempt{{
+			ID: "incident-old", EpochID: "local-old", Kind: budget.KindAutonomous,
+			NodeUID: "old-node-uid", Counted: true,
+		}},
+	}
+	if err := j.WriteBudgetState(ctx, func(*budget.State) (*budget.State, error) {
+		return &stale, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	agent := &SBRAgent{
+		journal:        j,
+		nodeName:       "worker-1",
+		nodeUID:        "new-node-uid",
+		recorder:       record.NewFakeRecorder(8),
+		recorderObject: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}},
+	}
+	ledger := agent.loadBudgetLedger()
+	if ledger == nil {
+		t.Fatal("a journal-backed agent must get a ledger")
+	}
+	if !ledger.PermitsAutonomous() {
+		t.Fatal("the replacement Node inherited its predecessor's spent budget")
+	}
+}
+
+// The startup wiring itself is covered: with the boot unit disabled (its
+// default) the UID comes from a direct Node read, and that binding is what lets
+// the loaded ledger drop an epoch charged by a replaced Node.
+func TestStartupNodeUIDWiringDropsAForeignEpochWhenTheBootUnitIsOff(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "new-node-uid"}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).Build()
+
+	// The boot unit reported nothing: it is disabled by default.
+	if got := startupNodeUID(context.Background(), c, "worker-1", ""); got != "new-node-uid" {
+		t.Fatalf("startupNodeUID = %q, want the UID read from the Node", got)
+	}
+	// When the unit did report one, it wins and no extra read happens.
+	if got := startupNodeUID(context.Background(), failingClient{}, "worker-1", "from-unit"); got != "from-unit" {
+		t.Fatalf("startupNodeUID = %q, want the boot unit's value", got)
+	}
+
+	j, err := bootunit.NewJournal(nodestatetest.TempStateDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := budget.State{
+		SchemaVersion: budget.SchemaVersion,
+		CurrentEpoch:  &budget.Epoch{ID: "local-old", AutonomousCharged: true, LastChargeAt: time.Now()},
+		Attempts: []budget.Attempt{{
+			ID: "incident-old", EpochID: "local-old", Kind: budget.KindAutonomous,
+			NodeUID: "old-node-uid", Counted: true,
+		}},
+	}
+	if err := j.WriteBudgetState(context.Background(), func(*budget.State) (*budget.State, error) {
+		return &stale, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	agent := &SBRAgent{
+		journal:        j,
+		nodeName:       "worker-1",
+		nodeUID:        startupNodeUID(context.Background(), c, "worker-1", ""),
+		recorder:       record.NewFakeRecorder(8),
+		recorderObject: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}},
+	}
+	if ledger := agent.loadBudgetLedger(); ledger == nil || !ledger.PermitsAutonomous() {
+		t.Fatal("the replaced Node inherited its predecessor's spent budget through the startup wiring")
 	}
 }
