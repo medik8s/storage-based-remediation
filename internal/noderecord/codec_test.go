@@ -253,6 +253,38 @@ func TestRecord_UnmarshalJSON_UnsupportedSchemaVersionNotMutated(t *testing.T) {
 	}
 }
 
+// knownKeys drives the unknown-field split, so drift between it and Record is
+// not cosmetic. A declared field missing from knownKeys is decoded into its
+// own field and copied into Unknown, and MarshalJSON then overlays the stale
+// copy back on top — silently discarding whatever a mutate function changed.
+func TestKnownKeysMatchesRecordFields(t *testing.T) {
+	declared := map[string]bool{}
+	recordType := reflect.TypeOf(Record{})
+	for i := range recordType.NumField() {
+		name, _, _ := strings.Cut(recordType.Field(i).Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		declared[name] = true
+	}
+
+	known := map[string]bool{}
+	for _, key := range knownKeys {
+		known[key] = true
+	}
+
+	for name := range declared {
+		if !known[name] {
+			t.Errorf("Record declares %q but knownKeys omits it; a mutation of that field would be silently discarded", name)
+		}
+	}
+	for name := range known {
+		if !declared[name] {
+			t.Errorf("knownKeys lists %q, which Record no longer declares", name)
+		}
+	}
+}
+
 func TestCheckSize_UnderLimit(t *testing.T) {
 	encoded := strings.Repeat("a", MaxRecordBytes-1)
 

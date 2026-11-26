@@ -226,6 +226,96 @@ func TestUpdate_Success(t *testing.T) {
 	}
 }
 
+// The retry test below injects its conflict, which proves the loop but not
+// the precondition. Here the conflict is real: a competing writer lands
+// between the read and the write, and the fake client enforces
+// resourceVersion. Without a precondition the first attempt would succeed and
+// erase that writer's change.
+func TestUpdate_WriteCarriesResourceVersionPrecondition(t *testing.T) {
+	ctx := context.Background()
+	rec := minimalRecord(types.UID("uid-1"))
+	rec.CoordinationRevision = 1
+	c := fakeNodeClient(t, buildTestNode(t, "node-1", types.UID("uid-1"), rec))
+
+	mutateCalls := 0
+	mutate := func(node *corev1.Node, rec *Record) error {
+		mutateCalls++
+		rec.CoordinationRevision++
+		if mutateCalls > 1 {
+			return nil
+		}
+		competing := &corev1.Node{}
+		if err := c.Get(ctx, client.ObjectKey{Name: "node-1"}, competing); err != nil {
+			t.Fatalf("competing writer get: %v", err)
+		}
+		competing.Labels = map[string]string{"competing": "writer"}
+		if err := c.Update(ctx, competing); err != nil {
+			t.Fatalf("competing writer update: %v", err)
+		}
+		return nil
+	}
+
+	if err := Update(ctx, c, c, "node-1", mutate); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if mutateCalls != 2 {
+		t.Fatalf("expected the stale write to be rejected and retried, got %d mutate calls", mutateCalls)
+	}
+
+	node := &corev1.Node{}
+	if err := c.Get(ctx, client.ObjectKey{Name: "node-1"}, node); err != nil {
+		t.Fatalf("Get after update: %v", err)
+	}
+	if node.Labels["competing"] != "writer" {
+		t.Fatal("the competing writer's change was erased, so the write carried no resourceVersion precondition")
+	}
+
+	stored := decodeStoredNode(t, c, "node-1")
+	if stored.CoordinationRevision != 2 {
+		t.Fatalf("expected the losing attempt to be discarded and reapplied once, got coordinationRevision=%d", stored.CoordinationRevision)
+	}
+}
+
+// coordinationRevision is Node-wide, not per-request, so swapping the active
+// execution and dropping the last restriction holder must leave it alone.
+func TestUpdate_CoordinationRevisionSurvivesExecutionReplacementAndRelease(t *testing.T) {
+	rec := minimalRecord(types.UID("uid-1"))
+	rec.CoordinationRevision = 9
+	rec.Execution = &Execution{
+		CR:            CRRef{Namespace: "ns", Name: "old", UID: types.UID("cr-old")},
+		InitialBootID: "boot-old",
+		Phase:         PhaseAccepted,
+	}
+	rec.Restrictions.RequiredByCRs = []types.UID{types.UID("cr-old")}
+	c := fakeNodeClient(t, buildTestNode(t, "node-1", types.UID("uid-1"), rec))
+
+	mutate := func(node *corev1.Node, rec *Record) error {
+		rec.PreviousExecutions = append(rec.PreviousExecutions, *rec.Execution)
+		rec.Execution = &Execution{
+			CR:            CRRef{Namespace: "ns", Name: "new", UID: types.UID("cr-new")},
+			InitialBootID: "boot-new",
+			Phase:         PhaseOffered,
+		}
+		rec.Restrictions.RequiredByCRs = nil
+		return nil
+	}
+
+	if err := Update(context.Background(), c, c, "node-1", mutate); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	stored := decodeStoredNode(t, c, "node-1")
+	if stored.CoordinationRevision != 9 {
+		t.Fatalf("coordinationRevision must survive execution replacement and release, got %d", stored.CoordinationRevision)
+	}
+	if stored.Execution == nil || stored.Execution.CR.UID != types.UID("cr-new") {
+		t.Fatalf("expected the replacement execution to be stored, got %+v", stored.Execution)
+	}
+	if len(stored.Restrictions.RequiredByCRs) != 0 {
+		t.Fatalf("expected the restriction to be released, got %v", stored.Restrictions.RequiredByCRs)
+	}
+}
+
 func TestUpdate_RetriesOnConflictAndReappliesMutate(t *testing.T) {
 	rec := minimalRecord(types.UID("uid-1"))
 	rec.CoordinationRevision = 1
