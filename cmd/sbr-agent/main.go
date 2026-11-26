@@ -2772,9 +2772,10 @@ func (s *SBRAgent) getScheme() *runtime.Scheme {
 func (s *SBRAgent) addSBRRemediationController() error {
 	// Create StorageBasedRemediation reconciler
 	reconciler := &controller.SBRRemediationReconciler{
-		Client:   s.controllerManager.GetClient(),
-		Scheme:   s.controllerManager.GetScheme(),
-		Recorder: s.controllerManager.GetEventRecorderFor("sbr-agent-remediation"),
+		Client:    s.controllerManager.GetClient(),
+		Scheme:    s.controllerManager.GetScheme(),
+		Recorder:  s.controllerManager.GetEventRecorderFor("sbr-agent-remediation"),
+		APIReader: s.controllerManager.GetAPIReader(),
 	}
 
 	// Set up the reconciler with agent resources

@@ -131,6 +131,8 @@ type SBRRemediationReconciler struct {
 	// StorageValidation status gates fencing. Set via SetSBRConfigRef.
 	sbrConfigName      string
 	sbrConfigNamespace string
+
+	APIReader client.Reader
 }
 
 // +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=storagebasedremediations,verbs=get;list;watch;create;update;patch;delete
