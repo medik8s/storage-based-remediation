@@ -165,6 +165,34 @@ func TestDaemonSetPassesHostStateFlagsInBlockPerNode(t *testing.T) {
 	}
 }
 
+func TestSharedAgentAndInitializationJobIOTimeoutFlag(t *testing.T) {
+	for _, mode := range []medik8sv1alpha1.SharedStorageVolumeModeType{medik8sv1alpha1.SharedStorageVolumeModeFilesystem, medik8sv1alpha1.SharedStorageVolumeModeBlock} {
+		t.Run(string(mode), func(t *testing.T) {
+			config := &medik8sv1alpha1.StorageBasedRemediationConfig{Spec: medik8sv1alpha1.StorageBasedRemediationConfigSpec{
+				SharedStorageVolumeMode: &mode,
+				IOTimeout:               &metav1.Duration{Duration: 45 * time.Second},
+			}}
+			r := &StorageBasedRemediationConfigReconciler{}
+			arguments := map[string][]string{"agent": r.buildSBRAgentArgs(config)}
+			if mode == medik8sv1alpha1.SharedStorageVolumeModeBlock {
+				job := r.buildBlockInitJob(config, "block-init", "shared-storage")
+				arguments["initialization-job"] = job.Spec.Template.Spec.Containers[0].Args
+			}
+			for component, args := range arguments {
+				var timeouts []string
+				for _, arg := range args {
+					if strings.HasPrefix(arg, "--io-timeout=") {
+						timeouts = append(timeouts, arg)
+					}
+				}
+				if len(timeouts) != 1 || timeouts[0] != "--io-timeout=2s" {
+					t.Fatalf("%s I/O timeout arguments = %v, want [--io-timeout=2s]", component, timeouts)
+				}
+			}
+		})
+	}
+}
+
 func TestDaemonSetOmitsDisabledBootSettings(t *testing.T) {
 	r := &StorageBasedRemediationConfigReconciler{}
 	disabled := false

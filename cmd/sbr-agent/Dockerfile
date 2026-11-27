@@ -35,6 +35,7 @@ USER default
 RUN git config --global --add safe.directory /workspace
 RUN VERSION="${OPERATOR_VERSION}" ./hack/build.sh -o bin/sbr-agent ./cmd/sbr-agent
 RUN VERSION="${OPERATOR_VERSION}" go build -o bin/sbr-self-cordon ./cmd/sbr-self-cordon
+RUN go build -o bin/sbr-watcher ./cmd/sbr-watcher
 
 # ==============================================================================
 # Runtime Stage - Minimal container for running the SBR Agent
@@ -58,12 +59,13 @@ RUN mkdir -p /var/log/sbr-agent && \
 # Copy the compiled binaries from the builder stage
 COPY --from=builder /workspace/bin/sbr-agent /usr/local/bin/sbr-agent
 COPY --from=builder /workspace/bin/sbr-self-cordon /usr/local/bin/sbr-self-cordon
+COPY --from=builder /workspace/bin/sbr-watcher /usr/local/bin/sbr-watcher
 
 # Copy the boot unit's systemd service file
 COPY deploy/sbr-self-cordon.service /usr/local/share/sbr-agent/sbr-self-cordon.service
 
 # Make the binaries executable
-RUN chmod +x /usr/local/bin/sbr-agent /usr/local/bin/sbr-self-cordon
+RUN chmod +x /usr/local/bin/sbr-agent /usr/local/bin/sbr-self-cordon /usr/local/bin/sbr-watcher
 
 
 # Set the working directory

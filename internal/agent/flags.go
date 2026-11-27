@@ -47,6 +47,7 @@ const (
 
 	// FlagPeerCheckInterval specifies the interval for checking peer heartbeats
 	FlagPeerCheckInterval = "peer-check-interval"
+	FlagIOTimeout         = "io-timeout"
 
 	// FlagMaxConsecutiveFailures caps consecutive failures before self-fence and peer timing.
 	FlagMaxConsecutiveFailures = "max-consecutive-failures"

@@ -2,6 +2,12 @@
 
 ## Overview
 
+When you use `BlockPerNode`, use exactly one `StorageBasedRemediationConfig` in the cluster.
+The current BlockPerNode command supplies probe monitoring and watcher integration.
+Host locking, watchdog execution, journal integration, boot reporting, and peer remediation remain incomplete.
+BlockPerNode uses the `sbr-per-node-agent` and `sbr-watcher` service accounts in the configuration namespace.
+The shared-mode service account descriptions below apply to Filesystem and shared Block configurations.
+
 StorageBasedRemediationConfig is a **namespaced** Kubernetes custom resource that configures the Storage-Based Remediation (SBR) operator for high-availability clustering with automatic node remediation. The SBR operator provides watchdog-based fencing to ensure cluster integrity by automatically rebooting unresponsive nodes.
 
 ## Key Features

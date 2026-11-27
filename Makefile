@@ -96,12 +96,16 @@ help: ## Display this help.
 ##@ Development
 
 .PHONY: manifests
-manifests: controller-gen agent-rbac ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
+manifests: controller-gen agent-rbac watcher-rbac ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	GOFLAGS=-mod=mod $(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: agent-rbac
 agent-rbac: controller-gen ## Generate ClusterRole for SBR Agent with minimal permissions.
 	GOFLAGS=-mod=mod $(CONTROLLER_GEN) rbac:roleName=sbr-agent-role,fileName=sbr_agent_generated_role.yaml paths="./cmd/sbr-agent/..." output:rbac:artifacts:config=config/rbac/
+
+.PHONY: watcher-rbac
+watcher-rbac: controller-gen ## Generate the watcher role.
+	GOFLAGS=-mod=mod $(CONTROLLER_GEN) rbac:roleName=sbr-watcher-role,fileName=sbr_watcher_generated_role.yaml paths="./cmd/sbr-watcher/..." output:rbac:artifacts:config=config/rbac/
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.

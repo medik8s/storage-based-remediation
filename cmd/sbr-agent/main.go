@@ -77,6 +77,7 @@ import (
 // +kubebuilder:rbac:groups="",resources=nodes/status,verbs=get;patch;update
 
 var (
+	blockPerNode   = flag.Bool("block-per-node", false, "Run the per-node probe monitor")
 	watchdogPath   = flag.String(agent.FlagWatchdogPath, agent.DefaultWatchdogPath, "Path to the watchdog device")
 	sbrDevice      = flag.String(agent.FlagSBRDevice, agent.DefaultSBRDevice, "Path to the SBR block device")
 	sbrFileLocking = flag.Bool(agent.FlagSBRFileLocking, agent.DefaultSBRFileLocking,
@@ -116,13 +117,13 @@ var (
 			"to the host's systemd or state directories for the unit.")
 	bootUnitTimeoutFlag = flag.Duration(agent.FlagBootUnitTimeout, 0,
 		"Positive boot-unit timeout. Required when boot-unit-enabled is true.")
-	autonomousRebootRecoveryPeriodFlag = flag.Duration(agent.FlagAutonomousRebootRecoveryPeriod, 5*time.Minute,
+	autonomousRebootRecoveryPeriodFlag = flag.Duration(agent.FlagAutonomousRebootRecoveryPeriod, v1alpha1.DefaultAutonomousRebootRecoveryPeriod,
 		"How long this node's storage must stay healthy before the agent releases the boot "+
 			"unit's cordon when no remediation CR ever claimed the node. Set by the controller "+
 			"from the configuration; the default matches the API default.")
 
 	// I/O timeout configuration
-	ioTimeout = flag.Duration("io-timeout", 2*time.Second,
+	ioTimeout = flag.Duration(agent.FlagIOTimeout, agent.IoTimeout,
 		"Timeout for I/O operations (prevents indefinite hanging when storage becomes unresponsive)")
 
 	// Init mode: initialize block device superblock and exit
@@ -2943,6 +2944,13 @@ func runBlockInit(devicePath string, ioTimeout time.Duration, log logr.Logger) e
 
 func main() {
 	flag.Parse()
+	if *blockPerNode {
+		if err := runPerNodeAgent(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if *bootUnitEnabled && *bootUnitTimeoutFlag <= 0 {
 		fmt.Fprintln(os.Stderr, "boot-unit-enabled requires a positive boot-unit-timeout")
 		os.Exit(1)

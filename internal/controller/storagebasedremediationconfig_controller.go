@@ -136,8 +136,9 @@ const (
 // StorageBasedRemediationConfigReconciler reconciles a StorageBasedRemediationConfig object
 type StorageBasedRemediationConfigReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	APIReader client.Reader
+	Scheme    *runtime.Scheme
+	Recorder  record.EventRecorder
 
 	// Retry configuration for Kubernetes API operations
 	retryConfig retry.Config
@@ -610,7 +611,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildBlockInitJob(
 							Args: []string{
 								fmt.Sprintf("--%s=true", agent.FlagInit),
 								fmt.Sprintf("--%s=%s", agent.FlagSBRDevice, agent.SharedStorageBlockDevicePath),
-								fmt.Sprintf("--io-timeout=%s", agent.IoTimeout),
+								fmt.Sprintf("--%s=%s", agent.FlagIOTimeout, agent.IoTimeout),
 							},
 							VolumeDevices: []corev1.VolumeDevice{
 								{
@@ -795,6 +796,17 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 	if sbrConfig.DeletionTimestamp != nil {
 		logger.Info("StorageBasedRemediationConfig is being deleted, performing cleanup")
 		return r.handleDeletion(ctx, &sbrConfig, logger)
+	}
+
+	if sbrConfig.Spec.IsBlockPerNodeMode() {
+		if err := sbrConfig.Spec.ValidateAll(); err != nil {
+			return ctrl.Result{}, err
+		}
+		agentImage, err := r.getAgentImage(logger)
+		if err != nil {
+			return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
+		}
+		return r.reconcileBlockPerNode(ctx, &sbrConfig, agentImage)
 	}
 
 	// Add finalizer if not present
@@ -1001,6 +1013,12 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 // handleDeletion handles the cleanup when an StorageBasedRemediationConfig is being deleted
 func (r *StorageBasedRemediationConfigReconciler) handleDeletion(
 	ctx context.Context, sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig, logger logr.Logger) (ctrl.Result, error) {
+	if sbrConfig.Spec.IsBlockPerNodeMode() {
+		if !controllerutil.ContainsFinalizer(sbrConfig, StorageBasedRemediationConfigFinalizerName) {
+			return ctrl.Result{}, nil
+		}
+		return r.retireBlockPerNode(ctx, sbrConfig, true)
+	}
 	logger.Info("Starting StorageBasedRemediationConfig cleanup")
 
 	// Clean up the ClusterRoleBinding specific to this StorageBasedRemediationConfig
@@ -1700,43 +1718,47 @@ func (r *StorageBasedRemediationConfigReconciler) warnIfMetricsNamespaceLabelMis
 
 // buildSBRAgentArgs builds the command line arguments for the sbr-agent container
 func (r *StorageBasedRemediationConfigReconciler) buildSBRAgentArgs(sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig) []string {
-	sbrTimeoutSeconds := sbrConfig.Spec.GetSBRTimeoutSeconds()
-	maxConsecutiveFailures := sbrConfig.Spec.GetMaxConsecutiveFailures()
-	sbrUpdateInterval := sbrConfig.Spec.GetSBRUpdateInterval()
-	peerCheckInterval := sbrConfig.Spec.GetPeerCheckInterval()
-	args := []string{
-		fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, getEffectiveWatchdogPath(sbrConfig)),
-		fmt.Sprintf("--%s=%s", agent.FlagLogLevel, agent.LogLevel),
-		fmt.Sprintf("--%s=%s", agent.FlagClusterName, sbrConfig.Name),
-		fmt.Sprintf("--%s=%s", agent.FlagSBRConfigName, sbrConfig.Name),
-		fmt.Sprintf("--%s=%s", agent.FlagStaleNodeTimeout, agent.StaleNodeTimeout),
-		fmt.Sprintf("--io-timeout=%s", agent.IoTimeout),
-		fmt.Sprintf("--%s=%s", agent.FlagRebootMethod, agent.RebootMethod),
-		fmt.Sprintf("--%s=%d", agent.FlagSBRTimeoutSeconds, sbrTimeoutSeconds),
-		fmt.Sprintf("--%s=%d", agent.FlagMaxConsecutiveFailures, maxConsecutiveFailures),
-		fmt.Sprintf("--%s=%s", agent.FlagSBRUpdateInterval, sbrUpdateInterval.String()),
-		fmt.Sprintf("--%s=%s", agent.FlagPeerCheckInterval, peerCheckInterval.String()),
-	}
-
-	// Add shared storage arguments if configured
-	if sbrConfig.Spec.HasSharedStorage() {
-		if sbrConfig.Spec.IsBlockMode() {
-			// Block mode: use the raw block device path directly
-			args = append(args, fmt.Sprintf("--%s=%s", agent.FlagSBRDevice, agent.SharedStorageBlockDevicePath))
-			// Block mode uses direct I/O — no file locking needed
-			args = append(args, fmt.Sprintf("--%s=false", agent.FlagSBRFileLocking))
-		} else {
-			// Filesystem mode: heartbeat device is a file within the shared storage mount
-			heartbeatDevicePath := fmt.Sprintf("%s/%s",
-				sbrConfig.Spec.GetSharedStorageMountPath(), agent.SharedStorageSBRDeviceFile)
-			args = append(args, fmt.Sprintf("--%s=%s", agent.FlagSBRDevice, heartbeatDevicePath))
-			// Enable file locking for shared storage safety
-			args = append(args, fmt.Sprintf("--%s=true", agent.FlagSBRFileLocking))
+	// BlockPerNode reads fixed probe timing from the owning Pod's environment.
+	args := []string{"--block-per-node=true"}
+	if !sbrConfig.Spec.IsBlockPerNodeMode() {
+		sbrTimeoutSeconds := sbrConfig.Spec.GetSBRTimeoutSeconds()
+		maxConsecutiveFailures := sbrConfig.Spec.GetMaxConsecutiveFailures()
+		sbrUpdateInterval := sbrConfig.Spec.GetSBRUpdateInterval()
+		peerCheckInterval := sbrConfig.Spec.GetPeerCheckInterval()
+		args = []string{
+			fmt.Sprintf("--%s=%s", agent.FlagWatchdogPath, getEffectiveWatchdogPath(sbrConfig)),
+			fmt.Sprintf("--%s=%s", agent.FlagLogLevel, agent.LogLevel),
+			fmt.Sprintf("--%s=%s", agent.FlagClusterName, sbrConfig.Name),
+			fmt.Sprintf("--%s=%s", agent.FlagSBRConfigName, sbrConfig.Name),
+			fmt.Sprintf("--%s=%s", agent.FlagStaleNodeTimeout, agent.StaleNodeTimeout),
+			fmt.Sprintf("--%s=%s", agent.FlagIOTimeout, agent.IoTimeout),
+			fmt.Sprintf("--%s=%s", agent.FlagRebootMethod, agent.RebootMethod),
+			fmt.Sprintf("--%s=%d", agent.FlagSBRTimeoutSeconds, sbrTimeoutSeconds),
+			fmt.Sprintf("--%s=%d", agent.FlagMaxConsecutiveFailures, maxConsecutiveFailures),
+			fmt.Sprintf("--%s=%s", agent.FlagSBRUpdateInterval, sbrUpdateInterval.String()),
+			fmt.Sprintf("--%s=%s", agent.FlagPeerCheckInterval, peerCheckInterval.String()),
 		}
-	}
 
-	if sbrConfig.Spec.GetDetectOnlyMode() {
-		args = append(args, fmt.Sprintf("--%s=true", agent.FlagDetectOnlyMode))
+		// Add shared storage arguments if configured
+		if sbrConfig.Spec.HasSharedStorage() {
+			if sbrConfig.Spec.IsBlockMode() {
+				// Block mode: use the raw block device path directly
+				args = append(args, fmt.Sprintf("--%s=%s", agent.FlagSBRDevice, agent.SharedStorageBlockDevicePath))
+				// Block mode uses direct I/O — no file locking needed
+				args = append(args, fmt.Sprintf("--%s=false", agent.FlagSBRFileLocking))
+			} else {
+				// Filesystem mode: heartbeat device is a file within the shared storage mount
+				heartbeatDevicePath := fmt.Sprintf("%s/%s",
+					sbrConfig.Spec.GetSharedStorageMountPath(), agent.SharedStorageSBRDeviceFile)
+				args = append(args, fmt.Sprintf("--%s=%s", agent.FlagSBRDevice, heartbeatDevicePath))
+				// Enable file locking for shared storage safety
+				args = append(args, fmt.Sprintf("--%s=true", agent.FlagSBRFileLocking))
+			}
+		}
+
+		if sbrConfig.Spec.GetDetectOnlyMode() {
+			args = append(args, fmt.Sprintf("--%s=true", agent.FlagDetectOnlyMode))
+		}
 	}
 
 	// Node-local host state (journal, boot unit) is enabled per volume mode.
@@ -1794,17 +1816,15 @@ func (r *StorageBasedRemediationConfigReconciler) buildVolumeMounts(sbrConfig *m
 		{Name: "proc", MountPath: "/proc", ReadOnly: true},
 	}
 
-	// A bind mount at destination /dev makes the OCI runtime skip creating the CSI-mapped block device
-	// node, so in block mode mount the host /dev at a side path (/host-dev); the agent resolves the
-	// watchdog under it and softdog's runtime-created device appears via the live directory mount.
-	if sbrConfig.Spec.IsBlockMode() {
+	// Both block modes use /host-dev because a /dev mount hides CSI devices.
+	if sbrConfig.Spec.IsBlockMode() || sbrConfig.Spec.IsBlockPerNodeMode() {
 		mounts = append(mounts, corev1.VolumeMount{Name: "host-dev", MountPath: BlockModeHostDevMountPath})
 	} else {
 		mounts = append(mounts, corev1.VolumeMount{Name: "dev", MountPath: "/dev"})
 	}
 
 	// Add shared storage mount for filesystem mode only; block mode uses volumeDevices
-	if sbrConfig.Spec.HasSharedStorage() && !sbrConfig.Spec.IsBlockMode() {
+	if sbrConfig.Spec.HasSharedStorage() && !sbrConfig.Spec.IsBlockMode() && !sbrConfig.Spec.IsBlockPerNodeMode() {
 		mounts = append(mounts, corev1.VolumeMount{
 			Name:      "shared-storage",
 			MountPath: sbrConfig.Spec.GetSharedStorageMountPath(),
@@ -1866,10 +1886,8 @@ func (r *StorageBasedRemediationConfigReconciler) buildVolumes(sbrConfig *medik8
 		},
 	}
 
-	// See buildVolumeMounts: block mode mounts the host watchdog directory at /host-dev (a bind mount
-	// at /dev makes the runtime skip the CSI block-device node). The host path is derived from the
-	// configured watchdog path so no /dev location is assumed; filesystem mode mounts the whole host /dev.
-	if sbrConfig.Spec.IsBlockMode() {
+	// Both block modes expose the host watchdog directory without hiding CSI devices under /dev.
+	if sbrConfig.Spec.IsBlockMode() || sbrConfig.Spec.IsBlockPerNodeMode() {
 		volumes = append(volumes, corev1.Volume{
 			Name: "host-dev",
 			VolumeSource: corev1.VolumeSource{
@@ -1945,7 +1963,7 @@ func (r *StorageBasedRemediationConfigReconciler) buildVolumes(sbrConfig *medik8
 	}
 
 	// Add shared storage volume if configured
-	if sbrConfig.Spec.HasSharedStorage() {
+	if sbrConfig.Spec.HasSharedStorage() && !sbrConfig.Spec.IsBlockPerNodeMode() {
 		volumes = append(volumes, corev1.Volume{
 			Name: "shared-storage",
 			VolumeSource: corev1.VolumeSource{
@@ -2160,6 +2178,7 @@ func (r *StorageBasedRemediationConfigReconciler) SetupWithManager(mgr ctrl.Mana
 	logger.Info("Setting up StorageBasedRemediationConfig controller")
 
 	r.FilterLog = logger.WithName("filter")
+	r.APIReader = mgr.GetAPIReader()
 
 	// only react when the spec generation actually changes. DeleteFunc explicitly
 	// documents the intent to re-create the NetworkPolicy if it is ever deleted out-of-band.
@@ -2177,6 +2196,18 @@ func (r *StorageBasedRemediationConfigReconciler) SetupWithManager(mgr ctrl.Mana
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
 		Owns(&networkingv1.NetworkPolicy{}, builder.WithPredicates(networkPolicyPredicates)).
+		Owns(&appsv1.Deployment{}).
+		Watches(&corev1.Node{}, r.blockPerNodeEvents(), builder.WithPredicates(blockPerNodeNodePredicate())).
+		Watches(&corev1.Pod{}, r.blockPerNodeEvents()).
+		Watches(&corev1.PersistentVolumeClaim{}, r.blockPerNodeEvents()).
+		Watches(&corev1.PersistentVolume{}, r.blockPerNodeEvents()).
+		Watches(&storagev1.StorageClass{}, r.blockPerNodeEvents()).
+		Watches(&storagev1.CSINode{}, r.blockPerNodeEvents()).
+		Watches(&storagev1.CSIDriver{}, r.blockPerNodeEvents()).
+		Watches(&appsv1.ReplicaSet{}, r.blockPerNodeEvents()).
+		Watches(&appsv1.DaemonSet{}, r.blockPerNodeEvents()).
+		Watches(&corev1.Event{}, r.blockPerNodeEvents()).
+		Watches(&medik8sv1alpha1.StorageBasedRemediationConfig{}, r.blockPerNodeEvents(), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("sbrconfig").
 		Complete(r)
 
