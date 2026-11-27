@@ -94,6 +94,138 @@ func TestWatcherGroupsAreDeterministicAndKeepLabelPresence(t *testing.T) {
 	}
 }
 
+func TestWatcherGroupMembershipChanges(t *testing.T) {
+	ctx := context.Background()
+	config := watcherConfig()
+	config.Spec.WatcherGroupSize = ptr.To[int32](2)
+	config.Spec.NodeSelector = map[string]string{"selected": "true"}
+	a1, a2, a3, b1, host := watcherNode("a1"), watcherNode("a2"), watcherNode("a3"), watcherNode("b1"), watcherNode("host")
+	uids := map[string]types.UID{}
+	for _, node := range []*corev1.Node{&a1, &a2, &a3, &b1} {
+		node.Labels["selected"] = "true"
+		node.Labels[corev1.LabelTopologyRegion] = "region"
+		node.Labels[corev1.LabelTopologyZone] = "a"
+		uids[node.Name] = node.UID
+	}
+	b1.Labels[corev1.LabelTopologyZone] = "b"
+	r := watcherReconciler(config, &a1, &a3, &b1, &host, csiFor(host))
+	reconcile := func(want [][]string) map[string]blockpernode.WatcherTargets {
+		t.Helper()
+		if err := r.Get(ctx, client.ObjectKeyFromObject(config), config); err != nil {
+			t.Fatalf("read stored configuration: %v", err)
+		}
+		if _, err := r.reconcileBlockPerNode(ctx, config, "image"); err != nil {
+			t.Fatalf("reconcile watcher groups: %v", err)
+		}
+		var deployments appsv1.DeploymentList
+		if err := r.List(ctx, &deployments, client.InNamespace(config.Namespace), client.MatchingLabels{blockpernode.ConfigurationUIDLabel: string(config.UID)}); err != nil {
+			t.Fatalf("read stored watcher Deployments: %v", err)
+		}
+		if len(deployments.Items) != len(want) {
+			t.Fatalf("watcher Deployments=%d, want groups %v", len(deployments.Items), want)
+		}
+		memberships := map[string]bool{}
+		expected := map[string]types.UID{}
+		for _, names := range want {
+			memberships[fmt.Sprint(names)] = true
+			for _, name := range names {
+				expected[name] = uids[name]
+			}
+		}
+		assignments := map[string]blockpernode.WatcherTargets{}
+		seen := map[types.UID]bool{}
+		for _, deployment := range deployments.Items {
+			payload := ""
+			for _, container := range deployment.Spec.Template.Spec.Containers {
+				if container.Name == "sbr-watcher" {
+					for _, env := range container.Env {
+						if env.Name == blockpernode.TargetsEnv {
+							payload = env.Value
+						}
+					}
+				}
+			}
+			var assignment blockpernode.WatcherTargets
+			if err := json.Unmarshal([]byte(payload), &assignment); err != nil {
+				t.Fatalf("decode watcher targets in Deployment %s: %v", deployment.Name, err)
+			}
+			if assignment.ConfigUID != config.UID || assignment.Group == "" {
+				t.Fatalf("Deployment %s has invalid assignment: %+v", deployment.Name, assignment)
+			}
+			var names []string
+			for _, target := range assignment.Targets {
+				if target.UID != expected[target.Name] || seen[target.UID] {
+					t.Fatalf("unexpected or repeated target in Deployment %s: %+v", deployment.Name, target)
+				}
+				seen[target.UID] = true
+				names = append(names, target.Name)
+				node := &corev1.Node{}
+				if err := r.Get(ctx, client.ObjectKey{Name: target.Name}, node); err != nil {
+					t.Fatalf("read assigned Node %s: %v", target.Name, err)
+				}
+				if node.Annotations[blockpernode.GroupAnnotation] != assignment.Group {
+					t.Fatalf("Node %s group=%q, watcher group=%q", target.Name, node.Annotations[blockpernode.GroupAnnotation], assignment.Group)
+				}
+			}
+			if !memberships[fmt.Sprint(names)] {
+				t.Fatalf("Deployment %s targets=%v, want groups %v", deployment.Name, names, want)
+			}
+			affinity := deployment.Spec.Template.Spec.Affinity
+			if affinity == nil || affinity.NodeAffinity == nil || affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+				t.Fatalf("Deployment %s has no required node affinity", deployment.Name)
+			}
+			terms := affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+			wantTerms := []corev1.NodeSelectorTerm{{MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{"host"}}}}}
+			if !reflect.DeepEqual(terms, wantTerms) {
+				t.Fatalf("Deployment %s required node affinity=%+v, want %+v", deployment.Name, terms, wantTerms)
+			}
+			assignments[names[0]] = assignment
+		}
+		if len(seen) != len(expected) {
+			t.Fatalf("assigned target UIDs=%v, want targets %v", seen, expected)
+		}
+		return assignments
+	}
+	initial := reconcile([][]string{{"a1", "a3"}, {"b1"}})
+	if err := r.Create(ctx, &a2); err != nil {
+		t.Fatalf("create Node a2: %v", err)
+	}
+	added := reconcile([][]string{{"a1", "a2"}, {"a3"}, {"b1"}})
+	if initial["a1"].Group != added["a1"].Group || initial["b1"].Group != added["b1"].Group {
+		t.Fatal("adding a target changed an existing partition's first group ID")
+	}
+	if err := r.Delete(ctx, &a1); err != nil {
+		t.Fatalf("delete Node a1: %v", err)
+	}
+	deleted := reconcile([][]string{{"a2", "a3"}, {"b1"}})
+	if initial["a1"].Group != deleted["a2"].Group || initial["b1"].Group != deleted["b1"].Group {
+		t.Fatal("deleting a target changed an existing partition's first group ID")
+	}
+	key := client.ObjectKey{Namespace: config.Namespace, Name: watcherAccountName + "-" + added["a3"].Group}
+	if err := r.Get(ctx, key, &appsv1.Deployment{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("obsolete second zone A Deployment remains: %v", err)
+	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(&b1), &b1); err != nil {
+		t.Fatalf("read Node b1: %v", err)
+	}
+	b1.Labels[corev1.LabelTopologyZone] = "a"
+	if err := r.Update(ctx, &b1); err != nil {
+		t.Fatalf("change Node b1 zone: %v", err)
+	}
+	want := [][]string{{"a2", "a3"}, {"b1"}}
+	relabeled := reconcile(want)
+	if deleted["a2"].Group != relabeled["a2"].Group || deleted["b1"].Group == relabeled["b1"].Group {
+		t.Fatal("zone change did not preserve the first zone A group and replace the zone B group")
+	}
+	key.Name = watcherAccountName + "-" + deleted["b1"].Group
+	if err := r.Get(ctx, key, &appsv1.Deployment{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("obsolete zone B Deployment remains: %v", err)
+	}
+	if repeated := reconcile(want); !reflect.DeepEqual(relabeled, repeated) {
+		t.Fatalf("repeated reconciliation changed watcher assignments: before=%+v after=%+v", relabeled, repeated)
+	}
+}
+
 type assignmentClient struct {
 	client.Client
 	updates int
@@ -249,24 +381,53 @@ func csiFor(node corev1.Node) *storagev1.CSINode {
 }
 
 func TestHostSelectionIntersectsAllVolumesAndExcludesUnmappedTargets(t *testing.T) {
-	a, b, c := watcherNode("a"), watcherNode("b"), watcherNode("c")
-	a.Labels["rack"] = "1"
-	b.Labels["rack"] = "2"
-	c.Labels["rack"] = "2"
-	c.Labels["disk"] = "fast"
+	ctx := context.Background()
+	a, b := watcherNode("a"), watcherNode("b")
+	rackOnly, diskOnly, both := watcherNode("rack-only"), watcherNode("disk-only"), watcherNode("both")
+	for _, node := range []*corev1.Node{&a, &b, &both} {
+		node.Labels["rack"] = "2"
+		node.Labels["disk"] = "fast"
+	}
+	a.Labels["selected"], b.Labels["selected"] = "true", "true"
+	rackOnly.Labels["rack"] = "2"
+	diskOnly.Labels["disk"] = "fast"
 	_, _, _, _, _, pv := probeObjects()
 	pv.Spec.NodeAffinity = &corev1.VolumeNodeAffinity{Required: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "rack", Operator: corev1.NodeSelectorOpIn, Values: []string{"2"}}}}}}}
 	pv2 := pv.DeepCopy()
 	pv2.Spec.NodeAffinity.Required.NodeSelectorTerms[0].MatchExpressions = []corev1.NodeSelectorRequirement{{Key: "disk", Operator: corev1.NodeSelectorOpIn, Values: []string{"fast"}}}
-	r := watcherReconciler(csiFor(a), csiFor(b), csiFor(c))
-	hosts, err := r.eligibleWatcherHosts(context.Background(), watcherGroup{Nodes: []corev1.Node{a, b}}, []corev1.Node{a, b, c}, []*corev1.PersistentVolume{pv, pv2})
-	if err != nil || !reflect.DeepEqual(hosts, []string{"c"}) {
+	r := watcherReconciler(csiFor(a), csiFor(b), csiFor(rackOnly), csiFor(diskOnly), csiFor(both))
+	group := watcherGroup{Nodes: []corev1.Node{a, b}}
+	nodes := []corev1.Node{a, b, rackOnly, diskOnly, both}
+	volumes := []*corev1.PersistentVolume{pv, pv2}
+	hosts, err := r.eligibleWatcherHosts(ctx, group, nodes, volumes)
+	if err != nil || !reflect.DeepEqual(hosts, []string{"both"}) {
 		t.Fatalf("hosts %v %v", hosts, err)
 	}
-	old := csiFor(c)
+	csi := &storagev1.CSINode{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(&both), csi); err != nil {
+		t.Fatalf("read host CSINode: %v", err)
+	}
+	drivers := csi.Spec.Drivers
+	csi.Spec.Drivers = nil
+	if err := r.Update(ctx, csi); err != nil {
+		t.Fatalf("remove host CSI driver: %v", err)
+	}
+	hosts, err = r.eligibleWatcherHosts(ctx, group, nodes, volumes)
+	if err != nil || len(hosts) != 0 {
+		t.Fatalf("host without required CSI driver accepted: %v %v", hosts, err)
+	}
+	csi.Spec.Drivers = drivers
+	if err := r.Update(ctx, csi); err != nil {
+		t.Fatalf("restore host CSI driver: %v", err)
+	}
+	hosts, err = r.eligibleWatcherHosts(ctx, group, nodes, volumes)
+	if err != nil || !reflect.DeepEqual(hosts, []string{"both"}) {
+		t.Fatalf("restored host not eligible: %v %v", hosts, err)
+	}
+	old := csiFor(both)
 	old.OwnerReferences[0].UID = "old-node"
 	r = watcherReconciler(old)
-	hosts, err = r.eligibleWatcherHosts(context.Background(), watcherGroup{Nodes: []corev1.Node{a, b}}, []corev1.Node{a, b, c}, []*corev1.PersistentVolume{pv})
+	hosts, err = r.eligibleWatcherHosts(ctx, group, nodes, volumes)
 	if err != nil || len(hosts) != 0 {
 		t.Fatalf("old CSI owner accepted: %v %v", hosts, err)
 	}
