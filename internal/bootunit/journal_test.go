@@ -18,6 +18,7 @@ package bootunit
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,8 @@ import (
 
 	"github.com/medik8s/common/pkg/nodestate"
 	"github.com/medik8s/common/pkg/nodestate/nodestatetest"
+
+	"github.com/medik8s/storage-based-remediation/v5/internal/budget"
 )
 
 // newTestJournal returns a Journal over a fresh temporary state directory.
@@ -544,5 +547,109 @@ func TestReadForArmingPrefersRecordedVerdict(t *testing.T) {
 					got, tt.wantUnhealthy, tt.verdict, tt.lastIOOK)
 			}
 		})
+	}
+}
+
+// A budget state round-trips through the real nodestate store: write, read
+// back, and the Extra entry survives alongside the arming state.
+func TestBudgetStateRoundTrip(t *testing.T) {
+	j := newTestJournal(t)
+	ctx := context.Background()
+
+	// Absent journal: no state, no error.
+	if st, err := j.ReadBudgetState(ctx); err != nil || st != nil {
+		t.Fatalf("read on absent journal = (%v, %v), want (nil, nil)", st, err)
+	}
+
+	want := &budget.State{
+		SchemaVersion: budget.SchemaVersion,
+		CurrentEpoch:  &budget.Epoch{ID: "local-abc", AutonomousCharged: true},
+		Attempts: []budget.Attempt{{
+			ID: "incident-1", EpochID: "local-abc", Kind: budget.KindAutonomous,
+			NodeUID: "node-uid-1", BootID: "boot-1", Counted: true,
+		}},
+	}
+	if err := j.WriteBudgetState(ctx, func(recovered *budget.State) (*budget.State, error) {
+		if recovered != nil {
+			t.Fatalf("recovered = %+v, want nil on first write", recovered)
+		}
+		return want, nil
+	}); err != nil {
+		t.Fatalf("WriteBudgetState: %v", err)
+	}
+
+	got, err := j.ReadBudgetState(ctx)
+	if err != nil {
+		t.Fatalf("ReadBudgetState: %v", err)
+	}
+	if got == nil || got.CurrentEpoch == nil || got.CurrentEpoch.ID != "local-abc" ||
+		!got.CurrentEpoch.AutonomousCharged || len(got.Attempts) != 1 ||
+		got.Attempts[0].ID != "incident-1" || !got.HistoryKnown {
+		t.Fatalf("round-tripped state = %+v, want the written state", got)
+	}
+
+	// The mutate function sees the recovered state on the second write.
+	if err := j.WriteBudgetState(ctx, func(recovered *budget.State) (*budget.State, error) {
+		if recovered == nil || recovered.CurrentEpoch == nil {
+			t.Fatalf("recovered = %+v, want the previously written state", recovered)
+		}
+		next := *recovered
+		next.Attempts = append(next.Attempts, budget.Attempt{
+			ID: "cr-uid-9", EpochID: recovered.CurrentEpoch.ID, Kind: budget.KindRequested,
+		})
+		return &next, nil
+	}); err != nil {
+		t.Fatalf("second WriteBudgetState: %v", err)
+	}
+	got, err = j.ReadBudgetState(ctx)
+	if err != nil {
+		t.Fatalf("ReadBudgetState after second write: %v", err)
+	}
+	if len(got.Attempts) != 2 {
+		t.Fatalf("attempts after second write = %d, want 2", len(got.Attempts))
+	}
+
+	// A nil next state writes nothing.
+	if err := j.WriteBudgetState(ctx, func(*budget.State) (*budget.State, error) {
+		return nil, nil
+	}); err != nil {
+		t.Fatalf("nil next state must not error: %v", err)
+	}
+	if got, err := j.ReadBudgetState(ctx); err != nil || len(got.Attempts) != 2 {
+		t.Fatalf("nil write changed the state: (%+v, %v)", got, err)
+	}
+}
+
+// An unsupported schema version in the Extra entry is an error, never a
+// silent reinterpretation, and the entry is left in place.
+func TestBudgetStateUnsupportedSchema(t *testing.T) {
+	j := newTestJournal(t)
+	ctx := context.Background()
+
+	encoded, err := budget.Encode(budget.State{SchemaVersion: budget.SchemaVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Hand-write a future version straight into the store: Encode stamps
+	// the current version, so a future one can only exist on disk.
+	future := `{"schemaVersion":99,"currentEpoch":{"id":"future"}}`
+	doc := nodestate.NewDocument(nodestate.ComponentSBR)
+	if doc.Agent.Extra == nil {
+		doc.Agent.Extra = make(map[string]string)
+	}
+	doc.Agent.Extra[KeyBudgetState] = future
+	if err := j.store.Write(ctx, doc); err != nil {
+		t.Fatalf("write future version: %v", err)
+	}
+	_ = encoded
+	if _, err := j.ReadBudgetState(ctx); !errors.Is(err, budget.ErrUnknownSchema) {
+		t.Fatalf("read future version = %v, want ErrUnknownSchema", err)
+	}
+	// And the write path refuses to recover-and-overwrite it.
+	if err := j.WriteBudgetState(ctx, func(*budget.State) (*budget.State, error) {
+		t.Fatal("mutate must not run on an unrecoverable state")
+		return nil, nil
+	}); err == nil {
+		t.Fatal("write over unsupported schema must fail")
 	}
 }

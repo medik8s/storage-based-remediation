@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/medik8s/storage-based-remediation/v5/internal/bootunit"
+	"github.com/medik8s/storage-based-remediation/v5/internal/budget"
+	"github.com/medik8s/storage-based-remediation/v5/internal/mocks"
 )
 
 // failingClient fails every Get. The disabled gate must not touch the API at
@@ -155,5 +158,285 @@ func TestExecuteSelfFencingStandsDownWhenAnotherFenceIsInProgress(t *testing.T) 
 	case e := <-rec.Events:
 		t.Fatalf("the stood-down caller emitted %q; only the fence owner may act", e)
 	default:
+	}
+}
+
+// The reset budget refuses a second autonomous attempt in the same outage
+// (design §5.6 lines 562-563): the refusal leaves everything untouched —
+// no self-fence latch, no decision recorded — so the watchdog keeps being
+// fed while storage may still recover. The BudgetExhausted event is the
+// only observable side effect. The reboot method "none" keeps the
+// permitted path from rebooting anything.
+func TestExecuteSelfFencingRefusedWhenBudgetExhausted(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		source    string
+		exhausted bool
+		wantEvent bool
+	}{
+		{"autonomous with a consumed outage refuses", bootunit.SourceAutonomous, true, true},
+		{"autonomous with a fresh outage proceeds", bootunit.SourceAutonomous, false, false},
+		{"requested is never gated by the budget", bootunit.SourceRequested, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := record.NewFakeRecorder(8)
+			agent := &SBRAgent{
+				nodeName:       "worker-1",
+				recorder:       rec,
+				rebootMethod:   RebootMethodNone,
+				recorderObject: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}},
+			}
+			ledger := budget.NewLedger(nil, nil)
+			if tc.exhausted {
+				if err := ledger.Charge(budget.Attempt{
+					ID: "incident-1", EpochID: "local-epoch-1", Kind: budget.KindAutonomous,
+				}, time.Unix(0, 0)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			agent.budgetLedger = ledger
+
+			committed := agent.executeSelfFencing("storage failures", tc.source)
+
+			sawExhausted := false
+		drain:
+			for {
+				select {
+				case e := <-rec.Events:
+					if strings.Contains(e, EventReasonBudgetExhausted) {
+						sawExhausted = true
+					}
+				default:
+					break drain
+				}
+			}
+			if sawExhausted != tc.wantEvent {
+				t.Fatalf("BudgetExhausted event = %v, want %v", sawExhausted, tc.wantEvent)
+			}
+			if tc.wantEvent && committed {
+				t.Fatal("a budget-refused fence must report that it did NOT commit; " +
+					"otherwise the watchdog loop stops feeding and the hardware watchdog reboots anyway")
+			}
+			if !tc.wantEvent && !committed {
+				t.Fatal("a permitted fence must report that it committed")
+			}
+			if latched := agent.isSelfFenceDetected(); latched == tc.wantEvent {
+				// wantEvent==true means the fence was REFUSED: the latch
+				// must be down so the watchdog keeps being fed. wantEvent
+				// ==false means the fence proceeded (method "none": the
+				// latch is up but reboots nothing).
+				t.Fatalf("self-fence latch = %v; a refused fence must not latch it", latched)
+			}
+		})
+	}
+}
+
+// chargeBudget wires a reboot commitment into the ledger: best-effort
+// persistence, identity carried from the fence decision. With reboot
+// method "none" executeSelfFencing deliberately does not charge (nothing
+// reboots, so nothing is committed), which is why this tests the charging
+// helper directly.
+func TestChargeBudgetConsumesTheOutage(t *testing.T) {
+	rec := record.NewFakeRecorder(8)
+	agent := &SBRAgent{
+		nodeName:       "worker-1",
+		recorder:       rec,
+		rebootMethod:   RebootMethodNone,
+		recorderObject: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}},
+	}
+	var persisted []budget.State
+	ledger := budget.NewLedger(nil, func(s budget.State) error {
+		persisted = append(persisted, s)
+		return nil
+	})
+	agent.budgetLedger = ledger
+
+	agent.chargeBudget(sourceToBudgetKind(bootunit.SourceAutonomous), "incident-42", "local-epoch-42")
+
+	if ledger.PermitsAutonomous() {
+		t.Fatal("an autonomous charge must consume the outage's attempt")
+	}
+	if len(persisted) != 1 || persisted[0].Attempts[0].ID != "incident-42" {
+		t.Fatalf("persisted = %+v, want one charge for incident-42", persisted)
+	}
+
+	// A requested charge marks the outage without consuming the allowance.
+	agent2 := &SBRAgent{
+		nodeName:       "worker-2",
+		recorder:       rec,
+		recorderObject: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-2"}},
+	}
+	ledger2 := budget.NewLedger(nil, nil)
+	agent2.budgetLedger = ledger2
+	agent2.chargeBudget(sourceToBudgetKind(bootunit.SourceRequested), "cr-uid-7", "local-epoch-7")
+	if !ledger2.PermitsAutonomous() {
+		t.Fatal("a requested charge must not consume the autonomous allowance")
+	}
+}
+
+// The BudgetExhausted report is latched: the watchdog loop evaluates every
+// tick, so an unlatched event would flood the API for a long outage.
+func TestReportBudgetExhaustedOnce(t *testing.T) {
+	rec := record.NewFakeRecorder(8)
+	agent := &SBRAgent{
+		nodeName:       "worker-1",
+		recorder:       rec,
+		recorderObject: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}},
+	}
+
+	for i := 0; i < 5; i++ {
+		agent.reportBudgetExhaustedOnce()
+	}
+
+	count := 0
+drain:
+	for {
+		select {
+		case e := <-rec.Events:
+			if strings.Contains(e, EventReasonBudgetExhausted) {
+				count++
+			}
+		default:
+			break drain
+		}
+	}
+	if count != 1 {
+		t.Fatalf("BudgetExhausted events = %d, want exactly 1 for one outage", count)
+	}
+
+	// Re-arming (what the loop does once the budget permits again) allows a
+	// report for the NEXT outage.
+	agent.budgetRefusalReported.Store(false)
+	agent.reportBudgetExhaustedOnce()
+	count = 0
+	for i := 0; i < 3; i++ {
+		select {
+		case e := <-rec.Events:
+			if strings.Contains(e, EventReasonBudgetExhausted) {
+				count++
+			}
+		default:
+		}
+	}
+	if count != 1 {
+		t.Fatalf("after re-arming, BudgetExhausted events = %d, want 1", count)
+	}
+}
+
+// autonomousBudgetSpent is the watchdog loop's cheap pre-check and must
+// follow the ledger exactly, including the nil-ledger (non-BlockPerNode) case.
+func TestAutonomousBudgetSpent(t *testing.T) {
+	agent := &SBRAgent{}
+	if agent.autonomousBudgetSpent() {
+		t.Fatal("no ledger means no budget: the feature is off, not exhausted")
+	}
+
+	ledger := budget.NewLedger(nil, nil)
+	agent.budgetLedger = ledger
+	if agent.autonomousBudgetSpent() {
+		t.Fatal("a fresh ledger permits an autonomous attempt")
+	}
+	if err := ledger.Charge(budget.Attempt{
+		ID: "incident-1", EpochID: "local-e1", Kind: budget.KindAutonomous,
+	}, time.Unix(0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if !agent.autonomousBudgetSpent() {
+		t.Fatal("a charged outage must read as spent")
+	}
+
+	// A requested-only charge marks the outage without spending it.
+	ledger2 := budget.NewLedger(nil, nil)
+	agent.budgetLedger = ledger2
+	if err := ledger2.Charge(budget.Attempt{
+		ID: "cr-1", EpochID: "local-e2", Kind: budget.KindRequested,
+	}, time.Unix(0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if agent.autonomousBudgetSpent() {
+		t.Fatal("a requested reboot must not spend the autonomous allowance")
+	}
+}
+
+// HistoryUnknown is reported (design §5.10), and once the ledger has trusted
+// history it is not reported again.
+func TestLoadBudgetLedgerReportsUnknownHistory(t *testing.T) {
+	rec := record.NewFakeRecorder(8)
+	agent := &SBRAgent{
+		nodeName:       "worker-1",
+		recorder:       rec,
+		recorderObject: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}},
+	}
+	// No journal: the feature is off, nothing to report.
+	if l := agent.loadBudgetLedger(); l != nil {
+		t.Fatal("no journal must yield a nil ledger")
+	}
+	select {
+	case e := <-rec.Events:
+		t.Fatalf("unexpected event without a journal: %q", e)
+	default:
+	}
+}
+
+// Recovery is measured from the latest charge, not from a healthy clock that
+// started earlier: a charge must still cost a full recovery period even when
+// storage was already healthy when it landed.
+func TestRecordStorageOutcomeMeasuresRecoveryFromTheCharge(t *testing.T) {
+	agent := &SBRAgent{autonomousRebootRecoveryPeriod: 5 * time.Minute}
+	ledger := budget.NewLedger(nil, nil)
+	agent.budgetLedger = ledger
+
+	// Storage has been healthy for well over a period...
+	agent.storageHealthySince = time.Now().Add(-time.Hour)
+	// ...and a charge lands now.
+	if err := ledger.Charge(budget.Attempt{
+		ID: "incident-1", EpochID: "local-e1", Kind: budget.KindAutonomous,
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	agent.recordStorageOutcome(true)
+
+	if ledger.PermitsAutonomous() {
+		t.Fatal("the epoch must survive: the healthy clock predates the charge, " +
+			"so no full recovery has been observed since it")
+	}
+	// The rejoin-release gate still sees the older clock, unchanged.
+	if d, ok := agent.storageHealthyFor(); !ok || d < 50*time.Minute {
+		t.Fatalf("storageHealthySince was disturbed by the charge: %v (ok=%v)", d, ok)
+	}
+}
+
+// A spent budget keeps the node alive even when the remediation state cannot be
+// read: the autonomous path is closed by design, and a pending requested reboot
+// still arrives through the peer's fence path, which the budget never gates.
+func TestHandleWatchdogTickSBRUnhealthyPetsWhenBudgetSpentAndLookupFails(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		budgetSpent bool
+		wantPet     bool
+	}{
+		{"spent budget pets", true, true},
+		{"live budget skips the pet (reboot imminent)", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := record.NewFakeRecorder(8)
+			wd := mocks.NewMockWatchdog("/dev/null")
+			agent := &SBRAgent{
+				nodeName:       "worker-1",
+				recorder:       rec,
+				recorderObject: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}},
+				watchdog:       wd,
+				k8sClient:      failingClient{}, // the remediation lookup always errors
+				ctx:            context.Background(),
+			}
+
+			agent.handleWatchdogTickSBRUnhealthy(tc.budgetSpent)
+
+			pet := wd.GetPetCount() > 0
+			if pet != tc.wantPet {
+				t.Fatalf("watchdog pet = %v, want %v (petCount=%d)", pet, tc.wantPet, wd.GetPetCount())
+			}
+		})
 	}
 }

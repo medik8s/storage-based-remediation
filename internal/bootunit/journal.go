@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 
 	"github.com/medik8s/common/pkg/nodestate"
+
+	"github.com/medik8s/storage-based-remediation/v5/internal/budget"
 )
 
 // SBRStateVersion is the version of the SBR-specific key set stored in the
@@ -33,6 +35,11 @@ const SBRStateVersion = "1"
 const (
 	KeyStateVersion = "sbrStateVersion"
 	KeyArmingState  = "armingState"
+	// KeyBudgetState is the reset-budget ledger's key (design §5.6/§5.7).
+	// The value is the JSON serialization of budget.State; the library's
+	// retention never prunes Agent.Extra, which is what makes this the
+	// authoritative home for the budget.
+	KeyBudgetState = budget.StateKey
 )
 
 // ArmingState is the structured value stored in journal key "armingState".
@@ -302,6 +309,90 @@ func (j *Journal) ClearArmingState(ctx context.Context) error {
 
 	_, err = j.store.Update(ctx, func(doc *nodestate.Document) error {
 		delete(doc.Agent.Extra, KeyArmingState)
+		return nil
+	})
+	return err
+}
+
+// ReadBudgetState loads the reset-budget ledger from Agent.Extra. An absent
+// journal or an absent entry returns (nil, nil): the caller starts with
+// unknown history. An untrusted journal and a decode failure return errors
+// the agent maps to unknown history too — none of them ever grant a budget,
+// and none of them are overwritten by a later write, because WriteBudgetState
+// refuses to act on an untrusted journal.
+func (j *Journal) ReadBudgetState(ctx context.Context) (*budget.State, error) {
+	res, err := j.store.Load(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read journal before budget load: %w", err)
+	}
+	if res.Status == nodestate.StatusAbsent {
+		return nil, nil
+	}
+	if !res.Status.Trusted() {
+		return nil, fmt.Errorf("cannot load budget on %s journal: %w", res.Status, res.Cause)
+	}
+	raw := res.Document.Agent.Extra[KeyBudgetState]
+	if raw == "" {
+		return nil, nil
+	}
+	return budget.Decode(raw)
+}
+
+// WriteBudgetState persists the reset-budget ledger through mutate, on the
+// same trusted-journal contract as WriteArmingState. The mutate function
+// receives the recovered state (nil for unknown history) and returns the
+// state to persist; returning nil deletes nothing and writes nothing.
+func (j *Journal) WriteBudgetState(
+	ctx context.Context,
+	mutate func(recovered *budget.State) (*budget.State, error),
+) error {
+	res, err := j.store.Load(ctx)
+	if err != nil {
+		return fmt.Errorf("read journal before budget write: %w", err)
+	}
+	var recovered *budget.State
+	switch {
+	case res.Status == nodestate.StatusAbsent:
+		// A first charge on an absent journal creates the document.
+	case !res.Status.Trusted():
+		return fmt.Errorf("cannot write budget on %s journal: %w", res.Status, res.Cause)
+	default:
+		if raw := res.Document.Agent.Extra[KeyBudgetState]; raw != "" {
+			recovered, err = budget.Decode(raw)
+			if err != nil {
+				return fmt.Errorf("recover budget before write: %w", err)
+			}
+		}
+	}
+
+	next, err := mutate(recovered)
+	if err != nil {
+		return err
+	}
+	if next == nil {
+		return nil
+	}
+	encoded, err := budget.Encode(*next)
+	if err != nil {
+		return fmt.Errorf("encode budget before write: %w", err)
+	}
+
+	if res.Status == nodestate.StatusAbsent {
+		// The library requires explicit initialization before Update on an
+		// absent document — the same contract WriteArmingState follows.
+		doc := nodestate.NewDocument(nodestate.ComponentSBR)
+		if doc.Agent.Extra == nil {
+			doc.Agent.Extra = make(map[string]string)
+		}
+		doc.Agent.Extra[KeyBudgetState] = encoded
+		return j.store.Write(ctx, doc)
+	}
+
+	_, err = j.store.Update(ctx, func(doc *nodestate.Document) error {
+		if doc.Agent.Extra == nil {
+			doc.Agent.Extra = map[string]string{}
+		}
+		doc.Agent.Extra[KeyBudgetState] = encoded
 		return nil
 	})
 	return err
