@@ -67,6 +67,7 @@ import (
 
 // RBAC permissions for SBR Agent
 // The agent reads StorageBasedRemediationConfig, sets SBRStorageUnhealthy node condition for unhealthy peers, and reconciles StorageBasedRemediation CRs (created by NHC) for fencing.
+// The workload and volume reads are for the peer's cleanup window: after it confirms the OutOfService taint, a peer checks which Pods, volume attachments and SBR-owned DaemonSet Pods remain on the target. They are reads only — SBR never deletes workloads, volumes or attachments itself.
 // +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=storagebasedremediationconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=storagebasedremediationconfigs/status,verbs=get
 // +kubebuilder:rbac:groups=storage-based-remediation.medik8s.io,resources=storagebasedremediations,verbs=get;list;watch;update;patch
@@ -75,6 +76,9 @@ import (
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups="",resources=nodes/status,verbs=get;patch;update
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims;persistentvolumes,verbs=get;list
+// +kubebuilder:rbac:groups=storage.k8s.io,resources=volumeattachments,verbs=get;list
+// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list
 
 var (
 	watchdogPath   = flag.String(agent.FlagWatchdogPath, agent.DefaultWatchdogPath, "Path to the watchdog device")
