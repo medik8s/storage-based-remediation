@@ -32,7 +32,11 @@ import (
 	"github.com/medik8s/storage-based-remediation/v5/internal/blockpernode"
 )
 
-const placementRepair = "sbr.medik8s.io/placement-repair-for"
+const (
+	placementRepair         = "sbr.medik8s.io/placement-repair-for"
+	watcherAccountName      = "sbr-watcher"
+	perNodeAgentAccountName = "sbr-per-node-agent"
+)
 
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups="",resources=pods;persistentvolumeclaims;persistentvolumes;events,verbs=get;list;watch
@@ -92,16 +96,12 @@ func watcherGroups(config *api.StorageBasedRemediationConfig, nodes []corev1.Nod
 		members := partitions[partition]
 		sort.Slice(members, func(i, j int) bool { return members[i].Name < members[j].Name })
 		for offset := 0; offset < len(members); offset += size {
-			data, _ := json.Marshal([]string{string(config.UID), partition, strconv.Itoa(offset / size)})
+			data, _ := json.Marshal([]string{partition, strconv.Itoa(offset / size)})
 			hash := sha256.Sum256(data)
 			groups = append(groups, watcherGroup{ID: hex.EncodeToString(hash[:16]), Nodes: members[offset:min(offset+size, len(members))]})
 		}
 	}
 	return groups, incomplete
-}
-
-func configIdentity(c *api.StorageBasedRemediationConfig) blockpernode.ConfigurationIdentity {
-	return blockpernode.ConfigurationIdentity{Namespace: c.Namespace, Name: c.Name, UID: c.UID}
 }
 
 func (r *StorageBasedRemediationConfigReconciler) liveReader() client.Reader {
@@ -122,32 +122,6 @@ func selectedNodes(config *api.StorageBasedRemediationConfig, nodes []corev1.Nod
 	return selected
 }
 
-func (r *StorageBasedRemediationConfigReconciler) configurationConflicts(ctx context.Context, config *api.StorageBasedRemediationConfig, fullNodes, targets []corev1.Node) (bool, error) {
-	var configs api.StorageBasedRemediationConfigList
-	if err := r.List(ctx, &configs); err != nil {
-		return false, err
-	}
-	names := map[string]bool{}
-	for _, n := range targets {
-		names[n.Name] = true
-	}
-	for i := range configs.Items {
-		other := &configs.Items[i]
-		if other.UID == config.UID || other.DeletionTimestamp != nil {
-			continue
-		}
-		if other.Spec.IsBlockPerNodeMode() && config.Spec.SharedStorageClass != other.Spec.SharedStorageClass {
-			return true, nil
-		}
-		for _, n := range selectedNodes(other, fullNodes) {
-			if names[n.Name] {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
 // updateNodeAssignment reads the live Node and updates both owned annotations together.
 func (r *StorageBasedRemediationConfigReconciler) updateNodeAssignment(ctx context.Context, config *api.StorageBasedRemediationConfig, expected *corev1.Node, phase, group string) (*corev1.Node, error) {
 	node := &corev1.Node{}
@@ -165,20 +139,22 @@ func (r *StorageBasedRemediationConfigReconciler) updateNodeAssignment(ctx conte
 		if err != nil || owner.NodeUID != node.UID {
 			return nil, fmt.Errorf("invalid existing owner on Node %s", node.Name)
 		}
-		if owner.Configuration != configIdentity(config) && owner.Phase != blockpernode.Released {
+		if owner.ConfigUID != config.UID && owner.Phase != blockpernode.Released {
 			return nil, fmt.Errorf("Node %s retains another configuration owner", node.Name)
 		}
 	}
-	if phase != blockpernode.Active && owner.Configuration != configIdentity(config) {
+	if phase != blockpernode.Active && owner.ConfigUID != config.UID {
 		return nil, fmt.Errorf("Node %s is not owned by this configuration", node.Name)
 	}
-	if owner.Configuration != configIdentity(config) || owner.Phase == blockpernode.Released || (phase == blockpernode.Active && owner.Phase != blockpernode.Active) {
-		if owner.Configuration == configIdentity(config) && owner.Phase != blockpernode.Conflict && owner.Phase != blockpernode.Released && oldValue != "" {
+	if phase == blockpernode.Active && owner.Phase != blockpernode.Active {
+		switch owner.Phase {
+		case "", blockpernode.Released:
+			owner.OwnershipGeneration = string(uuid.NewUUID())
+		default:
 			return nil, fmt.Errorf("Node %s has not completed retirement", node.Name)
 		}
-		owner.OwnershipGeneration = string(uuid.NewUUID())
 	}
-	owner.Version, owner.NodeUID, owner.Configuration, owner.Phase = 1, node.UID, configIdentity(config), phase
+	owner.Version, owner.NodeUID, owner.ConfigUID, owner.Phase = 1, node.UID, config.UID, phase
 	encoded, _ := json.Marshal(owner)
 	if node.Annotations == nil {
 		node.Annotations = map[string]string{}
@@ -208,11 +184,11 @@ func newStructuralResult() *structuralResult { return &structuralResult{failures
 
 func (s *structuralResult) condition() (metav1.ConditionStatus, string, string) {
 	message := fmt.Sprintf("targets=%d mappedProbes=%d groups=%d readyGroups=%d", s.targets, s.mapped, s.groups, s.ready)
-	if s.failures["ConfigurationConflict"] {
-		return metav1.ConditionFalse, "ConfigurationConflict", message
-	}
 	if s.unavailable {
 		return metav1.ConditionUnknown, "StateUnavailable", message
+	}
+	if s.failures["SingleConfigurationRequired"] {
+		return metav1.ConditionFalse, "SingleConfigurationRequired", "BlockPerNode requires exactly one StorageBasedRemediationConfig across all namespaces"
 	}
 	for _, reason := range []string{"AssignmentIncomplete", "ProbeClaimUnavailable", "NoEligibleHost", "SchedulingFailed", "VolumeSetupFailed", "PodNotReady"} {
 		if s.failures[reason] {
@@ -235,13 +211,8 @@ func (r *StorageBasedRemediationConfigReconciler) writeWatcherStatus(ctx context
 	return r.Status().Update(ctx, config)
 }
 
-func watcherResourceName(config *api.StorageBasedRemediationConfig) string {
-	hash := sha256.Sum256([]byte(config.UID))
-	return "sbr-watcher-" + hex.EncodeToString(hash[:16])
-}
-
 func (r *StorageBasedRemediationConfigReconciler) ensureWatcherPermissions(ctx context.Context, config *api.StorageBasedRemediationConfig) error {
-	return r.ensurePerNodePermissions(ctx, config, watcherResourceName(config), "sbr-operator-sbr-watcher-role",
+	return r.ensurePerNodePermissions(ctx, config, watcherAccountName, "sbr-operator-sbr-watcher-role",
 		fmt.Errorf("watcher service account belongs to another owner"), fmt.Errorf("watcher binding belongs to another owner"))
 }
 
@@ -282,12 +253,6 @@ func (r *StorageBasedRemediationConfigReconciler) reconcileBlockPerNode(ctx cont
 	}
 	targets := selectedNodes(config, nodes.Items)
 	result.targets = len(targets)
-	conflict, err := r.configurationConflicts(ctx, config, nodes.Items, targets)
-	if err != nil {
-		result.unavailable = true
-		_ = r.writeWatcherStatus(ctx, config, result)
-		return requeue, err
-	}
 	selected := map[types.UID]bool{}
 	for _, node := range targets {
 		selected[node.UID] = true
@@ -295,25 +260,25 @@ func (r *StorageBasedRemediationConfigReconciler) reconcileBlockPerNode(ctx cont
 	var removed []corev1.Node
 	for _, node := range nodes.Items {
 		owner, err := blockpernode.DecodeOwner(node.Annotations[blockpernode.OwnerAnnotation])
-		if err == nil && owner.NodeUID == node.UID && owner.Configuration == configIdentity(config) && owner.Phase != blockpernode.Released && !selected[node.UID] {
+		if err == nil && owner.NodeUID == node.UID && owner.ConfigUID == config.UID && owner.Phase != blockpernode.Released && !selected[node.UID] {
 			removed = append(removed, node)
 		}
 	}
 	if config.Status.Retirement != nil || len(removed) > 0 {
 		return r.retireBlockPerNode(ctx, config, false)
 	}
-	if conflict {
-		result.failures["ConfigurationConflict"] = true
-		for i := range nodes.Items {
-			node := &nodes.Items[i]
-			owner, e := blockpernode.DecodeOwner(node.Annotations[blockpernode.OwnerAnnotation])
-			if e == nil && owner.Configuration == configIdentity(config) && owner.NodeUID == node.UID && owner.Phase == blockpernode.Active {
-				if _, e = r.updateNodeAssignment(ctx, config, node, blockpernode.Conflict, ""); e != nil {
-					return requeue, e
-				}
-			}
-		}
+	active, err := soleBlockPerNodeConfig(ctx, r.liveReader())
+	if err != nil {
+		result.unavailable = true
+		_ = r.writeWatcherStatus(ctx, config, result)
+		return requeue, err
+	}
+	if active == nil || active.UID != config.UID {
+		result.failures["SingleConfigurationRequired"] = true
 		return requeue, r.writeWatcherStatus(ctx, config, result)
+	}
+	if controllerutil.AddFinalizer(config, StorageBasedRemediationConfigFinalizerName) {
+		return ctrl.Result{Requeue: true}, r.Update(ctx, config)
 	}
 	groups, incomplete := watcherGroups(config, targets)
 	result.groups = len(groups)
@@ -329,7 +294,7 @@ func (r *StorageBasedRemediationConfigReconciler) reconcileBlockPerNode(ctx cont
 	for i := range targets {
 		node, e := r.updateNodeAssignment(ctx, config, &targets[i], blockpernode.Active, assigned[targets[i].UID])
 		if e != nil {
-			result.failures["ConfigurationConflict"] = true
+			result.failures["AssignmentIncomplete"] = true
 			_ = r.writeWatcherStatus(ctx, config, result)
 			return requeue, e
 		}
@@ -360,7 +325,7 @@ func (r *StorageBasedRemediationConfigReconciler) reconcileBlockPerNode(ctx cont
 		for i := range group.Nodes {
 			group.Nodes[i] = updated[group.Nodes[i].UID]
 		}
-		assignment := blockpernode.WatcherTargets{Version: 1, Configuration: configIdentity(config), Group: group.ID}
+		assignment := blockpernode.WatcherTargets{Version: 1, ConfigUID: config.UID, Group: group.ID}
 		var pvs []*corev1.PersistentVolume
 		for index, node := range group.Nodes {
 			owner, _ := blockpernode.DecodeOwner(node.Annotations[blockpernode.OwnerAnnotation])
@@ -433,7 +398,7 @@ func configurePerNodeAgent(daemon *appsv1.DaemonSet, config *api.StorageBasedRem
 	daemon.Labels[blockpernode.ConfigurationUIDLabel] = string(config.UID)
 	daemon.Spec.Template.Labels[blockpernode.ConfigurationUIDLabel] = string(config.UID)
 	c := &daemon.Spec.Template.Spec.Containers[0]
-	daemon.Spec.Template.Spec.ServiceAccountName = peerResourceName(config)
+	daemon.Spec.Template.Spec.ServiceAccountName = perNodeAgentAccountName
 	c.Env = append(c.Env, corev1.EnvVar{Name: "SBR_CONFIGURATION_UID", Value: string(config.UID)})
 	c.Env = append(c.Env, corev1.EnvVar{Name: blockpernode.ProbeIntervalEnv, Value: config.Spec.GetSBRUpdateInterval().String()}, corev1.EnvVar{Name: blockpernode.IOTimeoutEnv, Value: config.Spec.GetIOTimeout().String()}, corev1.EnvVar{Name: blockpernode.FailuresEnv, Value: strconv.Itoa(int(config.Spec.GetMaxConsecutiveFailures()))})
 	c.VolumeDevices = []corev1.VolumeDevice{{Name: blockpernode.ProbeVolume, DevicePath: blockpernode.ProbeDevice}}
@@ -513,7 +478,7 @@ func (r *StorageBasedRemediationConfigReconciler) discoverProbe(ctx context.Cont
 	if timingErr != nil {
 		timing = nil
 	}
-	mapping := &blockpernode.ProbeMapping{AgentPodUID: pod.UID, ClaimNamespace: pvc.Namespace, ClaimName: pvc.Name, ClaimUID: pvc.UID, DevicePath: blockpernode.DevicePath(index)}
+	mapping := &blockpernode.ProbeMapping{AgentPodUID: pod.UID, ClaimName: pvc.Name, ClaimUID: pvc.UID, DevicePath: blockpernode.DevicePath(index)}
 	return mapping, timing, pv, nil
 }
 
@@ -653,8 +618,7 @@ func buildWatcherDeployment(config *api.StorageBasedRemediationConfig, assignmen
 			terms = append(terms, corev1.NodeSelectorTerm{MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{host}}}})
 		}
 	}
-	nameHash := sha256.Sum256([]byte(assignment.Group))
-	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: watcherResourceName(config) + "-" + hex.EncodeToString(nameHash[:8]), Namespace: config.Namespace, Labels: managed}, Spec: appsv1.DeploymentSpec{Replicas: ptr.To[int32](1), Selector: &metav1.LabelSelector{MatchLabels: managed}, Strategy: appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType, RollingUpdate: &appsv1.RollingUpdateDeployment{MaxSurge: ptr.To(intstr.FromInt32(0)), MaxUnavailable: ptr.To(intstr.FromInt32(1))}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: managed, Annotations: map[string]string{}}, Spec: corev1.PodSpec{ServiceAccountName: watcherResourceName(config), Containers: []corev1.Container{container}, Volumes: volumes, NodeSelector: map[string]string{corev1.LabelOSStable: "linux"}, Affinity: &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: terms}}}}}}}
+	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: watcherAccountName + "-" + assignment.Group, Namespace: config.Namespace, Labels: managed}, Spec: appsv1.DeploymentSpec{Replicas: ptr.To[int32](1), Selector: &metav1.LabelSelector{MatchLabels: managed}, Strategy: appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType, RollingUpdate: &appsv1.RollingUpdateDeployment{MaxSurge: ptr.To(intstr.FromInt32(0)), MaxUnavailable: ptr.To(intstr.FromInt32(1))}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: managed, Annotations: map[string]string{}}, Spec: corev1.PodSpec{ServiceAccountName: watcherAccountName, Containers: []corev1.Container{container}, Volumes: volumes, NodeSelector: map[string]string{corev1.LabelOSStable: "linux"}, Affinity: &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: terms}}}}}}}
 	return d, validateWatcherDevices(assignment, &d.Spec.Template.Spec)
 }
 

@@ -41,21 +41,21 @@ func (c *permissionCreateClient) Create(ctx context.Context, object client.Objec
 func TestPerNodePermissionsCreation(t *testing.T) {
 	for _, entry := range []struct {
 		name                string
-		resourceName        func(*api.StorageBasedRemediationConfig) string
+		resourceName        string
 		ensure              func(*StorageBasedRemediationConfigReconciler, context.Context, *api.StorageBasedRemediationConfig) error
 		role                string
 		serviceAccountError string
 		bindingError        string
 	}{
-		{"watcher", watcherResourceName, (*StorageBasedRemediationConfigReconciler).ensureWatcherPermissions,
+		{"watcher", watcherAccountName, (*StorageBasedRemediationConfigReconciler).ensureWatcherPermissions,
 			"sbr-operator-sbr-watcher-role", "watcher service account belongs to another owner", "watcher binding belongs to another owner"},
-		{"peer", peerResourceName, (*StorageBasedRemediationConfigReconciler).ensurePeerPermissions,
+		{"peer", perNodeAgentAccountName, (*StorageBasedRemediationConfigReconciler).ensurePeerPermissions,
 			"sbr-operator-sbr-agent-role", "peer service account identity does not match", "peer binding identity does not match"},
 	} {
 		t.Run(entry.name, func(t *testing.T) {
 			ctx := context.Background()
 			config := watcherConfig()
-			name := entry.resourceName(config)
+			name := entry.resourceName
 			managed := map[string]string{blockpernode.ConfigurationUIDLabel: string(config.UID), "app.kubernetes.io/managed-by": SBROperatorName}
 
 			t.Run("create-and-repeat", func(t *testing.T) {

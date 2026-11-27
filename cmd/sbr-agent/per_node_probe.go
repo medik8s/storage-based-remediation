@@ -73,7 +73,7 @@ func runPerNodeAgent() error {
 		return err
 	}
 	owner, err := blockpernode.DecodeOwner(node.Annotations[blockpernode.OwnerAnnotation])
-	if err != nil || owner.NodeUID != node.UID || owner.Configuration.UID != configUID || owner.Phase != blockpernode.Active {
+	if err != nil || owner.NodeUID != node.UID || owner.ConfigUID != configUID || owner.Phase != blockpernode.Active {
 		return fmt.Errorf("Node has no active matching configuration owner")
 	}
 	device, err := blockpernode.OpenDevice(blockpernode.ProbeDevice, true)

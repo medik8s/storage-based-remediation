@@ -15,19 +15,28 @@ import (
 	"github.com/medik8s/storage-based-remediation/v5/internal/blockpernode"
 )
 
+func soleBlockPerNodeConfig(ctx context.Context, reader client.Reader) (*api.StorageBasedRemediationConfig, error) {
+	var configs api.StorageBasedRemediationConfigList
+	if err := reader.List(ctx, &configs, client.Limit(2)); err != nil {
+		return nil, err
+	}
+	if len(configs.Items) != 1 || configs.Continue != "" {
+		return nil, nil
+	}
+	config := &configs.Items[0]
+	if !config.Spec.IsBlockPerNodeMode() || config.DeletionTimestamp != nil {
+		return nil, nil
+	}
+	return config, nil
+}
+
 func (r *StorageBasedRemediationConfigReconciler) blockPerNodeEvents() handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, _ client.Object) []ctrl.Request {
-		var configs api.StorageBasedRemediationConfigList
-		if err := r.List(ctx, &configs); err != nil {
+		config, err := soleBlockPerNodeConfig(ctx, r.Client)
+		if err != nil || config == nil {
 			return nil
 		}
-		var requests []ctrl.Request
-		for _, config := range configs.Items {
-			if config.Spec.IsBlockPerNodeMode() {
-				requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&config)})
-			}
-		}
-		return requests
+		return []ctrl.Request{{NamespacedName: client.ObjectKeyFromObject(config)}}
 	})
 }
 

@@ -24,26 +24,17 @@ const (
 	ProbeDevice           = "/dev/sbr-probe"
 	StorageCondition      = "SBRStorageUnhealthy"
 	Active                = "Active"
-	Conflict              = "Conflict"
 	Retiring              = "Retiring"
 	Shutdown              = "Shutdown"
 	Released              = "Released"
 )
 
-type ConfigurationIdentity struct {
-	Namespace string    `json:"namespace"`
-	Name      string    `json:"name"`
-	UID       types.UID `json:"uid"`
-}
-
-func (c ConfigurationIdentity) Valid() bool { return c.Namespace != "" && c.Name != "" && c.UID != "" }
-
 type ConfigurationOwner struct {
-	Version             int                   `json:"version"`
-	NodeUID             types.UID             `json:"nodeUID"`
-	Configuration       ConfigurationIdentity `json:"configuration"`
-	OwnershipGeneration string                `json:"ownershipGeneration"`
-	Phase               string                `json:"phase"`
+	Version             int       `json:"version"`
+	NodeUID             types.UID `json:"nodeUID"`
+	ConfigUID           types.UID `json:"configUID"`
+	OwnershipGeneration string    `json:"ownershipGeneration"`
+	Phase               string    `json:"phase"`
 }
 
 func DecodeOwner(value string) (ConfigurationOwner, error) {
@@ -51,11 +42,11 @@ func DecodeOwner(value string) (ConfigurationOwner, error) {
 	if err := json.Unmarshal([]byte(value), &owner); err != nil {
 		return owner, err
 	}
-	if owner.Version != 1 || owner.NodeUID == "" || !owner.Configuration.Valid() || owner.OwnershipGeneration == "" {
+	if owner.Version != 1 || owner.NodeUID == "" || owner.ConfigUID == "" || owner.OwnershipGeneration == "" {
 		return owner, fmt.Errorf("incomplete configuration owner")
 	}
 	switch owner.Phase {
-	case Active, Conflict, Retiring, Shutdown, Released:
+	case Active, Retiring, Shutdown, Released:
 	default:
 		return owner, fmt.Errorf("invalid owner phase %q", owner.Phase)
 	}
@@ -63,10 +54,10 @@ func DecodeOwner(value string) (ConfigurationOwner, error) {
 }
 
 type WatcherTargets struct {
-	Version       int                   `json:"version"`
-	Configuration ConfigurationIdentity `json:"configuration"`
-	Group         string                `json:"group"`
-	Targets       []WatcherTarget       `json:"targets"`
+	Version   int             `json:"version"`
+	ConfigUID types.UID       `json:"configUID"`
+	Group     string          `json:"group"`
+	Targets   []WatcherTarget `json:"targets"`
 }
 
 type WatcherTarget struct {
@@ -110,17 +101,16 @@ func ParseTiming(values map[string]string) (*ProbeTiming, error) {
 }
 
 type ProbeMapping struct {
-	AgentPodUID    types.UID `json:"agentPodUID"`
-	ClaimNamespace string    `json:"claimNamespace"`
-	ClaimName      string    `json:"claimName"`
-	ClaimUID       types.UID `json:"claimUID"`
-	DevicePath     string    `json:"devicePath"`
+	AgentPodUID types.UID `json:"agentPodUID"`
+	ClaimName   string    `json:"claimName"`
+	ClaimUID    types.UID `json:"claimUID"`
+	DevicePath  string    `json:"devicePath"`
 }
 
 func DevicePath(index int) string { return fmt.Sprintf("%s-%d", ProbeDevice, index) }
 
 func (w WatcherTargets) Validate(host string) error {
-	if w.Version != 1 || !w.Configuration.Valid() || w.Group == "" {
+	if w.Version != 1 || w.ConfigUID == "" || w.Group == "" {
 		return fmt.Errorf("invalid watcher assignment")
 	}
 	uids := map[types.UID]bool{}
@@ -138,7 +128,7 @@ func (w WatcherTargets) Validate(host string) error {
 			}
 		}
 		if p := target.Probe; p != nil {
-			if p.AgentPodUID == "" || p.ClaimNamespace != w.Configuration.Namespace || p.ClaimName == "" || p.ClaimUID == "" || p.DevicePath != DevicePath(i) {
+			if p.AgentPodUID == "" || p.ClaimName == "" || p.ClaimUID == "" || p.DevicePath != DevicePath(i) {
 				return fmt.Errorf("invalid probe mapping for %s", target.Name)
 			}
 		}
@@ -151,7 +141,7 @@ func (w WatcherTargets) Matches(node *corev1.Node, target WatcherTarget) bool {
 		return false
 	}
 	o, err := DecodeOwner(node.Annotations[OwnerAnnotation])
-	return err == nil && o.NodeUID == target.UID && o.Configuration == w.Configuration && o.OwnershipGeneration == target.OwnershipGeneration && o.Phase == Active
+	return err == nil && o.NodeUID == target.UID && o.ConfigUID == w.ConfigUID && o.OwnershipGeneration == target.OwnershipGeneration && o.Phase == Active
 }
 
 func Condition(node *corev1.Node) *corev1.NodeCondition {

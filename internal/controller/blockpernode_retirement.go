@@ -117,7 +117,7 @@ func (r *StorageBasedRemediationConfigReconciler) retireBlockPerNode(ctx context
 	for _, node := range nodes.Items {
 		nodeUIDs[node.Name] = node.UID
 		owner, e := blockpernode.DecodeOwner(node.Annotations[blockpernode.OwnerAnnotation])
-		if e == nil && owner.Configuration == configIdentity(config) && owner.NodeUID == node.UID && owner.Phase != blockpernode.Released && (deleting || !selected[node.UID] || retainedChecks[string(node.UID)]) {
+		if e == nil && owner.ConfigUID == config.UID && owner.NodeUID == node.UID && owner.Phase != blockpernode.Released && (deleting || !selected[node.UID] || retainedChecks[string(node.UID)]) {
 			owned = append(owned, node)
 			retiringGroups[node.Annotations[blockpernode.GroupAnnotation]] = true
 		}
@@ -280,7 +280,7 @@ func (r *StorageBasedRemediationConfigReconciler) retireBlockPerNode(ctx context
 }
 
 func (r *StorageBasedRemediationConfigReconciler) removePerNodePermissions(ctx context.Context, config *api.StorageBasedRemediationConfig) error {
-	for _, name := range []string{watcherResourceName(config), peerResourceName(config)} {
+	for _, name := range []string{watcherAccountName, perNodeAgentAccountName} {
 		binding := &rbacv1.ClusterRoleBinding{}
 		if err := r.liveReader().Get(ctx, types.NamespacedName{Name: name}, binding); err != nil {
 			if !apierrors.IsNotFound(err) {
@@ -309,10 +309,6 @@ func (r *StorageBasedRemediationConfigReconciler) removePerNodePermissions(ctx c
 		}
 	}
 	return nil
-}
-
-func peerResourceName(config *api.StorageBasedRemediationConfig) string {
-	return strings.Replace(watcherResourceName(config), "sbr-watcher-", "sbr-agent-", 1)
 }
 
 func excludeRetiringTargets(daemon *appsv1.DaemonSet, checks []api.RetirementReleaseCheck) {
@@ -349,6 +345,6 @@ func excludeRetiringTargets(daemon *appsv1.DaemonSet, checks []api.RetirementRel
 }
 
 func (r *StorageBasedRemediationConfigReconciler) ensurePeerPermissions(ctx context.Context, config *api.StorageBasedRemediationConfig) error {
-	return r.ensurePerNodePermissions(ctx, config, peerResourceName(config), "sbr-operator-sbr-agent-role",
+	return r.ensurePerNodePermissions(ctx, config, perNodeAgentAccountName, "sbr-operator-sbr-agent-role",
 		fmt.Errorf("peer service account identity does not match"), fmt.Errorf("peer binding identity does not match"))
 }

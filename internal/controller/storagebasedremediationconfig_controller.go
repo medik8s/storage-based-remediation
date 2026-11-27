@@ -798,6 +798,17 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 		return r.handleDeletion(ctx, &sbrConfig, logger)
 	}
 
+	if sbrConfig.Spec.IsBlockPerNodeMode() {
+		if err := sbrConfig.Spec.ValidateAll(); err != nil {
+			return ctrl.Result{}, err
+		}
+		agentImage, err := r.getAgentImage(logger)
+		if err != nil {
+			return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
+		}
+		return r.reconcileBlockPerNode(ctx, &sbrConfig, agentImage)
+	}
+
 	// Add finalizer if not present
 	if !controllerutil.ContainsFinalizer(&sbrConfig, StorageBasedRemediationConfigFinalizerName) {
 		logger.Info("Adding finalizer to StorageBasedRemediationConfig")
@@ -810,12 +821,6 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 	if err != nil {
 		logger.Error(err, "Failed to get agent image")
 		return ctrl.Result{RequeueAfter: InitialStorageBasedRemediationConfigRetryDelay}, err
-	}
-	if sbrConfig.Spec.IsBlockPerNodeMode() {
-		if err := sbrConfig.Spec.ValidateAll(); err != nil {
-			return ctrl.Result{}, err
-		}
-		return r.reconcileBlockPerNode(ctx, &sbrConfig, agentImage)
 	}
 	logger.V(1).Info("Starting StorageBasedRemediationConfig reconciliation",
 		"spec.image", agentImage,
@@ -1009,6 +1014,9 @@ func (r *StorageBasedRemediationConfigReconciler) Reconcile(ctx context.Context,
 func (r *StorageBasedRemediationConfigReconciler) handleDeletion(
 	ctx context.Context, sbrConfig *medik8sv1alpha1.StorageBasedRemediationConfig, logger logr.Logger) (ctrl.Result, error) {
 	if sbrConfig.Spec.IsBlockPerNodeMode() {
+		if !controllerutil.ContainsFinalizer(sbrConfig, StorageBasedRemediationConfigFinalizerName) {
+			return ctrl.Result{}, nil
+		}
 		return r.retireBlockPerNode(ctx, sbrConfig, true)
 	}
 	logger.Info("Starting StorageBasedRemediationConfig cleanup")

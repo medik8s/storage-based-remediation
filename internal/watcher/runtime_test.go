@@ -38,14 +38,14 @@ func (r *testReader) Read() (uint64, error) {
 }
 
 func runtimeFixture(names ...string) (*Runtime, client.Client) {
-	w := blockpernode.WatcherTargets{Version: 1, Configuration: blockpernode.ConfigurationIdentity{Namespace: "ns", Name: "config", UID: "config-uid"}, Group: "group"}
+	w := blockpernode.WatcherTargets{Version: 1, ConfigUID: "config-uid", Group: "group"}
 	state := NewNodeState()
 	state.available = true
 	state.epoch = 1
 	var objects []client.Object
 	for index, name := range names {
 		target := blockpernode.WatcherTarget{Name: name, UID: types.UID(name + "-uid"), OwnershipGeneration: "generation", Timing: &blockpernode.ProbeTiming{ProbeInterval: metav1.Duration{Duration: 10 * time.Millisecond}, IOTimeout: metav1.Duration{Duration: 5 * time.Millisecond}, MaxConsecutiveFailures: 2}, Probe: &blockpernode.ProbeMapping{DevicePath: blockpernode.DevicePath(index)}}
-		owner := blockpernode.ConfigurationOwner{Version: 1, NodeUID: target.UID, Configuration: w.Configuration, OwnershipGeneration: target.OwnershipGeneration, Phase: blockpernode.Active}
+		owner := blockpernode.ConfigurationOwner{Version: 1, NodeUID: target.UID, ConfigUID: w.ConfigUID, OwnershipGeneration: target.OwnershipGeneration, Phase: blockpernode.Active}
 		value, _ := json.Marshal(owner)
 		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name, UID: target.UID, ResourceVersion: "1", Annotations: map[string]string{blockpernode.OwnerAnnotation: string(value), blockpernode.GroupAnnotation: w.Group}}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeConditionType(blockpernode.StorageCondition), Status: corev1.ConditionTrue}}}}
 		state.nodes[name] = node

@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 	"testing"
@@ -18,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -46,7 +46,7 @@ func watcherReconciler(objects ...client.Object) *StorageBasedRemediationConfigR
 }
 
 func ownerFor(config *api.StorageBasedRemediationConfig, node *corev1.Node, group string) {
-	owner := blockpernode.ConfigurationOwner{Version: 1, NodeUID: node.UID, Configuration: configIdentity(config), OwnershipGeneration: "generation", Phase: blockpernode.Active}
+	owner := blockpernode.ConfigurationOwner{Version: 1, NodeUID: node.UID, ConfigUID: config.UID, OwnershipGeneration: "generation", Phase: blockpernode.Active}
 	value, _ := json.Marshal(owner)
 	node.Annotations = map[string]string{blockpernode.OwnerAnnotation: string(value), blockpernode.GroupAnnotation: group}
 }
@@ -137,7 +137,7 @@ func TestNodeAssignmentsPreserveFieldsAndSkipRepeatedWrites(t *testing.T) {
 	if _, err := r.updateNodeAssignment(ctx, config, current, blockpernode.Active, "other"); !apierrors.IsConflict(err) {
 		t.Fatalf("stale version accepted: %v", err)
 	}
-	updated, err = r.updateNodeAssignment(ctx, config, updated, blockpernode.Conflict, "")
+	updated, err = r.updateNodeAssignment(ctx, config, updated, blockpernode.Released, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestProbeTimingUsesOwningPodAndPendingRemovesOldDevice(t *testing.T) {
 	if err != nil || timing == nil || timing.ProbeInterval.Duration != 10*time.Second {
 		t.Fatalf("Pod timing not copied: %+v %v", timing, err)
 	}
-	assignment := blockpernode.WatcherTargets{Version: 1, Configuration: configIdentity(config), Group: "group", Targets: []blockpernode.WatcherTarget{{Name: node.Name, UID: node.UID, OwnershipGeneration: "generation", Probe: mapping, Timing: timing}}}
+	assignment := blockpernode.WatcherTargets{Version: 1, ConfigUID: config.UID, Group: "group", Targets: []blockpernode.WatcherTarget{{Name: node.Name, UID: node.UID, OwnershipGeneration: "generation", Probe: mapping, Timing: timing}}}
 	bound, _ := buildWatcherDeployment(config, assignment, []string{"host"}, "image")
 	pvc.Status.Phase = corev1.ClaimPending
 	pvc.Spec.VolumeName = ""
@@ -276,7 +276,7 @@ func TestWatcherTemplatesAreStableAndCheckDevicePaths(t *testing.T) {
 	config, node, daemon, pod, pvc, pv := probeObjects()
 	r := watcherReconciler(pod, pvc, pv)
 	mapping, timing, _, _ := r.discoverProbe(context.Background(), config, daemon, node, 0)
-	w := blockpernode.WatcherTargets{Version: 1, Configuration: configIdentity(config), Group: "group", Targets: []blockpernode.WatcherTarget{{Name: node.Name, UID: node.UID, OwnershipGeneration: "generation", Probe: mapping, Timing: timing}}}
+	w := blockpernode.WatcherTargets{Version: 1, ConfigUID: config.UID, Group: "group", Targets: []blockpernode.WatcherTarget{{Name: node.Name, UID: node.UID, OwnershipGeneration: "generation", Probe: mapping, Timing: timing}}}
 	first, err := buildWatcherDeployment(config, w, []string{"host"}, "image")
 	if err != nil {
 		t.Fatal(err)
@@ -301,7 +301,7 @@ func TestWatcherTemplatesAreStableAndCheckDevicePaths(t *testing.T) {
 
 func currentWatcherFixture() (*appsv1.Deployment, *appsv1.ReplicaSet, *corev1.Pod) {
 	config := watcherConfig()
-	d, _ := buildWatcherDeployment(config, blockpernode.WatcherTargets{Version: 1, Configuration: configIdentity(config), Group: "group"}, []string{"host"}, "image")
+	d, _ := buildWatcherDeployment(config, blockpernode.WatcherTargets{Version: 1, ConfigUID: config.UID, Group: "group"}, []string{"host"}, "image")
 	d.UID = "deployment"
 	rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "rs", Namespace: "ns", UID: "replicaset", OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", UID: d.UID, Controller: ptr.To(true)}}}, Spec: appsv1.ReplicaSetSpec{Template: *d.Spec.Template.DeepCopy()}}
 	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "watcher", Namespace: "ns", UID: "pod", Labels: d.Spec.Selector.MatchLabels, OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: rs.Name, UID: rs.UID, Controller: ptr.To(true)}}}, Spec: corev1.PodSpec{NodeName: "host"}}
@@ -430,7 +430,7 @@ func TestScheduledWatcherIgnoresEarlierSchedulingFailure(t *testing.T) {
 }
 
 func TestWatcherStructuralReasonsAndNodeEventFilter(t *testing.T) {
-	for _, reason := range []string{"ConfigurationConflict", "AssignmentIncomplete", "ProbeClaimUnavailable", "NoEligibleHost", "SchedulingFailed", "VolumeSetupFailed", "PodNotReady"} {
+	for _, reason := range []string{"SingleConfigurationRequired", "AssignmentIncomplete", "ProbeClaimUnavailable", "NoEligibleHost", "SchedulingFailed", "VolumeSetupFailed", "PodNotReady"} {
 		s := newStructuralResult()
 		s.failures[reason] = true
 		status, got, _ := s.condition()
@@ -546,25 +546,22 @@ func TestRetirementPersistsChecksBeforeDeletingWatcherAndRetainsPeers(t *testing
 	}
 }
 
-func TestPermissionsCleanupPreservesOtherConfiguration(t *testing.T) {
+func TestStaleCleanupPreservesPermissionsAfterConfigRecreation(t *testing.T) {
 	ctx := context.Background()
 	first := watcherConfig()
 	second := watcherConfig()
-	second.Namespace = "other-ns"
 	second.UID = "second-uid"
 	r := watcherReconciler()
-	for _, config := range []*api.StorageBasedRemediationConfig{first, second} {
-		if err := r.ensureWatcherPermissions(ctx, config); err != nil {
-			t.Fatal(err)
-		}
-		if err := r.ensurePeerPermissions(ctx, config); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := r.removePerNodePermissions(ctx, first); err != nil {
+	if err := r.ensureWatcherPermissions(ctx, second); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{watcherResourceName(second), peerResourceName(second)} {
+	if err := r.ensurePeerPermissions(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.removePerNodePermissions(ctx, first); err == nil {
+		t.Fatal("stale cleanup accepted the replacement configuration's permissions")
+	}
+	for _, name := range []string{watcherAccountName, perNodeAgentAccountName} {
 		if err := r.Get(ctx, client.ObjectKey{Namespace: second.Namespace, Name: name}, &corev1.ServiceAccount{}); err != nil {
 			t.Fatal("cleanup removed another service account")
 		}
@@ -722,7 +719,7 @@ func TestRetirementStopsFutureAgentPodsAfterReleaseBeforeInventoryCompletes(t *t
 					t.Fatalf("inventory gap released or changed Node %s: %+v", target.Name, liveNode.Annotations)
 				}
 			}
-			for _, name := range []string{watcherResourceName(config), peerResourceName(config)} {
+			for _, name := range []string{watcherAccountName, perNodeAgentAccountName} {
 				if err := r.Get(ctx, client.ObjectKey{Namespace: config.Namespace, Name: name}, &corev1.ServiceAccount{}); err != nil {
 					t.Fatal("inventory gap removed service account")
 				}
@@ -784,88 +781,75 @@ func TestWatcherStatusSkipsUnchangedResultAndTracksGeneration(t *testing.T) {
 	}
 }
 
-func TestConfigurationConflictIncludesOtherNamespacesAndStorageClasses(t *testing.T) {
-	ctx := context.Background()
-	a, b := watcherNode("a"), watcherNode("b")
-	first, second := watcherConfig(), watcherConfig()
-	second.Name = "second"
-	second.Namespace = "other"
-	second.UID = "second"
-	first.Spec.NodeSelector = map[string]string{"target": "first"}
-	second.Spec.NodeSelector = map[string]string{"target": "second"}
-	a.Labels["target"] = "first"
-	b.Labels["target"] = "second"
-	second.Spec.SharedStorageClass = "other-class"
-	r := watcherReconciler(first, second)
-	for _, config := range []*api.StorageBasedRemediationConfig{first, second} {
-		nodes := []corev1.Node{a, b}
-		conflict, err := r.configurationConflicts(ctx, config, nodes, selectedNodes(config, nodes))
-		if err != nil || !conflict {
-			t.Fatalf("disjoint class conflict missing: %t %v", conflict, err)
-		}
-	}
-	second.Spec.SharedStorageClass = "rwx"
-	second.Spec.NodeSelector = first.Spec.NodeSelector
-	r = watcherReconciler(first, second)
-	nodes := []corev1.Node{a, b}
-	conflict, err := r.configurationConflicts(ctx, first, nodes, selectedNodes(first, nodes))
-	if err != nil || !conflict {
-		t.Fatalf("overlap conflict missing: %t %v", conflict, err)
-	}
-	a.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse}}
-	if len(selectedNodes(first, []corev1.Node{a, b})) != 1 {
+func TestSelectedNodesIncludesUnreadyTargets(t *testing.T) {
+	config := watcherConfig()
+	target := watcherNode("target")
+	target.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse}}
+	if nodes := selectedNodes(config, []corev1.Node{target}); len(nodes) != 1 {
 		t.Fatal("NotReady target left selection")
 	}
 }
 
-type configurationListErrorClient struct {
-	client.Client
-	err error
-}
-
-func (c *configurationListErrorClient) List(ctx context.Context, list client.ObjectList, options ...client.ListOption) error {
-	if _, ok := list.(*api.StorageBasedRemediationConfigList); ok {
-		return c.err
-	}
-	return c.Client.List(ctx, list, options...)
-}
-
-func TestConfigurationConflictPreservesListError(t *testing.T) {
-	config := watcherConfig()
-	nodes := []corev1.Node{watcherNode("a")}
-	r := watcherReconciler(config)
-	failure := errors.New("configuration list failed")
-	r.Client = &configurationListErrorClient{Client: r.Client, err: failure}
-	conflict, err := r.configurationConflicts(context.Background(), config, nodes, selectedNodes(config, nodes))
-	if conflict || !errors.Is(err, failure) {
-		t.Fatalf("conflict = %t, error = %v, want false and %v", conflict, err, failure)
-	}
-}
-
-func TestConfigurationConflictIncludesSharedModes(t *testing.T) {
-	for _, mode := range []*api.SharedStorageVolumeModeType{nil, ptr.To(api.SharedStorageVolumeModeFilesystem), ptr.To(api.SharedStorageVolumeModeBlock)} {
-		second := watcherConfig()
-		second.Spec.SharedStorageVolumeMode = mode
-		t.Run(string(second.Spec.GetSharedStorageVolumeMode()), func(t *testing.T) {
-			first := watcherConfig()
-			second.Name, second.Namespace, second.UID = "second", "other", "second-uid"
-			second.Spec.SharedStorageClass = "other-class"
-			first.Spec.NodeSelector = map[string]string{"target": "first"}
-			second.Spec.NodeSelector = map[string]string{"target": "second"}
-			a, b := watcherNode("a"), watcherNode("b")
-			a.Labels["target"], b.Labels["target"] = "first", "second"
-			nodes := []corev1.Node{a, b}
-			targets := selectedNodes(first, nodes)
-			r := watcherReconciler(first, second)
-			conflict, err := r.configurationConflicts(context.Background(), first, nodes, targets)
-			if err != nil || conflict {
-				t.Fatalf("disjoint shared-mode configuration conflicts: %t %v", conflict, err)
+func TestWatcherRequiresOneConfigurationAcrossNamespaces(t *testing.T) {
+	t.Setenv(api.RelatedImageAgent, "sbr:test")
+	for _, mode := range []api.SharedStorageVolumeModeType{api.SharedStorageVolumeModeFilesystem, api.SharedStorageVolumeModeBlock, api.SharedStorageVolumeModeBlockPerNode} {
+		t.Run(string(mode), func(t *testing.T) {
+			ctx := context.Background()
+			config, other := watcherConfig(), watcherConfig()
+			config.Finalizers = nil
+			other.Namespace, other.UID = "other", "other-uid"
+			other.Spec.NodeSelector = map[string]string{"pool": "other"}
+			other.Spec.SharedStorageVolumeMode = &mode
+			node := watcherNode("target")
+			r := watcherReconciler(config, other, &node)
+			if err := r.Get(ctx, client.ObjectKeyFromObject(config), config); err != nil {
+				t.Fatal(err)
 			}
-			second.Spec.NodeSelector = first.Spec.NodeSelector
-			r = watcherReconciler(first, second)
-			conflict, err = r.configurationConflicts(context.Background(), first, nodes, targets)
-			if err != nil || !conflict {
-				t.Fatalf("overlapping shared-mode configuration does not conflict: %t %v", conflict, err)
+			reconcile := func() {
+				t.Helper()
+				if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(config)}); err != nil {
+					t.Fatal(err)
+				}
+				if err := r.Get(ctx, client.ObjectKeyFromObject(config), config); err != nil {
+					t.Fatal(err)
+				}
+				if err := r.Get(ctx, client.ObjectKeyFromObject(&node), &node); err != nil {
+					t.Fatal(err)
+				}
+			}
+			reconcile()
+			condition := config.GetCondition(api.SBRConfigConditionWatcherResourcesReady)
+			if condition == nil || condition.Reason != "SingleConfigurationRequired" || condition.Status != metav1.ConditionFalse {
+				t.Fatalf("unexpected watcher readiness: %+v", condition)
+			}
+			if len(config.Finalizers) != 0 {
+				t.Fatal("blocked configuration acquired a cleanup finalizer")
+			}
+			if node.Annotations[blockpernode.OwnerAnnotation] != "" {
+				t.Fatal("controller assigned a node while two configurations existed")
+			}
+			if err := r.Delete(ctx, other); err != nil {
+				t.Fatal(err)
+			}
+			reconcile()
+			if node.Annotations[blockpernode.OwnerAnnotation] != "" {
+				t.Fatal("controller ignored a terminating configuration")
+			}
+			if err := r.Get(ctx, client.ObjectKeyFromObject(other), other); err != nil {
+				t.Fatal(err)
+			}
+			other.Finalizers = nil
+			if err := r.Update(ctx, other); err != nil {
+				t.Fatal(err)
+			}
+			reconcile()
+			if len(config.Finalizers) != 1 || config.Finalizers[0] != StorageBasedRemediationConfigFinalizerName {
+				t.Fatal("eligible configuration has no cleanup finalizer")
+			}
+			reconcile()
+			owner, err := blockpernode.DecodeOwner(node.Annotations[blockpernode.OwnerAnnotation])
+			if err != nil || owner.ConfigUID != config.UID || owner.Phase != blockpernode.Active {
+				t.Fatalf("controller did not resume assignment: owner=%+v err=%v", owner, err)
 			}
 		})
 	}
